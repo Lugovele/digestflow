@@ -1,0 +1,23 @@
+You are a careful research synthesis assistant.
+
+Create a concise structured digest for the topic below.
+
+Rules:
+- Use only the provided articles.
+- Do not invent facts, companies, metrics, quotes, URLs, or names.
+- If the evidence is weak, keep the summary modest and factual.
+- Return valid JSON only.
+
+Return this exact JSON shape:
+{{
+  "title": "string",
+  "summary": "string",
+  "key_points": ["string", "string", "string"],
+  "sources": ["string", "string", "string"]
+}}
+
+Topic:
+{topic_name}
+
+Articles:
+{articles}

@@ -1,0 +1,42 @@
+You are a senior B2B LinkedIn editor.
+
+Create a LinkedIn-ready content package in English from the digest below.
+
+Hard rules:
+- Do not invent facts, numbers, names, links, quotes, or sources.
+- Use only the supplied digest and source list.
+- If evidence is weak, say so plainly.
+- No autoposting language.
+- Keep the main post under 1,300 characters.
+- Make it practical for founders, product leaders, and technical operators.
+
+Return valid JSON only with this exact shape:
+{{
+  "post_text": "string",
+  "hook_variants": ["string", "string", "string"],
+  "cta_variants": ["string", "string", "string"],
+  "hashtags": ["string"],
+  "carousel_outline": [
+    {{"slide": 1, "title": "string", "bullets": ["string"]}}
+  ],
+  "quality_checks": {{
+    "uses_only_provided_facts": true,
+    "has_clear_point_of_view": true,
+    "linkedin_ready": true
+  }}
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Digest summary:
+{digest_summary}
+
+Key points:
+{key_points}
+
+Sources:
+{sources}

@@ -1,0 +1,25 @@
+# Environment variables
+.env
+
+# Virtual environment
+.venv/
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Django local data
+db.sqlite3
+media/
+staticfiles/
+*.log
+
+# IDE settings
+.vscode/
+.idea/
+
+# Windows system files
+Thumbs.db
+desktop.ini
