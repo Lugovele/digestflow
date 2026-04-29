@@ -9,10 +9,11 @@ from django.conf import settings
 
 from apps.ai.client import OpenAIClient, estimate_cost_usd
 from services.ai.prompt_builder import build_prompt
+from services.ai.validators import DigestPayloadValidationError, validate_digest_payload
 from services.sources import get_demo_articles_for_topic
 
 
-class DigestSmokeTestError(ValueError):
+class DigestSmokeTestError(DigestPayloadValidationError):
     """Structured validation or smoke test error for digest payloads."""
 
 
@@ -142,28 +143,6 @@ def generate_digest_payload(topic_name: str, articles: list[dict[str, Any]]) -> 
         tokens=tokens,
         estimated_cost_usd=estimated_cost,
     )
-
-
-def validate_digest_payload(payload: dict[str, Any]) -> None:
-    """Validate the minimum contract for a digest payload."""
-    required_fields = ["title", "summary", "key_points", "sources"]
-    missing = [field for field in required_fields if field not in payload]
-    if missing:
-        raise DigestSmokeTestError(f"В digest payload отсутствуют поля: {missing}")
-
-    if not isinstance(payload["title"], str) or not payload["title"].strip():
-        raise DigestSmokeTestError("Поле title должно быть непустой строкой.")
-    if not isinstance(payload["summary"], str) or not payload["summary"].strip():
-        raise DigestSmokeTestError("Поле summary должно быть непустой строкой.")
-    if not isinstance(payload["key_points"], list) or not payload["key_points"]:
-        raise DigestSmokeTestError("Поле key_points должно быть непустым списком.")
-    if not all(isinstance(item, str) and item.strip() for item in payload["key_points"]):
-        raise DigestSmokeTestError("Каждый элемент key_points должен быть непустой строкой.")
-    if not isinstance(payload["sources"], list) or not payload["sources"]:
-        raise DigestSmokeTestError("Поле sources должно быть непустым списком.")
-    if not all(isinstance(item, str) and item.strip() for item in payload["sources"]):
-        raise DigestSmokeTestError("Каждый элемент sources должен быть непустой строкой.")
-
 
 def _should_use_mock() -> bool:
     api_key = settings.OPENAI_API_KEY.strip()

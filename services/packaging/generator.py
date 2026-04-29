@@ -12,10 +12,10 @@ from apps.ai.client import OpenAIClient, estimate_cost_usd
 from apps.digests.models import Digest
 from apps.packaging.models import ContentPackage
 from services.ai import build_prompt
-
-
-class PackagingValidationError(ValueError):
-    """Structured validation error for ContentPackage payloads."""
+from services.packaging.validators import (
+    ContentPackageValidationError,
+    validate_content_package_payload,
+)
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,9 @@ def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
             )
             response_text = response.text.strip()
             if not response_text:
-                raise PackagingValidationError("Модель вернула пустой ответ для packaging stage.")
+                raise ContentPackageValidationError(
+                    "Модель вернула пустой ответ для packaging stage."
+                )
             payload = _parse_json_response(response_text)
             validate_content_package_payload(payload)
             tokens = response.usage
@@ -149,39 +151,6 @@ def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
     )
 
 
-def validate_content_package_payload(payload: dict[str, Any]) -> None:
-    required_fields = ["post_text", "hook_variants", "cta_variants", "hashtags"]
-    missing = [field for field in required_fields if field not in payload]
-    if missing:
-        raise PackagingValidationError(f"В ContentPackage payload отсутствуют поля: {missing}")
-
-    if not isinstance(payload["post_text"], str) or not payload["post_text"].strip():
-        raise PackagingValidationError("Поле post_text должно быть непустой строкой.")
-    if len(payload["post_text"]) > 1300:
-        raise PackagingValidationError("Поле post_text превышает лимит 1300 символов.")
-
-    _validate_string_list(payload["hook_variants"], "hook_variants", min_items=3)
-    _validate_string_list(payload["cta_variants"], "cta_variants", min_items=3)
-    _validate_string_list(payload["hashtags"], "hashtags", min_items=1)
-
-    carousel_outline = payload.get("carousel_outline", [])
-    if carousel_outline is None:
-        raise PackagingValidationError("Поле carousel_outline не должно быть null.")
-    if not isinstance(carousel_outline, list):
-        raise PackagingValidationError("Поле carousel_outline должно быть списком.")
-
-
-def _validate_string_list(value: Any, field_name: str, min_items: int) -> None:
-    if not isinstance(value, list) or len(value) < min_items:
-        raise PackagingValidationError(
-            f"Поле {field_name} должно быть списком минимум из {min_items} элементов."
-        )
-    if not all(isinstance(item, str) and item.strip() for item in value):
-        raise PackagingValidationError(
-            f"Каждый элемент поля {field_name} должен быть непустой строкой."
-        )
-
-
 def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:
     quality_checks = payload.get("quality_checks", {})
     return {
@@ -202,14 +171,16 @@ def _format_list_for_prompt(items: list[Any]) -> str:
 def _parse_json_response(response_text: str) -> dict[str, Any]:
     normalized = _extract_json_candidate(response_text)
     if not normalized:
-        raise PackagingValidationError("Ответ модели пустой или не содержит JSON-объект.")
+        raise ContentPackageValidationError("Ответ модели пустой или не содержит JSON-объект.")
 
     try:
         payload = json.loads(normalized)
     except json.JSONDecodeError as exc:
-        raise PackagingValidationError(f"Ответ модели не является валидным JSON: {exc}") from exc
+        raise ContentPackageValidationError(
+            f"Ответ модели не является валидным JSON: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
-        raise PackagingValidationError("ContentPackage payload должен быть JSON-объектом.")
+        raise ContentPackageValidationError("ContentPackage payload должен быть JSON-объектом.")
     return payload
 
 
