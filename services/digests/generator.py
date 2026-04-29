@@ -16,16 +16,16 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
     run.started_at = run.started_at or timezone.now()
     run.save(update_fields=["status", "started_at", "updated_at"])
 
-    print(f"[DigestRun {run.id}] Stage started: generating_digest")
-    print(f"[DigestRun {run.id}] Topic: {run.topic.name}")
-    print(f"[DigestRun {run.id}] Articles received: {len(articles)}")
+    _debug(run.id, "STEP", "digest generating")
+    _debug(run.id, "INFO", f"topic -> {run.topic.name}")
+    _debug(run.id, "INFO", f"articles received -> {len(articles)}")
 
     generation = generate_digest_payload(run.topic.name, articles)
 
-    print(f"[DigestRun {run.id}] Provider: {generation.provider}")
-    print(f"[DigestRun {run.id}] Is mock: {generation.is_mock}")
+    _debug(run.id, "INFO", f"provider -> {generation.provider}")
+    _debug(run.id, "INFO", f"is_mock -> {generation.is_mock}")
     if generation.fallback_reason:
-        print(f"[DigestRun {run.id}] Fallback reason: {generation.fallback_reason}")
+        _debug(run.id, "INFO", f"fallback_reason -> {generation.fallback_reason}")
 
     payload = generation.payload
 
@@ -52,8 +52,7 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
         }
         run.save(update_fields=["metrics", "updated_at"])
 
-    print(f"[DigestRun {run.id}] Digest saved: {digest.id}")
-    print(f"[DigestRun {run.id}] Stage completed: generating_digest")
+    _debug(run.id, "OK", f"digest saved -> {digest.id}")
 
     debug_info = {
         "prompt": generation.prompt,
@@ -70,3 +69,7 @@ def _score_digest_payload(payload: dict[str, Any]) -> float:
     sources_count = len(payload.get("sources", []))
     score = 0.45 + min(key_points_count, 5) * 0.08 + min(sources_count, 5) * 0.04
     return min(1.0, round(score, 2))
+
+
+def _debug(run_id: int, level: str, message: str) -> None:
+    print(f"[DigestRun {run_id}] {level}: {message}")

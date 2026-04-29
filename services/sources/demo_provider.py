@@ -15,24 +15,39 @@ def get_demo_articles_for_topic(topic_name: str) -> list[dict]:
             "title": f"{topic_label}: market signal one",
             "url": "https://example.com/article-1",
             "source": "Example News",
-            "snippet": "A practical update relevant to the topic.",
+            "snippet": (
+                f"A product team in {topic_label} reduced manual research time by 35% after "
+                "switching from weekly summaries to daily AI-assisted briefings. The team also "
+                "cut the time needed to prepare stakeholder updates from two hours to forty minutes."
+            ),
         },
         {
             "title": f"{topic_label}: market signal one",
             "url": "https://example.com/article-1",
             "source": "Example News",
-            "snippet": "Duplicate item to test deduplication.",
+            "snippet": (
+                f"The same {topic_label} case study reported a 35% drop in manual research time "
+                "and faster stakeholder reporting after introducing AI-assisted briefings."
+            ),
         },
         {
             "title": f"{topic_label}: product release analysis",
             "url": "https://example.com/article-2",
             "source": "Example Blog",
-            "snippet": "Another relevant source item for digest generation.",
+            "snippet": (
+                f"A new {topic_label} workflow release added source-level citation blocks and "
+                "structured output templates. Early users said the change made review easier and "
+                "reduced editing passes before publishing."
+            ),
         },
         {
             "title": f"{topic_label}: operator takeaway",
             "url": "https://example.com/article-3",
             "source": "Example Research",
-            "snippet": "Operational implications and strategic context.",
+            "snippet": (
+                f"Operations leads testing {topic_label} workflows found that teams using a fixed "
+                "pipeline with explicit validation caught output issues earlier. The report noted "
+                "fewer last-minute corrections when digest generation and packaging were kept separate."
+            ),
         },
     ]

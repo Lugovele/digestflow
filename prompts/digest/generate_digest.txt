@@ -5,8 +5,16 @@ Create a concise structured digest for the topic below.
 Rules:
 - Use only the provided articles.
 - Do not invent facts, companies, metrics, quotes, URLs, or names.
-- If the evidence is weak, keep the summary modest and factual.
+- Do not add any general industry knowledge, background context, or assumptions.
+- Use only facts that are directly supported by the provided snippets.
+- If a statement cannot be directly supported by provided snippets, do not include it.
+- Every key_point must be directly tied to at least one specific provided article.
+- The summary must use only facts that appear in the provided snippets.
+- Do not write broad conclusions unless they are directly supported by the snippets.
+- If the evidence is weak or incomplete, keep the summary short, neutral, and factual.
 - Return valid JSON only.
+- Do not wrap the JSON in markdown fences.
+- Do not add comments, explanations, or any text before or after the JSON.
 
 Return this exact JSON shape:
 {{

@@ -33,4 +33,39 @@ class Command(BaseCommand):
         run_digest_pipeline(run.id, raw_items)
         run.refresh_from_db()
 
+        digest = getattr(run, "digest", None)
+        content_package = getattr(digest, "content_package", None) if digest else None
+
+        digest_stage_metrics = run.metrics.get("digest_stage", {}) if isinstance(run.metrics, dict) else {}
+        packaging_stage_metrics = (
+            run.metrics.get("packaging_stage", {}) if isinstance(run.metrics, dict) else {}
+        )
+        used_mock = bool(
+            digest_stage_metrics.get("is_mock") or packaging_stage_metrics.get("is_mock")
+        )
+
         self.stdout.write(self.style.SUCCESS(f"DigestRun {run.id} finished with status={run.status}"))
+        if run.error_message:
+            self.stdout.write(self.style.WARNING(f"error_message: {run.error_message}"))
+
+        self.stdout.write("")
+        self.stdout.write("=== RUN SUMMARY ===")
+        self.stdout.write(f"run_id: {run.id}")
+        self.stdout.write(f"status: {run.status}")
+        self.stdout.write(f"topic: {run.topic.name}")
+        self.stdout.write(f"digest_id: {digest.id if digest else 'null'}")
+        self.stdout.write(
+            f"content_package_id: {content_package.id if content_package else 'null'}"
+        )
+        self.stdout.write(f"used_mock: {used_mock}")
+        self.stdout.write(f"error_message: {run.error_message or 'null'}")
+        if digest_stage_metrics:
+            self.stdout.write(
+                "digest_provider: "
+                f"{digest_stage_metrics.get('provider', 'null')}"
+            )
+        if packaging_stage_metrics:
+            self.stdout.write(
+                "packaging_provider: "
+                f"{packaging_stage_metrics.get('provider', 'null')}"
+            )

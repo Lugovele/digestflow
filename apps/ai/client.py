@@ -24,11 +24,30 @@ class OpenAIClient:
             timeout=settings.OPENAI_TIMEOUT_SECONDS,
         )
 
-    def generate_text(self, prompt: str, max_output_tokens: int = 1200) -> AIResponse:
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            max_output_tokens=max_output_tokens,
-        )
+    def generate_text(
+        self,
+        prompt: str,
+        max_output_tokens: int = 1200,
+        json_mode: bool = False,
+    ) -> AIResponse:
+        request_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": prompt,
+            "max_output_tokens": max_output_tokens,
+        }
+        if json_mode:
+            request_kwargs["text"] = {"format": {"type": "json_object"}}
+
+        try:
+            response = self.client.responses.create(**request_kwargs)
+        except Exception:
+            if not json_mode:
+                raise
+            response = self.client.responses.create(
+                model=self.model,
+                input=prompt,
+                max_output_tokens=max_output_tokens,
+            )
+
         text = response.output_text
         return AIResponse(text=text, raw=response.model_dump())

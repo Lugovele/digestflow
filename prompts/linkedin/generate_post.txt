@@ -9,6 +9,8 @@ Hard rules:
 - No autoposting language.
 - Keep the main post under 1,300 characters.
 - Make it practical for founders, product leaders, and technical operators.
+- Do not wrap the JSON in markdown fences.
+- Do not add comments, explanations, or any text before or after the JSON.
 
 Return valid JSON only with this exact shape:
 {{

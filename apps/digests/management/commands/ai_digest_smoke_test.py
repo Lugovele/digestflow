@@ -20,7 +20,10 @@ class Command(BaseCommand):
         topic_name = options["topic"].strip()
         result = run_digest_smoke_test(topic_name)
 
-        self.stdout.write(self.style.SUCCESS("AI smoke test completed."))
+        if result.validation_passed:
+            self.stdout.write(self.style.SUCCESS("AI smoke test completed."))
+        else:
+            self.stdout.write(self.style.WARNING("AI smoke test completed with controlled failure."))
         self.stdout.write("")
         self.stdout.write("=== PROVIDER ===")
         self.stdout.write(result.provider)
@@ -42,6 +45,11 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write("=== VALIDATION PASSED ===")
         self.stdout.write(str(result.validation_passed))
-        self.stdout.write("")
-        self.stdout.write("=== PARSED PAYLOAD ===")
-        self.stdout.write(json.dumps(result.payload, ensure_ascii=False, indent=2))
+        if result.error_message:
+            self.stdout.write("")
+            self.stdout.write("=== ERROR MESSAGE ===")
+            self.stdout.write(result.error_message)
+        if result.payload is not None:
+            self.stdout.write("")
+            self.stdout.write("=== PARSED PAYLOAD ===")
+            self.stdout.write(json.dumps(result.payload, ensure_ascii=False, indent=2))
