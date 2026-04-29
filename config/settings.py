@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "apps.topics",
+    "apps.sources",
     "apps.digests",
     "apps.packaging",
 ]

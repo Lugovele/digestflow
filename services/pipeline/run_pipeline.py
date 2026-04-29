@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.digests.models import DigestRun
 from services.digests import generate_digest_for_run
 from services.packaging import generate_content_package_for_digest
+from services.sources import save_articles_for_topic
 
 
 logger = logging.getLogger(__name__)
@@ -31,11 +32,15 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         if not raw_items_list:
             raise ValueError("Source stage returned no articles.")
 
+        saved_articles = save_articles_for_topic(run.topic, raw_items_list)
+        _debug(run.id, "OK", f"articles saved -> {len(saved_articles)}")
+
         run.metrics = {
             **run.metrics,
             "source_stage": {
                 "status": "completed",
                 "articles_count": len(raw_items_list),
+                "saved_articles_count": len(saved_articles),
             },
         }
         run.save(update_fields=["metrics", "updated_at"])
