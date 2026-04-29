@@ -1,4 +1,4 @@
-"""Минимальный AI smoke test для digest generation."""
+"""Minimal AI smoke test helpers for digest generation."""
 from __future__ import annotations
 
 import json
@@ -7,13 +7,13 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import OpenAIClient
+from apps.ai.client import OpenAIClient, estimate_cost_usd
 from services.ai.prompt_builder import build_prompt
 from services.sources import get_demo_articles_for_topic
 
 
 class DigestSmokeTestError(ValueError):
-    """Ошибка smoke test или валидации digest payload."""
+    """Structured validation or smoke test error for digest payloads."""
 
 
 @dataclass(frozen=True)
@@ -36,10 +36,12 @@ class DigestGenerationPayload:
     is_mock: bool
     provider: str
     fallback_reason: str
+    tokens: dict[str, int | None] | None
+    estimated_cost_usd: float | None
 
 
 def run_digest_smoke_test(topic_name: str) -> DigestSmokeTestResult:
-    """Собрать prompt, получить ответ модели или mock и провалидировать payload."""
+    """Build a prompt, get a real or mock response, and validate the payload."""
     articles = get_demo_articles_for_topic(topic_name)
     try:
         generation = generate_digest_payload(topic_name, articles)
@@ -53,7 +55,7 @@ def run_digest_smoke_test(topic_name: str) -> DigestSmokeTestResult:
             fallback_reason=generation.fallback_reason,
             error_message="",
         )
-    except Exception as exc:  # noqa: BLE001 - smoke test должен завершаться контролируемо
+    except Exception as exc:  # noqa: BLE001 - smoke test should finish in a controlled way
         prompt = build_prompt(
             "digest/generate_digest.txt",
             topic_name=topic_name,
@@ -72,7 +74,7 @@ def run_digest_smoke_test(topic_name: str) -> DigestSmokeTestResult:
 
 
 def generate_digest_payload(topic_name: str, articles: list[dict[str, Any]]) -> DigestGenerationPayload:
-    """Собрать prompt и получить digest payload через реальный AI или mock."""
+    """Build a prompt and return digest payload via real AI or deterministic mock."""
     prompt = build_prompt(
         "digest/generate_digest.txt",
         topic_name=topic_name,
@@ -82,6 +84,8 @@ def generate_digest_payload(topic_name: str, articles: list[dict[str, Any]]) -> 
     fallback_reason = ""
     is_mock = False
     provider = "openai"
+    tokens: dict[str, int | None] | None = None
+    estimated_cost: float | None = None
 
     if _should_use_mock():
         response_text = _build_mock_response(topic_name, articles)
@@ -100,6 +104,11 @@ def generate_digest_payload(topic_name: str, articles: list[dict[str, Any]]) -> 
                 raise DigestSmokeTestError("Модель вернула пустой ответ.")
             payload = _parse_json_response(response_text)
             validate_digest_payload(payload)
+            tokens = response.usage
+            estimated_cost = estimate_cost_usd(
+                response.usage.get("prompt_tokens"),
+                response.usage.get("completion_tokens"),
+            )
             return DigestGenerationPayload(
                 prompt=prompt,
                 response_text=response_text,
@@ -107,8 +116,10 @@ def generate_digest_payload(topic_name: str, articles: list[dict[str, Any]]) -> 
                 is_mock=is_mock,
                 provider=provider,
                 fallback_reason=fallback_reason,
+                tokens=tokens,
+                estimated_cost_usd=estimated_cost,
             )
-        except Exception as exc:  # noqa: BLE001 - controlled fallback для smoke test и digest stage
+        except Exception as exc:  # noqa: BLE001 - controlled fallback for smoke test and digest stage
             raw_response_text = locals().get("response_text", "")
             response_text = _build_mock_response(topic_name, articles)
             is_mock = True
@@ -128,11 +139,13 @@ def generate_digest_payload(topic_name: str, articles: list[dict[str, Any]]) -> 
         is_mock=is_mock,
         provider=provider,
         fallback_reason=fallback_reason,
+        tokens=tokens,
+        estimated_cost_usd=estimated_cost,
     )
 
 
 def validate_digest_payload(payload: dict[str, Any]) -> None:
-    """Проверить минимальный контракт digest payload."""
+    """Validate the minimum contract for a digest payload."""
     required_fields = ["title", "summary", "key_points", "sources"]
     missing = [field for field in required_fields if field not in payload]
     if missing:

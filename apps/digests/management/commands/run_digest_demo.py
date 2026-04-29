@@ -41,8 +41,20 @@ class Command(BaseCommand):
             run.metrics.get("packaging_stage", {}) if isinstance(run.metrics, dict) else {}
         )
         source_stage_metrics = run.metrics.get("source_stage", {}) if isinstance(run.metrics, dict) else {}
+        digest_tokens = digest_stage_metrics.get("tokens", {}) if isinstance(digest_stage_metrics, dict) else {}
+        packaging_tokens = (
+            packaging_stage_metrics.get("tokens", {}) if isinstance(packaging_stage_metrics, dict) else {}
+        )
         used_mock = bool(
             digest_stage_metrics.get("is_mock") or packaging_stage_metrics.get("is_mock")
+        )
+        total_tokens = _sum_metric_values(
+            digest_tokens.get("total"),
+            packaging_tokens.get("total"),
+        )
+        total_estimated_cost = _sum_metric_values(
+            digest_stage_metrics.get("estimated_cost_usd"),
+            packaging_stage_metrics.get("estimated_cost_usd"),
         )
 
         self.stdout.write(self.style.SUCCESS(f"DigestRun {run.id} finished with status={run.status}"))
@@ -61,6 +73,11 @@ class Command(BaseCommand):
         self.stdout.write(
             f"article_ids: {source_stage_metrics.get('article_ids', [])}"
         )
+        self.stdout.write(f"total_tokens: {total_tokens if total_tokens is not None else 'null'}")
+        self.stdout.write(
+            "total_estimated_cost: "
+            f"{total_estimated_cost if total_estimated_cost is not None else 'null'}"
+        )
         self.stdout.write(f"used_mock: {used_mock}")
         self.stdout.write(f"error_message: {run.error_message or 'null'}")
         if digest_stage_metrics:
@@ -73,3 +90,10 @@ class Command(BaseCommand):
                 "packaging_provider: "
                 f"{packaging_stage_metrics.get('provider', 'null')}"
             )
+
+
+def _sum_metric_values(*values):
+    present_values = [value for value in values if value is not None]
+    if not present_values:
+        return None
+    return round(sum(present_values), 6)

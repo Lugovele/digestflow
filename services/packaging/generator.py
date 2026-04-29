@@ -1,4 +1,4 @@
-"""Первый рабочий LinkedIn packaging stage для MVP."""
+"""First working LinkedIn packaging stage for the MVP."""
 from __future__ import annotations
 
 import json
@@ -8,14 +8,14 @@ from typing import Any
 from django.conf import settings
 from django.db import transaction
 
-from apps.ai.client import OpenAIClient
+from apps.ai.client import OpenAIClient, estimate_cost_usd
 from apps.digests.models import Digest
 from apps.packaging.models import ContentPackage
 from services.ai import build_prompt
 
 
 class PackagingValidationError(ValueError):
-    """Ошибка structured validation для ContentPackage payload."""
+    """Structured validation error for ContentPackage payloads."""
 
 
 @dataclass(frozen=True)
@@ -26,10 +26,12 @@ class PackagingGenerationResult:
     provider: str
     is_mock: bool
     fallback_reason: str
+    tokens: dict[str, int | None] | None
+    estimated_cost_usd: float | None
 
 
 def generate_content_package_for_digest(digest: Digest) -> tuple[ContentPackage, dict[str, Any]]:
-    """Сгенерировать и сохранить ContentPackage для готового Digest."""
+    """Generate and save a ContentPackage for a ready Digest."""
     _debug(digest.run.id, "INFO", f"digest loaded -> {digest.id}")
     _debug(digest.run.id, "INFO", f"digest title -> {digest.title}")
 
@@ -39,6 +41,10 @@ def generate_content_package_for_digest(digest: Digest) -> tuple[ContentPackage,
     _debug(digest.run.id, "INFO", f"is_mock -> {generation.is_mock}")
     if generation.fallback_reason:
         _debug(digest.run.id, "INFO", f"fallback_reason -> {generation.fallback_reason}")
+    if generation.tokens and generation.tokens.get("total_tokens") is not None:
+        _debug(digest.run.id, "INFO", f"tokens -> total: {generation.tokens['total_tokens']}")
+    if generation.estimated_cost_usd is not None:
+        _debug(digest.run.id, "INFO", f"estimated cost -> ${generation.estimated_cost_usd:.6f}")
 
     payload = generation.payload
     validation_report = _build_validation_report(payload)
@@ -64,6 +70,8 @@ def generate_content_package_for_digest(digest: Digest) -> tuple[ContentPackage,
         "is_mock": generation.is_mock,
         "fallback_reason": generation.fallback_reason,
         "validation_report": validation_report,
+        "tokens": generation.tokens,
+        "estimated_cost_usd": generation.estimated_cost_usd,
     }
     return content_package, debug_info
 
@@ -81,6 +89,8 @@ def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
     fallback_reason = ""
     provider = "openai"
     is_mock = False
+    tokens: dict[str, int | None] | None = None
+    estimated_cost: float | None = None
 
     if _should_use_mock():
         response_text = _build_mock_response(digest)
@@ -99,6 +109,11 @@ def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
                 raise PackagingValidationError("Модель вернула пустой ответ для packaging stage.")
             payload = _parse_json_response(response_text)
             validate_content_package_payload(payload)
+            tokens = response.usage
+            estimated_cost = estimate_cost_usd(
+                response.usage.get("prompt_tokens"),
+                response.usage.get("completion_tokens"),
+            )
             return PackagingGenerationResult(
                 prompt=prompt,
                 response_text=response_text,
@@ -106,8 +121,10 @@ def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
                 provider=provider,
                 is_mock=is_mock,
                 fallback_reason=fallback_reason,
+                tokens=tokens,
+                estimated_cost_usd=estimated_cost,
             )
-        except Exception as exc:  # noqa: BLE001 - явный fallback для MVP stage
+        except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             raw_response_text = locals().get("response_text", "")
             response_text = _build_mock_response(digest)
             provider = "mock"
@@ -127,6 +144,8 @@ def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
         provider=provider,
         is_mock=is_mock,
         fallback_reason=fallback_reason,
+        tokens=tokens,
+        estimated_cost_usd=estimated_cost,
     )
 
 
@@ -158,7 +177,9 @@ def _validate_string_list(value: Any, field_name: str, min_items: int) -> None:
             f"Поле {field_name} должно быть списком минимум из {min_items} элементов."
         )
     if not all(isinstance(item, str) and item.strip() for item in value):
-        raise PackagingValidationError(f"Каждый элемент поля {field_name} должен быть непустой строкой.")
+        raise PackagingValidationError(
+            f"Каждый элемент поля {field_name} должен быть непустой строкой."
+        )
 
 
 def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:

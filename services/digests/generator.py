@@ -1,4 +1,4 @@
-"""Первый рабочий AI digest stage для MVP."""
+"""First working AI digest stage for the MVP."""
 from __future__ import annotations
 
 from typing import Any
@@ -11,7 +11,7 @@ from services.ai import generate_digest_payload
 
 
 def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> tuple[Digest, dict[str, Any]]:
-    """Сгенерировать и сохранить Digest для выбранного DigestRun."""
+    """Generate and save a Digest for the selected DigestRun."""
     run.status = DigestRun.STATUS_GENERATING_DIGEST
     run.started_at = run.started_at or timezone.now()
     run.save(update_fields=["status", "started_at", "updated_at"])
@@ -26,6 +26,10 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
     _debug(run.id, "INFO", f"is_mock -> {generation.is_mock}")
     if generation.fallback_reason:
         _debug(run.id, "INFO", f"fallback_reason -> {generation.fallback_reason}")
+    if generation.tokens and generation.tokens.get("total_tokens") is not None:
+        _debug(run.id, "INFO", f"tokens -> total: {generation.tokens['total_tokens']}")
+    if generation.estimated_cost_usd is not None:
+        _debug(run.id, "INFO", f"estimated cost -> ${generation.estimated_cost_usd:.6f}")
 
     payload = generation.payload
 
@@ -48,6 +52,12 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
                 "articles_in_prompt": len(articles),
                 "key_points_count": len(payload["key_points"]),
                 "sources_count": len(payload["sources"]),
+                "tokens": {
+                    "prompt": generation.tokens["prompt_tokens"] if generation.tokens else None,
+                    "completion": generation.tokens["completion_tokens"] if generation.tokens else None,
+                    "total": generation.tokens["total_tokens"] if generation.tokens else None,
+                },
+                "estimated_cost_usd": generation.estimated_cost_usd,
             },
         }
         run.save(update_fields=["metrics", "updated_at"])
@@ -60,6 +70,8 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
         "provider": generation.provider,
         "is_mock": generation.is_mock,
         "fallback_reason": generation.fallback_reason,
+        "tokens": generation.tokens,
+        "estimated_cost_usd": generation.estimated_cost_usd,
     }
     return digest, debug_info
 
