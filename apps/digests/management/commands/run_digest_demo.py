@@ -40,6 +40,7 @@ class Command(BaseCommand):
         packaging_stage_metrics = (
             run.metrics.get("packaging_stage", {}) if isinstance(run.metrics, dict) else {}
         )
+        source_stage_metrics = run.metrics.get("source_stage", {}) if isinstance(run.metrics, dict) else {}
         used_mock = bool(
             digest_stage_metrics.get("is_mock") or packaging_stage_metrics.get("is_mock")
         )
@@ -56,6 +57,9 @@ class Command(BaseCommand):
         self.stdout.write(f"digest_id: {digest.id if digest else 'null'}")
         self.stdout.write(
             f"content_package_id: {content_package.id if content_package else 'null'}"
+        )
+        self.stdout.write(
+            f"article_ids: {source_stage_metrics.get('article_ids', [])}"
         )
         self.stdout.write(f"used_mock: {used_mock}")
         self.stdout.write(f"error_message: {run.error_message or 'null'}")

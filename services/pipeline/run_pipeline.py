@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.digests.models import DigestRun
 from services.digests import generate_digest_for_run
 from services.packaging import generate_content_package_for_digest
+from services.processing.deduper import dedupe_source_items
 from services.sources import save_articles_for_topic
 
 
@@ -32,7 +33,12 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         if not raw_items_list:
             raise ValueError("Source stage returned no articles.")
 
-        saved_articles = save_articles_for_topic(run.topic, raw_items_list)
+        deduped_items = dedupe_source_items(raw_items_list)
+        duplicates_removed = len(raw_items_list) - len(deduped_items)
+        _debug(run.id, "OK", f"articles deduplicated -> {len(deduped_items)}")
+        _debug(run.id, "INFO", f"duplicates removed -> {duplicates_removed}")
+
+        saved_articles = save_articles_for_topic(run.topic, deduped_items)
         _debug(run.id, "OK", f"articles saved -> {len(saved_articles)}")
 
         run.metrics = {
@@ -40,12 +46,15 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
             "source_stage": {
                 "status": "completed",
                 "articles_count": len(raw_items_list),
+                "articles_after_dedupe": len(deduped_items),
+                "duplicates_removed": duplicates_removed,
                 "saved_articles_count": len(saved_articles),
+                "article_ids": [article.id for article in saved_articles],
             },
         }
         run.save(update_fields=["metrics", "updated_at"])
 
-        digest, digest_debug = generate_digest_for_run(run, raw_items_list)
+        digest, digest_debug = generate_digest_for_run(run, deduped_items)
 
         run.status = DigestRun.STATUS_PACKAGING
         run.metrics = {
