@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>DigestFlow Run {{ run.id }}</title>
+</head>
+<body>
+    <p><a href="{% url 'topic-list' %}">Назад к темам</a></p>
+
+    <h1>Результат pipeline</h1>
+
+    <h2>Run</h2>
+    <p><strong>ID:</strong> {{ run.id }}</p>
+    <p><strong>Тема:</strong> {{ run.topic.name }}</p>
+    <p><strong>Статус:</strong> {{ run.status }}</p>
+    {% if run.error_message %}
+        <p><strong>Ошибка:</strong> {{ run.error_message }}</p>
+    {% endif %}
+
+    <h2>Metrics</h2>
+    <ul>
+        <li><strong>article_ids:</strong> {{ article_ids|default:"[]" }}</li>
+        <li><strong>articles_after_dedupe:</strong> {{ articles_after_dedupe|default:"-" }}</li>
+        <li><strong>selected_for_prompt:</strong> {{ selected_for_prompt|default:"-" }}</li>
+        <li><strong>total_tokens:</strong> {{ total_tokens|default:"-" }}</li>
+        <li><strong>total_estimated_cost:</strong> {{ total_estimated_cost|default:"-" }}</li>
+        <li><strong>digest_provider:</strong> {{ digest_provider|default:"-" }}</li>
+        <li><strong>packaging_provider:</strong> {{ packaging_provider|default:"-" }}</li>
+    </ul>
+    <pre style="white-space: pre-wrap;">{{ metrics|default:"{}" }}</pre>
+
+    <h2>Digest</h2>
+    {% if digest %}
+        <p><strong>Title:</strong> {{ digest.title }}</p>
+        <p><strong>Summary:</strong> {{ digest.summary }}</p>
+
+        <p><strong>Key points:</strong></p>
+        <ul>
+            {% for point in digest.key_points %}
+                <li>{{ point }}</li>
+            {% endfor %}
+        </ul>
+
+        <p><strong>Sources:</strong></p>
+        {% if digest.sources %}
+            <ul>
+                {% for source in digest.sources %}
+                    <li>{{ source }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>No sources available.</p>
+        {% endif %}
+    {% else %}
+        <p>Digest пока не создан.</p>
+    {% endif %}
+
+    <h2>ContentPackage</h2>
+    {% if content_package %}
+        <p><strong>Validation status:</strong> {{ validation_status }}</p>
+
+        <p><strong>Post text:</strong></p>
+        <pre style="white-space: pre-wrap;">{{ content_package.post_text }}</pre>
+
+        <p><strong>Primary hook:</strong> {{ primary_hook|default:"-" }}</p>
+
+        <p><strong>Hooks:</strong></p>
+        {% if hook_variants %}
+            <ul>
+                {% for hook in hook_variants %}
+                    <li>{{ hook }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>No hook variants available.</p>
+        {% endif %}
+
+        <p><strong>CTA options:</strong></p>
+        {% if cta_variants %}
+            <ul>
+                {% for cta in cta_variants %}
+                    <li>{{ cta }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>No CTA variants available.</p>
+        {% endif %}
+
+        <p><strong>Hashtags:</strong> {{ hashtags_text|default:"-" }}</p>
+
+        <h3>Validation report</h3>
+        {% if validation_report %}
+            <ul>
+                <li><strong>status:</strong> {{ validation_report.status|default:"-" }}</li>
+                <li><strong>post_text_length:</strong> {{ validation_report.post_text_length|default:"-" }}</li>
+                <li><strong>hook_variants_count:</strong> {{ validation_report.hook_variants_count|default:"-" }}</li>
+                <li><strong>cta_variants_count:</strong> {{ validation_report.cta_variants_count|default:"-" }}</li>
+                <li><strong>hashtags_count:</strong> {{ validation_report.hashtags_count|default:"-" }}</li>
+                <li><strong>carousel_outline_count:</strong> {{ validation_report.carousel_outline_count|default:"-" }}</li>
+            </ul>
+            <p><strong>quality_checks:</strong></p>
+            <pre style="white-space: pre-wrap;">{{ quality_checks|default:"{}" }}</pre>
+        {% else %}
+            <p>No validation report available.</p>
+        {% endif %}
+    {% else %}
+        <p>ContentPackage пока не создан.</p>
+    {% endif %}
+</body>
+</html>
