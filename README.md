@@ -1,148 +1,223 @@
 # DigestFlow
 
-**AI-powered pipeline for generating structured content digests from topic-based sources**
+AI-powered local-first Django pipeline for turning a topic into:
 
-DigestFlow is a local-first Django-based system designed to collect topic-specific information, generate structured digests using AI, and prepare content for further publishing (e.g. LinkedIn posts).
+- a structured digest
+- a LinkedIn-ready content package
 
----
+Given a topic, DigestFlow produces:
 
-## 🔍 What problem it solves
+- a structured factual digest
+- a publish-ready LinkedIn post with hooks, CTAs, and hashtags
 
-Content creators, analysts, and founders spend significant time:
+## What it does
 
-* monitoring multiple sources
-* filtering relevant information
-* summarizing insights
-* preparing structured content
+DigestFlow currently supports a full MVP pipeline:
 
-DigestFlow automates this workflow:
+`Topic / user input -> demo source items -> cleaner -> dedupe -> ranking -> AI digest -> LinkedIn package -> result page`
 
-> **Topic → Articles → AI Digest → (future) Content Packaging**
+DigestFlow separates:
 
----
+- synthesis (`Digest`)
+- packaging (`ContentPackage`)
 
-## 🧠 Core idea
+This makes the system easier to validate, debug, and extend.
 
-The system is built around a modular pipeline architecture:
+The system is designed to be debug-friendly and safe to iterate on locally:
 
-1. **Source stage**
-   Collects articles for a given topic (currently demo/mock data)
+- demo source instead of real external ingestion
+- structured validation for AI output
+- mock fallback when AI is unavailable or returns invalid output
+- `DigestRun` metrics and console logging
+- minimal Django UI for creating a topic, running the pipeline, and viewing the result
 
-2. **Digest stage (AI)**
-   Converts articles into a structured digest using prompt templates and AI (or mock fallback)
+## Current MVP status
 
-3. **(Planned) Packaging stage**
-   Transforms digest into platform-ready content (e.g. LinkedIn posts)
+Implemented:
 
----
+- Django backend and admin
+- Topic model and Topic-based runs
+- demo source stage
+- cleaner
+- dedupe by URL and normalized title
+- deterministic topic-aware ranking
+- Article storage
+- AI digest stage
+- LinkedIn packaging stage
+- structured validation for digest and package output
+- mock fallback for AI failures / invalid JSON
+- token and estimated cost tracking
+- `DigestRun` metrics
+- console logging
+- minimal web UI
+- integration tests covering:
+  - completed
+  - partial_failed
+  - failed
+- unit tests for:
+  - cleaner
+  - deduper
+  - ranker
+  - digest validators
+  - packaging validators
+  - token / cost helpers
 
-## ⚙️ Current status (MVP)
+Current limitations:
 
-✅ Django admin interface
-✅ Topic management
-✅ Demo article source
-✅ AI digest generation (mock-based)
-✅ Structured pipeline execution (`DigestRun`)
+- source ingestion is demo-only
+- URLs are synthetic
+- real AI calls may fallback to mock
+- UI is minimal and not production-ready
 
-🚧 Real external sources (RSS / APIs)
-🚧 Real AI integration (requires API key)
-🚧 LinkedIn-ready content packaging
+## Tech stack
 
----
+- Python 3.13
+- Django 5.2
+- SQLite
+- OpenAI API (optional)
 
-## 📦 Data flow
+## Project flow
 
-```
-Topic
-  ↓
-Demo Source (articles)
-  ↓
-AI Digest Generator
-  ↓
-Digest (title, summary, key_points, sources)
-```
-
----
-
-## 🛠 Tech stack
-
-* Python 3.13
-* Django 5
-* OpenAI API (optional / planned)
-* Local-first architecture
-
----
-
-## ▶️ How to run
-
-```
-cd digestflow
-python manage.py migrate
-python manage.py runserver
-```
-
-Admin panel:
-http://127.0.0.1:8000/admin/
-
----
-
-## 🧪 Run demo pipeline
-
-Preview demo articles:
-
-```
-python manage.py preview_demo_sources --topic-id 1
-```
-
-Run digest stage:
-
-```
-python manage.py run_digest_stage --topic-id 1
+```text
+Topic / user input
+  ->
+Demo source items
+  ->
+Cleaner
+  ->
+Dedupe
+  ->
+Ranking
+  ->
+AI Digest
+  ->
+LinkedIn ContentPackage
+  ->
+Result page / admin / metrics
 ```
 
-Run AI smoke test:
+## Local setup
 
+```powershell
+cd C:\Users\Елена\Documents\DigestFlow
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py runserver
 ```
-python manage.py ai_digest_smoke_test --topic "AI automation"
-```
 
----
+Open:
 
-## 🔐 Environment
+- UI: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- admin: [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/)
+- health: [http://127.0.0.1:8000/health/](http://127.0.0.1:8000/health/)
 
-Create `.env` file:
+## How to use (UI)
 
-```
+1. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+2. Enter a topic, for example: `"AI automation for operations"`
+3. Click `Generate digest`
+4. You will be redirected to `/runs/<id>/`
+
+On the result page you can:
+
+- read the structured digest
+- copy the LinkedIn post
+- review hooks, CTAs, and hashtags
+- inspect validation and metrics
+
+## Environment
+
+Create `.env` in the project root:
+
+```env
 OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TIMEOUT_SECONDS=45
+AI_DAILY_TOKEN_BUDGET=100000
 ```
 
-If not set, the system automatically uses mock responses.
+If `OPENAI_API_KEY` is missing, placeholder, or the model returns unusable output, DigestFlow falls back to mock responses.
 
----
+## Useful commands
 
-## 🧩 Architecture principles
+Check project health:
 
-* Pipeline-first design
-* Clear separation of stages
-* AI as a replaceable component
-* Debug-friendly execution
-* No overengineering (no agents, no orchestration yet)
+```powershell
+.\.venv\Scripts\python.exe manage.py check
+```
 
----
+Run tests:
 
-## 📈 Why this project
+```powershell
+.\.venv\Scripts\python.exe manage.py test
+```
 
-This project demonstrates:
+Preview demo source items:
 
-* designing AI-driven workflows
-* building modular backend systems
-* working with prompt templates
-* integrating (or mocking) LLM APIs
-* structuring data pipelines end-to-end
+```powershell
+.\.venv\Scripts\python.exe manage.py preview_demo_sources --topic-id 2
+```
 
----
+Run digest smoke test:
 
-## 👤 Author
+```powershell
+.\.venv\Scripts\python.exe manage.py ai_digest_smoke_test --topic "AI automation"
+```
 
-Elena Lugovaya
-AI Automation / Workflow Systems
+Run digest stage only:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py run_digest_stage --topic-id 2
+```
+
+Run packaging stage only:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py run_packaging_stage --digest-id 1
+```
+
+Run full demo pipeline:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py run_digest_demo --topic-id 2
+```
+
+## Observability
+
+Where to look:
+
+- console logs while running commands or the web app
+- `DigestRun.metrics` in admin
+- result page `/runs/<id>/`
+
+Metrics currently include:
+
+- raw items count
+- count after cleaning / dedupe / ranking
+- selected articles for prompt
+- used `Article.id` list
+- digest / packaging status
+- provider (`openai` / `mock`)
+- token usage when available
+- estimated cost when available
+
+## Design principles
+
+- pipeline-first
+- deterministic preprocessing before AI
+- structured validation before accepting AI output
+- simple local observability
+- minimal UI before product polish
+- no agents
+- no async orchestration
+- no external monitoring stack
+
+## Why this project exists
+
+DigestFlow is built to explore a production-style AI pipeline:
+
+- deterministic preprocessing before LLM
+- strict output validation
+- controlled failure handling
+- traceable execution via metrics
+
+It is intentionally local-first and minimal to make iteration fast and debugging transparent.
