@@ -1,4 +1,4 @@
-"""Pipeline-first оркестрация первого сквозного MVP pipeline."""
+"""Pipeline-first orchestration for the first end-to-end MVP pipeline."""
 from __future__ import annotations
 
 import logging
@@ -7,9 +7,11 @@ from typing import Iterable
 from django.utils import timezone
 
 from apps.digests.models import DigestRun
+from apps.topics.models import DigestSettings
 from services.digests import generate_digest_for_run
 from services.packaging import generate_content_package_for_digest
-from services.processing.deduper import dedupe_source_items
+from services.processing.cleaner import clean_source_items
+from services.processing.deduper import dedupe_source_items_with_metrics
 from services.processing.ranker import rank_source_items
 from services.sources import save_articles_for_topic
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
-    """Выполнить первый сквозной pipeline: Topic -> articles -> Digest -> ContentPackage."""
+    """Run the first end-to-end pipeline: Topic -> articles -> Digest -> ContentPackage."""
     run = DigestRun.objects.select_related("topic").get(pk=run_id)
     run.status = DigestRun.STATUS_COLLECTING
     run.started_at = run.started_at or timezone.now()
@@ -34,13 +36,31 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         if not raw_items_list:
             raise ValueError("Source stage returned no articles.")
 
-        deduped_items = dedupe_source_items(raw_items_list)
-        duplicates_removed = len(raw_items_list) - len(deduped_items)
+        cleaned_items = clean_source_items(raw_items_list)
+        removed_during_cleaning = len(raw_items_list) - len(cleaned_items)
+        _debug(run.id, "OK", f"articles cleaned -> {len(cleaned_items)}")
+        _debug(run.id, "INFO", f"removed during cleaning -> {removed_during_cleaning}")
+
+        if not cleaned_items:
+            raise ValueError("Cleaning stage removed all source items.")
+
+        deduped_items, dedupe_metrics = dedupe_source_items_with_metrics(cleaned_items)
+        duplicates_removed = dedupe_metrics["duplicates_removed"]
         _debug(run.id, "OK", f"articles deduplicated -> {len(deduped_items)}")
         _debug(run.id, "INFO", f"duplicates removed -> {duplicates_removed}")
 
+        topic_settings = _get_digest_settings(run)
+        top_n = min(3, topic_settings.max_sources) if topic_settings else 3
+        min_quality_score = topic_settings.min_source_quality_score if topic_settings else 0.0
+
         _debug(run.id, "STEP", "ranking")
-        ranked_items, ranking_scores = rank_source_items(deduped_items)
+        ranked_items, ranking_scores = rank_source_items(
+            deduped_items,
+            keywords=run.topic.keywords,
+            excluded_keywords=run.topic.excluded_keywords,
+            top_n=top_n,
+            min_quality_score=min_quality_score,
+        )
         _debug(run.id, "INFO", f"ranked articles -> {len(deduped_items)}")
         _debug(run.id, "INFO", f"selected for prompt -> {len(ranked_items)}")
 
@@ -52,8 +72,12 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
             "source_stage": {
                 "status": "completed",
                 "articles_count": len(raw_items_list),
+                "articles_after_cleaning": len(cleaned_items),
+                "removed_during_cleaning": removed_during_cleaning,
                 "articles_after_dedupe": len(deduped_items),
                 "duplicates_removed": duplicates_removed,
+                "duplicate_urls_removed": dedupe_metrics["duplicate_urls_removed"],
+                "duplicate_titles_removed": dedupe_metrics["duplicate_titles_removed"],
                 "saved_articles_count": len(saved_articles),
                 "article_ids": [article.id for article in saved_articles],
             },
@@ -62,6 +86,8 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
                 "articles_after_dedupe": len(deduped_items),
                 "ranked_articles_count": len(deduped_items),
                 "selected_for_prompt": len(ranked_items),
+                "min_quality_score": min_quality_score,
+                "top_n": top_n,
                 "ranking_scores": ranking_scores,
             },
         }
@@ -138,6 +164,13 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         _debug(run.id, "FAIL", "run failed")
         _debug(run.id, "INFO", f"error -> {run.error_message}")
         return run
+
+
+def _get_digest_settings(run: DigestRun) -> DigestSettings | None:
+    try:
+        return run.topic.digest_settings
+    except DigestSettings.DoesNotExist:
+        return None
 
 
 def _debug(run_id: int, level: str, message: str) -> None:
