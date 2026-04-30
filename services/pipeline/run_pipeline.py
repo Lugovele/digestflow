@@ -9,17 +9,20 @@ from django.utils import timezone
 from apps.digests.models import DigestRun
 from apps.topics.models import DigestSettings
 from services.digests import generate_digest_for_run
+from services.json_utils import make_json_safe
 from services.packaging import generate_content_package_for_digest
 from services.processing.cleaner import clean_source_items
 from services.processing.deduper import dedupe_source_items_with_metrics
 from services.processing.ranker import rank_source_items
-from services.sources import save_articles_for_topic
+from services.sources import get_demo_articles_for_topic, save_articles_for_topic
+from services.sources.rss_adapter import fetch_rss_articles
 
+DEFAULT_RSS_FEED = "https://techcrunch.com/feed/"
 
 logger = logging.getLogger(__name__)
 
 
-def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
+def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) -> DigestRun:
     """Run the first end-to-end pipeline: Topic -> articles -> Digest -> ContentPackage."""
     run = DigestRun.objects.select_related("topic").get(pk=run_id)
     run.status = DigestRun.STATUS_COLLECTING
@@ -30,8 +33,22 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
     _debug(run.id, "OK", f"topic loaded -> {run.topic.name}")
 
     try:
-        raw_items_list = list(raw_items)
-        _debug(run.id, "OK", f"demo articles loaded -> {len(raw_items_list)}")
+        if raw_items is None:
+            try:
+                rss_items = fetch_rss_articles(DEFAULT_RSS_FEED)
+            except Exception:
+                rss_items = []
+
+            if rss_items:
+                raw_items_list = list(rss_items)
+                _debug(run.id, "OK", f"rss articles loaded -> {len(raw_items_list)}")
+            else:
+                _debug(run.id, "INFO", "fallback to demo source")
+                raw_items_list = list(get_demo_articles_for_topic(run.topic.name))
+                _debug(run.id, "OK", f"demo articles loaded -> {len(raw_items_list)}")
+        else:
+            raw_items_list = list(raw_items)
+            _debug(run.id, "OK", f"demo articles loaded -> {len(raw_items_list)}")
 
         if not raw_items_list:
             raise ValueError("Source stage returned no articles.")
@@ -67,7 +84,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         saved_articles = save_articles_for_topic(run.topic, deduped_items)
         _debug(run.id, "OK", f"articles saved -> {len(saved_articles)}")
 
-        run.metrics = {
+        run.metrics = make_json_safe({
             **run.metrics,
             "source_stage": {
                 "status": "completed",
@@ -92,16 +109,16 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
                 "top_n": top_n,
                 "ranking_scores": ranking_scores,
             },
-        }
+        })
         run.save(update_fields=["metrics", "updated_at"])
 
         digest, digest_debug = generate_digest_for_run(run, ranked_items)
 
         run.status = DigestRun.STATUS_PACKAGING
-        run.metrics = {
+        run.metrics = make_json_safe({
             **run.metrics,
             "packaging_stage": {"status": "started"},
-        }
+        })
         run.save(update_fields=["status", "metrics", "updated_at"])
         _debug(run.id, "STEP", "package generating")
 
@@ -112,14 +129,14 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
             run.status = DigestRun.STATUS_PARTIAL_FAILED
             run.error_message = f"Packaging stage failed: {exc}"
             run.finished_at = timezone.now()
-            run.metrics = {
+            run.metrics = make_json_safe({
                 **run.metrics,
                 "packaging_stage": {
                     "status": "failed",
                     "error": str(exc),
                     "digest_id": digest.id,
                 },
-            }
+            })
             run.save(
                 update_fields=["status", "error_message", "finished_at", "metrics", "updated_at"]
             )
@@ -131,7 +148,8 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
 
         run.status = DigestRun.STATUS_COMPLETED
         run.finished_at = timezone.now()
-        run.metrics = {
+        run.error_message = ""
+        run.metrics = make_json_safe({
             **run.metrics,
             "packaging_stage": {
                 "status": "completed",
@@ -151,8 +169,8 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
                 },
                 "estimated_cost_usd": packaging_debug.get("estimated_cost_usd"),
             },
-        }
-        run.save(update_fields=["status", "finished_at", "metrics", "updated_at"])
+        })
+        run.save(update_fields=["status", "finished_at", "error_message", "metrics", "updated_at"])
         _debug(run.id, "DONE", "run completed")
 
         logger.info("[DigestRun %s] Digest pipeline completed", run.id)

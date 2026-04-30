@@ -1,11 +1,11 @@
-"""Детерминированная предобработка перед любым AI-вызовом."""
+"""Р”РµС‚РµСЂРјРёРЅРёСЂРѕРІР°РЅРЅР°СЏ РїСЂРµРґРѕР±СЂР°Р±РѕС‚РєР° РїРµСЂРµРґ Р»СЋР±С‹Рј AI-РІС‹Р·РѕРІРѕРј."""
 from __future__ import annotations
 
 from html import unescape
 
 
 def clean_source_items(raw_items: list[dict] | object) -> list[dict]:
-    """Нормализовать источники и убрать элементы без title или URL."""
+    """РќРѕСЂРјР°Р»РёР·РѕРІР°С‚СЊ РёСЃС‚РѕС‡РЅРёРєРё Рё СѓР±СЂР°С‚СЊ СЌР»РµРјРµРЅС‚С‹ Р±РµР· title РёР»Рё URL."""
     cleaned = []
     for item in list(raw_items):
         title = _clean_text(str(item.get("title", "")))
@@ -13,11 +13,13 @@ def clean_source_items(raw_items: list[dict] | object) -> list[dict]:
         if not title or not url:
             continue
 
+        source_value = item.get("source_name", item.get("source", "unknown"))
+
         cleaned.append(
             {
                 "title": title,
                 "url": url,
-                "source": _clean_text(str(item.get("source", "unknown"))),
+                "source": _clean_text(str(source_value)),
                 "published_at": item.get("published_at"),
                 "snippet": _clean_text(str(item.get("snippet", ""))),
             }

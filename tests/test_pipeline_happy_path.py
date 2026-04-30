@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+from datetime import datetime
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
@@ -6,6 +10,7 @@ from apps.sources.models import Article
 from apps.topics.models import Topic
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import get_demo_articles_for_topic
+from services.sources.rss_adapter import fetch_rss_articles
 
 
 @override_settings(OPENAI_API_KEY="sk-your-key")
@@ -73,3 +78,39 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(packaging_stage.get("status"), "completed")
         self.assertEqual(packaging_stage.get("provider"), "mock")
         self.assertTrue(packaging_stage.get("is_mock"))
+
+    def test_run_digest_pipeline_completes_with_local_rss_items_and_no_error_message(self):
+        user = get_user_model().objects.create_user(
+            username="rss-pipeline-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="DigestFlow AI",
+            keywords=["AI", "automation"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={
+                "mode": "rss_url_override",
+                "source": "integration_test",
+                "rss_url": "tests/fixtures/sample_feed.xml",
+            },
+        )
+
+        raw_items = fetch_rss_articles(str(Path("tests/fixtures/sample_feed.xml")))
+        json.dumps(raw_items[0])
+
+        result = run_digest_pipeline(run.id, raw_items)
+        run.refresh_from_db()
+
+        self.assertEqual(result.id, run.id)
+        self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
+        self.assertEqual(run.error_message, "")
+        self.assertTrue(hasattr(run, "digest"))
+        self.assertTrue(hasattr(run.digest, "content_package"))
+        article = Article.objects.filter(topic=topic).order_by("id").first()
+        self.assertIsNotNone(article)
+        self.assertIsInstance(article.published_at, datetime)
+        self.assertIsInstance(article.raw_payload.get("published_at"), str)
