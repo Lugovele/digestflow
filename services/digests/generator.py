@@ -1,6 +1,7 @@
 """First working AI digest stage for the MVP."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from django.db import transaction
@@ -8,6 +9,8 @@ from django.utils import timezone
 
 from apps.digests.models import Digest, DigestRun
 from services.ai import generate_digest_payload
+
+logger = logging.getLogger(__name__)
 
 
 def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> tuple[Digest, dict[str, Any]]:
@@ -47,6 +50,7 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
         run.metrics = {
             **run.metrics,
             "digest_stage": {
+                "status": "completed",
                 "provider": generation.provider,
                 "is_mock": generation.is_mock,
                 "articles_in_prompt": len(articles),
@@ -84,4 +88,4 @@ def _score_digest_payload(payload: dict[str, Any]) -> float:
 
 
 def _debug(run_id: int, level: str, message: str) -> None:
-    print(f"[DigestRun {run_id}] {level}: {message}")
+    logger.info("[DigestRun %s] %s: %s", run_id, level, message)

@@ -71,6 +71,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
             **run.metrics,
             "source_stage": {
                 "status": "completed",
+                "raw_items_count": len(raw_items_list),
                 "articles_count": len(raw_items_list),
                 "articles_after_cleaning": len(cleaned_items),
                 "removed_during_cleaning": removed_during_cleaning,
@@ -85,6 +86,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
                 "status": "completed",
                 "articles_after_dedupe": len(deduped_items),
                 "ranked_articles_count": len(deduped_items),
+                "articles_after_rank": len(ranked_items),
                 "selected_for_prompt": len(ranked_items),
                 "min_quality_score": min_quality_score,
                 "top_n": top_n,
@@ -106,7 +108,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         try:
             content_package, packaging_debug = generate_content_package_for_digest(digest)
         except Exception as exc:
-            logger.exception("Packaging stage failed", extra={"run_id": run.id})
+            logger.exception("[DigestRun %s] Packaging stage failed", run.id)
             run.status = DigestRun.STATUS_PARTIAL_FAILED
             run.error_message = f"Packaging stage failed: {exc}"
             run.finished_at = timezone.now()
@@ -153,10 +155,10 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict]) -> DigestRun:
         run.save(update_fields=["status", "finished_at", "metrics", "updated_at"])
         _debug(run.id, "DONE", "run completed")
 
-        logger.info("Digest pipeline completed", extra={"run_id": run.id})
+        logger.info("[DigestRun %s] Digest pipeline completed", run.id)
         return run
     except Exception as exc:
-        logger.exception("Digest pipeline failed", extra={"run_id": run.id})
+        logger.exception("[DigestRun %s] Digest pipeline failed", run.id)
         run.status = DigestRun.STATUS_FAILED
         run.error_message = str(exc)
         run.finished_at = timezone.now()
@@ -174,4 +176,4 @@ def _get_digest_settings(run: DigestRun) -> DigestSettings | None:
 
 
 def _debug(run_id: int, level: str, message: str) -> None:
-    print(f"[DigestRun {run_id}] {level}: {message}")
+    logger.info("[DigestRun %s] %s: %s", run_id, level, message)

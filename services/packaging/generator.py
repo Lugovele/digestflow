@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,8 @@ from services.packaging.validators import (
     ContentPackageValidationError,
     validate_content_package_payload,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -244,4 +247,4 @@ def _build_mock_response(digest: Digest) -> str:
 
 
 def _debug(run_id: int, level: str, message: str) -> None:
-    print(f"[DigestRun {run_id}] {level}: {message}")
+    logger.info("[DigestRun %s] %s: %s", run_id, level, message)
