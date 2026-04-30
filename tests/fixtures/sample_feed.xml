@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>DigestFlow Sample Feed</title>
+    <link>https://example.com/</link>
+    <description>Sample RSS feed for local DigestFlow testing.</description>
+
+    <item>
+      <title>AI automation reduces manual ops workload</title>
+      <link>https://example.com/articles/ai-ops-1</link>
+      <description>Operations teams reduced repetitive manual tasks by 32 percent after introducing AI-assisted workflows for triage and reporting.</description>
+      <pubDate>Wed, 30 Apr 2026 09:00:00 GMT</pubDate>
+    </item>
+
+    <item>
+      <title>Research note shows faster review cycles</title>
+      <link>https://example.com/articles/research-review-cycles</link>
+      <description>A research report found that teams using structured validation cut review cycles from five rounds to three in typical weekly content workflows.</description>
+      <pubDate>Wed, 30 Apr 2026 10:15:00 GMT</pubDate>
+    </item>
+
+    <item>
+      <title>New workflow release adds source citations</title>
+      <link>https://example.com/articles/source-citations</link>
+      <description>The latest workflow release introduced source-level citation blocks and clearer output formatting for analyst-ready summaries.</description>
+      <pubDate>Wed, 30 Apr 2026 11:30:00 GMT</pubDate>
+    </item>
+
+    <item>
+      <title>Teams improve reporting consistency</title>
+      <link>https://example.com/articles/reporting-consistency</link>
+      <description>Early users reported more consistent weekly stakeholder updates after adopting a fixed digest and packaging pipeline.</description>
+      <pubDate>Wed, 30 Apr 2026 12:45:00 GMT</pubDate>
+    </item>
+
+    <item>
+      <title>Packaging stage highlights reusable hooks</title>
+      <link>https://example.com/articles/reusable-hooks</link>
+      <description>Editors said reusable hooks and CTA variants reduced last-minute rewriting before manual LinkedIn publishing.</description>
+      <pubDate>Wed, 30 Apr 2026 14:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
