@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.digests.models import DigestRun
 from apps.topics.models import DigestSettings
 from services.digests import generate_digest_for_run
+from services.config.author_profile import load_author_profile
 from services.json_utils import make_json_safe
 from services.packaging import generate_content_package_for_digest
 from services.processing.cleaner import clean_source_items
@@ -121,9 +122,13 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         })
         run.save(update_fields=["status", "metrics", "updated_at"])
         _debug(run.id, "STEP", "package generating")
+        author_profile = load_author_profile()
 
         try:
-            content_package, packaging_debug = generate_content_package_for_digest(digest)
+            content_package, packaging_debug = generate_content_package_for_digest(
+                digest,
+                author_profile=author_profile,
+            )
         except Exception as exc:
             logger.exception("[DigestRun %s] Packaging stage failed", run.id)
             run.status = DigestRun.STATUS_PARTIAL_FAILED

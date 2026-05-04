@@ -1,0 +1,11 @@
+{
+  "role": "AI Automation Specialist",
+  "background": "Previously redesigned and automated workflows in companies with developers",
+  "focus": "workflow design, validation, reusable systems",
+  "voice": "analytical",
+  "style_constraints": [
+    "avoid generic marketing language",
+    "focus on systems, not tools",
+    "connect facts into insights"
+  ]
+}

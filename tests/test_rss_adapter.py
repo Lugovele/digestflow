@@ -22,8 +22,11 @@ class RSSAdapterTests(SimpleTestCase):
 
         self.assertEqual(len(items), 5)
         self.assertEqual(items[0]["source_name"], "DigestFlow Sample Feed")
-        self.assertEqual(items[0]["title"], "AI automation reduces manual ops workload")
-        self.assertEqual(items[0]["url"], "https://example.com/articles/ai-ops-1")
+        self.assertEqual(
+            items[0]["title"],
+            "AI briefing workflow cut research prep, but editors still blocked publish risk",
+        )
+        self.assertEqual(items[0]["url"], "https://example.com/articles/ai-briefing-workflow")
         self.assertIsInstance(items[0]["published_at"], str)
         json.dumps(items[0])
 
@@ -33,7 +36,7 @@ class RSSAdapterTests(SimpleTestCase):
         items = fetch_rss_articles(fixture_path.as_uri(), limit=2)
 
         self.assertEqual(len(items), 2)
-        self.assertEqual(items[1]["url"], "https://example.com/articles/research-review-cycles")
+        self.assertEqual(items[1]["url"], "https://example.com/articles/support-triage-handoffs")
 
     def test_fetch_rss_articles_returns_json_serializable_published_at(self):
         fake_feed = SimpleNamespace(

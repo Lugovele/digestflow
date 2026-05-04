@@ -20,6 +20,18 @@ from services.packaging.validators import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_AUTHOR_PROFILE = {
+    "role": "AI Automation Specialist",
+    "background": "Builds and improves workflow systems.",
+    "focus": "workflow design, validation, reusable systems",
+    "voice": "analytical",
+    "style_constraints": [
+        "avoid generic marketing language",
+        "focus on systems, not tools",
+        "connect facts into insights",
+    ],
+}
+
 
 @dataclass(frozen=True)
 class PackagingGenerationResult:
@@ -33,12 +45,15 @@ class PackagingGenerationResult:
     estimated_cost_usd: float | None
 
 
-def generate_content_package_for_digest(digest: Digest) -> tuple[ContentPackage, dict[str, Any]]:
+def generate_content_package_for_digest(
+    digest: Digest,
+    author_profile: dict[str, Any] | None = None,
+) -> tuple[ContentPackage, dict[str, Any]]:
     """Generate and save a ContentPackage for a ready Digest."""
     _debug(digest.run.id, "INFO", f"digest loaded -> {digest.id}")
     _debug(digest.run.id, "INFO", f"digest title -> {digest.title}")
 
-    generation = _generate_packaging_payload(digest)
+    generation = _generate_packaging_payload(digest, author_profile=author_profile)
 
     _debug(digest.run.id, "INFO", f"provider -> {generation.provider}")
     _debug(digest.run.id, "INFO", f"is_mock -> {generation.is_mock}")
@@ -79,14 +94,30 @@ def generate_content_package_for_digest(digest: Digest) -> tuple[ContentPackage,
     return content_package, debug_info
 
 
-def _generate_packaging_payload(digest: Digest) -> PackagingGenerationResult:
+def _generate_packaging_payload(
+    digest: Digest,
+    author_profile: dict[str, Any] | None = None,
+) -> PackagingGenerationResult:
+    profile = _normalize_author_profile(author_profile)
+    summary = digest.summary
+    key_points = [str(item) for item in (digest.key_points or [])]
+    sources = [str(item) for item in (digest.sources or [])]
+
     prompt = build_prompt(
         "linkedin/generate_post.txt",
         topic_name=digest.run.topic.name,
         digest_title=digest.title,
+        summary=summary,
         digest_summary=digest.summary,
-        key_points=_format_list_for_prompt(digest.key_points),
-        sources=_format_list_for_prompt(digest.sources),
+        key_points=_format_list_for_prompt(key_points),
+        sources=_format_list_for_prompt(sources),
+        author_role=profile["role"],
+        author_background=profile["background"],
+        author_focus=profile["focus"],
+        author_voice=profile["voice"],
+        style_constraint_1=profile["style_constraints"][0],
+        style_constraint_2=profile["style_constraints"][1],
+        style_constraint_3=profile["style_constraints"][2],
     )
 
     fallback_reason = ""
@@ -169,6 +200,27 @@ def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _format_list_for_prompt(items: list[Any]) -> str:
     return json.dumps(items, ensure_ascii=False, indent=2)
+
+
+def _normalize_author_profile(author_profile: dict[str, Any] | None) -> dict[str, Any]:
+    profile = dict(DEFAULT_AUTHOR_PROFILE)
+    if not author_profile:
+        return profile
+
+    for key in ("role", "background", "focus", "voice"):
+        value = author_profile.get(key)
+        if value:
+            profile[key] = str(value)
+
+    constraints = author_profile.get("style_constraints")
+    if isinstance(constraints, list):
+        normalized = [str(item) for item in constraints if item]
+        if normalized:
+            while len(normalized) < 3:
+                normalized.append(DEFAULT_AUTHOR_PROFILE["style_constraints"][len(normalized)])
+            profile["style_constraints"] = normalized[:3]
+
+    return profile
 
 
 def _parse_json_response(response_text: str) -> dict[str, Any]:
