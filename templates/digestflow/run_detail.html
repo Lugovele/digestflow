@@ -30,26 +30,40 @@
     <pre style="white-space: pre-wrap;">{{ metrics|default:"{}" }}</pre>
 
     <h2>Digest</h2>
-    {% if digest %}
-        <p><strong>Title:</strong> {{ digest.title }}</p>
-        <p><strong>Summary:</strong> {{ digest.summary }}</p>
+    {% if has_digest %}
+        <p><strong>Title:</strong> {{ digest_payload.title }}</p>
 
-        <p><strong>Key points:</strong></p>
-        <ul>
-            {% for point in digest.key_points %}
-                <li>{{ point }}</li>
+        {% if has_digest_articles %}
+            <h3>Articles</h3>
+            {% for article in digest_payload.articles %}
+                <div style="margin-bottom: 24px;">
+                    <p>
+                        <strong>Source:</strong>
+                        {% if article.url %}
+                            <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                                {{ article.title|default:article.link_label|default:"Open article" }}
+                            </a>
+                        {% else %}
+                            No source available
+                        {% endif %}
+                    </p>
+                    <p><strong>Summary:</strong> {{ article.summary|default:"-" }}</p>
+                    <p><strong>Content type:</strong> {{ article.content_type|default:"unknown" }}</p>
+                    <p><strong>Confidence:</strong> {{ article.confidence|default:"0.0" }}</p>
+                    <p><strong>Key points:</strong></p>
+                    {% if article.key_points %}
+                        <ul>
+                            {% for point in article.key_points %}
+                                <li>{{ point }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p>No key points available.</p>
+                    {% endif %}
+                </div>
             {% endfor %}
-        </ul>
-
-        <p><strong>Sources:</strong></p>
-        {% if digest.sources %}
-            <ul>
-                {% for source in digest.sources %}
-                    <li>{{ source }}</li>
-                {% endfor %}
-            </ul>
         {% else %}
-            <p>No sources available.</p>
+            <p>No per-article analyses available.</p>
         {% endif %}
     {% else %}
         <p>Digest пока не создан.</p>

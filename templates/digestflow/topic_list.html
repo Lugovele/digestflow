@@ -16,12 +16,26 @@
             <label for="{{ topic_form.topic_name.id_for_label }}">Topic name</label><br>
             {{ topic_form.topic_name }}
         </p>
+        <p>
+            <label for="{{ topic_form.source_url.id_for_label }}">Source RSS URL</label><br>
+            {{ topic_form.source_url }}<br>
+            {% if topic_form.source_url.help_text %}
+                <small>{{ topic_form.source_url.help_text }}</small>
+            {% endif %}
+        </p>
         {% if topic_form_error %}
             <p><strong>{{ topic_form_error }}</strong></p>
         {% endif %}
         {% if topic_form.topic_name.errors %}
             <ul>
                 {% for error in topic_form.topic_name.errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+        {% if topic_form.source_url.errors %}
+            <ul>
+                {% for error in topic_form.source_url.errors %}
                     <li>{{ error }}</li>
                 {% endfor %}
             </ul>
@@ -35,6 +49,9 @@
             {% for topic in topics %}
                 <li>
                     <strong>{{ topic.name }}</strong>
+                    {% if topic.source_url %}
+                        <div>Source: {{ topic.source_url }}</div>
+                    {% endif %}
                     {% if topic.description %}
                         <div>{{ topic.description }}</div>
                     {% endif %}
