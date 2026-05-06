@@ -1,4 +1,4 @@
-"""Simple structured validators for AI-generated digest payloads."""
+"""Structured validators for the article-based digest payload."""
 from __future__ import annotations
 
 from typing import Any
@@ -9,25 +9,33 @@ class DigestPayloadValidationError(ValueError):
 
 
 def validate_digest_payload(payload: dict[str, Any]) -> None:
-    """Validate the minimum contract for a digest payload."""
-    required_fields = ["title", "summary", "key_points", "sources"]
+    """Validate the article-based digest payload contract."""
+    required_fields = ["title", "articles"]
     missing = [field for field in required_fields if field not in payload]
     if missing:
-        raise DigestPayloadValidationError(f"В digest payload отсутствуют поля: {missing}")
+        raise DigestPayloadValidationError(f"Digest payload is missing required fields: {missing}")
+
+    version = payload.get("version", 1)
+    if not isinstance(version, int):
+        raise DigestPayloadValidationError("Digest payload version must be an integer when provided.")
 
     if not isinstance(payload["title"], str) or not payload["title"].strip():
-        raise DigestPayloadValidationError("Поле title должно быть непустой строкой.")
-    if not isinstance(payload["summary"], str) or not payload["summary"].strip():
-        raise DigestPayloadValidationError("Поле summary должно быть непустой строкой.")
-    if not isinstance(payload["key_points"], list) or len(payload["key_points"]) < 3:
-        raise DigestPayloadValidationError(
-            "Поле key_points должно быть списком минимум из 3 элементов."
-        )
-    if not all(isinstance(item, str) and item.strip() for item in payload["key_points"]):
-        raise DigestPayloadValidationError("Каждый элемент key_points должен быть непустой строкой.")
-    if not isinstance(payload["sources"], list) or len(payload["sources"]) < 3:
-        raise DigestPayloadValidationError(
-            "Поле sources должно быть списком минимум из 3 элементов."
-        )
-    if not all(isinstance(item, str) and item.strip() for item in payload["sources"]):
-        raise DigestPayloadValidationError("Каждый элемент sources должен быть непустой строкой.")
+        raise DigestPayloadValidationError("Digest title must be a non-empty string.")
+
+    articles = payload["articles"]
+    if not isinstance(articles, list) or not articles:
+        raise DigestPayloadValidationError("Digest articles must be a non-empty list.")
+
+    for article in articles:
+        if not isinstance(article, dict):
+            raise DigestPayloadValidationError("Each digest article must be a JSON object.")
+        if not isinstance(article.get("url"), str) or not article["url"].strip():
+            raise DigestPayloadValidationError("Each digest article must include a non-empty url.")
+        if not isinstance(article.get("title"), str) or not article["title"].strip():
+            raise DigestPayloadValidationError("Each digest article must include a non-empty title.")
+        if not isinstance(article.get("summary"), str) or not article["summary"].strip():
+            raise DigestPayloadValidationError("Each digest article must include a non-empty summary.")
+        if not isinstance(article.get("key_points"), list):
+            raise DigestPayloadValidationError("Each digest article must include key_points as a list.")
+        if not all(isinstance(item, str) and item.strip() for item in article["key_points"]):
+            raise DigestPayloadValidationError("Each digest key point must be a non-empty string.")

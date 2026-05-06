@@ -38,12 +38,11 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
 
     with transaction.atomic():
         Digest.objects.filter(run=run).delete()
+        # Deprecated storage fields stay only at the persistence boundary until the DB schema is redesigned.
         digest = Digest.objects.create(
             run=run,
             title=payload["title"],
-            summary=payload["summary"],
-            key_points=payload["key_points"],
-            sources=payload["sources"],
+            payload=payload,
             quality_score=_score_digest_payload(payload),
         )
 
@@ -54,8 +53,7 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
                 "provider": generation.provider,
                 "is_mock": generation.is_mock,
                 "articles_in_prompt": len(articles),
-                "key_points_count": len(payload["key_points"]),
-                "sources_count": len(payload["sources"]),
+                "articles_count": len(payload["articles"]),
                 "tokens": {
                     "prompt": generation.tokens["prompt_tokens"] if generation.tokens else None,
                     "completion": generation.tokens["completion_tokens"] if generation.tokens else None,
@@ -74,6 +72,7 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
         "provider": generation.provider,
         "is_mock": generation.is_mock,
         "fallback_reason": generation.fallback_reason,
+        "articles": generation.articles,
         "tokens": generation.tokens,
         "estimated_cost_usd": generation.estimated_cost_usd,
     }
@@ -81,9 +80,13 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
 
 
 def _score_digest_payload(payload: dict[str, Any]) -> float:
-    key_points_count = len(payload.get("key_points", []))
-    sources_count = len(payload.get("sources", []))
-    score = 0.45 + min(key_points_count, 5) * 0.08 + min(sources_count, 5) * 0.04
+    articles_count = len(payload.get("articles", []))
+    strong_articles = sum(
+        1
+        for article in payload.get("articles", [])
+        if float(article.get("confidence", 0.0) or 0.0) >= 0.6
+    )
+    score = 0.4 + min(articles_count, 5) * 0.08 + min(strong_articles, 5) * 0.06
     return min(1.0, round(score, 2))
 
 

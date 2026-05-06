@@ -50,11 +50,53 @@ class Digest(models.Model):
 
     run = models.OneToOneField(DigestRun, on_delete=models.CASCADE, related_name="digest")
     title = models.CharField(max_length=240)
-    summary = models.TextField()
-    key_points = models.JSONField(default=list)
-    sources = models.JSONField(default=list)
+    payload = models.JSONField(default=dict)
     quality_score = models.FloatField(default=0.0)
     generated_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
         return self.title
+
+    def get_payload_title(self) -> str:
+        payload = self._normalized_payload()
+        return str(payload.get("title") or self.title).strip()
+
+    def get_payload_version(self) -> int:
+        payload = self._normalized_payload()
+        return int(payload.get("version", 1))
+
+    def get_articles(self) -> list[dict]:
+        payload = self._normalized_payload()
+        raw_articles = payload.get("articles", [])
+        if not isinstance(raw_articles, list):
+            return []
+
+        normalized_articles: list[dict] = []
+        for article in raw_articles:
+            if not isinstance(article, dict):
+                continue
+            normalized_articles.append(
+                {
+                    "url": str(article.get("url", "")).strip(),
+                    "title": str(article.get("title", "")).strip(),
+                    "summary": str(article.get("summary", "")).strip(),
+                    "key_points": article.get("key_points", []) if isinstance(article.get("key_points"), list) else [],
+                    "content_type": str(article.get("content_type", "unknown")).strip() or "unknown",
+                    "confidence": article.get("confidence", 0.0),
+                }
+            )
+        return normalized_articles
+
+    def has_articles(self) -> bool:
+        return bool(self.get_articles())
+
+    def _normalized_payload(self) -> dict:
+        payload = self.payload if isinstance(self.payload, dict) else {}
+        version = payload.get("version", 1)
+        if not isinstance(version, int):
+            version = 1
+        return {
+            "version": version,
+            "title": payload.get("title") or self.title,
+            "articles": payload.get("articles", []),
+        }
