@@ -99,26 +99,9 @@ def _generate_packaging_payload(
     author_profile: dict[str, Any] | None = None,
 ) -> PackagingGenerationResult:
     profile = _normalize_author_profile(author_profile)
-    summary = digest.summary
-    key_points = [str(item) for item in (digest.key_points or [])]
-    sources = [str(item) for item in (digest.sources or [])]
-
-    prompt = build_prompt(
-        "linkedin/generate_post.txt",
-        topic_name=digest.run.topic.name,
-        digest_title=digest.title,
-        summary=summary,
-        digest_summary=digest.summary,
-        key_points=_format_list_for_prompt(key_points),
-        sources=_format_list_for_prompt(sources),
-        author_role=profile["role"],
-        author_background=profile["background"],
-        author_focus=profile["focus"],
-        author_voice=profile["voice"],
-        style_constraint_1=profile["style_constraints"][0],
-        style_constraint_2=profile["style_constraints"][1],
-        style_constraint_3=profile["style_constraints"][2],
-    )
+    articles = digest.get_articles()
+    if not articles:
+        logger.warning("[DigestRun %s] packaging received no digest articles", digest.run.id)
 
     fallback_reason = ""
     provider = "openai"
@@ -127,29 +110,20 @@ def _generate_packaging_payload(
     estimated_cost: float | None = None
 
     if _should_use_mock():
-        response_text = _build_mock_response(digest)
+        payload = _build_mock_payload(digest, articles)
+        prompt = build_post_prompt(digest, articles, profile)
+        response_text = json.dumps(payload, ensure_ascii=False, indent=2)
         provider = "mock"
         is_mock = True
         fallback_reason = "OPENAI_API_KEY не задан или содержит placeholder."
     else:
         try:
-            response = OpenAIClient().generate_text(
-                prompt=prompt,
-                max_output_tokens=900,
-                json_mode=True,
-            )
-            response_text = response.text.strip()
-            if not response_text:
-                raise ContentPackageValidationError(
-                    "Модель вернула пустой ответ для packaging stage."
-                )
-            payload = _parse_json_response(response_text)
-            validate_content_package_payload(payload)
-            tokens = response.usage
+            payload, prompt, response_text, tokens = _generate_payload_via_llm(digest, articles, profile)
             estimated_cost = estimate_cost_usd(
-                response.usage.get("prompt_tokens"),
-                response.usage.get("completion_tokens"),
+                tokens.get("prompt_tokens") if tokens else None,
+                tokens.get("completion_tokens") if tokens else None,
             )
+            validate_content_package_payload(payload)
             return PackagingGenerationResult(
                 prompt=prompt,
                 response_text=response_text,
@@ -161,16 +135,16 @@ def _generate_packaging_payload(
                 estimated_cost_usd=estimated_cost,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
-            raw_response_text = locals().get("response_text", "")
-            response_text = _build_mock_response(digest)
+            payload = _build_mock_payload(digest, articles)
+            prompt = build_post_prompt(digest, articles, profile)
+            response_text = json.dumps(payload, ensure_ascii=False, indent=2)
             provider = "mock"
             is_mock = True
             fallback_reason = (
                 "Fallback на mock из-за ошибки реального AI call или невалидного JSON: "
-                f"{exc}. Raw response: {raw_response_text or '<empty>'}"
+                f"{exc}. Raw response: <empty>"
             )
 
-    payload = _parse_json_response(response_text)
     validate_content_package_payload(payload)
 
     return PackagingGenerationResult(
@@ -183,6 +157,116 @@ def _generate_packaging_payload(
         tokens=tokens,
         estimated_cost_usd=estimated_cost,
     )
+
+
+def generate_post_from_articles(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> dict[str, Any]:
+    """Mode 1: build one post from all article analyses."""
+    prompt = build_post_prompt(digest, articles, author_profile)
+    if not articles:
+        return _build_safe_fallback_post(digest)
+
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=900,
+        json_mode=True,
+    )
+    payload = _parse_json_response(response.text.strip())
+    return payload
+
+
+def generate_carousel_from_articles(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Mode 2: build one slide per article plus CTA slide."""
+    prompt = build_carousel_prompt(digest, articles, author_profile)
+    if not articles:
+        return [
+            {
+                "slide": 1,
+                "title": digest.title,
+                "bullets": ["No digest articles available."],
+            }
+        ]
+
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=900,
+        json_mode=True,
+    )
+    payload = _parse_json_response(response.text.strip())
+    slides = payload.get("slides", [])
+    return _normalize_carousel_slides(slides)
+
+
+def build_post_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> str:
+    """Build prompt for single-post mode from digest articles."""
+    return build_prompt(
+        "linkedin/generate_post_from_articles.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+        style_constraint_1=author_profile["style_constraints"][0],
+        style_constraint_2=author_profile["style_constraints"][1],
+        style_constraint_3=author_profile["style_constraints"][2],
+    )
+
+
+def build_carousel_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> str:
+    """Build prompt for carousel mode from digest articles."""
+    return build_prompt(
+        "linkedin/generate_carousel_from_articles.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+    )
+
+
+def _generate_payload_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    if not articles:
+        prompt = build_post_prompt(digest, articles, author_profile)
+        payload = _build_safe_fallback_post(digest)
+        response_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        return payload, prompt, response_text, None
+
+    post_payload = generate_post_from_articles(digest, articles, author_profile)
+    carousel_outline = generate_carousel_from_articles(digest, articles, author_profile)
+    payload = {
+        "post_text": post_payload["post_text"],
+        "hook_variants": post_payload["hook_variants"],
+        "cta_variants": post_payload["cta_variants"],
+        "hashtags": post_payload["hashtags"],
+        "carousel_outline": carousel_outline,
+        "quality_checks": post_payload["quality_checks"],
+    }
+    prompt = build_post_prompt(digest, articles, author_profile)
+    response_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    return payload, prompt, response_text, None
 
 
 def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:
@@ -239,6 +323,152 @@ def _parse_json_response(response_text: str) -> dict[str, Any]:
     return payload
 
 
+def _normalize_carousel_slides(slides: Any) -> list[dict[str, Any]]:
+    if not isinstance(slides, list):
+        return []
+
+    normalized = []
+    for index, slide in enumerate(slides, start=1):
+        if not isinstance(slide, dict):
+            continue
+        title = str(slide.get("title", "")).strip()
+        content = str(slide.get("content", "")).strip()
+        bullets = [line.strip() for line in content.split("\n") if line.strip()]
+        if not title or not bullets:
+            continue
+        normalized.append(
+            {
+                "slide": index,
+                "title": title,
+                "bullets": bullets[:3],
+            }
+        )
+    return normalized
+
+
+def _should_use_mock() -> bool:
+    api_key = settings.OPENAI_API_KEY.strip()
+    return not api_key or api_key == "sk-your-key"
+
+
+def _build_mock_payload(digest: Digest, articles: list[dict[str, Any]]) -> dict[str, Any]:
+    if not articles:
+        return _build_safe_fallback_post(digest)
+
+    post_text = _build_mock_post_text_from_articles(articles)
+    hooks = _build_mock_hooks_from_articles(articles)
+    ctas = [
+        "What still breaks?",
+        "Where does it fail?",
+        "Are you fixing or just speeding up?",
+    ]
+    hashtags = ["#AI", "#Workflows", "#Operations"]
+    carousel_outline = _build_mock_carousel_from_articles(articles)
+
+    return {
+        "post_text": post_text,
+        "hook_variants": hooks,
+        "cta_variants": ctas,
+        "hashtags": hashtags,
+        "carousel_outline": carousel_outline,
+        "quality_checks": {
+            "uses_only_provided_facts": True,
+            "has_clear_point_of_view": True,
+            "linkedin_ready": True,
+        },
+    }
+
+
+def _build_mock_post_text_from_articles(articles: list[dict[str, Any]]) -> str:
+    if not articles:
+        return "No digest articles were available."
+
+    pattern = _build_cross_article_pattern(articles)
+    top_article = articles[0]
+    second_article = articles[1] if len(articles) > 1 else articles[0]
+    body = [
+        pattern,
+        "",
+        f"One article points to: {top_article['summary']}",
+        f"Another article adds tension: {second_article['summary']}",
+        "",
+        "The pattern is not in one summary. It shows up across the set.",
+    ]
+    return "\n".join(body)[:1250]
+
+
+def _build_mock_hooks_from_articles(articles: list[dict[str, Any]]) -> list[str]:
+    if not articles:
+        return ["AI makes things faster. But not better."] * 3
+
+    pattern = _build_cross_article_pattern(articles)
+    return [
+        pattern,
+        "The bottleneck does not disappear. It moves.",
+        "Different articles. Same workflow problem.",
+    ]
+
+
+def _build_mock_carousel_from_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    slides = []
+    for index, article in enumerate(articles, start=1):
+        bullets = [str(point).strip() for point in article.get("key_points", []) if str(point).strip()]
+        slides.append(
+            {
+                "slide": index,
+                "title": f"Article {index}",
+                "bullets": [article.get("summary", "Failed to extract")] + bullets[:2],
+            }
+        )
+
+    slides.append(
+        {
+            "slide": len(slides) + 1,
+            "title": "CTA",
+            "bullets": ["What still breaks?", "Where does it fail?"],
+        }
+    )
+    return slides
+
+
+def _build_cross_article_pattern(articles: list[dict[str, Any]]) -> str:
+    content_types = {str(article.get("content_type", "unknown")).strip() for article in articles}
+    if "tutorial" in content_types:
+        return "The pattern is clearer when articles show the workflow step by step."
+    if "opinion" in content_types:
+        return "The strongest pattern is where different takes still point to the same tension."
+    return "Across the articles, the same workflow tension keeps showing up."
+
+
+def _build_safe_fallback_post(digest: Digest) -> dict[str, Any]:
+    return {
+        "post_text": f"{digest.title}\n\nNo digest articles were available.",
+        "hook_variants": [
+            "No article pattern was available.",
+            "The source set was too thin to shape a post.",
+            "There was not enough article structure to build from.",
+        ],
+        "cta_variants": [
+            "What still breaks?",
+            "Where does it fail?",
+            "What data would help here?",
+        ],
+        "hashtags": ["#AI", "#Workflows"],
+        "carousel_outline": [
+            {
+                "slide": 1,
+                "title": digest.title,
+                "bullets": ["No digest articles were available."],
+            }
+        ],
+        "quality_checks": {
+            "uses_only_provided_facts": True,
+            "has_clear_point_of_view": False,
+            "linkedin_ready": True,
+        },
+    }
+
+
 def _extract_json_candidate(response_text: str) -> str:
     text = response_text.strip()
     if not text:
@@ -256,46 +486,6 @@ def _extract_json_candidate(response_text: str) -> str:
     if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
         return ""
     return text[first_brace : last_brace + 1]
-
-
-def _should_use_mock() -> bool:
-    api_key = settings.OPENAI_API_KEY.strip()
-    return not api_key or api_key == "sk-your-key"
-
-
-def _build_mock_response(digest: Digest) -> str:
-    payload = {
-        "post_text": (
-            f"{digest.title}\n\n"
-            f"{digest.summary}\n\n"
-            "Three signals stood out to me:\n"
-            + "\n".join(f"- {point}" for point in digest.key_points[:3])
-        )[:1250],
-        "hook_variants": [
-            f"What changed in {digest.run.topic.name} this week?",
-            f"Three practical signals from {digest.run.topic.name}.",
-            f"If you follow {digest.run.topic.name}, watch these shifts.",
-        ],
-        "cta_variants": [
-            "What would you add to this view?",
-            "Which signal matters most for your team?",
-            "Follow for more practical digests.",
-        ],
-        "hashtags": ["#LinkedIn", "#AI", "#ProductStrategy"],
-        "carousel_outline": [
-            {
-                "slide": 1,
-                "title": digest.title,
-                "bullets": digest.key_points[:3],
-            }
-        ],
-        "quality_checks": {
-            "uses_only_provided_facts": True,
-            "has_clear_point_of_view": True,
-            "linkedin_ready": True,
-        },
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def _debug(run_id: int, level: str, message: str) -> None:
