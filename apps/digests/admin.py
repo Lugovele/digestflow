@@ -44,5 +44,5 @@ class DigestRunAdmin(admin.ModelAdmin):
 @admin.register(Digest)
 class DigestAdmin(admin.ModelAdmin):
     list_display = ("id", "title", "run", "quality_score", "generated_at")
-    search_fields = ("title", "summary")
-    readonly_fields = ("key_points", "sources")
+    search_fields = ("title", "run__topic__name")
+    readonly_fields = ("payload",)

@@ -10,3 +10,8 @@ class TopicInputForm(forms.Form):
             "required": "Введите тему, чтобы запустить digest.",
         },
     )
+    source_url = forms.URLField(
+        label="Source RSS URL",
+        required=False,
+        help_text="Optional. Paste an RSS feed URL to use real source items.",
+    )

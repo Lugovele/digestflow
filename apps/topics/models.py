@@ -7,6 +7,7 @@ class Topic(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     name = models.CharField(max_length=160)
+    source_url = models.URLField(blank=True, null=True)
     description = models.TextField(blank=True)
     keywords = models.JSONField(default=list, blank=True)
     excluded_keywords = models.JSONField(default=list, blank=True)

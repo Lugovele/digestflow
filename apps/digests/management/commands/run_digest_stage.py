@@ -49,12 +49,12 @@ class Command(BaseCommand):
             run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
             raise
 
+        articles = digest.get_articles()
+
         self.stdout.write("")
         self.stdout.write("=== DIGEST ===")
-        self.stdout.write(f"title: {digest.title}")
-        self.stdout.write(f"summary: {digest.summary}")
-        self.stdout.write(f"key_points: {json.dumps(digest.key_points, ensure_ascii=False)}")
-        self.stdout.write(f"sources: {json.dumps(digest.sources, ensure_ascii=False)}")
+        self.stdout.write(f"title: {digest.get_payload_title()}")
+        self.stdout.write(f"articles: {json.dumps(articles, ensure_ascii=False)}")
         self.stdout.write("")
         self.stdout.write("=== DEBUG ===")
         self.stdout.write(f"provider: {debug_info['provider']}")

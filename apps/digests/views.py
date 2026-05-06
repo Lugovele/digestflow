@@ -1,14 +1,21 @@
+import logging
+from urllib.parse import urlparse
+
 from django.contrib.auth import get_user_model
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.digests.models import DigestRun
 from apps.topics.models import Topic
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import get_demo_articles_for_topic
+from services.sources.rss_adapter import fetch_rss_articles
 
 from .forms import TopicInputForm
+
+logger = logging.getLogger(__name__)
 
 
 @require_GET
@@ -25,12 +32,11 @@ def create_topic_and_run_view(request: HttpRequest) -> HttpResponse:
         return render(request, "digestflow/topic_list.html", context, status=400)
 
     topic_name = form.cleaned_data["topic_name"]
-    topic = _get_or_create_ui_topic(topic_name)
+    source_url = form.cleaned_data.get("source_url") or ""
+    topic = _get_or_create_ui_topic(topic_name, source_url=source_url)
     run = _create_ui_digest_run(topic, source="web_ui_form")
 
-    raw_items = get_demo_articles_for_topic(topic.name)
-    run_digest_pipeline(run.id, raw_items)
-
+    _start_topic_run(run, topic, default_source="web_ui_form")
     return redirect("run-detail", run_id=run.id)
 
 
@@ -39,9 +45,7 @@ def run_pipeline_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     run = _create_ui_digest_run(topic, source="web_ui")
 
-    raw_items = get_demo_articles_for_topic(topic.name)
-    run_digest_pipeline(run.id, raw_items)
-
+    _start_topic_run(run, topic, default_source="web_ui")
     return redirect("run-detail", run_id=run.id)
 
 
@@ -59,6 +63,11 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
     ranking_stage = metrics.get("ranking_stage", {})
     digest_stage = metrics.get("digest_stage", {})
     packaging_stage = metrics.get("packaging_stage", {})
+    digest_articles = _decorate_article_links(digest.get_articles() if digest else [])
+
+    logger.info("[DigestRun %s] digest payload articles count -> %s", run.id, len(digest_articles))
+    if not digest_articles:
+        logger.warning("[DigestRun %s] digest payload articles are empty", run.id)
 
     digest_total_tokens = (digest_stage.get("tokens") or {}).get("total")
     packaging_total_tokens = (packaging_stage.get("tokens") or {}).get("total")
@@ -73,9 +82,15 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         else {}
     )
 
+    digest_payload = {
+        "title": digest.get_payload_title() if digest else "",
+        "articles": digest_articles,
+    }
+
     context = {
         "run": run,
-        "digest": digest,
+        "digest_payload": digest_payload,
+        "has_digest": digest is not None,
         "content_package": content_package,
         "metrics": metrics,
         "article_ids": source_stage.get("article_ids", []),
@@ -85,6 +100,7 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "total_estimated_cost": total_estimated_cost,
         "digest_provider": digest_stage.get("provider"),
         "packaging_provider": packaging_stage.get("provider"),
+        "has_digest_articles": bool(digest_articles),
         "validation_report": validation_report,
         "quality_checks": validation_report.get("quality_checks", {}),
         "hook_variants": content_package.hook_variants if content_package else [],
@@ -107,6 +123,26 @@ def _sum_metric_values(*values):
     return round(sum(present_values), 6)
 
 
+def _decorate_article_links(articles: list[dict]) -> list[dict]:
+    decorated_articles = []
+    for article in articles:
+        url = str(article.get("url", "")).strip()
+        domain = ""
+        if url:
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            if domain.startswith("www."):
+                domain = domain[4:]
+
+        decorated_articles.append(
+            {
+                **article,
+                "domain": domain,
+                "link_label": str(article.get("title", "")).strip() or "Open article",
+            }
+        )
+    return decorated_articles
+
 def _build_topic_list_context(form: TopicInputForm | None = None) -> dict:
     topics = Topic.objects.order_by("name")
     recent_runs = DigestRun.objects.select_related("topic").order_by("-created_at")[:10]
@@ -117,18 +153,24 @@ def _build_topic_list_context(form: TopicInputForm | None = None) -> dict:
     }
 
 
-def _get_or_create_ui_topic(topic_name: str) -> Topic:
+def _get_or_create_ui_topic(topic_name: str, source_url: str = "") -> Topic:
     user = _get_or_create_ui_user()
-    topic, _created = Topic.objects.get_or_create(
+    topic, created = Topic.objects.get_or_create(
         user=user,
         name=topic_name,
         defaults={
+            "source_url": source_url or None,
             "description": "",
             "keywords": [topic_name],
             "excluded_keywords": [],
             "is_active": True,
         },
     )
+
+    if not created and source_url and topic.source_url != source_url:
+        topic.source_url = source_url
+        topic.save(update_fields=["source_url", "updated_at"])
+
     return topic
 
 
@@ -149,7 +191,58 @@ def _create_ui_digest_run(topic: Topic, source: str) -> DigestRun:
     return DigestRun.objects.create(
         topic=topic,
         input_snapshot={
-            "mode": "demo",
+            "mode": "manual",
             "source": source,
+            "topic_name": topic.name,
+            "source_url": topic.source_url or "",
         },
+    )
+
+
+def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
+    if topic.source_url:
+        raw_items = fetch_rss_articles(topic.source_url)
+        if not raw_items:
+            _mark_run_failed_for_empty_rss(run, topic.source_url)
+            return
+
+        run.input_snapshot = {
+            **run.input_snapshot,
+            "source": "topic_rss",
+            "source_url": topic.source_url,
+            "raw_items_count": len(raw_items),
+        }
+        run.save(update_fields=["input_snapshot", "updated_at"])
+        run_digest_pipeline(run.id, raw_items=raw_items)
+        return
+
+    raw_items = get_demo_articles_for_topic(topic.name)
+    run.input_snapshot = {
+        **run.input_snapshot,
+        "source": default_source,
+        "source_url": "",
+        "raw_items_count": len(raw_items),
+    }
+    run.save(update_fields=["input_snapshot", "updated_at"])
+    run_digest_pipeline(run.id, raw_items=raw_items)
+
+
+def _mark_run_failed_for_empty_rss(run: DigestRun, source_url: str) -> None:
+    run.status = DigestRun.STATUS_FAILED
+    run.error_message = f"RSS source returned no valid items: {source_url}"
+    run.finished_at = timezone.now()
+    run.input_snapshot = {
+        **run.input_snapshot,
+        "source": "topic_rss",
+        "source_url": source_url,
+        "raw_items_count": 0,
+    }
+    run.save(
+        update_fields=[
+            "status",
+            "error_message",
+            "finished_at",
+            "input_snapshot",
+            "updated_at",
+        ]
     )
