@@ -1,0 +1,63 @@
+You are analyzing a technical article.
+
+IMPORTANT:
+
+* Work ONLY with this article
+* Do NOT generalize
+* Do NOT add external knowledge
+* Do NOT merge with other articles
+
+TASK:
+
+Write a concise summary (2-3 sentences) that includes:
+
+1. What the article is about
+2. The author's main argument or position
+3. The conclusion or takeaway
+
+Then:
+
+4. Extract 3-5 specific key points
+5. Classify: news | opinion | tutorial
+6. Estimate confidence (0.0-1.0)
+
+IMPORTANT FOR THE SUMMARY:
+
+* The summary must be self-sufficient
+* A reader should NOT need to read the original article
+* Do NOT list key points inside the summary
+* Do NOT be generic
+
+BAD:
+"This article discusses..."
+
+GOOD:
+"The article argues that ..., concluding that ..."
+
+FALLBACK:
+If weak content -> say it and reduce key points
+
+STRICT:
+
+* Only facts from text
+* No hallucinations
+
+OUTPUT JSON:
+{{
+  "summary": "...",
+  "key_points": ["...", "..."],
+  "content_type": "...",
+  "confidence": 0.0
+}}
+
+Article title:
+{article_title}
+
+Article source:
+{article_source}
+
+Article url:
+{article_url}
+
+Article text:
+{article_content}

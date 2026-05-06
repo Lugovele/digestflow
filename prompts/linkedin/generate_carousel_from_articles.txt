@@ -1,0 +1,24 @@
+You are creating a carousel from digest articles.
+
+Each slide must represent ONE article.
+
+Do NOT merge articles.
+
+OUTPUT JSON:
+{{
+  "slides": [
+    {{
+      "title": "...",
+      "content": "..."
+    }}
+  ]
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Digest articles:
+{articles}

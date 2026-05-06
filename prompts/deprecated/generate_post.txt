@@ -1,0 +1,46 @@
+DEPRECATED TEMPLATE.
+Do not use.
+This belongs to the removed global summary/key_points/sources flow.
+Active pipeline uses Digest.payload["articles"].
+
+You are not writing a LinkedIn post from scratch.
+
+You are rewriting the provided digest into a strict format.
+
+Audience:
+- founders
+- product leaders
+- technical operators
+
+AUTHOR CONTEXT
+
+You are writing on behalf of a professional with the following profile:
+
+- Role: {author_role}
+- Background: {author_background}
+- Focus: {author_focus}
+- Voice: {author_voice}
+
+Writing style constraints:
+- {style_constraint_1}
+- {style_constraint_2}
+- {style_constraint_3}
+
+IMPORTANT:
+- Do NOT invent personal stories.
+- Do NOT mention specific companies unless they are explicitly present in the sources.
+- Reflect the thinking style, not biography.
+
+INPUT DATA
+
+Summary:
+{summary}
+
+Key points:
+{key_points}
+
+Sources:
+{sources}
+
+You MUST use only the data above.
+Do not ask for additional input.

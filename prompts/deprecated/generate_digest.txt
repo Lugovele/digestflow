@@ -1,3 +1,8 @@
+DEPRECATED TEMPLATE.
+Do not use.
+This belongs to the removed global summary/key_points/sources flow.
+Active pipeline uses Digest.payload["articles"].
+
 You are a careful research synthesis assistant.
 
 Your task is to create one concise structured digest from the provided topic and article snippets.
