@@ -27,7 +27,9 @@ def get_demo_articles_for_topic(topic_name: str) -> list[dict]:
             "source": "Example News",
             "snippet": (
                 f"The same {topic_label} case study reported a 35% drop in manual research time "
-                "and faster stakeholder reporting after introducing AI-assisted briefings."
+                "and faster stakeholder reporting after introducing AI-assisted briefings. The team "
+                "said the briefing draft came together sooner, but the review step still required "
+                "someone to check the claims one by one before the update was safe to share."
             ),
         },
         {
@@ -37,7 +39,9 @@ def get_demo_articles_for_topic(topic_name: str) -> list[dict]:
             "snippet": (
                 f"A new {topic_label} workflow release added source-level citation blocks and "
                 "structured output templates. Early users said the change made review easier and "
-                "reduced editing passes before publishing."
+                "reduced editing passes before publishing. Teams said the package looked cleaner, "
+                "but they still had to compare claims against original notes before anything went "
+                "live, and that extra review work still sat with the same operators at the end."
             ),
         },
         {
@@ -47,7 +51,9 @@ def get_demo_articles_for_topic(topic_name: str) -> list[dict]:
             "snippet": (
                 f"Operations leads testing {topic_label} workflows found that teams using a fixed "
                 "pipeline with explicit validation caught output issues earlier. The report noted "
-                "fewer last-minute corrections when digest generation and packaging were kept separate."
+                "fewer last-minute corrections when digest generation and packaging were kept separate. "
+                "It also described how review cycles stayed shorter when the handoff between drafting "
+                "and validation was clear, because teams stopped rediscovering the same problems at the end."
             ),
         },
     ]

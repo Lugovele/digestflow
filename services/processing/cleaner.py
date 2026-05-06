@@ -1,11 +1,14 @@
-"""Р”РµС‚РµСЂРјРёРЅРёСЂРѕРІР°РЅРЅР°СЏ РїСЂРµРґРѕР±СЂР°Р±РѕС‚РєР° РїРµСЂРµРґ Р»СЋР±С‹Рј AI-РІС‹Р·РѕРІРѕРј."""
+"""Deterministic preprocessing before the first AI calls."""
 from __future__ import annotations
 
-from html import unescape
+from bs4 import BeautifulSoup
+
+
+MIN_CONTENT_LENGTH = 200
 
 
 def clean_source_items(raw_items: list[dict] | object) -> list[dict]:
-    """РќРѕСЂРјР°Р»РёР·РѕРІР°С‚СЊ РёСЃС‚РѕС‡РЅРёРєРё Рё СѓР±СЂР°С‚СЊ СЌР»РµРјРµРЅС‚С‹ Р±РµР· title РёР»Рё URL."""
+    """Normalize source items, convert HTML to text, and drop weak entries."""
     cleaned = []
     for item in list(raw_items):
         title = _clean_text(str(item.get("title", "")))
@@ -13,19 +16,43 @@ def clean_source_items(raw_items: list[dict] | object) -> list[dict]:
         if not title or not url:
             continue
 
-        source_value = item.get("source_name", item.get("source", "unknown"))
+        source_value = item.get("source_name") or item.get("source") or "unknown"
+        raw_content = (
+            item.get("content")
+            or item.get("body")
+            or item.get("text")
+            or item.get("snippet")
+            or ""
+        )
+        normalized_content = extract_text(str(raw_content))
+        if len(normalized_content) < MIN_CONTENT_LENGTH:
+            continue
+
+        raw_snippet = item.get("snippet") or normalized_content
+        normalized_snippet = extract_text(str(raw_snippet))
 
         cleaned.append(
             {
                 "title": title,
                 "url": url,
                 "source": _clean_text(str(source_value)),
+                "source_name": _clean_text(str(source_value)),
                 "published_at": item.get("published_at"),
-                "snippet": _clean_text(str(item.get("snippet", ""))),
+                "snippet": normalized_snippet,
+                "content": normalized_content,
             }
         )
     return cleaned
 
 
+def extract_text(raw_html: str) -> str:
+    """Convert HTML-heavy RSS content into readable plain text."""
+    if not raw_html:
+        return ""
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+    return _clean_text(soup.get_text(separator=" ", strip=True))
+
+
 def _clean_text(value: str) -> str:
-    return " ".join(unescape(value).split())
+    return " ".join(value.split())

@@ -49,7 +49,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 _debug(run.id, "OK", f"demo articles loaded -> {len(raw_items_list)}")
         else:
             raw_items_list = list(raw_items)
-            _debug(run.id, "OK", f"demo articles loaded -> {len(raw_items_list)}")
+            _debug(run.id, "OK", f"source items loaded -> {len(raw_items_list)}")
 
         if not raw_items_list:
             raise ValueError("Source stage returned no articles.")
@@ -59,8 +59,20 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         _debug(run.id, "OK", f"articles cleaned -> {len(cleaned_items)}")
         _debug(run.id, "INFO", f"removed during cleaning -> {removed_during_cleaning}")
 
+        run.metrics = make_json_safe({
+            **run.metrics,
+            "source_stage": {
+                "status": "completed" if cleaned_items else "failed_cleaning",
+                "raw_items_count": len(raw_items_list),
+                "articles_count": len(raw_items_list),
+                "articles_after_cleaning": len(cleaned_items),
+                "removed_during_cleaning": removed_during_cleaning,
+            },
+        })
+        run.save(update_fields=["metrics", "updated_at"])
+
         if not cleaned_items:
-            raise ValueError("Cleaning stage removed all source items.")
+            raise ValueError("Source items were loaded but none passed cleaning.")
 
         deduped_items, dedupe_metrics = dedupe_source_items_with_metrics(cleaned_items)
         duplicates_removed = dedupe_metrics["duplicates_removed"]
@@ -88,11 +100,8 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         run.metrics = make_json_safe({
             **run.metrics,
             "source_stage": {
+                **run.metrics.get("source_stage", {}),
                 "status": "completed",
-                "raw_items_count": len(raw_items_list),
-                "articles_count": len(raw_items_list),
-                "articles_after_cleaning": len(cleaned_items),
-                "removed_during_cleaning": removed_during_cleaning,
                 "articles_after_dedupe": len(deduped_items),
                 "duplicates_removed": duplicates_removed,
                 "duplicate_urls_removed": dedupe_metrics["duplicate_urls_removed"],

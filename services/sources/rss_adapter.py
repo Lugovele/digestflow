@@ -67,6 +67,7 @@ def fetch_rss_articles(feed_url: str, limit: int = 10) -> list[dict]:
                 "url": url,
                 "source_name": source_name,
                 "snippet": snippet,
+                "content": snippet,
                 "published_at": published_at.isoformat() if published_at else None,
             }
         )

@@ -22,7 +22,7 @@ def save_articles_for_topic(topic: Topic, raw_items: list[dict[str, Any]]) -> li
             url=item["url"],
             defaults={
                 "title": item["title"],
-                "source_name": item["source"],
+                "source_name": item.get("source_name") or item["source"],
                 "snippet": item["snippet"],
                 "published_at": _coerce_published_at(item.get("published_at")),
                 "raw_payload": make_json_safe(item),
