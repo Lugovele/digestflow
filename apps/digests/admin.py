@@ -9,14 +9,17 @@ class DigestRunAdmin(admin.ModelAdmin):
         "id",
         "topic",
         "status",
+        "source_mode",
+        "audience_key",
+        "quality_threshold_used",
         "has_digest",
         "has_content_package",
         "started_at",
         "finished_at",
         "created_at",
     )
-    list_filter = ("status", "created_at", "finished_at")
-    search_fields = ("topic__name", "error_message")
+    list_filter = ("status", "source_mode", "created_at", "finished_at")
+    search_fields = ("topic__name", "error_message", "result_message", "audience_key")
     readonly_fields = (
         "topic",
         "status",
@@ -26,6 +29,10 @@ class DigestRunAdmin(admin.ModelAdmin):
         "updated_at",
         "input_snapshot",
         "metrics",
+        "result_message",
+        "source_mode",
+        "audience_key",
+        "quality_threshold_used",
         "error_message",
         "has_digest",
         "has_content_package",
