@@ -27,6 +27,7 @@ class RankSourceItemsTests(SimpleTestCase):
             items,
             keywords=["AI automation"],
             top_n=2,
+            min_quality_score=0.0,
         )
 
         self.assertEqual(selected[0]["url"], "https://example.com/high")
@@ -74,7 +75,7 @@ class RankSourceItemsTests(SimpleTestCase):
             },
         ]
 
-        selected, _ = rank_source_items(items, top_n=2)
+        selected, _ = rank_source_items(items, top_n=2, min_quality_score=0.0)
 
         self.assertEqual(
             [item["url"] for item in selected],
@@ -103,11 +104,11 @@ class RankSourceItemsTests(SimpleTestCase):
             },
         ]
 
-        selected, _ = rank_source_items(items, top_n=2)
+        selected, _ = rank_source_items(items, top_n=2, min_quality_score=0.0)
 
         self.assertEqual(len(selected), 2)
 
-    def test_ranking_scores_contains_url_score_and_quality_score(self):
+    def test_ranking_scores_contains_explainable_metadata(self):
         items = [
             {
                 "title": "One",
@@ -117,9 +118,31 @@ class RankSourceItemsTests(SimpleTestCase):
             }
         ]
 
-        _, ranking_scores = rank_source_items(items, top_n=1)
+        _, ranking_scores = rank_source_items(items, top_n=1, min_quality_score=0.0)
 
-        self.assertEqual(
-            ranking_scores,
-            [{"url": "https://example.com/1", "score": 0, "quality_score": 0.0}],
-        )
+        self.assertEqual(ranking_scores[0]["title"], "One")
+        self.assertEqual(ranking_scores[0]["url"], "https://example.com/1")
+        self.assertEqual(ranking_scores[0]["source_name"], "Example Blog")
+        self.assertEqual(ranking_scores[0]["score"], 0)
+        self.assertEqual(ranking_scores[0]["quality_score"], 0.0)
+        self.assertTrue(ranking_scores[0]["quality_reasons"])
+
+    def test_items_below_threshold_are_not_selected(self):
+        items = [
+            {
+                "title": "Weak one",
+                "url": "https://example.com/weak-1",
+                "source": "Example Blog",
+                "snippet": "Short note.",
+            },
+            {
+                "title": "Weak two",
+                "url": "https://example.com/weak-2",
+                "source": "Example Blog",
+                "snippet": "Another short note.",
+            },
+        ]
+
+        selected, _ = rank_source_items(items, top_n=3, min_quality_score=0.4)
+
+        self.assertEqual(selected, [])

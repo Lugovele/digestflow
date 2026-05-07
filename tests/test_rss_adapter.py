@@ -9,12 +9,106 @@ from django.test import SimpleTestCase
 
 from services.sources.rss_adapter import (
     _fetch_feed_content,
+    build_dev_to_api_url,
+    detect_source_type,
     fetch_rss_articles,
     get_rss_debug_snapshot,
+    normalize_source_url,
 )
 
 
 class RSSAdapterTests(SimpleTestCase):
+    def test_normalize_source_url_detects_dev_to_tag_and_builds_internal_api_url(self):
+        normalized = normalize_source_url("https://dev.to/t/ai")
+
+        self.assertEqual(normalized.platform, "dev.to")
+        self.assertEqual(normalized.source_type, "dev_to_tag")
+        self.assertEqual(normalized.metadata["tag"], "ai")
+        self.assertEqual(normalized.original_url, "https://dev.to/t/ai")
+        self.assertEqual(normalized.normalized_url, "https://dev.to/api/articles?tag=ai")
+        self.assertEqual(detect_source_type("https://dev.to/t/ai"), "dev_to_tag")
+        self.assertEqual(build_dev_to_api_url("ai"), "https://dev.to/api/articles?tag=ai")
+
+    def test_fetch_dev_to_tag_page_uses_internal_api_and_returns_real_article_urls(self):
+        article_list = [
+            {
+                "id": 101,
+                "title": "AI workflow article",
+                "url": "https://dev.to/alice/ai-workflow-article",
+                "description": "Short description",
+                "tag_list": ["ai"],
+                "published_at": "2026-05-05T10:00:00Z",
+            }
+        ]
+        full_content = "Full article content " * 20
+
+        with patch(
+            "services.sources.rss_adapter.fetch_dev_to_article_list",
+            return_value=article_list,
+        ), patch(
+            "services.sources.rss_adapter.fetch_dev_to_article_content",
+            return_value={
+                "title": "AI workflow article",
+                "url": "https://dev.to/alice/ai-workflow-article",
+                "description": "Short description",
+                "content": full_content,
+                "published_at": "2026-05-05T10:00:00Z",
+                "metadata": {"reading_time_minutes": 4},
+            },
+        ):
+            items = fetch_rss_articles("https://dev.to/t/ai")
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["url"], "https://dev.to/alice/ai-workflow-article")
+        self.assertEqual(items[0]["title"], "AI workflow article")
+        self.assertEqual(items[0]["source_url"], "https://dev.to/t/ai")
+        self.assertEqual(items[0]["source_api_url"], "https://dev.to/api/articles?tag=ai")
+        self.assertEqual(items[0]["content"], full_content.strip())
+        self.assertEqual(items[0]["metadata"]["source_type"], "dev_to_tag")
+        self.assertFalse(items[0]["metadata"]["content_unavailable"])
+
+    def test_fetch_dev_to_tag_page_marks_articles_without_full_content(self):
+        article_list = [
+            {
+                "id": 101,
+                "title": "Thin article",
+                "url": "https://dev.to/alice/thin-article",
+                "description": "Short description",
+            }
+        ]
+
+        with patch(
+            "services.sources.rss_adapter.fetch_dev_to_article_list",
+            return_value=article_list,
+        ), patch(
+            "services.sources.rss_adapter.fetch_dev_to_article_content",
+            return_value=None,
+        ):
+            items = fetch_rss_articles("https://dev.to/t/ai")
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["url"], "https://dev.to/alice/thin-article")
+        self.assertEqual(items[0]["content"], "")
+        self.assertTrue(items[0]["metadata"]["content_unavailable"])
+
+    def test_direct_dev_to_article_url_fetches_single_article_content(self):
+        html = """
+        <html>
+          <head><title>Real dev.to article</title></head>
+          <body><article><p>Full article body from HTML.</p></article></body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            items = fetch_rss_articles("https://dev.to/alice/real-devto-article")
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["url"], "https://dev.to/alice/real-devto-article")
+        self.assertEqual(items[0]["title"], "Real dev.to article")
+        self.assertIn("Full article body from HTML.", items[0]["content"])
+        self.assertEqual(items[0]["source_url"], "https://dev.to/alice/real-devto-article")
+        self.assertIsNone(items[0]["source_api_url"])
+
     def test_fetch_rss_articles_reads_local_sample_feed_file(self):
         fixture_path = Path("tests/fixtures/sample_feed.xml")
 

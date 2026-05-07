@@ -31,6 +31,7 @@ class PackagingArticlesOnlyTests(TestCase):
                 "articles": [
                     {
                         "url": "https://example.com/article-1",
+                        "title": "Workflow redesign article",
                         "summary": "The article argues that workflow redesign matters before adding AI.",
                         "key_points": [
                             "Review time dropped after teams changed the handoff.",
@@ -73,6 +74,7 @@ class PackagingArticlesOnlyTests(TestCase):
         helper_articles = [
             {
                 "url": "https://example.com/helper-article",
+                "title": "Helper article title",
                 "summary": "The article argues that workflow fixes come before AI.",
                 "key_points": ["The team changed the workflow before the model step."],
                 "content_type": "opinion",

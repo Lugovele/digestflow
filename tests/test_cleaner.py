@@ -49,15 +49,35 @@ class CleanSourceItemsTests(SimpleTestCase):
                 "source": "Research Lab",
                 "snippet": LONG_TEXT,
                 "published_at": "2026-04-30",
+                "source_url": "https://dev.to/t/ai",
+                "source_api_url": "https://dev.to/api/articles?tag=ai",
+                "description": "Readable description",
+                "metadata": {"source_type": "dev_to_tag"},
             }
         ]
 
         cleaned = clean_source_items(raw_items)
 
         self.assertEqual(cleaned[0]["published_at"], "2026-04-30")
+        self.assertEqual(cleaned[0]["source_url"], "https://dev.to/t/ai")
+        self.assertEqual(cleaned[0]["source_api_url"], "https://dev.to/api/articles?tag=ai")
+        self.assertEqual(cleaned[0]["description"], "Readable description")
+        self.assertEqual(cleaned[0]["metadata"]["source_type"], "dev_to_tag")
         self.assertEqual(
             set(cleaned[0].keys()),
-            {"title", "url", "source", "source_name", "published_at", "snippet", "content"},
+            {
+                "title",
+                "url",
+                "source",
+                "source_name",
+                "source_url",
+                "source_api_url",
+                "published_at",
+                "snippet",
+                "content",
+                "description",
+                "metadata",
+            },
         )
 
     def test_cleaner_accepts_rss_items_with_snippet_only_and_preserves_source_name(self):

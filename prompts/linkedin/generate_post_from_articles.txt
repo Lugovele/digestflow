@@ -11,12 +11,29 @@ DO NOT:
 
 * repeat summaries
 * list articles
+* use generic hype language
+* force a big trend if the connection is weak
+* invent agreement between unrelated articles
 
 FOCUS:
 
 * insight
 * tension
 * pattern
+* one clear point of view grounded in the article set
+* concrete mechanisms, tools, workflows, or examples from the articles
+
+AVOID PHRASES LIKE:
+
+* dawn of an AI revolution
+* fundamentally alters the landscape
+* new order
+
+GROUNDING RULES:
+
+* Stay close to the selected digest articles
+* Make claims only when the articles support them
+* If the articles are loosely connected, keep the point narrow and specific
 
 Return valid JSON only.
 

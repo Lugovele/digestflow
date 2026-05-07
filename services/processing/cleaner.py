@@ -37,9 +37,13 @@ def clean_source_items(raw_items: list[dict] | object) -> list[dict]:
                 "url": url,
                 "source": _clean_text(str(source_value)),
                 "source_name": _clean_text(str(source_value)),
+                "source_url": str(item.get("source_url") or "").strip() or None,
+                "source_api_url": str(item.get("source_api_url") or "").strip() or None,
                 "published_at": item.get("published_at"),
                 "snippet": normalized_snippet,
                 "content": normalized_content,
+                "description": item.get("description"),
+                "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
             }
         )
     return cleaned

@@ -14,11 +14,16 @@ from services.json_utils import make_json_safe
 from services.packaging import generate_content_package_for_digest
 from services.processing.cleaner import clean_source_items
 from services.processing.deduper import dedupe_source_items_with_metrics
-from services.processing.ranker import rank_source_items
+from services.processing.ranker import DEFAULT_MIN_QUALITY_SCORE, rank_source_items
 from services.sources import get_demo_articles_for_topic, save_articles_for_topic
 from services.sources.rss_adapter import fetch_rss_articles
 
 DEFAULT_RSS_FEED = "https://techcrunch.com/feed/"
+MIN_ARTICLES_FOR_DIGEST = 2
+INSUFFICIENT_QUALITY_MESSAGE = (
+    "Недостаточно качественных статей для полноценного дайджеста. "
+    "Источник обработан, но найденные материалы слишком слабые или разрозненные."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +59,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         if not raw_items_list:
             raise ValueError("Source stage returned no articles.")
 
+        source_metrics = _build_source_input_metrics(raw_items_list)
         cleaned_items = clean_source_items(raw_items_list)
         removed_during_cleaning = len(raw_items_list) - len(cleaned_items)
         _debug(run.id, "OK", f"articles cleaned -> {len(cleaned_items)}")
@@ -63,7 +69,11 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             **run.metrics,
             "source_stage": {
                 "status": "completed" if cleaned_items else "failed_cleaning",
-                "raw_items_count": len(raw_items_list),
+                "raw_items_count": source_metrics["raw_items_count"],
+                "article_links_extracted": source_metrics["article_links_extracted"],
+                "article_contents_fetched": source_metrics["article_contents_fetched"],
+                "content_unavailable_count": source_metrics["content_unavailable_count"],
+                "normalized_source_type": source_metrics["normalized_source_type"],
                 "articles_count": len(raw_items_list),
                 "articles_after_cleaning": len(cleaned_items),
                 "removed_during_cleaning": removed_during_cleaning,
@@ -81,7 +91,11 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
 
         topic_settings = _get_digest_settings(run)
         top_n = min(3, topic_settings.max_sources) if topic_settings else 3
-        min_quality_score = topic_settings.min_source_quality_score if topic_settings else 0.0
+        quality_threshold = (
+            topic_settings.min_source_quality_score
+            if topic_settings
+            else DEFAULT_MIN_QUALITY_SCORE
+        )
 
         _debug(run.id, "STEP", "ranking")
         ranked_items, ranking_scores = rank_source_items(
@@ -89,7 +103,25 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             keywords=run.topic.keywords,
             excluded_keywords=run.topic.excluded_keywords,
             top_n=top_n,
-            min_quality_score=min_quality_score,
+            min_quality_score=quality_threshold,
+        )
+        qualified_scores = [
+            score_entry
+            for score_entry in ranking_scores
+            if float(score_entry.get("quality_score", 0.0) or 0.0) >= quality_threshold
+        ]
+        rejected_scores = [
+            score_entry
+            for score_entry in ranking_scores
+            if float(score_entry.get("quality_score", 0.0) or 0.0) < quality_threshold
+        ]
+        quality_values = [float(score_entry.get("quality_score", 0.0) or 0.0) for score_entry in ranking_scores]
+        max_quality_score = max(quality_values) if quality_values else None
+        min_actual_quality_score = min(quality_values) if quality_values else None
+        average_quality_score = (
+            round(sum(quality_values) / len(quality_values), 2)
+            if quality_values
+            else None
         )
         _debug(run.id, "INFO", f"ranked articles -> {len(deduped_items)}")
         _debug(run.id, "INFO", f"selected for prompt -> {len(ranked_items)}")
@@ -114,13 +146,48 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 "articles_after_dedupe": len(deduped_items),
                 "ranked_articles_count": len(deduped_items),
                 "articles_after_rank": len(ranked_items),
+                "articles_above_quality_threshold": len(qualified_scores),
                 "selected_for_prompt": len(ranked_items),
-                "min_quality_score": min_quality_score,
+                "quality_threshold": quality_threshold,
+                "max_quality_score": max_quality_score,
+                "min_actual_quality_score": min_actual_quality_score,
+                "average_quality_score": average_quality_score,
+                "rejected_low_quality_count": len(rejected_scores),
                 "top_n": top_n,
                 "ranking_scores": ranking_scores,
+                "top_rejected_articles": rejected_scores[:5],
             },
         })
         run.save(update_fields=["metrics", "updated_at"])
+
+        if len(ranked_items) < MIN_ARTICLES_FOR_DIGEST:
+            _debug(run.id, "INFO", "insufficient article quality for digest generation")
+            run.status = DigestRun.STATUS_INSUFFICIENT_QUALITY
+            run.error_message = INSUFFICIENT_QUALITY_MESSAGE
+            run.finished_at = timezone.now()
+            run.metrics = make_json_safe({
+                **run.metrics,
+                "ranking_stage": {
+                    **run.metrics.get("ranking_stage", {}),
+                    "status": "insufficient_quality",
+                    "insufficient_quality": True,
+                    "insufficient_quality_message": INSUFFICIENT_QUALITY_MESSAGE,
+                    "minimum_articles_required": MIN_ARTICLES_FOR_DIGEST,
+                },
+                "digest_stage": {
+                    "status": "skipped",
+                    "reason": "insufficient_quality",
+                },
+                "packaging_stage": {
+                    "status": "skipped",
+                    "reason": "insufficient_quality",
+                },
+            })
+            run.save(
+                update_fields=["status", "error_message", "finished_at", "metrics", "updated_at"]
+            )
+            _debug(run.id, "DONE", "run insufficient_quality")
+            return run
 
         digest, digest_debug = generate_digest_for_run(run, ranked_items)
 
@@ -205,6 +272,39 @@ def _get_digest_settings(run: DigestRun) -> DigestSettings | None:
         return run.topic.digest_settings
     except DigestSettings.DoesNotExist:
         return None
+
+
+def _build_source_input_metrics(raw_items: list[dict]) -> dict[str, int | str | None]:
+    raw_items_count = len(raw_items)
+    article_links_extracted = 0
+    article_contents_fetched = 0
+    content_unavailable_count = 0
+    normalized_source_type = None
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("url"):
+            article_links_extracted += 1
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if normalized_source_type is None:
+            normalized_source_type = (
+                item.get("source_type")
+                or metadata.get("source_type")
+                or "raw_items"
+            )
+        if metadata.get("content_unavailable"):
+            content_unavailable_count += 1
+        elif str(item.get("content") or item.get("snippet") or "").strip():
+            article_contents_fetched += 1
+
+    return {
+        "raw_items_count": raw_items_count,
+        "article_links_extracted": article_links_extracted,
+        "article_contents_fetched": article_contents_fetched,
+        "content_unavailable_count": content_unavailable_count,
+        "normalized_source_type": normalized_source_type or "raw_items",
+    }
 
 
 def _debug(run_id: int, level: str, message: str) -> None:

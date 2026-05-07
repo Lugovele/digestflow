@@ -10,6 +10,7 @@ class DigestRun(models.Model):
     STATUS_GENERATING_DIGEST = "generating_digest"
     STATUS_PACKAGING = "packaging"
     STATUS_COMPLETED = "completed"
+    STATUS_INSUFFICIENT_QUALITY = "insufficient_quality"
     STATUS_PARTIAL_FAILED = "partial_failed"
     STATUS_FAILED = "failed"
 
@@ -20,6 +21,7 @@ class DigestRun(models.Model):
         (STATUS_GENERATING_DIGEST, "Generating digest"),
         (STATUS_PACKAGING, "Packaging"),
         (STATUS_COMPLETED, "Completed"),
+        (STATUS_INSUFFICIENT_QUALITY, "Insufficient quality"),
         (STATUS_PARTIAL_FAILED, "Partial failed"),
         (STATUS_FAILED, "Failed"),
     ]

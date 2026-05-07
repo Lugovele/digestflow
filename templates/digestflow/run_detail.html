@@ -21,16 +21,56 @@
     <ul>
         <li><strong>article_ids:</strong> {{ article_ids|default:"[]" }}</li>
         <li><strong>articles_after_dedupe:</strong> {{ articles_after_dedupe|default:"-" }}</li>
-        <li><strong>selected_for_prompt:</strong> {{ selected_for_prompt|default:"-" }}</li>
-        <li><strong>total_tokens:</strong> {{ total_tokens|default:"-" }}</li>
-        <li><strong>total_estimated_cost:</strong> {{ total_estimated_cost|default:"-" }}</li>
+        <li><strong>quality_threshold:</strong> {{ quality_threshold_display }}</li>
+        <li><strong>max_quality_score:</strong> {{ max_quality_score_display }}</li>
+        <li><strong>min_actual_quality_score:</strong> {{ min_actual_quality_score_display }}</li>
+        <li><strong>average_quality_score:</strong> {{ average_quality_score_display }}</li>
+        <li><strong>articles_above_quality_threshold:</strong> {{ articles_above_quality_threshold_display }}</li>
+        <li><strong>rejected_low_quality_count:</strong> {{ rejected_low_quality_count_display }}</li>
+        <li><strong>selected_for_prompt:</strong> {{ selected_for_prompt_display }}</li>
+        <li><strong>total_tokens:</strong> {{ total_tokens_display }}</li>
+        <li><strong>total_estimated_cost:</strong> {{ total_estimated_cost_display }}</li>
         <li><strong>digest_provider:</strong> {{ digest_provider|default:"-" }}</li>
         <li><strong>packaging_provider:</strong> {{ packaging_provider|default:"-" }}</li>
     </ul>
     <pre style="white-space: pre-wrap;">{{ metrics|default:"{}" }}</pre>
 
+    {% if is_insufficient_quality %}
+        <h2>Result</h2>
+        <p>{{ insufficient_quality_message }}</p>
+        {% if top_rejected_articles %}
+            <h3>Ranking diagnostics</h3>
+            <ul>
+                {% for rejected in top_rejected_articles %}
+                    <li>{{ rejected.url|default:"-" }} — quality_score: {{ rejected.quality_score|default:"0.0" }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endif %}
+
+    {% if selected_ranked_articles and not is_insufficient_quality %}
+        <h2>Selected articles</h2>
+        <ol>
+            {% for article in selected_ranked_articles %}
+                <li style="margin-bottom: 16px;">
+                    {% if article.url %}
+                        <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                            {{ article.title|default:article.link_label|default:"Open article" }}
+                        </a>
+                    {% else %}
+                        {{ article.title|default:"No source available" }}
+                    {% endif %}
+                    <div>quality_score: {{ article.quality_score }}</div>
+                    <div>score: {{ article.score }}</div>
+                </li>
+            {% endfor %}
+        </ol>
+    {% endif %}
+
     <h2>Digest</h2>
-    {% if has_digest %}
+    {% if is_insufficient_quality %}
+        <p>Digest не был создан из-за недостаточного качества отобранных материалов.</p>
+    {% elif has_digest %}
         <p><strong>Title:</strong> {{ digest_payload.title }}</p>
 
         {% if has_digest_articles %}
@@ -70,7 +110,9 @@
     {% endif %}
 
     <h2>ContentPackage</h2>
-    {% if content_package %}
+    {% if is_insufficient_quality %}
+        <p>LinkedIn post и упаковка не были созданы, потому что статей выше порога оказалось слишком мало.</p>
+    {% elif content_package %}
         <p><strong>Validation status:</strong> {{ validation_status }}</p>
 
         <p><strong>Post text:</strong></p>
@@ -119,6 +161,35 @@
         {% endif %}
     {% else %}
         <p>ContentPackage пока не создан.</p>
+    {% endif %}
+    {% if has_ranked_articles %}
+        <h2>All ranked articles</h2>
+        <ol>
+            {% for article in ranked_articles %}
+                <li style="margin-bottom: 16px;">
+                    {% if article.url %}
+                        <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                            {{ article.title|default:article.link_label|default:"Open article" }}
+                        </a>
+                    {% else %}
+                        {{ article.title|default:"No source available" }}
+                    {% endif %}
+                    {% if article.source_name %}
+                        <div>source: {{ article.source_name }}</div>
+                    {% endif %}
+                    <div>quality_score: {{ article.quality_score }}</div>
+                    <div>score: {{ article.score }}</div>
+                    {% if article.quality_reasons %}
+                        <div>reasons:</div>
+                        <ul>
+                            {% for reason in article.quality_reasons %}
+                                <li>{{ reason }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ol>
     {% endif %}
 </body>
 </html>

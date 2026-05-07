@@ -37,6 +37,7 @@ class PromptUsageTests(SimpleTestCase):
         articles = [
             {
                 "url": "https://example.com/article-1",
+                "title": "Prompt article title",
                 "summary": "Summary",
                 "key_points": ["Point"],
                 "content_type": "news",

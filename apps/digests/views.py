@@ -64,6 +64,8 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
     digest_stage = metrics.get("digest_stage", {})
     packaging_stage = metrics.get("packaging_stage", {})
     digest_articles = _decorate_article_links(digest.get_articles() if digest else [])
+    ranked_articles = _decorate_article_links(ranking_stage.get("ranking_scores", []))
+    is_insufficient_quality = run.status == DigestRun.STATUS_INSUFFICIENT_QUALITY
 
     logger.info("[DigestRun %s] digest payload articles count -> %s", run.id, len(digest_articles))
     if not digest_articles:
@@ -86,21 +88,53 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "title": digest.get_payload_title() if digest else "",
         "articles": digest_articles,
     }
+    selected_ranked_articles = _select_ranked_articles_for_prompt(
+        ranked_articles,
+        ranking_stage.get("quality_threshold"),
+        ranking_stage.get("selected_for_prompt"),
+    )
 
     context = {
         "run": run,
         "digest_payload": digest_payload,
         "has_digest": digest is not None,
         "content_package": content_package,
+        "is_insufficient_quality": is_insufficient_quality,
+        "insufficient_quality_message": (
+            ranking_stage.get("insufficient_quality_message") or run.error_message
+        ),
         "metrics": metrics,
         "article_ids": source_stage.get("article_ids", []),
         "articles_after_dedupe": source_stage.get("articles_after_dedupe"),
         "selected_for_prompt": ranking_stage.get("selected_for_prompt"),
+        "selected_for_prompt_display": _display_metric_value(ranking_stage.get("selected_for_prompt")),
+        "quality_threshold": ranking_stage.get("quality_threshold"),
+        "quality_threshold_display": _display_metric_value(ranking_stage.get("quality_threshold")),
+        "max_quality_score": ranking_stage.get("max_quality_score"),
+        "max_quality_score_display": _display_metric_value(ranking_stage.get("max_quality_score")),
+        "min_actual_quality_score": ranking_stage.get("min_actual_quality_score"),
+        "min_actual_quality_score_display": _display_metric_value(ranking_stage.get("min_actual_quality_score")),
+        "average_quality_score": ranking_stage.get("average_quality_score"),
+        "average_quality_score_display": _display_metric_value(ranking_stage.get("average_quality_score")),
+        "articles_above_quality_threshold": ranking_stage.get("articles_above_quality_threshold"),
+        "articles_above_quality_threshold_display": _display_metric_value(
+            ranking_stage.get("articles_above_quality_threshold")
+        ),
+        "rejected_low_quality_count": ranking_stage.get("rejected_low_quality_count"),
+        "rejected_low_quality_count_display": _display_metric_value(
+            ranking_stage.get("rejected_low_quality_count")
+        ),
+        "top_rejected_articles": _decorate_article_links(ranking_stage.get("top_rejected_articles", [])),
+        "ranked_articles": ranked_articles,
+        "selected_ranked_articles": selected_ranked_articles,
         "total_tokens": total_tokens,
+        "total_tokens_display": _display_metric_value(total_tokens),
         "total_estimated_cost": total_estimated_cost,
+        "total_estimated_cost_display": _display_metric_value(total_estimated_cost),
         "digest_provider": digest_stage.get("provider"),
         "packaging_provider": packaging_stage.get("provider"),
         "has_digest_articles": bool(digest_articles),
+        "has_ranked_articles": bool(ranked_articles),
         "validation_report": validation_report,
         "quality_checks": validation_report.get("quality_checks", {}),
         "hook_variants": content_package.hook_variants if content_package else [],
@@ -121,6 +155,44 @@ def _sum_metric_values(*values):
     if not present_values:
         return None
     return round(sum(present_values), 6)
+
+
+def _display_metric_value(value):
+    if value is None:
+        return "-"
+    return value
+
+
+def _select_ranked_articles_for_prompt(
+    ranked_articles: list[dict],
+    quality_threshold,
+    selected_count,
+) -> list[dict]:
+    try:
+        threshold_value = float(quality_threshold) if quality_threshold is not None else None
+    except (TypeError, ValueError):
+        threshold_value = None
+
+    try:
+        selected_limit = int(selected_count or 0)
+    except (TypeError, ValueError):
+        selected_limit = 0
+
+    if selected_limit <= 0:
+        return []
+
+    eligible_articles = []
+    for article in ranked_articles:
+        quality_score = article.get("quality_score")
+        try:
+            quality_value = float(quality_score) if quality_score is not None else None
+        except (TypeError, ValueError):
+            quality_value = None
+
+        if threshold_value is not None and quality_value is not None and quality_value >= threshold_value:
+            eligible_articles.append(article)
+
+    return eligible_articles[:selected_limit]
 
 
 def _decorate_article_links(articles: list[dict]) -> list[dict]:

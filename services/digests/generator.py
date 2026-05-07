@@ -38,7 +38,6 @@ def generate_digest_for_run(run: DigestRun, articles: list[dict[str, Any]]) -> t
 
     with transaction.atomic():
         Digest.objects.filter(run=run).delete()
-        # Deprecated storage fields stay only at the persistence boundary until the DB schema is redesigned.
         digest = Digest.objects.create(
             run=run,
             title=payload["title"],
