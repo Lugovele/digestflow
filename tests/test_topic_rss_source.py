@@ -4,6 +4,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.digests.forms import TopicInputForm
+from apps.digests import result_messages
 from apps.digests.models import DigestRun
 from apps.sources.models import Article
 from apps.topics.models import Topic
@@ -142,6 +143,7 @@ class TopicRssSourceTests(TestCase):
             run.error_message,
             "RSS source returned no valid items: https://example.com/empty.xml",
         )
+        self.assertEqual(run.result_message, result_messages.SOURCE_NO_USABLE_ARTICLES)
         mock_run_digest_pipeline.assert_not_called()
 
     @patch("apps.digests.views.run_digest_pipeline")

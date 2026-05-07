@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.digests import result_messages
 from apps.digests.models import DigestRun
 from apps.topics.models import Topic
 from services.pipeline.run_pipeline import run_digest_pipeline
@@ -101,7 +102,9 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "content_package": content_package,
         "is_insufficient_quality": is_insufficient_quality,
         "insufficient_quality_message": (
-            ranking_stage.get("insufficient_quality_message") or run.error_message
+            run.result_message
+            or ranking_stage.get("insufficient_quality_message")
+            or run.error_message
         ),
         "metrics": metrics,
         "article_ids": source_stage.get("article_ids", []),
@@ -302,6 +305,7 @@ def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
 def _mark_run_failed_for_empty_rss(run: DigestRun, source_url: str) -> None:
     run.status = DigestRun.STATUS_FAILED
     run.error_message = f"RSS source returned no valid items: {source_url}"
+    run.result_message = result_messages.SOURCE_NO_USABLE_ARTICLES
     run.finished_at = timezone.now()
     run.input_snapshot = {
         **run.input_snapshot,
@@ -313,6 +317,7 @@ def _mark_run_failed_for_empty_rss(run: DigestRun, source_url: str) -> None:
         update_fields=[
             "status",
             "error_message",
+            "result_message",
             "finished_at",
             "input_snapshot",
             "updated_at",

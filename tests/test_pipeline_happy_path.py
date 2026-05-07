@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from apps.digests.models import DigestRun
+from apps.digests import result_messages
 from apps.sources.models import Article
 from apps.topics.models import Topic
 from services.pipeline.run_pipeline import _resolve_quality_threshold, _resolve_source_mode, run_digest_pipeline
@@ -65,6 +66,7 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(result.id, run.id)
         self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
         self.assertEqual(run.error_message, "")
+        self.assertEqual(run.result_message, result_messages.COMPLETED)
         self.assertEqual(run.source_mode, Topic.SOURCE_MODE_AUTOMATIC)
         self.assertEqual(run.quality_threshold_used, 0.4)
         self.assertIsNotNone(run.started_at)
@@ -157,6 +159,7 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(result.id, run.id)
         self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
         self.assertEqual(run.error_message, "")
+        self.assertEqual(run.result_message, result_messages.COMPLETED)
         self.assertTrue(hasattr(run, "digest"))
         self.assertTrue(hasattr(run.digest, "content_package"))
         article = Article.objects.filter(topic=topic).order_by("id").first()
@@ -364,6 +367,7 @@ class DigestPipelineHappyPathTests(TestCase):
 
         self.assertEqual(result.id, run.id)
         self.assertEqual(run.status, DigestRun.STATUS_INSUFFICIENT_QUALITY)
+        self.assertEqual(run.result_message, result_messages.INSUFFICIENT_QUALITY)
         self.assertFalse(hasattr(run, "digest"))
         source_stage = run.metrics.get("source_stage", {})
         ranking_stage = run.metrics.get("ranking_stage", {})
@@ -444,6 +448,7 @@ class DigestPipelineHappyPathTests(TestCase):
 
         self.assertEqual(result.id, run.id)
         self.assertEqual(run.status, DigestRun.STATUS_INSUFFICIENT_QUALITY)
+        self.assertEqual(run.result_message, result_messages.INSUFFICIENT_QUALITY)
         self.assertFalse(hasattr(run, "digest"))
         self.assertEqual(Article.objects.filter(topic=topic).count(), 3)
         ranking_stage = run.metrics.get("ranking_stage", {})
@@ -457,3 +462,26 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(len(ranking_stage.get("top_rejected_articles", [])), 3)
         self.assertTrue(ranking_stage.get("ranking_scores")[0]["title"])
         self.assertIn("Недостаточно качественных статей", run.error_message)
+    def test_run_digest_pipeline_populates_result_message_for_source_stage_failure(self):
+        user = get_user_model().objects.create_user(
+            username="source-failure-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Empty source topic",
+            keywords=["ai"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "raw_items", "source": "integration_test"},
+        )
+
+        result = run_digest_pipeline(run.id, [])
+        run.refresh_from_db()
+
+        self.assertEqual(result.id, run.id)
+        self.assertEqual(run.status, DigestRun.STATUS_FAILED)
+        self.assertEqual(run.result_message, result_messages.SOURCE_NO_USABLE_ARTICLES)
+        self.assertEqual(run.error_message, "Source stage returned no articles.")

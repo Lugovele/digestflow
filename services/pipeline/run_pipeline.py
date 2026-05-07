@@ -7,6 +7,7 @@ from typing import Iterable
 from django.utils import timezone
 
 from apps.digests.models import DigestRun
+from apps.digests import result_messages
 from apps.topics.models import Topic
 from services.digests import generate_digest_for_run
 from services.config.author_profile import load_author_profile
@@ -24,7 +25,6 @@ INSUFFICIENT_QUALITY_MESSAGE = (
     "Недостаточно качественных статей для полноценного дайджеста. "
     "Источник обработан, но найденные материалы слишком слабые или разрозненные."
 )
-
 logger = logging.getLogger(__name__)
 
 
@@ -163,6 +163,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             _debug(run.id, "INFO", "insufficient article quality for digest generation")
             run.status = DigestRun.STATUS_INSUFFICIENT_QUALITY
             run.error_message = INSUFFICIENT_QUALITY_MESSAGE
+            run.result_message = result_messages.INSUFFICIENT_QUALITY
             run.finished_at = timezone.now()
             run.metrics = make_json_safe({
                 **run.metrics,
@@ -183,7 +184,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 },
             })
             run.save(
-                update_fields=["status", "error_message", "finished_at", "metrics", "updated_at"]
+                update_fields=["status", "error_message", "result_message", "finished_at", "metrics", "updated_at"]
             )
             _debug(run.id, "DONE", "run insufficient_quality")
             return run
@@ -208,6 +209,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             logger.exception("[DigestRun %s] Packaging stage failed", run.id)
             run.status = DigestRun.STATUS_PARTIAL_FAILED
             run.error_message = f"Packaging stage failed: {exc}"
+            run.result_message = result_messages.PARTIAL_FAILED
             run.finished_at = timezone.now()
             run.metrics = make_json_safe({
                 **run.metrics,
@@ -218,7 +220,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 },
             })
             run.save(
-                update_fields=["status", "error_message", "finished_at", "metrics", "updated_at"]
+                update_fields=["status", "error_message", "result_message", "finished_at", "metrics", "updated_at"]
             )
             _debug(run.id, "FAIL", "package generating")
             _debug(run.id, "INFO", f"error -> {run.error_message}")
@@ -229,6 +231,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         run.status = DigestRun.STATUS_COMPLETED
         run.finished_at = timezone.now()
         run.error_message = ""
+        run.result_message = result_messages.COMPLETED
         run.metrics = make_json_safe({
             **run.metrics,
             "packaging_stage": {
@@ -250,7 +253,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 "estimated_cost_usd": packaging_debug.get("estimated_cost_usd"),
             },
         })
-        run.save(update_fields=["status", "finished_at", "error_message", "metrics", "updated_at"])
+        run.save(update_fields=["status", "finished_at", "error_message", "result_message", "metrics", "updated_at"])
         _debug(run.id, "DONE", "run completed")
 
         logger.info("[DigestRun %s] Digest pipeline completed", run.id)
@@ -259,8 +262,9 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         logger.exception("[DigestRun %s] Digest pipeline failed", run.id)
         run.status = DigestRun.STATUS_FAILED
         run.error_message = str(exc)
+        run.result_message = _build_failed_result_message(exc)
         run.finished_at = timezone.now()
-        run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
+        run.save(update_fields=["status", "error_message", "result_message", "finished_at", "updated_at"])
         _debug(run.id, "FAIL", "run failed")
         _debug(run.id, "INFO", f"error -> {run.error_message}")
         return run
@@ -329,6 +333,16 @@ def _build_input_snapshot(run: DigestRun | None) -> dict:
         snapshot["source_url"] = topic.source_url
 
     return snapshot
+
+
+def _build_failed_result_message(exc: Exception) -> str:
+    message = str(exc)
+    if message in {
+        "Source stage returned no articles.",
+        "Source items were loaded but none passed cleaning.",
+    }:
+        return result_messages.SOURCE_NO_USABLE_ARTICLES
+    return result_messages.FAILED
 
 
 def _build_source_input_metrics(raw_items: list[dict]) -> dict[str, int | str | None]:

@@ -1,0 +1,5 @@
+COMPLETED = "Digest generated successfully."
+INSUFFICIENT_QUALITY = "Not enough high-quality articles for a full digest."
+SOURCE_NO_USABLE_ARTICLES = "Source processed, but no usable articles were found."
+FAILED = "Digest run failed before completion."
+PARTIAL_FAILED = "Digest generated, but content packaging failed."

@@ -18,6 +18,7 @@ class RunDetailViewTests(TestCase):
         run = DigestRun.objects.create(
             topic=topic,
             status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
             metrics={
                 "ranking_stage": {
                     "quality_threshold": 0.4,
@@ -90,6 +91,7 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, 'href="https://example.com/article-1"', html=False)
         self.assertContains(response, "First article title")
         self.assertContains(response, "Article one summary")
+        self.assertContains(response, "Digest generated successfully.")
         self.assertContains(response, "Selected articles")
         self.assertContains(response, "All ranked articles")
         self.assertNotContains(response, "Legacy compatibility view")
@@ -212,6 +214,7 @@ class RunDetailViewTests(TestCase):
         run = DigestRun.objects.create(
             topic=topic,
             status=DigestRun.STATUS_INSUFFICIENT_QUALITY,
+            result_message="Not enough high-quality articles for a full digest.",
             error_message=(
                 "Недостаточно качественных статей для полноценного дайджеста. "
                 "Источник обработан, но найденные материалы слишком слабые или разрозненные."
@@ -273,10 +276,23 @@ class RunDetailViewTests(TestCase):
         )
 
         response = self.client.get(reverse("run-detail", args=[run.id]))
+        response_text = response.content.decode("utf-8")
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["is_insufficient_quality"])
-        self.assertContains(response, "Недостаточно качественных статей для полноценного дайджеста")
+        self.assertEqual(
+            response.context["insufficient_quality_message"],
+            "Not enough high-quality articles for a full digest.",
+        )
+        self.assertContains(response, "Not enough high-quality articles for a full digest.")
+        self.assertEqual(
+            response_text.count("Not enough high-quality articles for a full digest."),
+            1,
+        )
+        self.assertLess(
+            response_text.index("Not enough high-quality articles for a full digest."),
+            response_text.index(run.error_message),
+        )
         self.assertContains(response, "Ranking diagnostics")
         self.assertContains(response, "All ranked articles")
         self.assertContains(response, "Weak article one")
@@ -321,3 +337,25 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, "selected_for_prompt:</strong> 0", html=False)
         self.assertContains(response, "total_tokens:</strong> 0", html=False)
         self.assertContains(response, "total_estimated_cost:</strong> 0", html=False)
+
+    def test_run_detail_hides_result_message_block_when_empty(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-no-result-message")
+        topic = Topic.objects.create(
+            user=user,
+            name="No result message",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_FAILED,
+            result_message="",
+            error_message="Technical failure",
+            metrics={},
+        )
+
+        response = self.client.get(reverse("run-detail", args=[run.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "<strong>Result:</strong>", html=False)
+        self.assertContains(response, "Technical failure")

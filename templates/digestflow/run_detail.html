@@ -13,8 +13,11 @@
     <p><strong>ID:</strong> {{ run.id }}</p>
     <p><strong>Тема:</strong> {{ run.topic.name }}</p>
     <p><strong>Статус:</strong> {{ run.status }}</p>
+    {% if run.result_message %}
+        <p><strong>Result:</strong> {{ run.result_message }}</p>
+    {% endif %}
     {% if run.error_message %}
-        <p><strong>Ошибка:</strong> {{ run.error_message }}</p>
+        <p><strong>Error:</strong> {{ run.error_message }}</p>
     {% endif %}
 
     <h2>Metrics</h2>
@@ -37,7 +40,9 @@
 
     {% if is_insufficient_quality %}
         <h2>Result</h2>
-        <p>{{ insufficient_quality_message }}</p>
+        {% if not run.result_message %}
+            <p>{{ insufficient_quality_message }}</p>
+        {% endif %}
         {% if top_rejected_articles %}
             <h3>Ranking diagnostics</h3>
             <ul>
