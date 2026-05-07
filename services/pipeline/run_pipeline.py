@@ -7,7 +7,7 @@ from typing import Iterable
 from django.utils import timezone
 
 from apps.digests.models import DigestRun
-from apps.topics.models import DigestSettings
+from apps.topics.models import Topic
 from services.digests import generate_digest_for_run
 from services.config.author_profile import load_author_profile
 from services.json_utils import make_json_safe
@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) -> DigestRun:
     """Run the first end-to-end pipeline: Topic -> articles -> Digest -> ContentPackage."""
     run = DigestRun.objects.select_related("topic").get(pk=run_id)
+    run.source_mode = _resolve_source_mode(run)
+    run.input_snapshot = _build_input_snapshot(run)
     run.status = DigestRun.STATUS_COLLECTING
     run.started_at = run.started_at or timezone.now()
-    run.save(update_fields=["status", "started_at", "updated_at"])
+    run.save(update_fields=["source_mode", "input_snapshot", "status", "started_at", "updated_at"])
 
     _debug(run.id, "STEP", "pipeline started")
     _debug(run.id, "OK", f"topic loaded -> {run.topic.name}")
@@ -89,13 +91,10 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         _debug(run.id, "OK", f"articles deduplicated -> {len(deduped_items)}")
         _debug(run.id, "INFO", f"duplicates removed -> {duplicates_removed}")
 
-        topic_settings = _get_digest_settings(run)
-        top_n = min(3, topic_settings.max_sources) if topic_settings else 3
-        quality_threshold = (
-            topic_settings.min_source_quality_score
-            if topic_settings
-            else DEFAULT_MIN_QUALITY_SCORE
-        )
+        top_n = _resolve_top_n(run)
+        quality_threshold = _resolve_quality_threshold(run)
+        run.quality_threshold_used = quality_threshold
+        run.save(update_fields=["quality_threshold_used", "updated_at"])
 
         _debug(run.id, "STEP", "ranking")
         ranked_items, ranking_scores = rank_source_items(
@@ -267,11 +266,69 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         return run
 
 
-def _get_digest_settings(run: DigestRun) -> DigestSettings | None:
+def _resolve_top_n(run: DigestRun | None) -> int:
+    if run is None:
+        return 3
     try:
-        return run.topic.digest_settings
-    except DigestSettings.DoesNotExist:
-        return None
+        return min(3, run.topic.digest_settings.max_sources)
+    except Exception:  # noqa: BLE001 - small fallback helper
+        return 3
+
+
+def _resolve_quality_threshold(run: DigestRun | None) -> float:
+    if run is None:
+        return DEFAULT_MIN_QUALITY_SCORE
+
+    topic = getattr(run, "topic", None)
+    if isinstance(topic, Topic):
+        try:
+            return float(topic.default_quality_threshold)
+        except (TypeError, ValueError):
+            return DEFAULT_MIN_QUALITY_SCORE
+
+    return DEFAULT_MIN_QUALITY_SCORE
+
+
+def _resolve_source_mode(run: DigestRun | None) -> str:
+    if run is None:
+        return Topic.SOURCE_MODE_AUTOMATIC
+
+    topic = getattr(run, "topic", None)
+    if isinstance(topic, Topic):
+        source_mode = str(topic.source_mode or "").strip()
+        if source_mode:
+            return source_mode
+
+    existing_source_mode = str(getattr(run, "source_mode", "") or "").strip()
+    if existing_source_mode:
+        return existing_source_mode
+
+    return Topic.SOURCE_MODE_AUTOMATIC
+
+
+def _build_input_snapshot(run: DigestRun | None) -> dict:
+    existing_snapshot = {}
+    if run is not None and isinstance(getattr(run, "input_snapshot", None), dict):
+        existing_snapshot = dict(run.input_snapshot)
+
+    if run is None:
+        return existing_snapshot
+
+    topic = getattr(run, "topic", None)
+    if not isinstance(topic, Topic):
+        return existing_snapshot
+
+    snapshot = {
+        **existing_snapshot,
+        "topic_id": topic.id,
+        "topic_name": topic.name,
+        "source_mode": _resolve_source_mode(run),
+        "default_quality_threshold": topic.default_quality_threshold,
+    }
+    if topic.source_url:
+        snapshot["source_url"] = topic.source_url
+
+    return snapshot
 
 
 def _build_source_input_metrics(raw_items: list[dict]) -> dict[str, int | str | None]:

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -9,7 +10,7 @@ from django.test import TestCase, override_settings
 from apps.digests.models import DigestRun
 from apps.sources.models import Article
 from apps.topics.models import Topic
-from services.pipeline.run_pipeline import run_digest_pipeline
+from services.pipeline.run_pipeline import _resolve_quality_threshold, _resolve_source_mode, run_digest_pipeline
 from services.sources import get_demo_articles_for_topic
 from services.sources.rss_adapter import fetch_rss_articles
 
@@ -64,8 +65,16 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(result.id, run.id)
         self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
         self.assertEqual(run.error_message, "")
+        self.assertEqual(run.source_mode, Topic.SOURCE_MODE_AUTOMATIC)
+        self.assertEqual(run.quality_threshold_used, 0.4)
         self.assertIsNotNone(run.started_at)
         self.assertIsNotNone(run.finished_at)
+        self.assertEqual(run.input_snapshot.get("topic_id"), topic.id)
+        self.assertEqual(run.input_snapshot.get("topic_name"), topic.name)
+        self.assertEqual(run.input_snapshot.get("source_mode"), Topic.SOURCE_MODE_AUTOMATIC)
+        self.assertEqual(run.input_snapshot.get("default_quality_threshold"), 0.4)
+        self.assertEqual(run.input_snapshot.get("mode"), "demo")
+        self.assertEqual(run.input_snapshot.get("source"), "integration_test")
 
         self.assertEqual(Article.objects.filter(topic=topic).count(), 3)
         self.assertEqual(digest.run_id, run.id)
@@ -154,6 +163,95 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertIsNotNone(article)
         self.assertIsInstance(article.published_at, datetime)
         self.assertIsInstance(article.raw_payload.get("published_at"), str)
+
+    def test_run_digest_pipeline_uses_topic_default_quality_threshold(self):
+        user = get_user_model().objects.create_user(
+            username="topic-threshold-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="AI workflows",
+            keywords=["AI automation", "workflow automation"],
+            excluded_keywords=[],
+            default_quality_threshold=0.2,
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "demo", "source": "integration_test"},
+        )
+
+        result = run_digest_pipeline(run.id, get_demo_articles_for_topic(topic.name))
+        run.refresh_from_db()
+
+        self.assertEqual(result.id, run.id)
+        self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
+        self.assertEqual(run.quality_threshold_used, 0.2)
+        self.assertEqual(run.metrics.get("ranking_stage", {}).get("quality_threshold"), 0.2)
+
+    def test_resolve_quality_threshold_uses_default_fallback_when_run_is_missing(self):
+        self.assertEqual(_resolve_quality_threshold(None), 0.4)
+
+    def test_run_digest_pipeline_copies_topic_source_mode_to_run_snapshot(self):
+        user = get_user_model().objects.create_user(
+            username="source-mode-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="AI source mode",
+            keywords=["AI automation", "workflow automation"],
+            excluded_keywords=[],
+            source_mode=Topic.SOURCE_MODE_HYBRID,
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "demo", "source": "integration_test"},
+        )
+
+        run_digest_pipeline(run.id, get_demo_articles_for_topic(topic.name))
+        run.refresh_from_db()
+
+        self.assertEqual(run.source_mode, Topic.SOURCE_MODE_HYBRID)
+        self.assertEqual(run.input_snapshot.get("source_mode"), Topic.SOURCE_MODE_HYBRID)
+
+    def test_run_digest_pipeline_stores_topic_configuration_in_input_snapshot(self):
+        user = get_user_model().objects.create_user(
+            username="snapshot-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Snapshot topic",
+            keywords=["AI automation"],
+            excluded_keywords=[],
+            source_mode=Topic.SOURCE_MODE_CUSTOM_ONLY,
+            default_quality_threshold=0.35,
+            source_url="https://dev.to/t/ai",
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "manual", "custom_flag": True},
+        )
+
+        run_digest_pipeline(run.id, get_demo_articles_for_topic(topic.name))
+        run.refresh_from_db()
+
+        self.assertEqual(run.input_snapshot.get("topic_id"), topic.id)
+        self.assertEqual(run.input_snapshot.get("topic_name"), "Snapshot topic")
+        self.assertEqual(run.input_snapshot.get("source_mode"), Topic.SOURCE_MODE_CUSTOM_ONLY)
+        self.assertEqual(run.input_snapshot.get("default_quality_threshold"), 0.35)
+        self.assertEqual(run.input_snapshot.get("source_url"), "https://dev.to/t/ai")
+        self.assertEqual(run.input_snapshot.get("mode"), "manual")
+        self.assertTrue(run.input_snapshot.get("custom_flag"))
+
+    def test_resolve_source_mode_keeps_existing_value_without_topic(self):
+        run = SimpleNamespace(topic=None, source_mode=Topic.SOURCE_MODE_CUSTOM_ONLY)
+        self.assertEqual(_resolve_source_mode(run), Topic.SOURCE_MODE_CUSTOM_ONLY)
+
+    def test_resolve_source_mode_uses_automatic_default_without_topic_or_value(self):
+        run = SimpleNamespace(topic=None, source_mode="")
+        self.assertEqual(_resolve_source_mode(run), Topic.SOURCE_MODE_AUTOMATIC)
 
     def test_run_digest_pipeline_completes_with_snippet_only_rss_items(self):
         user = get_user_model().objects.create_user(
