@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from apps.digests.forms import TopicInputForm
+from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun
 from apps.sources.models import Article
@@ -51,6 +51,15 @@ class TopicRssSourceTests(TestCase):
 
         self.assertTrue(form.is_valid())
         self.assertEqual(form.cleaned_data["source_url"], "https://example.com/feed.xml")
+
+    def test_topic_form_required_message_is_english(self) -> None:
+        form = TopicInputForm(data={"topic_name": "", "source_url": ""})
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(
+            form.errors["topic_name"],
+            [TOPIC_NAME_REQUIRED_MESSAGE],
+        )
 
     @patch("apps.digests.views.run_digest_pipeline")
     @patch("apps.digests.views.fetch_rss_articles")
@@ -190,6 +199,36 @@ class TopicRssSourceTests(TestCase):
 
         self.assertContains(response, "https://example.com/visible.xml")
         self.assertContains(response, "Source RSS URL")
+        self.assertContains(response, "Topics")
+        self.assertContains(response, "Recent Digest Runs")
+        self.assertContains(response, "Open Django admin")
+
+    def test_topic_list_form_disables_browser_native_validation(self) -> None:
+        response = self.client.get(reverse("topic-list"))
+        html = response.content.decode("utf-8")
+
+        self.assertIn('action="/quick-start/" novalidate', html)
+
+    def test_topic_list_empty_state_and_validation_copy_are_english(self) -> None:
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertContains(response, "No topics yet. Enter a topic above to create one and start a digest.")
+        self.assertContains(response, "No runs yet.")
+        self.assertNotContains(response, "Нужно указать тему")
+        self.assertNotContains(response, "Введите тему")
+
+    def test_create_topic_validation_error_is_english(self) -> None:
+        response = self.client.post(
+            reverse("create-topic-and-run"),
+            data={"topic_name": "", "source_url": ""},
+        )
+        html = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, TOPIC_NAME_REQUIRED_MESSAGE, status_code=400)
+        self.assertEqual(html.count(TOPIC_NAME_REQUIRED_MESSAGE), 1)
+        self.assertNotContains(response, "Нужно указать тему", status_code=400)
+        self.assertNotContains(response, "Введите тему", status_code=400)
 
     @override_settings(OPENAI_API_KEY="sk-your-key")
     @patch("apps.digests.views.fetch_rss_articles")

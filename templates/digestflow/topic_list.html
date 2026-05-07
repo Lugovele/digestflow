@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <title>DigestFlow Topics</title>
@@ -10,7 +10,7 @@
     <h2>Generate digest</h2>
     <p>Enter a topic, and DigestFlow will generate a structured digest and a LinkedIn-ready content package.</p>
     <p>A new topic will be created automatically.</p>
-    <form method="post" action="{% url 'create-topic-and-run' %}">
+    <form method="post" action="{% url 'create-topic-and-run' %}" novalidate>
         {% csrf_token %}
         <p>
             <label for="{{ topic_form.topic_name.id_for_label }}">Topic name</label><br>
@@ -26,7 +26,7 @@
         {% if topic_form_error %}
             <p><strong>{{ topic_form_error }}</strong></p>
         {% endif %}
-        {% if topic_form.topic_name.errors %}
+        {% if topic_form.topic_name.errors and not topic_form_error %}
             <ul>
                 {% for error in topic_form.topic_name.errors %}
                     <li>{{ error }}</li>
@@ -43,7 +43,7 @@
         <button type="submit">Generate digest</button>
     </form>
 
-    <h2>Темы</h2>
+    <h2>Topics</h2>
     {% if topics %}
         <ul>
             {% for topic in topics %}
@@ -63,10 +63,10 @@
             {% endfor %}
         </ul>
     {% else %}
-        <p>Тем пока нет. Можно ввести тему выше и сразу запустить digest.</p>
+        <p>No topics yet. Enter a topic above to create one and start a digest.</p>
     {% endif %}
 
-    <h2>Последние DigestRun</h2>
+    <h2>Recent Digest Runs</h2>
     {% if recent_runs %}
         <ul>
             {% for run in recent_runs %}
@@ -78,9 +78,9 @@
             {% endfor %}
         </ul>
     {% else %}
-        <p>Пока запусков нет.</p>
+        <p>No runs yet.</p>
     {% endif %}
 
-    <p><a href="/admin/">Открыть Django admin</a></p>
+    <p><a href="/admin/">Open Django admin</a></p>
 </body>
 </html>

@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -92,6 +94,10 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, "First article title")
         self.assertContains(response, "Article one summary")
         self.assertContains(response, "Digest generated successfully.")
+        self.assertContains(response, "Back to topics")
+        self.assertContains(response, "Pipeline result")
+        self.assertContains(response, "Topic:</strong> AI workflows", html=False)
+        self.assertContains(response, "Status:</strong> completed", html=False)
         self.assertContains(response, "Selected articles")
         self.assertContains(response, "All ranked articles")
         self.assertNotContains(response, "Legacy compatibility view")
@@ -284,25 +290,84 @@ class RunDetailViewTests(TestCase):
             response.context["insufficient_quality_message"],
             "Not enough high-quality articles for a full digest.",
         )
+        self.assertEqual(
+            response.context["display_error_message"],
+            "Insufficient-quality diagnostics are available in metrics.",
+        )
         self.assertContains(response, "Not enough high-quality articles for a full digest.")
+        self.assertContains(response, "Insufficient-quality diagnostics are available in metrics.")
         self.assertEqual(
             response_text.count("Not enough high-quality articles for a full digest."),
             1,
         )
         self.assertLess(
             response_text.index("Not enough high-quality articles for a full digest."),
-            response_text.index(run.error_message),
+            response_text.index("Insufficient-quality diagnostics are available in metrics."),
         )
+        visible_without_pre = re.sub(r"<pre.*?</pre>", "", response_text, flags=re.DOTALL)
+        self.assertNotIn(run.error_message, visible_without_pre)
         self.assertContains(response, "Ranking diagnostics")
         self.assertContains(response, "All ranked articles")
         self.assertContains(response, "Weak article one")
         self.assertContains(response, "https://example.com/weak-1")
-        self.assertContains(response, "Digest не был создан из-за недостаточного качества")
         self.assertContains(
             response,
-            "LinkedIn post и упаковка не были созданы, потому что статей выше порога оказалось слишком мало.",
+            "No digest was generated because the selected articles did not meet the required quality level.",
+        )
+        self.assertContains(
+            response,
+            "No LinkedIn post or content package was generated because too few articles passed the quality threshold.",
         )
         self.assertContains(response, "articles_above_quality_threshold:</strong> 1", html=False)
+
+    def test_run_detail_uses_english_insufficient_quality_fallback_for_legacy_records(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-insufficient-legacy")
+        topic = Topic.objects.create(
+            user=user,
+            name="Legacy insufficient quality",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        legacy_error_message = (
+            "Недостаточно качественных статей для полноценного дайджеста. "
+            "Источник обработан, но найденные материалы слишком слабые или разрозненные."
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_INSUFFICIENT_QUALITY,
+            result_message="",
+            error_message=legacy_error_message,
+            metrics={
+                "ranking_stage": {
+                    "status": "insufficient_quality",
+                    "quality_threshold": 0.4,
+                    "articles_above_quality_threshold": 0,
+                    "selected_for_prompt": 0,
+                    "ranking_scores": [],
+                    "insufficient_quality_message": legacy_error_message,
+                },
+                "digest_stage": {"status": "skipped", "reason": "insufficient_quality"},
+                "packaging_stage": {"status": "skipped", "reason": "insufficient_quality"},
+            },
+        )
+
+        response = self.client.get(reverse("run-detail", args=[run.id]))
+        response_text = response.content.decode("utf-8")
+        visible_without_pre = re.sub(r"<pre.*?</pre>", "", response_text, flags=re.DOTALL)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["insufficient_quality_message"],
+            "Not enough high-quality articles for a full digest.",
+        )
+        self.assertEqual(
+            response.context["display_error_message"],
+            "Insufficient-quality diagnostics are available in metrics.",
+        )
+        self.assertContains(response, "Not enough high-quality articles for a full digest.")
+        self.assertContains(response, "Insufficient-quality diagnostics are available in metrics.")
+        self.assertNotIn(legacy_error_message, visible_without_pre)
+        self.assertIn(legacy_error_message, response_text)
 
     def test_run_detail_shows_zero_values_as_zero(self) -> None:
         user = get_user_model().objects.create_user(username="detail-user-zero")

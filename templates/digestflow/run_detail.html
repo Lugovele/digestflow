@@ -1,23 +1,23 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <title>DigestFlow Run {{ run.id }}</title>
 </head>
 <body>
-    <p><a href="{% url 'topic-list' %}">Назад к темам</a></p>
+    <p><a href="{% url 'topic-list' %}">Back to topics</a></p>
 
-    <h1>Результат pipeline</h1>
+    <h1>Pipeline result</h1>
 
     <h2>Run</h2>
     <p><strong>ID:</strong> {{ run.id }}</p>
-    <p><strong>Тема:</strong> {{ run.topic.name }}</p>
-    <p><strong>Статус:</strong> {{ run.status }}</p>
+    <p><strong>Topic:</strong> {{ run.topic.name }}</p>
+    <p><strong>Status:</strong> {{ run.status }}</p>
     {% if run.result_message %}
         <p><strong>Result:</strong> {{ run.result_message }}</p>
     {% endif %}
-    {% if run.error_message %}
-        <p><strong>Error:</strong> {{ run.error_message }}</p>
+    {% if display_error_message %}
+        <p><strong>Error:</strong> {{ display_error_message }}</p>
     {% endif %}
 
     <h2>Metrics</h2>
@@ -47,7 +47,7 @@
             <h3>Ranking diagnostics</h3>
             <ul>
                 {% for rejected in top_rejected_articles %}
-                    <li>{{ rejected.url|default:"-" }} — quality_score: {{ rejected.quality_score|default:"0.0" }}</li>
+                    <li>{{ rejected.url|default:"-" }} - quality_score: {{ rejected.quality_score|default:"0.0" }}</li>
                 {% endfor %}
             </ul>
         {% endif %}
@@ -74,7 +74,7 @@
 
     <h2>Digest</h2>
     {% if is_insufficient_quality %}
-        <p>Digest не был создан из-за недостаточного качества отобранных материалов.</p>
+        <p>No digest was generated because the selected articles did not meet the required quality level.</p>
     {% elif has_digest %}
         <p><strong>Title:</strong> {{ digest_payload.title }}</p>
 
@@ -111,12 +111,12 @@
             <p>No per-article analyses available.</p>
         {% endif %}
     {% else %}
-        <p>Digest пока не создан.</p>
+        <p>No digest has been generated yet.</p>
     {% endif %}
 
     <h2>ContentPackage</h2>
     {% if is_insufficient_quality %}
-        <p>LinkedIn post и упаковка не были созданы, потому что статей выше порога оказалось слишком мало.</p>
+        <p>No LinkedIn post or content package was generated because too few articles passed the quality threshold.</p>
     {% elif content_package %}
         <p><strong>Validation status:</strong> {{ validation_status }}</p>
 
@@ -165,8 +165,9 @@
             <p>No validation report available.</p>
         {% endif %}
     {% else %}
-        <p>ContentPackage пока не создан.</p>
+        <p>No content package has been generated yet.</p>
     {% endif %}
+
     {% if has_ranked_articles %}
         <h2>All ranked articles</h2>
         <ol>

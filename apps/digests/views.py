@@ -14,9 +14,11 @@ from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import get_demo_articles_for_topic
 from services.sources.rss_adapter import fetch_rss_articles
 
-from .forms import TopicInputForm
+from .forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 
 logger = logging.getLogger(__name__)
+INSUFFICIENT_QUALITY_ERROR_FALLBACK = "Insufficient-quality diagnostics are available in metrics."
+INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were available for a full digest."
 
 
 @require_GET
@@ -29,7 +31,7 @@ def create_topic_and_run_view(request: HttpRequest) -> HttpResponse:
     form = TopicInputForm(request.POST)
     if not form.is_valid():
         context = _build_topic_list_context(form=form)
-        context["topic_form_error"] = "Нужно указать тему перед запуском pipeline."
+        context["topic_form_error"] = _get_topic_form_error(form)
         return render(request, "digestflow/topic_list.html", context, status=400)
 
     topic_name = form.cleaned_data["topic_name"]
@@ -100,12 +102,9 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "digest_payload": digest_payload,
         "has_digest": digest is not None,
         "content_package": content_package,
+        "display_error_message": _get_display_error_message(run),
         "is_insufficient_quality": is_insufficient_quality,
-        "insufficient_quality_message": (
-            run.result_message
-            or ranking_stage.get("insufficient_quality_message")
-            or run.error_message
-        ),
+        "insufficient_quality_message": _get_insufficient_quality_message(run),
         "metrics": metrics,
         "article_ids": source_stage.get("article_ids", []),
         "articles_after_dedupe": source_stage.get("articles_after_dedupe"),
@@ -158,6 +157,24 @@ def _sum_metric_values(*values):
     if not present_values:
         return None
     return round(sum(present_values), 6)
+
+
+def _get_display_error_message(run: DigestRun) -> str:
+    if run.status == DigestRun.STATUS_INSUFFICIENT_QUALITY:
+        return INSUFFICIENT_QUALITY_ERROR_FALLBACK if run.error_message else ""
+    return run.error_message
+
+
+def _get_insufficient_quality_message(run: DigestRun) -> str:
+    result_message = str(getattr(run, "result_message", "") or "").strip()
+    if result_message:
+        return result_message
+
+    centralized_message = str(getattr(result_messages, "INSUFFICIENT_QUALITY", "") or "").strip()
+    if centralized_message:
+        return centralized_message
+
+    return INSUFFICIENT_QUALITY_GENERIC_FALLBACK
 
 
 def _display_metric_value(value):
@@ -217,6 +234,13 @@ def _decorate_article_links(articles: list[dict]) -> list[dict]:
             }
         )
     return decorated_articles
+
+
+def _get_topic_form_error(form: TopicInputForm) -> str:
+    topic_errors = form.errors.get("topic_name", [])
+    if topic_errors:
+        return str(topic_errors[0])
+    return TOPIC_NAME_REQUIRED_MESSAGE
 
 def _build_topic_list_context(form: TopicInputForm | None = None) -> dict:
     topics = Topic.objects.order_by("name")
