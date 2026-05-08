@@ -3,39 +3,46 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
+from bs4.element import Tag
+
+from services.sources.detector import (
+    DEVTO_API_ROOT,
+    NormalizedSource,
+    build_dev_to_api_url,
+    classify_source_url,
+    detect_source_type,
+)
 
 
-DEVTO_HOST = "dev.to"
-DEVTO_API_ROOT = "https://dev.to/api/articles"
-
-
-@dataclass(frozen=True)
-class NormalizedSource:
-    original_url: str
-    normalized_url: str
-    source_type: str
-    platform: str
-    metadata: dict[str, Any]
+logger = logging.getLogger(__name__)
+WEAK_EXTRACTION_LENGTH = 200
+HTML_CONTENT_PREVIEW_LENGTH = 200
 
 
 def fetch_rss_articles(source_url: str, limit: int = 10) -> list[dict]:
     """Fetch source items from RSS or supported dev.to sources."""
     normalized_source = normalize_source_url(source_url)
+    logger.info(
+        "Detected source type for %s -> %s (%s)",
+        source_url,
+        normalized_source.source_type,
+        normalized_source.detection_reason,
+    )
 
-    if normalized_source.source_type in {"dev_to_tag", "dev_to_api_list"}:
+    if normalized_source.source_type == "devto_tag":
         return _fetch_dev_to_articles_from_list_source(normalized_source, limit=limit)
 
-    if normalized_source.source_type == "dev_to_article":
+    if normalized_source.source_type == "devto_article":
         article = _fetch_dev_to_single_article(normalized_source)
         return [article] if article else []
 
@@ -46,7 +53,7 @@ def get_rss_debug_snapshot(source_url: str, sample_size: int = 5) -> dict[str, A
     """Return a debug snapshot for RSS parsing and supported source normalization."""
     normalized_source = normalize_source_url(source_url)
 
-    if normalized_source.source_type in {"dev_to_tag", "dev_to_api_list", "dev_to_article"}:
+    if normalized_source.source_type in {"devto_tag", "devto_article"}:
         return {
             "feed_url": source_url,
             "normalized_url": normalized_source.normalized_url,
@@ -59,6 +66,7 @@ def get_rss_debug_snapshot(source_url: str, sample_size: int = 5) -> dict[str, A
             "href": normalized_source.normalized_url,
             "source_type": normalized_source.source_type,
             "platform": normalized_source.platform,
+            "detection_reason": normalized_source.detection_reason,
             "entries": [],
         }
 
@@ -76,6 +84,7 @@ def get_rss_debug_snapshot(source_url: str, sample_size: int = 5) -> dict[str, A
             "href": None,
             "source_type": normalized_source.source_type,
             "platform": normalized_source.platform,
+            "detection_reason": normalized_source.detection_reason,
             "entries": [],
         }
 
@@ -99,6 +108,7 @@ def get_rss_debug_snapshot(source_url: str, sample_size: int = 5) -> dict[str, A
         "href": getattr(feed, "href", None),
         "source_type": normalized_source.source_type,
         "platform": normalized_source.platform,
+        "detection_reason": normalized_source.detection_reason,
         "entries": [
             {
                 "available_keys": _entry_available_keys(entry),
@@ -117,61 +127,7 @@ def get_rss_debug_snapshot(source_url: str, sample_size: int = 5) -> dict[str, A
 
 def normalize_source_url(url: str) -> NormalizedSource:
     """Normalize a human-facing source URL into an internal fetchable source."""
-    parsed = urlparse(url)
-    host = _normalized_host(parsed.netloc)
-    path = parsed.path.strip("/")
-    query = parse_qs(parsed.query)
-
-    if host == DEVTO_HOST:
-        path_parts = [part for part in path.split("/") if part]
-
-        if len(path_parts) >= 2 and path_parts[0] == "t":
-            tag = path_parts[1]
-            return NormalizedSource(
-                original_url=url,
-                normalized_url=build_dev_to_api_url(tag),
-                source_type="dev_to_tag",
-                platform="dev.to",
-                metadata={"tag": tag},
-            )
-
-        if path_parts[:2] == ["api", "articles"]:
-            tag = (query.get("tag") or [""])[0].strip()
-            metadata: dict[str, Any] = {}
-            if tag:
-                metadata["tag"] = tag
-            return NormalizedSource(
-                original_url=url,
-                normalized_url=url,
-                source_type="dev_to_api_list",
-                platform="dev.to",
-                metadata=metadata,
-            )
-
-        if len(path_parts) >= 2 and path_parts[0] not in {"api", "t"}:
-            return NormalizedSource(
-                original_url=url,
-                normalized_url=url,
-                source_type="dev_to_article",
-                platform="dev.to",
-                metadata={"author": path_parts[0], "slug": path_parts[1]},
-            )
-
-    return NormalizedSource(
-        original_url=url,
-        normalized_url=url,
-        source_type="rss_feed",
-        platform=host or "unknown",
-        metadata={},
-    )
-
-
-def detect_source_type(url: str) -> str:
-    return normalize_source_url(url).source_type
-
-
-def build_dev_to_api_url(tag: str) -> str:
-    return f"{DEVTO_API_ROOT}?tag={tag}"
+    return classify_source_url(url)
 
 
 def fetch_dev_to_article_list(api_url: str) -> list[dict]:
@@ -185,11 +141,15 @@ def fetch_dev_to_article_content(article_id_or_url: int | str) -> dict[str, Any]
         detail_url = f"{DEVTO_API_ROOT}/{article_id}"
         payload = _fetch_json(detail_url)
         if isinstance(payload, dict):
+            final_content_source = "metadata_summary"
+            if str(payload.get("body_markdown") or "").strip() or str(payload.get("body_html") or "").strip():
+                final_content_source = "full_article_api"
+            content_diagnostics = _extract_dev_to_content_diagnostics(payload)
             return {
                 "title": str(payload.get("title", "")).strip(),
                 "url": str(payload.get("url", "")).strip(),
                 "description": str(payload.get("description") or "").strip() or None,
-                "content": _extract_dev_to_text(payload),
+                "content": content_diagnostics["content"],
                 "published_at": payload.get("published_at"),
                 "metadata": {
                     "devto_id": payload.get("id", article_id),
@@ -199,6 +159,12 @@ def fetch_dev_to_article_content(article_id_or_url: int | str) -> dict[str, Any]
                     "public_reactions_count": payload.get("public_reactions_count"),
                     "reading_time_minutes": payload.get("reading_time_minutes"),
                     "cover_image": payload.get("cover_image"),
+                    "final_content_source": final_content_source,
+                    "headings": content_diagnostics["headings"],
+                    "raw_html_heading_count": content_diagnostics["raw_html_heading_count"],
+                    "extracted_heading_count": content_diagnostics["extracted_heading_count"],
+                    "heading_extraction_strategy": content_diagnostics["heading_extraction_strategy"],
+                    "sample_detected_headings": content_diagnostics["sample_detected_headings"],
                 },
             }
 
@@ -210,13 +176,25 @@ def fetch_dev_to_article_content(article_id_or_url: int | str) -> dict[str, Any]
     if not html:
         return None
 
+    extraction = _extract_html_content_diagnostics(html)
+
     return {
         "title": _extract_html_title(html),
         "url": article_url,
         "description": None,
-        "content": _extract_html_text(html),
+        "content": extraction["content"],
         "published_at": None,
-        "metadata": {},
+        "metadata": {
+            "extraction_method": extraction["extraction_method"],
+            "extracted_content_length": extraction["extracted_content_length"],
+            "extraction_warning": extraction["extraction_warning"],
+            "extraction_candidates": extraction["extraction_candidates"],
+            "headings": extraction["headings"],
+            "raw_html_heading_count": extraction["raw_html_heading_count"],
+            "extracted_heading_count": extraction["extracted_heading_count"],
+            "heading_extraction_strategy": extraction["heading_extraction_strategy"],
+            "sample_detected_headings": extraction["sample_detected_headings"],
+        },
     }
 
 
@@ -260,6 +238,7 @@ def _fetch_dev_to_articles_from_list_source(
             "public_reactions_count": item.get("public_reactions_count"),
             "published_at": detail_published_at,
             "content_unavailable": not bool(content),
+            "detection_reason": normalized_source.detection_reason,
         }
         metadata.update(detail_metadata)
 
@@ -306,6 +285,7 @@ def _fetch_dev_to_single_article(normalized_source: NormalizedSource) -> dict[st
             "platform": "dev.to",
             "source_type": normalized_source.source_type,
             "content_unavailable": not bool(content),
+            "detection_reason": normalized_source.detection_reason,
             **(detail.get("metadata", {}) if isinstance(detail.get("metadata"), dict) else {}),
         },
     }
@@ -340,6 +320,9 @@ def _fetch_rss_feed_articles(normalized_source: NormalizedSource, limit: int = 1
         if len(snippet) > 300:
             snippet = snippet[:297].rstrip() + "..."
 
+        extraction = _extract_rss_article_content(url, snippet)
+        content = extraction["content"]
+
         published_at = None
         published_parsed = _get_entry_value(entry, "published_parsed")
         if published_parsed:
@@ -366,13 +349,21 @@ def _fetch_rss_feed_articles(normalized_source: NormalizedSource, limit: int = 1
                 "source_type": normalized_source.source_type,
                 "platform": normalized_source.platform,
                 "snippet": snippet,
-                "content": snippet,
+                "content": content,
                 "description": None,
                 "metadata": {
                     "platform": normalized_source.platform,
                     "source_type": normalized_source.source_type,
-                    "content_unavailable": not bool(snippet),
+                    "content_unavailable": not bool(content),
                     "published_at": published_at.isoformat() if published_at else None,
+                    "detection_reason": normalized_source.detection_reason,
+                    "extraction_method": extraction["extraction_method"],
+                    "extracted_content_length": extraction["extracted_content_length"],
+                    "extraction_warning": extraction["extraction_warning"],
+                    "extraction_candidates": extraction["extraction_candidates"],
+                    "final_content_source": extraction["final_content_source"],
+                    "rss_summary_length": extraction["rss_summary_length"],
+                    "html_extracted_content_length": extraction["html_extracted_content_length"],
                 },
                 "published_at": published_at.isoformat() if published_at else None,
             }
@@ -384,26 +375,296 @@ def _fetch_rss_feed_articles(normalized_source: NormalizedSource, limit: int = 1
     return articles
 
 
-def _extract_dev_to_text(payload: dict[str, Any]) -> str:
-    body_markdown = str(payload.get("body_markdown") or "").strip()
-    if body_markdown:
-        return _clean_text(body_markdown)
+def _extract_rss_article_content(article_url: str, rss_summary: str) -> dict[str, Any]:
+    normalized_summary = _clean_text(rss_summary)
+    summary_length = len(normalized_summary)
+    html = _fetch_url_text(article_url)
 
+    if not html:
+        logger.info(
+            "RSS article extraction for %s -> summary_len=%s html_len=0 method=rss_summary_fallback final_source=rss_summary",
+            article_url,
+            summary_length,
+        )
+        return {
+            "content": normalized_summary,
+            "extraction_method": "rss_summary_fallback",
+            "extracted_content_length": summary_length,
+            "extraction_warning": "html fetch failed; RSS summary used",
+            "extraction_candidates": [],
+            "final_content_source": "rss_summary",
+            "rss_summary_length": summary_length,
+            "html_extracted_content_length": 0,
+        }
+
+    html_extraction = _extract_html_content_diagnostics(html)
+    html_content = html_extraction["content"]
+    html_content_length = int(html_extraction["extracted_content_length"])
+
+    if html_content:
+        logger.info(
+            "RSS article extraction for %s -> summary_len=%s html_len=%s method=%s final_source=html_article_body",
+            article_url,
+            summary_length,
+            html_content_length,
+            html_extraction["extraction_method"],
+        )
+        return {
+            "content": html_content,
+            "extraction_method": str(html_extraction["extraction_method"] or "fallback_text"),
+            "extracted_content_length": html_content_length,
+            "extraction_warning": html_extraction["extraction_warning"],
+            "extraction_candidates": html_extraction["extraction_candidates"],
+            "final_content_source": "html_article_body",
+            "rss_summary_length": summary_length,
+            "html_extracted_content_length": html_content_length,
+        }
+
+    warning = html_extraction["extraction_warning"] or "no article container found; RSS summary used"
+    if normalized_summary:
+        warning = f"{warning}; RSS summary used"
+    logger.info(
+        "RSS article extraction for %s -> summary_len=%s html_len=%s method=rss_summary_fallback final_source=rss_summary",
+        article_url,
+        summary_length,
+        html_content_length,
+    )
+    return {
+        "content": normalized_summary,
+        "extraction_method": "rss_summary_fallback",
+        "extracted_content_length": summary_length,
+        "extraction_warning": warning,
+        "extraction_candidates": html_extraction["extraction_candidates"],
+        "final_content_source": "rss_summary" if normalized_summary else "none",
+        "rss_summary_length": summary_length,
+        "html_extracted_content_length": html_content_length,
+    }
+
+
+def _extract_dev_to_content_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    body_markdown = str(payload.get("body_markdown") or "").strip()
     body_html = str(payload.get("body_html") or "").strip()
+    raw_html_headings = _extract_html_headings(body_html) if body_html else []
+
+    if body_markdown:
+        markdown_headings = _extract_markdown_headings(body_markdown)
+        return {
+            "content": _clean_text(body_markdown),
+            "headings": markdown_headings,
+            "raw_html_heading_count": len(raw_html_headings),
+            "extracted_heading_count": len(markdown_headings),
+            "heading_extraction_strategy": "markdown_headings" if markdown_headings else "markdown_without_headings",
+            "sample_detected_headings": markdown_headings[:5],
+        }
+
     if body_html:
-        return _extract_html_text(body_html)
+        extraction = _extract_html_content_diagnostics(body_html)
+        return {
+            "content": extraction["content"],
+            "headings": extraction["headings"],
+            "raw_html_heading_count": extraction["raw_html_heading_count"],
+            "extracted_heading_count": extraction["extracted_heading_count"],
+            "heading_extraction_strategy": extraction["heading_extraction_strategy"],
+            "sample_detected_headings": extraction["sample_detected_headings"],
+        }
 
     description = str(payload.get("description") or "").strip()
-    return _clean_text(description)
+    return {
+        "content": _clean_text(description),
+        "headings": [],
+        "raw_html_heading_count": 0,
+        "extracted_heading_count": 0,
+        "heading_extraction_strategy": "none",
+        "sample_detected_headings": [],
+    }
+
+
+def _extract_dev_to_text(payload: dict[str, Any]) -> str:
+    return str(_extract_dev_to_content_diagnostics(payload)["content"])
 
 
 def _extract_html_text(html: str) -> str:
+    return _extract_html_content_diagnostics(html)["content"]
+
+
+def _extract_html_content_diagnostics(html: str) -> dict[str, Any]:
     if not html:
-        return ""
+        return {
+            "content": "",
+            "extraction_method": "empty_html",
+            "extracted_content_length": 0,
+            "extraction_warning": "no html content was fetched",
+            "content_preview": "",
+            "extraction_candidates": [],
+            "headings": [],
+            "raw_html_heading_count": 0,
+            "extracted_heading_count": 0,
+            "heading_extraction_strategy": "none",
+            "sample_detected_headings": [],
+        }
+
     soup = BeautifulSoup(html, "html.parser")
-    article = soup.find("article")
-    text = article.get_text(separator=" ", strip=True) if article else soup.get_text(separator=" ", strip=True)
-    return _clean_text(text)
+    raw_html_headings = _extract_heading_texts(soup)
+    _remove_boilerplate_nodes(soup)
+
+    candidate_builders = [
+        ("article_tag", lambda root: root.find("article")),
+        ("main_article", lambda root: root.select_one("main article")),
+        ("role_main_article", lambda root: root.select_one('[role="main"] article')),
+        ("role_main", lambda root: root.select_one('[role="main"]')),
+        ("main_tag", lambda root: root.find("main")),
+    ]
+    candidate_builders.extend(
+        [
+            (f"common_selector:{selector}", lambda root, selector=selector: root.select_one(selector))
+            for selector in (
+                ".article-content",
+                ".post-content",
+                ".entry-content",
+                ".article-body",
+                ".post-body",
+                ".story-body",
+                ".content__body",
+                ".blog-post",
+                ".blog-content",
+                ".c-article-body",
+            )
+        ]
+    )
+
+    candidates: list[dict[str, Any]] = []
+    candidate_diagnostics: list[dict[str, Any]] = []
+    for method, builder in candidate_builders:
+        try:
+            node = builder(soup)
+        except Exception:
+            node = None
+        if node is None:
+            candidate_diagnostics.append(
+                {
+                    "selector": method,
+                    "found": False,
+                    "text_length": 0,
+                    "text_preview": "",
+                    "rejection_reason": "not found",
+                }
+            )
+            continue
+        text = _extract_readable_block_text(node)
+        text_length = len(text)
+        text_preview = text[:HTML_CONTENT_PREVIEW_LENGTH]
+        if text:
+            candidates.append(
+                {
+                    "method": method,
+                    "node": node,
+                    "text": text,
+                    "text_length": text_length,
+                    "text_preview": text_preview,
+                    "score": _score_extracted_block(text),
+                }
+            )
+            candidate_diagnostics.append(
+                {
+                    "selector": method,
+                    "found": True,
+                    "text_length": text_length,
+                    "text_preview": text_preview,
+                    "rejection_reason": None,
+                }
+            )
+        else:
+            candidate_diagnostics.append(
+                {
+                    "selector": method,
+                    "found": True,
+                    "text_length": 0,
+                    "text_preview": "",
+                    "rejection_reason": "no readable text extracted",
+                }
+            )
+
+    body_text = _extract_readable_block_text(soup.body or soup)
+    if body_text:
+        candidates.append(
+            {
+                "method": "fallback_text",
+                "node": soup.body or soup,
+                "text": body_text,
+                "text_length": len(body_text),
+                "text_preview": body_text[:HTML_CONTENT_PREVIEW_LENGTH],
+                "score": _score_extracted_block(body_text) - 50,
+            }
+        )
+        candidate_diagnostics.append(
+            {
+                "selector": "fallback_text",
+                "found": True,
+                "text_length": len(body_text),
+                "text_preview": body_text[:HTML_CONTENT_PREVIEW_LENGTH],
+                "rejection_reason": None,
+            }
+        )
+    else:
+        candidate_diagnostics.append(
+            {
+                "selector": "fallback_text",
+                "found": False,
+                "text_length": 0,
+                "text_preview": "",
+                "rejection_reason": "no readable text extracted",
+            }
+        )
+
+    if not candidates:
+        return {
+            "content": "",
+            "extraction_method": "no_candidate_text",
+            "extracted_content_length": 0,
+            "extraction_warning": "no readable article text was extracted",
+            "content_preview": "",
+            "extraction_candidates": candidate_diagnostics,
+            "headings": [],
+            "raw_html_heading_count": len(raw_html_headings),
+            "extracted_heading_count": 0,
+            "heading_extraction_strategy": "none",
+            "sample_detected_headings": [],
+        }
+
+    best_candidate = max(candidates, key=lambda candidate: candidate["score"])
+    content = _clean_text(best_candidate["text"])
+    extracted_headings = _extract_heading_texts(best_candidate.get("node"))
+    extracted_content_length = len(content)
+    extraction_warning = None
+    if extracted_content_length < WEAK_EXTRACTION_LENGTH:
+        extraction_warning = "extracted content is very short"
+
+    diagnostics_by_selector = {item["selector"]: item for item in candidate_diagnostics}
+    for candidate in candidates:
+        item = diagnostics_by_selector.get(candidate["method"])
+        if item is None:
+            continue
+        if candidate["method"] == best_candidate["method"]:
+            item["rejection_reason"] = None
+            continue
+        if candidate["text_length"] < WEAK_EXTRACTION_LENGTH:
+            item["rejection_reason"] = "too short"
+        else:
+            item["rejection_reason"] = "low article-like score"
+
+    return {
+        "content": content,
+        "extraction_method": best_candidate["method"],
+        "extracted_content_length": extracted_content_length,
+        "extraction_warning": extraction_warning,
+        "content_preview": content[:HTML_CONTENT_PREVIEW_LENGTH],
+        "extraction_candidates": candidate_diagnostics,
+        "headings": extracted_headings,
+        "raw_html_heading_count": len(raw_html_headings),
+        "extracted_heading_count": len(extracted_headings),
+        "heading_extraction_strategy": "html_headings" if extracted_headings else "none",
+        "sample_detected_headings": extracted_headings[:5],
+    }
 
 
 def _extract_html_title(html: str) -> str:
@@ -416,6 +677,108 @@ def _extract_html_title(html: str) -> str:
     if soup.title and soup.title.string:
         return _clean_text(soup.title.string)
     return ""
+
+
+def _remove_boilerplate_nodes(soup: BeautifulSoup) -> None:
+    for tag_name in ("script", "style", "nav", "header", "footer", "aside", "noscript", "form", "svg"):
+        for node in soup.find_all(tag_name):
+            if isinstance(node, Tag):
+                node.decompose()
+
+    boilerplate_markers = (
+        "cookie",
+        "banner",
+        "subscribe",
+        "newsletter",
+        "share",
+        "social",
+        "menu",
+        "nav",
+        "footer",
+        "header",
+        "related",
+        "recommend",
+        "promo",
+        "advert",
+    )
+    for node in list(soup.find_all(True)):
+        if not isinstance(node, Tag):
+            continue
+        attrs = getattr(node, "attrs", None)
+        if not isinstance(attrs, dict):
+            continue
+
+        class_values = attrs.get("class", [])
+        if isinstance(class_values, str):
+            classes = class_values
+        elif isinstance(class_values, (list, tuple)):
+            classes = " ".join(str(value) for value in class_values if value)
+        else:
+            classes = ""
+
+        node_id = str(attrs.get("id") or "")
+        aria_label = str(attrs.get("aria-label") or "")
+        marker_text = " ".join((classes, node_id, aria_label)).lower()
+        if any(marker in marker_text for marker in boilerplate_markers):
+            node.decompose()
+
+
+def _extract_readable_block_text(node) -> str:
+    if node is None:
+        return ""
+
+    parts: list[str] = []
+    for element in node.find_all(
+        ["p", "h1", "h2", "h3", "h4", "blockquote", "li"],
+        recursive=True,
+    ):
+        text = _clean_text(element.get_text(separator=" ", strip=True))
+        if text:
+            parts.append(text)
+
+    if not parts:
+        return _clean_text(node.get_text(separator=" ", strip=True))
+
+    return _clean_text(" ".join(parts))
+
+
+def _extract_markdown_headings(markdown: str) -> list[str]:
+    headings: list[str] = []
+    for line in str(markdown).splitlines():
+        match = re.match(r"^\s{0,3}#{1,6}\s+(.*\S)\s*$", line)
+        if not match:
+            continue
+        heading = _clean_text(match.group(1).strip("# ").strip())
+        if heading and heading not in headings:
+            headings.append(heading)
+    return headings[:12]
+
+
+def _extract_html_headings(html: str) -> list[str]:
+    if not html:
+        return []
+    soup = BeautifulSoup(html, "html.parser")
+    return _extract_heading_texts(soup)
+
+
+def _extract_heading_texts(node) -> list[str]:
+    if node is None:
+        return []
+
+    headings: list[str] = []
+    for element in node.find_all(["h1", "h2", "h3", "h4", "h5", "h6"], recursive=True):
+        text = _clean_text(element.get_text(separator=" ", strip=True))
+        if text and text not in headings:
+            headings.append(text)
+    return headings[:12]
+
+
+def _score_extracted_block(text: str) -> int:
+    normalized = _clean_text(text)
+    if not normalized:
+        return 0
+    paragraph_like_bonus = normalized.count(". ") * 5
+    return len(normalized) + paragraph_like_bonus
 
 
 def _build_snippet(content: str, limit: int = 280) -> str:
@@ -580,8 +943,3 @@ def _entry_available_keys(entry) -> list[str]:
             return []
 
     return sorted(str(key) for key in vars(entry).keys()) if hasattr(entry, "__dict__") else []
-
-
-def _normalized_host(netloc: str) -> str:
-    host = (netloc or "").lower()
-    return host[4:] if host.startswith("www.") else host

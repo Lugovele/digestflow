@@ -29,7 +29,7 @@ class TopicAndSourceModelTests(TestCase):
             topic=topic,
             original_url="https://dev.to/t/ai",
             normalized_url="https://dev.to/api/articles?tag=ai",
-            source_type="dev_to_tag",
+            source_type="devto_tag",
             platform="dev.to",
         )
 

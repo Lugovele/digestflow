@@ -264,13 +264,13 @@ class TopicRssSourceTests(TestCase):
         response = self.client.post(
             reverse("create-topic-and-run"),
             data={
-                "topic_name": "Snippet RSS Topic",
+                "topic_name": "Workflow operations",
                 "source_url": "https://dev.to/feed/example",
             },
         )
 
         self.assertEqual(response.status_code, 302)
-        topic = Topic.objects.get(name="Snippet RSS Topic")
+        topic = Topic.objects.get(name="Workflow operations")
         run = DigestRun.objects.get(topic=topic)
         run.refresh_from_db()
         self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)

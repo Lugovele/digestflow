@@ -13,7 +13,7 @@ from services.digests import generate_digest_for_run
 from services.config.author_profile import load_author_profile
 from services.json_utils import make_json_safe
 from services.packaging import generate_content_package_for_digest
-from services.processing.cleaner import clean_source_items
+from services.processing.cleaner import clean_source_items_with_diagnostics
 from services.processing.deduper import dedupe_source_items_with_metrics
 from services.processing.ranker import DEFAULT_MIN_QUALITY_SCORE, rank_source_items
 from services.sources import get_demo_articles_for_topic, save_articles_for_topic
@@ -62,7 +62,8 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             raise ValueError("Source stage returned no articles.")
 
         source_metrics = _build_source_input_metrics(raw_items_list)
-        cleaned_items = clean_source_items(raw_items_list)
+        cleaned_items, cleaning_rejections = clean_source_items_with_diagnostics(raw_items_list)
+        content_tier_counts = _build_content_tier_counts(cleaned_items, cleaning_rejections)
         removed_during_cleaning = len(raw_items_list) - len(cleaned_items)
         _debug(run.id, "OK", f"articles cleaned -> {len(cleaned_items)}")
         _debug(run.id, "INFO", f"removed during cleaning -> {removed_during_cleaning}")
@@ -71,6 +72,9 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             **run.metrics,
             "source_stage": {
                 "status": "completed" if cleaned_items else "failed_cleaning",
+                "source_url": source_metrics["source_url"],
+                "detected_source_type": source_metrics["detected_source_type"],
+                "detection_reason": source_metrics["detection_reason"],
                 "raw_items_count": source_metrics["raw_items_count"],
                 "article_links_extracted": source_metrics["article_links_extracted"],
                 "article_contents_fetched": source_metrics["article_contents_fetched"],
@@ -79,6 +83,8 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 "articles_count": len(raw_items_list),
                 "articles_after_cleaning": len(cleaned_items),
                 "removed_during_cleaning": removed_during_cleaning,
+                **content_tier_counts,
+                "cleaning_rejections": cleaning_rejections,
             },
         })
         run.save(update_fields=["metrics", "updated_at"])
@@ -345,12 +351,39 @@ def _build_failed_result_message(exc: Exception) -> str:
     return result_messages.FAILED
 
 
+def _build_content_tier_counts(cleaned_items: list[dict], cleaning_rejections: list[dict]) -> dict[str, int]:
+    counts = {
+        "full_article_count": 0,
+        "rich_summary_count": 0,
+        "weak_snippet_count": 0,
+        "missing_content_count": 0,
+    }
+
+    for item in cleaned_items:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        tier = str(metadata.get("content_tier") or "").strip()
+        key = f"{tier}_count"
+        if key in counts:
+            counts[key] += 1
+
+    for item in cleaning_rejections:
+        tier = str(item.get("content_tier") or "").strip()
+        key = f"{tier}_count"
+        if key in counts:
+            counts[key] += 1
+
+    return counts
+
+
 def _build_source_input_metrics(raw_items: list[dict]) -> dict[str, int | str | None]:
     raw_items_count = len(raw_items)
     article_links_extracted = 0
     article_contents_fetched = 0
     content_unavailable_count = 0
     normalized_source_type = None
+    detected_source_type = None
+    detection_reason = None
+    source_url = None
 
     for item in raw_items:
         if not isinstance(item, dict):
@@ -358,18 +391,27 @@ def _build_source_input_metrics(raw_items: list[dict]) -> dict[str, int | str | 
         if item.get("url"):
             article_links_extracted += 1
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if source_url is None:
+            source_url = item.get("source_url") or item.get("source_api_url")
         if normalized_source_type is None:
             normalized_source_type = (
                 item.get("source_type")
                 or metadata.get("source_type")
                 or "raw_items"
             )
+        if detected_source_type is None:
+            detected_source_type = item.get("source_type") or metadata.get("source_type")
+        if detection_reason is None:
+            detection_reason = metadata.get("detection_reason")
         if metadata.get("content_unavailable"):
             content_unavailable_count += 1
         elif str(item.get("content") or item.get("snippet") or "").strip():
             article_contents_fetched += 1
 
     return {
+        "source_url": source_url,
+        "detected_source_type": detected_source_type or normalized_source_type or "raw_items",
+        "detection_reason": detection_reason,
         "raw_items_count": raw_items_count,
         "article_links_extracted": article_links_extracted,
         "article_contents_fetched": article_contents_fetched,
