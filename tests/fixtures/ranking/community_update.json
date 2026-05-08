@@ -1,0 +1,31 @@
+{
+  "keywords": ["ai agents"],
+  "item": {
+    "title": "Congrats to the OpenClaw Challenge Winners!",
+    "url": "https://example.com/fixtures/community-update",
+    "source": "DEV Community",
+    "snippet": "A community roundup celebrating challenge winners, event highlights, and a few agent-project mentions from the week.",
+    "content": "This community update highlights challenge winners, an event recap, and a few brief project references.\n\n## Winners\nThe winners are announced with short notes.\n\n## Event Recap\nThe event recap highlights talks and demos.\n\n## Project Mentions\nA few agent projects are mentioned in passing.",
+    "metadata": {
+      "content_tier": "rich_summary",
+      "content_length": 412,
+      "headings": [
+        "Winners",
+        "Event Recap",
+        "Project Mentions"
+      ],
+      "raw_html_heading_count": 3,
+      "extracted_heading_count": 3,
+      "heading_extraction_strategy": "markdown_headings",
+      "sample_detected_headings": [
+        "Winners",
+        "Event Recap"
+      ]
+    }
+  },
+  "expected": {
+    "primary_article_type": "community_update",
+    "dominant_tags": ["event"],
+    "rejected_for_digest": true
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "keywords": ["ai agents"],
+  "item": {
+    "title": "Deploying a Multi-Agent System with Terraform and Cloud Run",
+    "url": "https://example.com/fixtures/multi-agent-tutorial",
+    "source": "DEV Community",
+    "snippet": "A deployment guide for a multi-agent system using Terraform and Cloud Run with one MCP integration section and a short least-privilege note.",
+    "content": "This tutorial walks through a multi-agent system deployed on Cloud Run with Terraform and rollout validation.\n\n## Overview\nWe start with a multi-agent system design and the deployment goals.\n\n## Terraform Provisioning\nTerraform creates Cloud Run services and supporting deployment resources.\n\n## MCP Integration\nThe MCP server exposes tool access for a knowledge connector and request routing.\n\n## Service Accounts and Least Privilege\nService accounts and least privilege are covered as supporting operational guidance.\n\n## Validation and Rollout\nTesting and rollout checks confirm the deployment works in production.",
+    "metadata": {
+      "content_tier": "full_article",
+      "content_length": 758,
+      "headings": [
+        "Overview",
+        "Terraform Provisioning",
+        "MCP Integration",
+        "Service Accounts and Least Privilege",
+        "Validation and Rollout"
+      ],
+      "raw_html_heading_count": 5,
+      "extracted_heading_count": 5,
+      "heading_extraction_strategy": "markdown_headings",
+      "sample_detected_headings": [
+        "Terraform Provisioning",
+        "MCP Integration",
+        "Service Accounts and Least Privilege"
+      ]
+    }
+  },
+  "expected": {
+    "primary_article_type": "tutorial",
+    "dominant_tags": ["multi_agent", "cloud", "devops", "terraform", "google_cloud"],
+    "supporting_tags": ["mcp", "security", "auth", "testing"],
+    "not_dominant_tags": ["mcp", "security", "auth"]
+  }
+}

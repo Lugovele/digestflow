@@ -1,0 +1,32 @@
+{
+  "keywords": ["ai agents"],
+  "item": {
+    "title": "Designing a team of agents",
+    "url": "https://example.com/fixtures/system-design",
+    "source": "DEV Community",
+    "snippet": "A conceptual look at agent coordination, planner and executor roles, and system design tradeoffs for teams of agents.",
+    "content": "This conceptual article examines how a team of agents coordinates work and where planner and executor roles should separate.\n\n## Coordination Model\nAgent coordination and task delegation drive the system design.\n\n## Planner and Executor Roles\nPlanner and executor responsibilities create different failure modes.\n\n## Governance Layer\nPermissions and guardrails are discussed as secondary concerns.\n\n## Memory Boundaries\nLong-term memory is mentioned as one architectural consideration.",
+    "metadata": {
+      "content_tier": "full_article",
+      "content_length": 751,
+      "headings": [
+        "Coordination Model",
+        "Planner and Executor Roles",
+        "Governance Layer",
+        "Memory Boundaries"
+      ],
+      "raw_html_heading_count": 4,
+      "extracted_heading_count": 4,
+      "heading_extraction_strategy": "markdown_headings",
+      "sample_detected_headings": [
+        "Coordination Model",
+        "Planner and Executor Roles"
+      ]
+    }
+  },
+  "expected": {
+    "primary_article_type": "system_design",
+    "supporting_tags": ["security", "auth", "memory"],
+    "not_dominant_tags": ["security", "auth", "memory"]
+  }
+}

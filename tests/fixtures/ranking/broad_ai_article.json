@@ -1,0 +1,19 @@
+{
+  "keywords": ["ai agents"],
+  "item": {
+    "title": "I Built My Mom an AI Recipe Helper for Mother's Day",
+    "url": "https://example.com/fixtures/broad-ai",
+    "source": "Personal Blog",
+    "snippet": "A personal project using OpenAI, a small app interface, and cloud hosting to suggest recipes and shopping ideas.",
+    "content": "This personal project uses AI prompts to suggest recipes and shopping ideas. The app runs in the cloud and includes a lightweight workflow for generating meal plans. It does not discuss agents, orchestration, tool use, delegation, or memory beyond a passing note about conversation history.",
+    "metadata": {
+      "content_tier": "full_article",
+      "content_length": 596
+    }
+  },
+  "expected": {
+    "max_topic_relevance_score": 1.0,
+    "max_topic_specificity_score": 0.5,
+    "rejected_for_digest": true
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "keywords": ["ai agents"],
+  "item": {
+    "title": "MCP Gateway Internals for Tool-Using Agents",
+    "url": "https://example.com/fixtures/mcp-gateway",
+    "source": "DEV Community",
+    "snippet": "A deep technical analysis of an MCP gateway, request routing, tool contracts, and one Google Cloud Docs knowledge tool section.",
+    "content": "This article explains the internals of an MCP gateway for tool-using agents and how request routing, tool contracts, and capability boundaries work.\n\n## Architecture\nThe gateway sits between agent callers and tool adapters.\n\n## MCP Gateway\nThe MCP gateway coordinates tool calls, request routing, and capability boundaries.\n\n## OAuth Tokens\nOAuth token exchange protects one delegated access flow in the gateway.\n\n## Policy Enforcement\nSecurity and authorization rules are applied before tool execution.\n\n## Google Cloud Docs (Knowledge Tool)\nOne knowledge tool uses Google Cloud Docs as a document source.\n\nThe MCP gateway appears throughout the article as the central mechanism. Security and authorization are supporting technical concerns. Cloud is mentioned mostly in the knowledge tool section.",
+    "metadata": {
+      "content_tier": "full_article",
+      "content_length": 983,
+      "headings": [
+        "Architecture",
+        "MCP Gateway",
+        "OAuth Tokens",
+        "Policy Enforcement",
+        "Google Cloud Docs (Knowledge Tool)"
+      ],
+      "raw_html_heading_count": 5,
+      "extracted_heading_count": 5,
+      "heading_extraction_strategy": "markdown_headings",
+      "sample_detected_headings": [
+        "MCP Gateway",
+        "OAuth Tokens",
+        "Google Cloud Docs (Knowledge Tool)"
+      ]
+    }
+  },
+  "expected": {
+    "primary_article_type": "deep_technical",
+    "dominant_tags": ["mcp"],
+    "supporting_tags": ["security", "auth", "oauth", "cloud", "google_cloud"],
+    "not_dominant_tags": ["cloud", "google_cloud", "security", "auth"]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "keywords": ["ai agents"],
+  "item": {
+    "title": "How to Authorize AI Agents Using Token Exchange Open Standards",
+    "url": "https://example.com/fixtures/security-heavy",
+    "source": "DEV Community",
+    "snippet": "This article focuses on token exchange, delegated access, authorization boundaries, and policy controls for AI agents.",
+    "content": "The article explains why AI agents need delegated authorization and how token exchange supports secure tool access.\n\n## Token Exchange\nToken exchange and OAuth flows are the central mechanism.\n\n## Authorization Boundaries\nPermissions, identity, and access control shape the security model.\n\n## Policy Enforcement\nGovernance and scoped access rules keep agent actions constrained.\n\nCloud deployment is mentioned briefly as an implementation detail.",
+    "metadata": {
+      "content_tier": "full_article",
+      "content_length": 734,
+      "headings": [
+        "Token Exchange",
+        "Authorization Boundaries",
+        "Policy Enforcement"
+      ],
+      "raw_html_heading_count": 3,
+      "extracted_heading_count": 3,
+      "heading_extraction_strategy": "markdown_headings",
+      "sample_detected_headings": [
+        "Token Exchange",
+        "Authorization Boundaries"
+      ]
+    }
+  },
+  "expected": {
+    "primary_article_type": "architecture_security",
+    "dominant_tags": ["ai_agents", "security", "auth", "oauth"],
+    "supporting_tags": ["cloud"],
+    "not_dominant_tags": ["cloud"]
+  }
+}

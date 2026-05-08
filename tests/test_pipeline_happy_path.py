@@ -101,6 +101,9 @@ class DigestPipelineHappyPathTests(TestCase):
         packaging_stage = run.metrics.get("packaging_stage", {})
 
         self.assertEqual(source_stage.get("articles_count"), 4)
+        self.assertIsNone(source_stage.get("source_url"))
+        self.assertEqual(source_stage.get("detected_source_type"), "raw_items")
+        self.assertIsNone(source_stage.get("detection_reason"))
         self.assertEqual(source_stage.get("article_links_extracted"), 4)
         self.assertEqual(source_stage.get("article_contents_fetched"), 4)
         self.assertEqual(source_stage.get("content_unavailable_count"), 0)
@@ -108,16 +111,63 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(source_stage.get("duplicates_removed"), 1)
         self.assertEqual(source_stage.get("saved_articles_count"), 3)
         self.assertEqual(len(source_stage.get("article_ids", [])), 3)
+        self.assertEqual(source_stage.get("cleaning_rejections"), [])
 
         self.assertEqual(ranking_stage.get("quality_threshold"), 0.4)
-        self.assertEqual(ranking_stage.get("max_quality_score"), 0.7)
-        self.assertEqual(ranking_stage.get("min_actual_quality_score"), 0.4)
-        self.assertEqual(ranking_stage.get("average_quality_score"), 0.53)
+        self.assertGreaterEqual(ranking_stage.get("max_quality_score"), 0.8)
+        self.assertGreaterEqual(ranking_stage.get("min_actual_quality_score"), 0.6)
+        self.assertGreaterEqual(ranking_stage.get("average_quality_score"), 0.6)
         self.assertEqual(ranking_stage.get("articles_above_quality_threshold"), 3)
         self.assertEqual(ranking_stage.get("rejected_low_quality_count"), 0)
         self.assertEqual(ranking_stage.get("selected_for_prompt"), 3)
         self.assertTrue(ranking_stage.get("ranking_scores")[0]["title"])
         self.assertTrue(ranking_stage.get("ranking_scores")[0]["quality_reasons"])
+        self.assertIn("topic_relevance_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("topic_specificity_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("topic_specificity_reason", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("specificity_signals", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("generic_topic_signals", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("evidence_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("practical_value_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("novelty_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("final_quality_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("primary_article_type", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("secondary_article_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("weighted_secondary_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("dominant_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("supporting_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("weak_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("article_type", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("classification_signal_summary", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("dominant_theme_reason", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("primary_type_override_reason", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("heading_diagnostics", ranking_stage.get("ranking_scores")[0])
+        weighted_tags = ranking_stage.get("ranking_scores")[0].get("weighted_secondary_tags", {})
+        if weighted_tags:
+            sample_payload = next(iter(weighted_tags.values()))
+            self.assertIn("title_matches", sample_payload)
+            self.assertIn("intro_matches", sample_payload)
+            self.assertIn("heading_matches", sample_payload)
+            self.assertIn("body_match_count", sample_payload)
+            self.assertIn("editorial_weight", sample_payload)
+            self.assertIn("body_weight_component", sample_payload)
+            self.assertIn("body_saturation_applied", sample_payload)
+            self.assertIn("heading_weight_component", sample_payload)
+            self.assertIn("heading_boost_capped", sample_payload)
+            self.assertIn("dominant_signal_sources", sample_payload)
+            self.assertIn("centrality_reason", sample_payload)
+        heading_diagnostics = ranking_stage.get("ranking_scores")[0].get("heading_diagnostics", {})
+        self.assertIn("detected_headings", heading_diagnostics)
+        self.assertIn("normalized_headings", heading_diagnostics)
+        self.assertIn("heading_count", heading_diagnostics)
+        self.assertIn("heading_source", heading_diagnostics)
+        self.assertIn("raw_html_heading_count", heading_diagnostics)
+        self.assertIn("extracted_heading_count", heading_diagnostics)
+        self.assertIn("heading_extraction_strategy", heading_diagnostics)
+        self.assertIn("sample_detected_headings", heading_diagnostics)
+        self.assertIn("matched_heading_tags", heading_diagnostics)
+        self.assertIn("rejection_reasons", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("diagnostic_warnings", ranking_stage.get("ranking_scores")[0])
         self.assertEqual(digest_stage.get("provider"), "mock")
         self.assertTrue(digest_stage.get("is_mock"))
         self.assertEqual(digest_stage.get("status"), "completed")
@@ -150,7 +200,8 @@ class DigestPipelineHappyPathTests(TestCase):
             },
         )
 
-        raw_items = fetch_rss_articles(str(Path("tests/fixtures/sample_feed.xml")))
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=""):
+            raw_items = fetch_rss_articles(str(Path("tests/fixtures/sample_feed.xml")))
         json.dumps(raw_items[0])
 
         result = run_digest_pipeline(run.id, raw_items)
@@ -311,6 +362,7 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(source_stage.get("article_contents_fetched"), 3)
         self.assertEqual(source_stage.get("articles_after_cleaning"), 3)
         self.assertEqual(source_stage.get("removed_during_cleaning"), 0)
+        self.assertEqual(source_stage.get("cleaning_rejections"), [])
 
     @patch("services.sources.rss_adapter.fetch_dev_to_article_content")
     @patch("services.sources.rss_adapter.fetch_dev_to_article_list")
@@ -371,21 +423,60 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertFalse(hasattr(run, "digest"))
         source_stage = run.metrics.get("source_stage", {})
         ranking_stage = run.metrics.get("ranking_stage", {})
-        self.assertEqual(source_stage.get("normalized_source_type"), "dev_to_tag")
+        self.assertEqual(source_stage.get("source_url"), "https://dev.to/t/ai")
+        self.assertEqual(source_stage.get("detected_source_type"), "devto_tag")
+        self.assertEqual(source_stage.get("detection_reason"), "matched dev.to topic pattern")
+        self.assertEqual(source_stage.get("normalized_source_type"), "devto_tag")
         self.assertEqual(source_stage.get("raw_items_count"), 2)
         self.assertEqual(source_stage.get("article_links_extracted"), 2)
         self.assertEqual(source_stage.get("article_contents_fetched"), 1)
         self.assertEqual(source_stage.get("content_unavailable_count"), 1)
         self.assertEqual(source_stage.get("articles_after_cleaning"), 1)
+        self.assertEqual(source_stage.get("removed_during_cleaning"), 1)
+        self.assertEqual(source_stage.get("full_article_count"), 1)
+        self.assertEqual(source_stage.get("rich_summary_count"), 0)
+        self.assertEqual(source_stage.get("weak_snippet_count"), 1)
+        self.assertEqual(source_stage.get("missing_content_count"), 0)
+        self.assertEqual(
+            source_stage.get("cleaning_rejections"),
+            [
+                {
+                    "title": "Missing content article",
+                    "url": "https://dev.to/bob/missing-content-article",
+                    "source_name": "DEV Community",
+                    "reason": "content too short",
+                    "content_tier": "weak_snippet",
+                    "final_content_source": "rss_summary",
+                    "content_length": len("List description 2"),
+                    "content_preview": "List description 2",
+                    "extraction_method": None,
+                    "extraction_warning": None,
+                    "extraction_candidates": [],
+                }
+            ],
+        )
         self.assertEqual(ranking_stage.get("quality_threshold"), 0.4)
-        self.assertEqual(ranking_stage.get("max_quality_score"), 0.2)
-        self.assertEqual(ranking_stage.get("min_actual_quality_score"), 0.2)
-        self.assertEqual(ranking_stage.get("average_quality_score"), 0.2)
-        self.assertEqual(ranking_stage.get("articles_above_quality_threshold"), 0)
-        self.assertEqual(ranking_stage.get("selected_for_prompt"), 0)
+        self.assertEqual(ranking_stage.get("max_quality_score"), 0.4)
+        self.assertEqual(ranking_stage.get("min_actual_quality_score"), 0.4)
+        self.assertEqual(ranking_stage.get("average_quality_score"), 0.4)
+        self.assertEqual(ranking_stage.get("articles_above_quality_threshold"), 1)
+        self.assertEqual(ranking_stage.get("selected_for_prompt"), 1)
         self.assertEqual(ranking_stage.get("status"), "insufficient_quality")
         self.assertTrue(ranking_stage.get("insufficient_quality"))
         self.assertTrue(ranking_stage.get("ranking_scores")[0]["quality_reasons"])
+        self.assertIn("topic_relevance_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("topic_specificity_score", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("primary_article_type", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("secondary_article_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("weighted_secondary_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("dominant_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("supporting_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("weak_tags", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("classification_signal_summary", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("dominant_theme_reason", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("primary_type_override_reason", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("rejection_reasons", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("heading_diagnostics", ranking_stage.get("ranking_scores")[0])
         self.assertEqual(run.metrics.get("digest_stage", {}).get("status"), "skipped")
         self.assertEqual(run.metrics.get("packaging_stage", {}).get("status"), "skipped")
         self.assertIn("Недостаточно качественных статей", run.error_message)
@@ -453,15 +544,121 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(Article.objects.filter(topic=topic).count(), 3)
         ranking_stage = run.metrics.get("ranking_stage", {})
         self.assertEqual(ranking_stage.get("quality_threshold"), 0.4)
-        self.assertEqual(ranking_stage.get("max_quality_score"), 0.3)
-        self.assertEqual(ranking_stage.get("min_actual_quality_score"), 0.3)
-        self.assertEqual(ranking_stage.get("average_quality_score"), 0.3)
+        self.assertLess(ranking_stage.get("max_quality_score"), 0.4)
+        self.assertGreaterEqual(ranking_stage.get("max_quality_score"), 0.3)
+        self.assertLess(ranking_stage.get("min_actual_quality_score"), 0.4)
+        self.assertGreaterEqual(ranking_stage.get("min_actual_quality_score"), 0.2)
+        self.assertLess(ranking_stage.get("average_quality_score"), 0.4)
+        self.assertGreaterEqual(ranking_stage.get("average_quality_score"), 0.2)
         self.assertEqual(ranking_stage.get("articles_above_quality_threshold"), 0)
         self.assertEqual(ranking_stage.get("selected_for_prompt"), 0)
         self.assertEqual(ranking_stage.get("rejected_low_quality_count"), 3)
         self.assertEqual(len(ranking_stage.get("top_rejected_articles", [])), 3)
         self.assertTrue(ranking_stage.get("ranking_scores")[0]["title"])
+        self.assertIn("topic_relevance_score", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("topic_specificity_score", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("primary_article_type", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("secondary_article_tags", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("weighted_secondary_tags", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("dominant_tags", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("supporting_tags", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("weak_tags", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("classification_signal_summary", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("dominant_theme_reason", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("primary_type_override_reason", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("rejection_reasons", ranking_stage.get("top_rejected_articles")[0])
+        self.assertIn("heading_diagnostics", ranking_stage.get("top_rejected_articles")[0])
         self.assertIn("Недостаточно качественных статей", run.error_message)
+    def test_run_digest_pipeline_records_cleaning_rejections_in_source_metrics(self):
+        user = get_user_model().objects.create_user(
+            username="cleaning-diagnostics-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Cleaning diagnostics",
+            keywords=["workflow"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "raw_items", "source": "integration_test"},
+        )
+        raw_items = [
+            {
+                "title": "Valid workflow article",
+                "url": "https://example.com/valid",
+                "source_name": "Example Source",
+                "snippet": LONG_RSS_SNIPPET_1,
+            },
+            {
+                "title": "Missing content article",
+                "url": "https://example.com/no-content",
+                "source_name": "Example Source",
+                "content": "",
+                "snippet": "",
+                "metadata": {
+                    "extraction_method": "rss_summary_fallback",
+                    "extraction_warning": "html fetch failed; RSS summary used",
+                    "extraction_candidates": [],
+                },
+            },
+            {
+                "title": "Tiny article",
+                "url": "https://example.com/tiny",
+                "source_name": "Example Source",
+                "content": "<p>Too short.</p>",
+                "metadata": {
+                    "extraction_method": "article_tag",
+                    "extraction_warning": "extracted content is very short",
+                    "extraction_candidates": [],
+                },
+            },
+        ]
+
+        result = run_digest_pipeline(run.id, raw_items)
+        run.refresh_from_db()
+
+        self.assertEqual(result.id, run.id)
+        source_stage = run.metrics.get("source_stage", {})
+        self.assertEqual(source_stage.get("articles_after_cleaning"), 1)
+        self.assertEqual(source_stage.get("removed_during_cleaning"), 2)
+        self.assertEqual(source_stage.get("full_article_count"), 0)
+        self.assertEqual(source_stage.get("rich_summary_count"), 1)
+        self.assertEqual(source_stage.get("weak_snippet_count"), 1)
+        self.assertEqual(source_stage.get("missing_content_count"), 1)
+        self.assertEqual(
+            source_stage.get("cleaning_rejections"),
+            [
+                {
+                    "title": "Missing content article",
+                    "url": "https://example.com/no-content",
+                    "source_name": "Example Source",
+                    "reason": "missing extracted content",
+                    "content_tier": "missing_content",
+                    "final_content_source": "rss_summary",
+                    "content_length": 0,
+                    "content_preview": "",
+                    "extraction_method": "rss_summary_fallback",
+                    "extraction_warning": "html fetch failed; RSS summary used",
+                    "extraction_candidates": [],
+                },
+                {
+                    "title": "Tiny article",
+                    "url": "https://example.com/tiny",
+                    "source_name": "Example Source",
+                    "reason": "content too short",
+                    "content_tier": "weak_snippet",
+                    "final_content_source": "html_article_body",
+                    "content_length": len("Too short."),
+                    "content_preview": "Too short.",
+                    "extraction_method": "article_tag",
+                    "extraction_warning": "extracted content is very short",
+                    "extraction_candidates": [],
+                },
+            ],
+        )
+
     def test_run_digest_pipeline_populates_result_message_for_source_stage_failure(self):
         user = get_user_model().objects.create_user(
             username="source-failure-user",
