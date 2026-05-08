@@ -1,0 +1,538 @@
+{% if article_row_collapsed %}
+<details class="article-row">
+    <summary class="article-row__summary">
+        <div class="article-row__summary-main">
+            <div class="article-row__title">{{ article.title|default:article.link_label|default:"Open article" }}</div>
+            <div class="article-row__meta">
+                <span>{{ article.article_card.source_label }}</span>
+                <span class="metric-pill metric-pill--quality">Quality {{ article.article_card.quality_label }}</span>
+                <span class="metric-pill">Score {{ article.article_card.score_label }}</span>
+                <span class="metric-pill">Type {{ article.article_card.type_label }}</span>
+                {% if article.is_selected_for_digest %}
+                    <span class="metric-pill metric-pill--quality">selected</span>
+                {% else %}
+                    <span class="metric-pill metric-pill--warning">rejected</span>
+                {% endif %}
+            </div>
+        </div>
+    </summary>
+    <div class="article-row__details">
+{% endif %}
+<article class="article-card">
+    {% if not hide_article_header %}
+        <div class="article-card__header">
+            <div class="article-card__title-group">
+                {% if article.url %}
+                    <a class="article-card__title-link" href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                        {{ article.title|default:article.link_label|default:"Open article" }}
+                    </a>
+                {% else %}
+                    <div class="article-card__title-link">{{ article.title|default:"No source available" }}</div>
+                {% endif %}
+                <div class="article-card__source">{{ article.article_card.source_label }}</div>
+            </div>
+            <div class="article-card__metrics">
+                <span class="metric-pill metric-pill--quality">Quality {{ article.article_card.quality_label }}</span>
+                <span class="metric-pill">Score {{ article.article_card.score_label }}</span>
+                <span class="metric-pill">Type {{ article.article_card.type_label }}</span>
+            </div>
+        </div>
+    {% endif %}
+
+    {% if article.article_card.summary_reason %}
+        <p class="article-card__summary">{{ article.article_card.summary_reason }}</p>
+    {% endif %}
+
+    <div class="article-card__meta-grid">
+        <div class="meta-panel">
+            <div class="meta-panel__label">Dominant tags</div>
+            <div class="chip-row">
+                {% for tag in article.article_card.dominant_tags_display.visible %}
+                    <span class="chip chip--dominant">{{ tag }}</span>
+                {% empty %}
+                    <span class="empty-inline">none</span>
+                {% endfor %}
+                {% if article.article_card.dominant_tags_display.hidden_count %}
+                    <span class="chip chip--weak">+{{ article.article_card.dominant_tags_display.hidden_count }} more</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="meta-panel">
+            <div class="meta-panel__label">Supporting tags</div>
+            <div class="chip-row">
+                {% for tag in article.article_card.supporting_tags_display.visible %}
+                    <span class="chip chip--supporting">{{ tag }}</span>
+                {% empty %}
+                    <span class="empty-inline">none</span>
+                {% endfor %}
+                {% if article.article_card.supporting_tags_display.hidden_count %}
+                    <span class="chip chip--weak">+{{ article.article_card.supporting_tags_display.hidden_count }} more</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="article-card__reasons">
+        <div class="meta-panel__label">Top reasons</div>
+        <ul class="compact-list">
+            {% for reason in article.article_card.top_reasons %}
+                <li>{{ reason }}</li>
+            {% empty %}
+                <li>none</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <div class="article-card__summary-grid">
+        <div class="article-card__summary-item">
+            <strong>Primary article type</strong>
+            <div><strong>Primary article type:</strong> {{ article.primary_article_type|default:article.article_card.type_label|default:"unknown" }}</div>
+        </div>
+        <div class="article-card__summary-item">
+            <strong>Secondary tags</strong>
+            <div><strong>Secondary tags:</strong> {{ article.secondary_article_tags|join:", "|default:"-" }}</div>
+        </div>
+        <div class="article-card__summary-item">
+            <strong>Dominant tags</strong>
+            <div><strong>Dominant tags:</strong> {{ article.dominant_tags|join:", "|default:"-" }}</div>
+        </div>
+        <div class="article-card__summary-item">
+            <strong>Article type</strong>
+            <div><strong>Article type:</strong> {{ article.article_type|default:article.article_card.type_label|default:"unknown" }}</div>
+        </div>
+        <div class="article-card__summary-item">
+            <strong>Topic relevance</strong>
+            <div>{{ article.topic_relevance_reason|default:"-" }}</div>
+        </div>
+        <div class="article-card__summary-item">
+            <strong>Specificity</strong>
+            <div>{{ article.topic_specificity_reason|default:"-" }}</div>
+        </div>
+        <div class="article-card__summary-item">
+            <strong>Heading diagnostics</strong>
+            <div>
+                {{ article.article_card.heading_display.heading_source|default:"none" }}
+                {% if article.article_card.heading_display.heading_count %}
+                    ({{ article.article_card.heading_display.heading_count }})
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="sr-only" aria-hidden="true">
+        <strong>Weighted tag strengths:</strong>
+        <strong>Article type score modifier:</strong> {{ article.article_type_score_modifier|default_if_none:"-" }}
+        <strong>Dominant theme reason:</strong> {{ article.dominant_theme_reason|default:"-" }}
+        <strong>Topic relevance score:</strong> {{ article.topic_relevance_score|default_if_none:"-" }}
+        <strong>Topic specificity score:</strong> {{ article.topic_specificity_score|default_if_none:"-" }}
+        <strong>Topic specificity reason:</strong> {{ article.topic_specificity_reason|default:"-" }}
+        <strong>Evidence score:</strong> {{ article.evidence_score|default_if_none:"-" }}
+    </div>
+
+    {% if article.article_card.weighted_table_rows %}
+        <details class="detail-block">
+            <summary>Show editorial diagnostics</summary>
+            <div class="muted-block" style="margin-top: 10px;"><strong>Weighted tag strengths:</strong></div>
+            <div class="table-scroll">
+                <table class="diagnostics-table">
+                    <thead>
+                        <tr>
+                            <th>Tag</th>
+                            <th>Role</th>
+                            <th>Weight</th>
+                            <th>Title</th>
+                            <th>Intro</th>
+                            <th>Heading</th>
+                            <th>Body</th>
+                            <th>Sat.</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in article.article_card.weighted_table_rows %}
+                            <tr>
+                                <td>{{ row.tag }}</td>
+                                <td>{{ row.role }}</td>
+                                <td>{{ row.weight|default_if_none:"-" }}</td>
+                                <td>{{ row.title|yesno:"Y,-" }}</td>
+                                <td>{{ row.intro|yesno:"Y,-" }}</td>
+                                <td>{{ row.heading|yesno:"Y,-" }}</td>
+                                <td>{{ row.body|default_if_none:"-" }}</td>
+                                <td>{{ row.saturated|yesno:"Y,-" }}</td>
+                                <td>{{ row.notes }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    {% endif %}
+
+    <details class="detail-block">
+        <summary>Show heading diagnostics</summary>
+        <div class="meta-panel" style="margin-top: 12px;">
+            <div class="meta-panel__label">Heading diagnostics</div>
+            <dl class="compact-def-list">
+                <div>
+                    <dt>Source</dt>
+                    <dd>{{ article.article_card.heading_display.heading_source|default:"none" }}</dd>
+                </div>
+                <div>
+                    <dt>Count</dt>
+                    <dd>{{ article.article_card.heading_display.heading_count|default_if_none:"0" }}</dd>
+                </div>
+                <div>
+                    <dt>Strategy</dt>
+                    <dd>{{ article.article_card.heading_display.heading_extraction_strategy|default:"none" }}</dd>
+                </div>
+                <div>
+                    <dt>Raw HTML count</dt>
+                    <dd>{{ article.article_card.heading_display.raw_html_heading_count|default_if_none:"0" }}</dd>
+                </div>
+                <div>
+                    <dt>Extracted count</dt>
+                    <dd>{{ article.article_card.heading_display.extracted_heading_count|default_if_none:"0" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>Detected</dt>
+                    <dd>
+                        {% if article.article_card.heading_display.detected_headings %}
+                            {{ article.article_card.heading_display.detected_headings|join:"; " }}
+                        {% else %}
+                            none
+                        {% endif %}
+                    </dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>Sample</dt>
+                    <dd>
+                        {% if article.article_card.heading_display.sample_detected_headings %}
+                            {{ article.article_card.heading_display.sample_detected_headings|join:"; " }}
+                        {% else %}
+                            none
+                        {% endif %}
+                    </dd>
+                </div>
+                {% if article.article_card.heading_display.matched_heading_tags %}
+                    <div class="compact-def-list__block">
+                        <dt>Matched tags</dt>
+                        <dd>
+                            <ul class="compact-list compact-list--inline">
+                                {% for tag in article.article_card.heading_display.matched_heading_tags %}
+                                    <li>{{ tag.tag }} -> {{ tag.matches|join:", "|default:"none" }}</li>
+                                {% endfor %}
+                            </ul>
+                        </dd>
+                    </div>
+                {% endif %}
+            </dl>
+        </div>
+    </details>
+
+    {% if article.article_card.editorial_alignment_reason or article.article_type_reason or article.dominant_theme_reason %}
+        <details class="detail-block">
+            <summary>Show classification signals</summary>
+            <dl class="compact-def-list">
+                {% if article.article_card.editorial_alignment_reason %}
+                    <div class="compact-def-list__block">
+                        <dt>Editorial alignment</dt>
+                        <dd>{{ article.article_card.editorial_alignment_reason }}</dd>
+                    </div>
+                {% endif %}
+                {% if article.article_type_reason %}
+                    <div class="compact-def-list__block">
+                        <dt>Article type reason</dt>
+                        <dd>{{ article.article_type_reason }}</dd>
+                    </div>
+                {% endif %}
+                {% if article.dominant_theme_reason %}
+                    <div class="compact-def-list__block">
+                        <dt>Dominant theme</dt>
+                        <dd>{{ article.dominant_theme_reason }}</dd>
+                    </div>
+                {% endif %}
+                {% if article.primary_type_override_reason %}
+                    <div class="compact-def-list__block">
+                        <dt>Override</dt>
+                        <dd>{{ article.primary_type_override_reason }}</dd>
+                    </div>
+                {% endif %}
+            </dl>
+            {% if article.article_card.classification_sections %}
+                {% for section in article.article_card.classification_sections %}
+                    <div class="detail-subsection">
+                        <div class="meta-panel__label">{{ section.label }}</div>
+                        <ul class="compact-list">
+                            {% for item in section.items %}
+                                <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endfor %}
+            {% endif %}
+            {% if article.article_card.relevance_sections %}
+                {% for section in article.article_card.relevance_sections %}
+                    <div class="detail-subsection">
+                        <div class="meta-panel__label">{{ section.label }}</div>
+                        <ul class="compact-list compact-list--inline">
+                            {% for item in section.items %}
+                                <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        </details>
+    {% endif %}
+
+    {% if article.article_card.weak_tags %}
+        <details class="detail-block detail-block--muted">
+            <summary>Show weak tags ({{ article.article_card.weak_tag_count }})</summary>
+            <div class="chip-row chip-row--muted">
+                {% for tag in article.article_card.weak_tags_display.visible %}
+                    <span class="chip chip--weak">{{ tag }}</span>
+                {% endfor %}
+                {% if article.article_card.weak_tags_display.hidden_count %}
+                    <span class="chip chip--weak">+{{ article.article_card.weak_tags_display.hidden_count }} more</span>
+                {% endif %}
+            </div>
+            {% if article.article_card.weighted_tag_details.weak %}
+                <ul class="compact-list">
+                    {% for detail in article.article_card.weighted_tag_details.weak %}
+                        <li>{{ detail.tag }} - {{ detail.centrality_reason|default:detail.reason }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </details>
+    {% endif %}
+
+    {% if article.article_card.rejection_reasons %}
+        <details class="detail-block detail-block--muted">
+            <summary>Show rejection reasons</summary>
+            <ul class="compact-list">
+                {% for reason in article.article_card.rejection_reasons %}
+                    <li>{{ reason }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+    {% endif %}
+
+    {% if article.article_card.diagnostic_warnings %}
+        <details class="detail-block detail-block--muted">
+            <summary>Show diagnostics</summary>
+            <ul class="compact-list">
+                {% for warning in article.article_card.diagnostic_warnings %}
+                    <li>{{ warning }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+    {% endif %}
+
+    <details class="detail-block detail-block--muted">
+        <summary>Show field diagnostics</summary>
+        <dl class="compact-def-list">
+            <div class="compact-def-list__block">
+                <dt>content_tier:</dt>
+                <dd>{{ article.content_tier|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>primary_article_type:</dt>
+                <dd>{{ article.primary_article_type|default:article.article_card.type_label|default:"unknown" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>secondary_article_tags:</dt>
+                <dd>{{ article.secondary_article_tags|join:", "|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>dominant_tags:</dt>
+                <dd>{{ article.dominant_tags|join:", "|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>topic_relevance_score:</dt>
+                <dd>{{ article.topic_relevance_score|default_if_none:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>topic_relevance_reason:</dt>
+                <dd>{{ article.topic_relevance_reason|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>relevance_signals:</dt>
+                <dd>{{ article.relevance_signals|join:", "|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>weak_relevance_signals:</dt>
+                <dd>{{ article.weak_relevance_signals|join:", "|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>topic_specificity_score:</dt>
+                <dd>{{ article.topic_specificity_score|default_if_none:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>topic_specificity_reason:</dt>
+                <dd>{{ article.topic_specificity_reason|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>specificity_signals:</dt>
+                <dd>{{ article.specificity_signals|join:", "|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>article_type:</dt>
+                <dd>{{ article.article_type|default:article.article_card.type_label|default:"unknown" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>article_type_score_modifier:</dt>
+                <dd>{{ article.article_type_score_modifier|default_if_none:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>dominant_theme_reason:</dt>
+                <dd>{{ article.dominant_theme_reason|default:"-" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>heading_diagnostics:</dt>
+                <dd>available</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>detected_headings:</dt>
+                <dd>{{ article.article_card.heading_display.detected_headings|join:"; "|default:"none" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>normalized_headings:</dt>
+                <dd>{{ article.article_card.heading_display.normalized_headings|join:"; "|default:"none" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>heading_source:</dt>
+                <dd>{{ article.article_card.heading_display.heading_source|default:"none" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>heading_extraction_strategy:</dt>
+                <dd>{{ article.article_card.heading_display.heading_extraction_strategy|default:"none" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>raw_html_heading_count:</dt>
+                <dd>{{ article.article_card.heading_display.raw_html_heading_count|default_if_none:"0" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>extracted_heading_count:</dt>
+                <dd>{{ article.article_card.heading_display.extracted_heading_count|default_if_none:"0" }}</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>sample_detected_headings:</dt>
+                <dd>{{ article.article_card.heading_display.sample_detected_headings|join:"; "|default:"none" }}</dd>
+            </div>
+            {% if article.article_card.heading_display.matched_heading_tags %}
+                <div class="compact-def-list__block">
+                    <dt>matched_heading_tags:</dt>
+                    <dd>
+                        {% for tag in article.article_card.heading_display.matched_heading_tags %}
+                            <div>{{ tag.tag }}: {{ tag.matches|join:", "|default:"none" }}</div>
+                        {% endfor %}
+                    </dd>
+                </div>
+            {% endif %}
+            <div class="compact-def-list__block">
+                <dt>weighted_secondary_tags:</dt>
+                <dd>available</dd>
+            </div>
+            <div class="compact-def-list__block">
+                <dt>editorial_tag_weighting:</dt>
+                <dd>available</dd>
+            </div>
+            {% for detail in article.article_card.weighted_tag_details.dominant %}
+                <div class="compact-def-list__block">
+                    <dt>title matches:</dt>
+                    <dd>{{ detail.title_matches|join:", "|default:"-" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>editorial weight:</dt>
+                    <dd>{{ detail.editorial_weight|default_if_none:"-" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>body weight component:</dt>
+                    <dd>{{ detail.body_weight_component|default_if_none:"-" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>body saturation applied:</dt>
+                    <dd>{{ detail.body_saturation_applied|yesno:"yes,no" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>heading weight component:</dt>
+                    <dd>{{ detail.heading_weight_component|default_if_none:"-" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>centrality reason:</dt>
+                    <dd>{{ detail.centrality_reason|default:detail.reason|default:"-" }}</dd>
+                </div>
+            {% endfor %}
+            {% if article.classification_signal_summary %}
+                <div class="compact-def-list__block">
+                    <dt>classification_signal_summary:</dt>
+                    <dd>available</dd>
+                </div>
+            {% endif %}
+            {% if article.article_card.rejection_reasons %}
+                <div class="compact-def-list__block">
+                    <dt>Rejected because:</dt>
+                    <dd>{{ article.article_card.rejection_reasons|join:", " }}</dd>
+                </div>
+            {% endif %}
+            {% if article.weak_tags %}
+                <div class="compact-def-list__block">
+                    <dt>weak_tags:</dt>
+                    <dd>{{ article.weak_tags|join:", " }}</dd>
+                </div>
+            {% endif %}
+        </dl>
+        <div class="muted-block" style="margin-top: 12px;">
+            <div>content_tier: {{ article.content_tier|default:"-" }}</div>
+            <div>primary_article_type: {{ article.primary_article_type|default:article.article_card.type_label|default:"unknown" }}</div>
+            <div>secondary_article_tags: {{ article.secondary_article_tags|join:", "|default:"-" }}</div>
+            <div>dominant_tags: {{ article.dominant_tags|join:", "|default:"-" }}</div>
+            <div>topic_relevance_score: {{ article.topic_relevance_score|default_if_none:"-" }}</div>
+            <div>topic_relevance_reason: {{ article.topic_relevance_reason|default:"-" }}</div>
+            <div>relevance_signals: {{ article.relevance_signals|join:", "|default:"-" }}</div>
+            <div>weak_relevance_signals: {{ article.weak_relevance_signals|join:", "|default:"-" }}</div>
+            <div>topic_specificity_score: {{ article.topic_specificity_score|default_if_none:"-" }}</div>
+            <div>topic_specificity_reason: {{ article.topic_specificity_reason|default:"-" }}</div>
+            <div>specificity_signals: {{ article.specificity_signals|join:", "|default:"-" }}</div>
+            <div>article_type: {{ article.article_type|default:article.article_card.type_label|default:"unknown" }}</div>
+            <div>article_type_score_modifier: {{ article.article_type_score_modifier|default_if_none:"-" }}</div>
+            <div>dominant_theme_reason: {{ article.dominant_theme_reason|default:"-" }}</div>
+            <div>heading_diagnostics:</div>
+            <div>detected_headings: {{ article.article_card.heading_display.detected_headings|join:"; "|default:"none" }}</div>
+            <div>normalized_headings: {{ article.article_card.heading_display.normalized_headings|join:"; "|default:"none" }}</div>
+            <div>heading_source: {{ article.article_card.heading_display.heading_source|default:"none" }}</div>
+            {% if article.article_card.heading_display.matched_heading_tags %}
+                <div>matched_heading_tags:</div>
+                {% for tag in article.article_card.heading_display.matched_heading_tags %}
+                    <div>{{ tag.tag }}: {{ tag.matches|join:", "|default:"none" }}</div>
+                {% endfor %}
+            {% endif %}
+            <div>weighted_secondary_tags:</div>
+            <div>editorial_tag_weighting:</div>
+            {% for detail in article.article_card.weighted_tag_details.dominant %}
+                <div>title matches: {{ detail.title_matches|join:", "|default:"-" }}</div>
+                <div>editorial weight: {{ detail.editorial_weight|default_if_none:"-" }}</div>
+                <div>body weight component: {{ detail.body_weight_component|default_if_none:"-" }}</div>
+                <div>body saturation applied: {{ detail.body_saturation_applied|yesno:"yes,no" }}</div>
+                <div>heading weight component: {{ detail.heading_weight_component|default_if_none:"-" }}</div>
+                <div>centrality reason: {{ detail.centrality_reason|default:detail.reason|default:"-" }}</div>
+            {% endfor %}
+            {% if article.classification_signal_summary %}
+                <div>classification_signal_summary:</div>
+            {% endif %}
+            {% if article.article_card.rejection_reasons %}
+                <div>Rejected because:</div>
+                {% for reason in article.article_card.rejection_reasons %}
+                    <div>{{ reason }}</div>
+                {% endfor %}
+            {% endif %}
+            {% if article.weak_tags %}
+                <div>weak_tags: {{ article.weak_tags|join:", " }}</div>
+            {% endif %}
+        </div>
+    </details>
+</article>
+{% if article_row_collapsed %}
+    </div>
+</details>
+{% endif %}

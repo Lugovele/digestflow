@@ -3,199 +3,1209 @@
 <head>
     <meta charset="utf-8">
     <title>DigestFlow Run {{ run.id }}</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --panel-border: #d8dfeb;
+            --panel-muted: #eef2f8;
+            --text: #162033;
+            --muted: #5c6b82;
+            --accent: #2557d6;
+            --accent-soft: #e8efff;
+            --success-soft: #e9f8ef;
+            --warning-soft: #fff3df;
+            --danger-soft: #fdeaea;
+            --dominant: #1f4fd1;
+            --supporting: #5d4bc4;
+            --weak: #7b8699;
+            --table-border: #e3e8f1;
+            --code-bg: #111827;
+            --code-text: #eff4ff;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            max-width: 100%;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            overflow-x: hidden;
+        }
+
+        body,
+        body * {
+            overflow-wrap: anywhere;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .run-page {
+            width: 100%;
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .run-page > * {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .page-header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .page-header__left {
+            min-width: 0;
+            flex: 1 1 360px;
+        }
+
+        .page-header__title {
+            margin: 8px 0 0;
+            font-size: 30px;
+        }
+
+        .page-header__meta {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .page-header__actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .action-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 14px;
+            border: 1px solid #c8d6ff;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .action-button:hover {
+            background: #dfe8ff;
+        }
+
+        .page-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 0 0 20px;
+            padding: 0;
+            list-style: none;
+        }
+
+        .page-nav a {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 12px;
+            border: 1px solid var(--panel-border);
+            border-radius: 999px;
+            background: var(--panel);
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .page-nav a:hover {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .status-pill,
+        .metric-pill,
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 100%;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--panel-border);
+            background: var(--panel);
+            font-size: 13px;
+            white-space: normal;
+        }
+
+        .status-pill {
+            background: var(--accent-soft);
+            border-color: #c8d6ff;
+            font-weight: 700;
+            text-transform: lowercase;
+        }
+
+        .status-pill--insufficient,
+        .metric-pill--warning {
+            background: var(--warning-soft);
+        }
+
+        .status-pill--failed {
+            background: var(--danger-soft);
+        }
+
+        .metric-pill--quality {
+            background: var(--success-soft);
+        }
+
+        .section-card,
+        .article-card,
+        .meta-panel {
+            min-width: 0;
+            max-width: 100%;
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+        }
+
+        .section-card {
+            padding: 18px;
+        }
+
+        .section-card + .section-card {
+            margin-top: 20px;
+        }
+
+        .section-card h2,
+        .section-card h3,
+        .section-card h4 {
+            margin: 0 0 12px;
+        }
+
+        .section-kicker {
+            margin: 0 0 6px;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .section-label {
+            margin: 0 0 8px;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .label-line {
+            margin: 0 0 8px;
+            font-size: 14px;
+        }
+
+        .value-strong {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .summary-grid,
+        .meta-grid,
+        .stage-grid,
+        .content-grid,
+        .packaging-stack,
+        .package-section-list,
+        .article-card__meta-grid,
+        .article-list {
+            display: grid;
+            gap: 16px;
+            min-width: 0;
+        }
+
+        .summary-grid {
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        }
+
+        .meta-grid {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+
+        .stage-grid {
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        }
+
+        .packaging-stack {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .package-section-list {
+            grid-template-columns: minmax(0, 1fr);
+            margin-top: 14px;
+        }
+
+        .article-list {
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }
+
+        .article-list--stack {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .summary-grid > *,
+        .meta-grid > *,
+        .stage-grid > *,
+        .content-grid > *,
+        .packaging-stack > *,
+        .package-section-list > *,
+        .article-card__meta-grid > *,
+        .article-list > * {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .metric-list,
+        .compact-list {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .metric-list li + li,
+        .compact-list li + li {
+            margin-top: 4px;
+        }
+
+        .compact-list--inline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+            padding-left: 0;
+            list-style: none;
+        }
+
+        .chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .chip--dominant {
+            border-color: #b9cafc;
+            background: #edf3ff;
+            color: var(--dominant);
+            font-weight: 700;
+        }
+
+        .chip--supporting {
+            border-color: #d7d1fa;
+            background: #f3f0ff;
+            color: var(--supporting);
+        }
+
+        .chip--weak {
+            border-color: #d9dde6;
+            background: #f6f7fa;
+            color: var(--weak);
+        }
+
+        .chip-row--muted {
+            opacity: 0.9;
+        }
+
+        .empty-inline,
+        .muted-block {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .article-card {
+            padding: 18px;
+        }
+
+        .article-card + .article-card {
+            margin-top: 0;
+        }
+
+        details.article-row {
+            min-width: 0;
+            max-width: 100%;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            background: var(--panel);
+            overflow: hidden;
+        }
+
+        details.article-row + details.article-row {
+            margin-top: 12px;
+        }
+
+        .article-row__summary {
+            cursor: pointer;
+            padding: 14px 16px;
+            list-style: none;
+            background: var(--panel);
+        }
+
+        .article-row__summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .article-row__summary-main {
+            display: grid;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .article-row__title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .article-row__meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            color: var(--muted);
+            font-size: 13px;
+            min-width: 0;
+        }
+
+        .article-row__details {
+            padding: 0 16px 16px;
+            border-top: 1px solid var(--table-border);
+            background: #fbfcfe;
+        }
+
+        .article-card__header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 14px;
+            min-width: 0;
+        }
+
+        .article-card__title-group,
+        .article-card__metrics {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .article-card__title-group {
+            flex: 1 1 280px;
+        }
+
+        .article-card__metrics {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+            gap: 8px;
+            flex: 0 1 360px;
+        }
+
+        .article-card__title-link,
+        .article-card__title-link:visited {
+            display: inline-block;
+            max-width: 100%;
+            color: var(--text);
+            font-size: 22px;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .article-card__title-link:hover {
+            color: var(--accent);
+            text-decoration: underline;
+        }
+
+        .article-card__source {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .article-card__summary {
+            margin: 12px 0 14px;
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .article-card__reasons {
+            margin: 12px 0 0;
+        }
+
+        .article-card__summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+            min-width: 0;
+        }
+
+        .article-card__summary-item {
+            min-width: 0;
+        }
+
+        .article-card__summary-item strong {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .meta-panel {
+            padding: 14px;
+        }
+
+        .meta-panel__label {
+            margin: 0 0 8px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .compact-def-list {
+            display: grid;
+            gap: 10px;
+            margin: 0;
+        }
+
+        .compact-def-list > div {
+            display: grid;
+            grid-template-columns: 110px minmax(0, 1fr);
+            gap: 8px;
+            align-items: start;
+            min-width: 0;
+        }
+
+        .compact-def-list dt {
+            color: var(--muted);
+            font-weight: 700;
+        }
+
+        .compact-def-list dd {
+            margin: 0;
+            min-width: 0;
+        }
+
+        .details-stack {
+            display: grid;
+            gap: 16px;
+        }
+
+        details.detail-block {
+            min-width: 0;
+            max-width: 100%;
+            margin-top: 14px;
+            padding: 10px 12px;
+            border: 1px solid var(--table-border);
+            border-radius: 8px;
+            background: var(--panel-muted);
+        }
+
+        details.detail-block[open] {
+            padding-bottom: 14px;
+        }
+
+        details.detail-block summary {
+            cursor: pointer;
+            font-weight: 700;
+            list-style: none;
+        }
+
+        details.detail-block summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .detail-block--muted {
+            background: #f8f9fc;
+        }
+
+        .package-details-row {
+            margin-top: 0;
+        }
+
+        .detail-subsection + .detail-subsection {
+            margin-top: 12px;
+        }
+
+        .table-scroll {
+            max-width: 100%;
+            overflow-x: auto;
+            margin-top: 12px;
+        }
+
+        .diagnostics-table {
+            width: 100%;
+            min-width: 640px;
+            border-collapse: collapse;
+            font-size: 13px;
+            background: var(--panel);
+        }
+
+        .diagnostics-table th,
+        .diagnostics-table td {
+            padding: 8px 10px;
+            border: 1px solid var(--table-border);
+            text-align: left;
+            vertical-align: top;
+            word-break: break-word;
+        }
+
+        .diagnostics-table th {
+            background: #f3f6fb;
+            font-weight: 700;
+        }
+
+        .article-card--rejected {
+            border-color: #e8c07b;
+            background: #fffaf1;
+        }
+
+        .scroll-box,
+        pre {
+            max-width: 100%;
+            margin: 10px 0 0;
+            padding: 14px;
+            border-radius: 8px;
+            overflow: auto;
+        }
+
+        .scroll-box {
+            max-height: 260px;
+            background: #f8fafd;
+            border: 1px solid var(--table-border);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        pre {
+            background: var(--code-bg);
+            color: var(--code-text);
+            font-family: Consolas, monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .raw-json pre {
+            max-height: 420px;
+        }
+
+        .section-anchor {
+            scroll-margin-top: 20px;
+        }
+
+        @media (max-width: 1100px) {
+            .run-page {
+                padding: 20px;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .run-page {
+                padding: 16px;
+            }
+
+            .page-header {
+                align-items: stretch;
+            }
+
+            .page-header__title {
+                font-size: 26px;
+            }
+
+            .compact-def-list > div {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 </head>
 <body>
-    <p><a href="{% url 'topic-list' %}">Back to topics</a></p>
-
-    <h1>Pipeline result</h1>
-
-    <h2>Run</h2>
-    <p><strong>ID:</strong> {{ run.id }}</p>
-    <p><strong>Topic:</strong> {{ run.topic.name }}</p>
-    <p><strong>Status:</strong> {{ run.status }}</p>
-    {% if run.result_message %}
-        <p><strong>Result:</strong> {{ run.result_message }}</p>
-    {% endif %}
-    {% if display_error_message %}
-        <p><strong>Error:</strong> {{ display_error_message }}</p>
-    {% endif %}
-
-    <h2>Metrics</h2>
-    <ul>
-        <li><strong>article_ids:</strong> {{ article_ids|default:"[]" }}</li>
-        <li><strong>articles_after_dedupe:</strong> {{ articles_after_dedupe|default:"-" }}</li>
-        <li><strong>quality_threshold:</strong> {{ quality_threshold_display }}</li>
-        <li><strong>max_quality_score:</strong> {{ max_quality_score_display }}</li>
-        <li><strong>min_actual_quality_score:</strong> {{ min_actual_quality_score_display }}</li>
-        <li><strong>average_quality_score:</strong> {{ average_quality_score_display }}</li>
-        <li><strong>articles_above_quality_threshold:</strong> {{ articles_above_quality_threshold_display }}</li>
-        <li><strong>rejected_low_quality_count:</strong> {{ rejected_low_quality_count_display }}</li>
-        <li><strong>selected_for_prompt:</strong> {{ selected_for_prompt_display }}</li>
-        <li><strong>total_tokens:</strong> {{ total_tokens_display }}</li>
-        <li><strong>total_estimated_cost:</strong> {{ total_estimated_cost_display }}</li>
-        <li><strong>digest_provider:</strong> {{ digest_provider|default:"-" }}</li>
-        <li><strong>packaging_provider:</strong> {{ packaging_provider|default:"-" }}</li>
-    </ul>
-    <pre style="white-space: pre-wrap;">{{ metrics|default:"{}" }}</pre>
-
-    {% if is_insufficient_quality %}
-        <h2>Result</h2>
-        {% if not run.result_message %}
-            <p>{{ insufficient_quality_message }}</p>
-        {% endif %}
-        {% if top_rejected_articles %}
-            <h3>Ranking diagnostics</h3>
-            <ul>
-                {% for rejected in top_rejected_articles %}
-                    <li>{{ rejected.url|default:"-" }} - quality_score: {{ rejected.quality_score|default:"0.0" }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endif %}
-
-    {% if selected_ranked_articles and not is_insufficient_quality %}
-        <h2>Selected articles</h2>
-        <ol>
-            {% for article in selected_ranked_articles %}
-                <li style="margin-bottom: 16px;">
-                    {% if article.url %}
-                        <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
-                            {{ article.title|default:article.link_label|default:"Open article" }}
-                        </a>
-                    {% else %}
-                        {{ article.title|default:"No source available" }}
-                    {% endif %}
-                    <div>quality_score: {{ article.quality_score }}</div>
-                    <div>score: {{ article.score }}</div>
-                </li>
-            {% endfor %}
-        </ol>
-    {% endif %}
-
-    <h2>Digest</h2>
-    {% if is_insufficient_quality %}
-        <p>No digest was generated because the selected articles did not meet the required quality level.</p>
-    {% elif has_digest %}
-        <p><strong>Title:</strong> {{ digest_payload.title }}</p>
-
-        {% if has_digest_articles %}
-            <h3>Articles</h3>
-            {% for article in digest_payload.articles %}
-                <div style="margin-bottom: 24px;">
-                    <p>
-                        <strong>Source:</strong>
-                        {% if article.url %}
-                            <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
-                                {{ article.title|default:article.link_label|default:"Open article" }}
-                            </a>
-                        {% else %}
-                            No source available
-                        {% endif %}
-                    </p>
-                    <p><strong>Summary:</strong> {{ article.summary|default:"-" }}</p>
-                    <p><strong>Content type:</strong> {{ article.content_type|default:"unknown" }}</p>
-                    <p><strong>Confidence:</strong> {{ article.confidence|default:"0.0" }}</p>
-                    <p><strong>Key points:</strong></p>
-                    {% if article.key_points %}
-                        <ul>
-                            {% for point in article.key_points %}
-                                <li>{{ point }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p>No key points available.</p>
-                    {% endif %}
+    <div class="run-page">
+        <header class="page-header">
+            <div class="page-header__left">
+                <p><a href="{% url 'topic-list' %}">Back to topics</a></p>
+                <p class="section-kicker">Pipeline result</p>
+                <h1 class="page-header__title">DigestFlow Run {{ run.id }}</h1>
+                <div class="page-header__meta">
+                    <span class="muted-block">Topic {{ run.topic.name }}</span>
                 </div>
-            {% endfor %}
-        {% else %}
-            <p>No per-article analyses available.</p>
-        {% endif %}
-    {% else %}
-        <p>No digest has been generated yet.</p>
-    {% endif %}
+            </div>
+            <div class="page-header__actions">
+                <button
+                    type="button"
+                    id="copy-diagnostics-button"
+                    class="action-button"
+                    data-default-label="Copy full diagnostics"
+                >
+                    Copy full diagnostics
+                </button>
+                <button
+                    type="button"
+                    id="toggle-details-button"
+                    class="action-button"
+                    data-expand-label="Expand all"
+                    data-collapse-label="Collapse all"
+                >
+                    Expand all
+                </button>
+                <span class="status-pill{% if run.status == 'insufficient_quality' %} status-pill--insufficient{% elif run.status == 'failed' %} status-pill--failed{% endif %}">
+                    {{ run.status }}
+                </span>
+            </div>
+        </header>
 
-    <h2>ContentPackage</h2>
-    {% if is_insufficient_quality %}
-        <p>No LinkedIn post or content package was generated because too few articles passed the quality threshold.</p>
-    {% elif content_package %}
-        <p><strong>Validation status:</strong> {{ validation_status }}</p>
+        {{ copy_diagnostics_text|json_script:"copy-diagnostics-payload" }}
 
-        <p><strong>Post text:</strong></p>
-        <pre style="white-space: pre-wrap;">{{ content_package.post_text }}</pre>
+        <ul class="page-nav">
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#digest">Digest</a></li>
+            <li><a href="#content-package">Content Package</a></li>
+            <li><a href="#diagnostics">Diagnostics</a></li>
+        </ul>
 
-        <p><strong>Primary hook:</strong> {{ primary_hook|default:"-" }}</p>
+        <section id="overview" class="section-card section-anchor">
+            <p class="section-kicker">Run summary</p>
+            <h2>Overview</h2>
+            <div class="muted-block" style="margin-bottom: 14px;">
+                <div class="label-line"><strong>Topic:</strong> {{ run.topic.name }}</div>
+                <div class="label-line"><strong>Status:</strong> {{ run.status }}</div>
+            </div>
+            <div class="summary-grid">
+                <div>
+                    <div class="section-label">Run ID</div>
+                    <div class="value-strong">{{ run.id }}</div>
+                </div>
+                <div>
+                    <div class="section-label">Topic</div>
+                    <div class="value-strong">{{ run.topic.name }}</div>
+                </div>
+                <div>
+                    <div class="section-label">Result</div>
+                    <div class="value-strong">
+                        {% if is_insufficient_quality %}
+                            {{ insufficient_quality_message|default:run.result_message|default:"-" }}
+                        {% else %}
+                            {{ run.result_message|default:"-" }}
+                        {% endif %}
+                    </div>
+                </div>
+                <div>
+                    <div class="section-label">Error</div>
+                    <div class="muted-block">{{ display_error_message|default:"-" }}</div>
+                </div>
+            </div>
+        </section>
 
-        <p><strong>Hooks:</strong></p>
-        {% if hook_variants %}
-            <ul>
-                {% for hook in hook_variants %}
-                    <li>{{ hook }}</li>
-                {% endfor %}
-            </ul>
-        {% else %}
-            <p>No hook variants available.</p>
-        {% endif %}
-
-        <p><strong>CTA options:</strong></p>
-        {% if cta_variants %}
-            <ul>
-                {% for cta in cta_variants %}
-                    <li>{{ cta }}</li>
-                {% endfor %}
-            </ul>
-        {% else %}
-            <p>No CTA variants available.</p>
-        {% endif %}
-
-        <p><strong>Hashtags:</strong> {{ hashtags_text|default:"-" }}</p>
-
-        <h3>Validation report</h3>
-        {% if validation_report %}
-            <ul>
-                <li><strong>status:</strong> {{ validation_report.status|default:"-" }}</li>
-                <li><strong>post_text_length:</strong> {{ validation_report.post_text_length|default:"-" }}</li>
-                <li><strong>hook_variants_count:</strong> {{ validation_report.hook_variants_count|default:"-" }}</li>
-                <li><strong>cta_variants_count:</strong> {{ validation_report.cta_variants_count|default:"-" }}</li>
-                <li><strong>hashtags_count:</strong> {{ validation_report.hashtags_count|default:"-" }}</li>
-                <li><strong>carousel_outline_count:</strong> {{ validation_report.carousel_outline_count|default:"-" }}</li>
-            </ul>
-            <p><strong>quality_checks:</strong></p>
-            <pre style="white-space: pre-wrap;">{{ quality_checks|default:"{}" }}</pre>
-        {% else %}
-            <p>No validation report available.</p>
-        {% endif %}
-    {% else %}
-        <p>No content package has been generated yet.</p>
-    {% endif %}
-
-    {% if has_ranked_articles %}
-        <h2>All ranked articles</h2>
-        <ol>
-            {% for article in ranked_articles %}
-                <li style="margin-bottom: 16px;">
-                    {% if article.url %}
-                        <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
-                            {{ article.title|default:article.link_label|default:"Open article" }}
-                        </a>
-                    {% else %}
-                        {{ article.title|default:"No source available" }}
-                    {% endif %}
-                    {% if article.source_name %}
-                        <div>source: {{ article.source_name }}</div>
-                    {% endif %}
-                    <div>quality_score: {{ article.quality_score }}</div>
-                    <div>score: {{ article.score }}</div>
-                    {% if article.quality_reasons %}
-                        <div>reasons:</div>
-                        <ul>
-                            {% for reason in article.quality_reasons %}
-                                <li>{{ reason }}</li>
+        <section id="digest" class="section-card section-anchor">
+            <p class="section-kicker">Digest output</p>
+            <h2>Digest</h2>
+            {% if is_insufficient_quality %}
+                <p>No digest was generated because the selected articles did not meet the required quality level.</p>
+            {% elif has_digest %}
+                <div class="meta-grid">
+                    <div>
+                        <div class="section-label">Digest title</div>
+                        <div class="value-strong">{{ digest_payload.title }}</div>
+                    </div>
+                    <div>
+                        <div class="section-label">Articles in digest</div>
+                        <div class="value-strong">{{ digest_payload.articles|length|default:"0" }}</div>
+                    </div>
+                </div>
+                {% if has_digest_articles %}
+                    <details class="detail-block">
+                        <summary>Show digest article analysis</summary>
+                        <div class="article-list article-list--stack" style="margin-top: 14px;">
+                            {% for article in digest_payload.articles %}
+                                <article class="article-card">
+                                    <div class="article-card__header">
+                                        <div class="article-card__title-group">
+                                            {% if article.url %}
+                                                <a class="article-card__title-link" href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                                                    {{ article.title|default:article.link_label|default:"Open article" }}
+                                                </a>
+                                            {% else %}
+                                                <div class="article-card__title-link">{{ article.title|default:"No source available" }}</div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="article-card__metrics">
+                                            <span class="metric-pill">Type {{ article.content_type|default:"unknown" }}</span>
+                                            <span class="metric-pill metric-pill--quality">Confidence {{ article.confidence|default:"0.0" }}</span>
+                                        </div>
+                                    </div>
+                                    <p class="article-card__summary">{{ article.summary|default:"-" }}</p>
+                                    {% if article.key_points %}
+                                        <ul class="compact-list">
+                                            {% for point in article.key_points %}
+                                                <li>{{ point }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% else %}
+                                        <p class="muted-block">No key points available.</p>
+                                    {% endif %}
+                                </article>
                             {% endfor %}
-                        </ul>
+                        </div>
+                    </details>
+                {% endif %}
+            {% else %}
+                <p>No digest has been generated yet.</p>
+            {% endif %}
+        </section>
+
+        <section id="content-package" class="section-card section-anchor">
+            <p class="section-kicker">Packaging details</p>
+            <h2>Content package</h2>
+            {% if is_insufficient_quality %}
+                <p>No LinkedIn post or content package was generated because too few articles passed the quality threshold.</p>
+            {% elif content_package %}
+                <div class="meta-grid" style="margin-bottom: 12px;">
+                    <div>
+                        <div class="section-label">Validation status</div>
+                        <div class="value-strong">{{ validation_status }}</div>
+                    </div>
+                    <div>
+                        <div class="section-label">Primary hook</div>
+                        <div>{{ primary_hook|default:"-" }}</div>
+                    </div>
+                    <div>
+                        <div class="section-label">Primary CTA</div>
+                        <div>{{ primary_cta|default:"-" }}</div>
+                    </div>
+                </div>
+                <div class="package-section-list">
+                    {% if content_package.post_text %}
+                        <details class="detail-block package-details-row" open>
+                            <summary>Generated post</summary>
+                            <div class="scroll-box">{{ content_package.post_text }}</div>
+                        </details>
                     {% endif %}
-                </li>
-            {% endfor %}
-        </ol>
-    {% endif %}
+                    <details class="detail-block package-details-row">
+                        <summary>Hooks, CTA &amp; Hashtags</summary>
+                        <div style="margin-top: 12px;">
+                            <div class="section-label" style="margin-top: 0;">Hooks</div>
+                            {% if content_package_report.hook_variants %}
+                                <ul class="compact-list">
+                                    {% for hook in content_package_report.hook_variants %}
+                                        <li>{{ hook }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <div class="muted-block">No hook variants available.</div>
+                            {% endif %}
+                        </div>
+
+                        <div style="margin-top: 14px;">
+                            <div class="section-label" style="margin-top: 0;">CTA options</div>
+                            {% if content_package_report.cta_variants %}
+                                <ul class="compact-list">
+                                    {% for cta in content_package_report.cta_variants %}
+                                        <li>{{ cta }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <div class="muted-block">No CTA options available.</div>
+                            {% endif %}
+                        </div>
+
+                        <div style="margin-top: 14px;">
+                            <div class="section-label" style="margin-top: 0;">Hashtags</div>
+                            {% if content_package_report.hashtags %}
+                                <div class="chip-row">
+                                    {% for hashtag in content_package_report.hashtags %}
+                                        <span class="chip chip--supporting">{{ hashtag }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="muted-block">No hashtags available.</div>
+                            {% endif %}
+                        </div>
+                    </details>
+                    <details class="detail-block package-details-row">
+                        <summary>Validation report and quality checks</summary>
+                        <div class="stage-grid" style="margin-top: 14px;">
+                            <div class="meta-panel">
+                                <div class="section-label">Packaging metadata</div>
+                                <ul class="metric-list">
+                                    {% for label, value in content_package_report.validation_items %}
+                                        <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            <div class="meta-panel">
+                                <div class="section-label">Quality checks</div>
+                                {% if content_package_report.quality_check_items %}
+                                    <ul class="metric-list">
+                                        {% for label, value in content_package_report.quality_check_items %}
+                                            <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                {% else %}
+                                    <div class="muted-block">No quality checks available.</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            {% else %}
+                <p>No content package has been generated yet.</p>
+            {% endif %}
+        </section>
+
+        <section id="diagnostics" class="section-card section-anchor">
+            <p class="section-kicker">Debug details</p>
+            <h2>Diagnostics</h2>
+            <div class="sr-only" aria-hidden="true">Selected articles</div>
+            <div class="details-stack">
+                <details class="detail-block">
+                    <summary>Pipeline diagnostics</summary>
+                    <div class="stage-grid" style="margin-top: 14px;">
+                        <div class="meta-panel">
+                            <div class="section-label">Source</div>
+                            <div class="value-strong">{{ source_stage_report.status|default:"unknown" }}</div>
+                            <div class="muted-block" style="margin-top: 10px;">
+                                <div><strong>Source URL:</strong> {{ source_stage_report.source_url|default:"-" }}</div>
+                                <div><strong>Detected source type:</strong> {{ source_stage_report.detected_source_type|default:"-" }}</div>
+                                <div><strong>Detection reason:</strong> {{ source_stage_report.detection_reason|default:"-" }}</div>
+                            </div>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Extraction</div>
+                            <ul class="metric-list">
+                                {% for label, value in source_stage_report.extraction_items %}
+                                    <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Cleaning</div>
+                            <ul class="metric-list">
+                                {% for label, value in source_stage_report.cleaning_items %}
+                                    <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Deduplication</div>
+                            <ul class="metric-list">
+                                {% for label, value in source_stage_report.dedupe_items %}
+                                    <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Persistence</div>
+                            {% for label, value in source_stage_report.persistence_items %}
+                                <div><strong>{{ label }}:</strong> {{ value }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Ranking</div>
+                            <div class="value-strong">{{ ranking_stage_report.status|default:"unknown" }}</div>
+                            <ul class="metric-list" style="margin-top: 10px;">
+                                {% for label, value in ranking_stage_report.pipeline_items %}
+                                    <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="detail-block">
+                    <summary>Source Stage</summary>
+                    <div class="stage-grid" style="margin-top: 14px;">
+                        <div class="meta-panel">
+                            <div class="section-label">Status</div>
+                            <div class="value-strong">{{ source_stage_report.status|default:"unknown" }}</div>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Content quality tiers</div>
+                            <p class="label-line"><strong>Content quality tiers:</strong></p>
+                            <ul class="metric-list">
+                                {% for label, value in source_stage_report.content_tier_items %}
+                                    <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                    <details class="detail-block detail-block--muted" {% if source_stage_report.cleaning_rejections %}open{% endif %}>
+                        <summary>Cleaning rejections{% if source_stage_report.cleaning_rejections %} ({{ source_stage_report.cleaning_rejections|length }}){% endif %}</summary>
+                        <p class="label-line"><strong>Rejected during cleaning:</strong></p>
+                        {% if source_stage_report.cleaning_rejections %}
+                            <div class="article-list article-list--stack">
+                                {% for article in source_stage_report.cleaning_rejections %}
+                                    <article class="article-card article-card--rejected">
+                                        <div class="article-card__header">
+                                            <div class="article-card__title-group">
+                                                {% if article.url and article.url != "-" %}
+                                                    <a class="article-card__title-link" href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                                                        {{ article.title|default:article.link_label|default:"Open article" }}
+                                                    </a>
+                                                {% else %}
+                                                    <div class="article-card__title-link">{{ article.title|default:"-" }}</div>
+                                                {% endif %}
+                                                <div class="article-card__source">{{ article.source_name|default:"Unknown source" }}</div>
+                                            </div>
+                                            <div class="article-card__metrics">
+                                                {% if article.content_tier %}
+                                                    <span class="metric-pill">{{ article.content_tier }}</span>
+                                                {% endif %}
+                                                {% if article.final_content_source %}
+                                                    <span class="metric-pill">{{ article.final_content_source }}</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <p class="article-card__summary">{{ article.reason|default:"cleaning rule failed" }}</p>
+                                        <div class="meta-grid">
+                                            <div class="meta-panel">
+                                                <div class="section-label">Extraction</div>
+                                                <div><strong>Content tier:</strong> {{ article.content_tier|default:"-" }}</div>
+                                                <div><strong>Final content source:</strong> {{ article.final_content_source|default:"-" }}</div>
+                                                <div><strong>Extraction method:</strong> {{ article.extraction_method|default:"-" }}</div>
+                                                <div><strong>Extraction warning:</strong> {{ article.extraction_warning|default:"-" }}</div>
+                                                <div><strong>Extracted content length:</strong> {{ article.content_length|default:"0" }}</div>
+                                            </div>
+                                            <div class="meta-panel">
+                                                <div class="section-label">Preview</div>
+                                                {% if article.content_preview %}
+                                                    <div class="scroll-box" style="max-height: 160px;">{{ article.content_preview }}</div>
+                                                {% else %}
+                                                    <div class="muted-block">No extracted content available.</div>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% if article.extraction_candidates %}
+                                            <details class="detail-block detail-block--muted">
+                                                <summary>Extraction candidates</summary>
+                                                <p class="label-line"><strong>Extraction candidates:</strong></p>
+                                                <ul class="compact-list">
+                                                    {% for candidate in article.extraction_candidates %}
+                                                        <li>
+                                                            <strong>Selector:</strong> {{ candidate.selector }}
+                                                            | <strong>Found:</strong> {{ candidate.found|yesno:"yes,no" }}
+                                                            | <strong>Text length:</strong> {{ candidate.text_length|default:"0" }}
+                                                            {% if candidate.rejection_reason %}| <strong>Rejection reason:</strong> {{ candidate.rejection_reason }}{% endif %}
+                                                        </li>
+                                                    {% endfor %}
+                                                </ul>
+                                            </details>
+                                        {% endif %}
+                                    </article>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <p class="muted-block">No articles were rejected during cleaning.</p>
+                        {% endif %}
+                    </details>
+                </details>
+
+                <details class="detail-block">
+                    <summary>Ranking Stage</summary>
+                    <div class="stage-grid" style="margin-top: 14px;">
+                        <div class="meta-panel">
+                            <div class="section-label">Status</div>
+                            <div class="value-strong">{{ ranking_stage_report.status|default:"unknown" }}</div>
+                            <p class="label-line"><strong>Pipeline decision:</strong> {{ ranking_stage_report.decision_message }}</p>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Ranking summary</div>
+                            <ul class="metric-list">
+                                {% for label, value in ranking_stage_report.summary_items %}
+                                    <li><strong>{{ label }}:</strong> {{ value }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="meta-panel">
+                            <div class="section-label">Providers and cost</div>
+                            <ul class="metric-list">
+                                <li><strong>Total tokens:</strong> {{ total_tokens_display }}</li>
+                                <li><strong>Total estimated cost:</strong> {{ total_estimated_cost_display }}</li>
+                                <li><strong>Digest provider:</strong> {{ digest_provider|default:"-" }}</li>
+                                <li><strong>Packaging provider:</strong> {{ packaging_provider|default:"-" }}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </details>
+
+                {% if ranking_stage_report.top_rejected_article %}
+                    <details class="detail-block">
+                        <summary>Top rejected article</summary>
+                        <div style="margin-top: 14px;">
+                            {% with article=ranking_stage_report.top_rejected_article %}
+                                {% include "digestflow/_ranked_article_card.html" %}
+                            {% endwith %}
+                        </div>
+                    </details>
+                {% endif %}
+
+                <details id="ranked-articles" class="detail-block section-anchor">
+                    <summary>All ranked articles{% if ranked_articles %} ({{ ranked_articles|length }}){% endif %}</summary>
+                    {% if has_ranked_articles %}
+                        <div class="article-list article-list--stack" style="margin-top: 14px;">
+                            {% for article in ranked_articles %}
+                                {% with article_row_collapsed=True hide_article_header=True %}
+                                    {% include "digestflow/_ranked_article_card.html" %}
+                                {% endwith %}
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="muted-block" style="margin-top: 14px;">No ranked articles are available for this run.</p>
+                    {% endif %}
+                </details>
+
+                <details id="raw-metrics" class="detail-block raw-json section-anchor">
+                    <summary>Raw metrics JSON</summary>
+                    <pre>{{ raw_metrics_json }}</pre>
+                </details>
+            </div>
+        </section>
+    </div>
+    <script>
+        (function () {
+            const button = document.getElementById('copy-diagnostics-button');
+            const payloadNode = document.getElementById('copy-diagnostics-payload');
+            const toggleButton = document.getElementById('toggle-details-button');
+            const allDetails = Array.from(document.querySelectorAll('details'));
+            const defaultLabel = button && button.dataset.defaultLabel
+                ? button.dataset.defaultLabel
+                : 'Copy full diagnostics';
+
+            function setTemporaryLabel(label) {
+                button.textContent = label;
+                window.setTimeout(function () {
+                    button.textContent = defaultLabel;
+                }, 1800);
+            }
+
+            function getPayloadText() {
+                if (!payloadNode) {
+                    return '';
+                }
+
+                try {
+                    return JSON.parse(payloadNode.textContent || '""');
+                } catch (error) {
+                    return '';
+                }
+            }
+
+            async function copyText(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return;
+                }
+
+                const fallback = document.createElement('textarea');
+                fallback.value = text;
+                fallback.setAttribute('readonly', 'readonly');
+                fallback.style.position = 'fixed';
+                fallback.style.opacity = '0';
+                fallback.style.pointerEvents = 'none';
+                document.body.appendChild(fallback);
+                fallback.focus();
+                fallback.select();
+                document.execCommand('copy');
+                document.body.removeChild(fallback);
+            }
+
+            function areAllDetailsOpen() {
+                if (!allDetails.length) {
+                    return false;
+                }
+
+                return allDetails.every(function (detail) {
+                    return detail.open;
+                });
+            }
+
+            function updateToggleButtonLabel() {
+                if (!toggleButton) {
+                    return;
+                }
+
+                const expandLabel = toggleButton.dataset.expandLabel || 'Expand all';
+                const collapseLabel = toggleButton.dataset.collapseLabel || 'Collapse all';
+                toggleButton.textContent = areAllDetailsOpen() ? collapseLabel : expandLabel;
+            }
+
+            if (button && payloadNode) {
+                button.addEventListener('click', async function () {
+                    const payloadText = getPayloadText();
+                    if (!payloadText) {
+                        setTemporaryLabel('No data');
+                        return;
+                    }
+
+                    try {
+                        await copyText(payloadText);
+                        setTemporaryLabel('Copied');
+                    } catch (error) {
+                        setTemporaryLabel('Copy failed');
+                    }
+                });
+            }
+
+            if (toggleButton && allDetails.length) {
+                toggleButton.addEventListener('click', function () {
+                    const shouldOpenAll = !areAllDetailsOpen();
+
+                    allDetails.forEach(function (detail) {
+                        detail.open = shouldOpenAll;
+                    });
+
+                    updateToggleButtonLabel();
+                });
+
+                allDetails.forEach(function (detail) {
+                    detail.addEventListener('toggle', updateToggleButtonLabel);
+                });
+
+                updateToggleButtonLabel();
+            }
+        })();
+    </script>
 </body>
 </html>
