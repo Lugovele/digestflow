@@ -142,6 +142,9 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertIn("dominant_theme_reason", ranking_stage.get("ranking_scores")[0])
         self.assertIn("primary_type_override_reason", ranking_stage.get("ranking_scores")[0])
         self.assertIn("heading_diagnostics", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("diversity_penalty", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("similarity_reasons", ranking_stage.get("ranking_scores")[0])
+        self.assertIn("diversity_adjusted_score", ranking_stage.get("ranking_scores")[0])
         weighted_tags = ranking_stage.get("ranking_scores")[0].get("weighted_secondary_tags", {})
         if weighted_tags:
             sample_payload = next(iter(weighted_tags.values()))

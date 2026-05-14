@@ -35,6 +35,9 @@ class RunDetailViewTests(TestCase):
                             "url": "https://example.com/architect",
                             "source_name": "DEV Community",
                             "score": 11.85,
+                            "diversity_penalty": 0.0,
+                            "diversity_adjusted_score": 11.85,
+                            "similarity_reasons": [],
                             "quality_score": 1.0,
                             "primary_article_type": "tutorial",
                             "quality_reasons": ["strong relevance to topic"],
@@ -65,6 +68,12 @@ class RunDetailViewTests(TestCase):
                             "url": "https://example.com/recipe-helper",
                             "source_name": "DEV Community",
                             "score": 9.9,
+                            "diversity_penalty": 0.44,
+                            "diversity_adjusted_score": 9.46,
+                            "similarity_reasons": [
+                                "moderate supporting-tag overlap with an already selected article",
+                                "same source or publication family as selected article",
+                            ],
                             "quality_score": 1.0,
                             "primary_article_type": "tutorial",
                             "quality_reasons": ["good technical/practical article"],
@@ -181,6 +190,9 @@ class RunDetailViewTests(TestCase):
                             "url": "https://example.com/architect",
                             "source_name": "DEV Community",
                             "score": 11.85,
+                            "diversity_penalty": 0.0,
+                            "diversity_adjusted_score": 11.85,
+                            "similarity_reasons": [],
                             "quality_score": 1.0,
                             "primary_article_type": "tutorial",
                             "dominant_tags": ["multi_agent", "memory"],
@@ -228,6 +240,12 @@ class RunDetailViewTests(TestCase):
                             "url": "https://example.com/recipe-helper",
                             "source_name": "DEV Community",
                             "score": 9.9,
+                            "diversity_penalty": 0.44,
+                            "diversity_adjusted_score": 9.46,
+                            "similarity_reasons": [
+                                "moderate supporting-tag overlap with an already selected article",
+                                "same source or publication family as selected article",
+                            ],
                             "quality_score": 1.0,
                             "primary_article_type": "tutorial",
                             "dominant_tags": [],
@@ -305,6 +323,10 @@ class RunDetailViewTests(TestCase):
         self.assertIn("Hashtags:", copy_payload)
         self.assertIn("#aiagents", copy_payload)
         self.assertIn("Raw metrics JSON", copy_payload)
+        self.assertContains(response, "Show diversity diagnostics")
+        self.assertContains(response, "Diversity penalty")
+        self.assertContains(response, "Diversity-adjusted score")
+        self.assertContains(response, "moderate supporting-tag overlap with an already selected article")
 
     def test_run_detail_renders_only_per_article_digest_view(self) -> None:
         user = get_user_model().objects.create_user(username="detail-user")
