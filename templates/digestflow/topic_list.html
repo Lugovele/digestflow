@@ -3,84 +3,934 @@
 <head>
     <meta charset="utf-8">
     <title>DigestFlow Topics</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            line-height: 1.45;
+            color: #1f2937;
+            background: #f6f8fb;
+        }
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 24px 16px 48px;
+        }
+        .card {
+            background: #fff;
+            border: 1px solid #d9e2f1;
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 18px;
+            max-width: 100%;
+        }
+        .workflow-card {
+            padding: 0;
+            overflow: hidden;
+        }
+        .workflow-section {
+            padding: 18px;
+        }
+        .workflow-section + .workflow-section {
+            border-top: 1px solid #e6ebf5;
+        }
+        .muted { color: #5b6472; }
+        .stack { display: flex; flex-direction: column; gap: 16px; }
+        .topic-form,
+        .source-list,
+        .topics-list,
+        .runs-list,
+        .inventory-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .field-row { display: flex; flex-direction: column; gap: 6px; }
+        .section-hint {
+            margin: 4px 0 0;
+            color: #5b6472;
+        }
+        .workflow-header,
+        .section-header,
+        .pipeline-bar,
+        .inventory-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: start;
+        }
+        .section-header--stack {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        .workflow-title {
+            margin: 0;
+            font-size: 22px;
+        }
+        .page-title {
+            margin: 0 0 10px;
+            font-size: 30px;
+            line-height: 1.15;
+        }
+        .workspace-settings-form {
+            margin-top: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .section-heading {
+            margin: 0;
+            font-size: 17px;
+        }
+        .focus-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .focus-chip-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            min-height: 18px;
+        }
+        .focus-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px;
+            border-radius: 999px;
+            background: #eef3ff;
+            color: #2240a1;
+            font-size: 14px;
+        }
+        .focus-chip button {
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1;
+            min-width: 0;
+        }
+        .focus-input {
+            width: 100%;
+        }
+        .source-identity {
+            min-width: 0;
+        }
+        .source-line {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 6px;
+            min-width: 0;
+            line-height: 1.35;
+        }
+        .source-line strong {
+            color: #1f2937;
+        }
+        .source-separator {
+            color: #94a3b8;
+            flex: 0 0 auto;
+        }
+        .source-url {
+            color: #5b6472;
+            font-size: 13px;
+            text-decoration: none;
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .source-url:hover,
+        .source-url:focus-visible {
+            color: #2251cc;
+            text-decoration: underline;
+        }
+        .meta-strip,
+        .source-meta,
+        .topic-meta,
+        .candidate-summary,
+        .inventory-actions,
+        .source-footer {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .inventory-row,
+        .topic-row,
+        .run-row {
+            padding: 14px;
+            border: 1px solid #d9e2f1;
+            border-radius: 10px;
+            background: #fbfcfe;
+        }
+        .topic-row {
+            position: relative;
+            padding-right: 56px;
+        }
+        .inventory-row--disabled {
+            opacity: 0.72;
+        }
+        .topic-row--dragging {
+            opacity: 0.58;
+            box-shadow: 0 10px 24px rgba(31, 41, 55, 0.12);
+        }
+        .topic-card-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .topic-title-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .drag-handle {
+            color: #94a3b8;
+            cursor: grab;
+            font-size: 18px;
+            line-height: 1;
+            user-select: none;
+        }
+        .topic-delete-form {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            margin: 0;
+        }
+        .icon-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            border-radius: 999px;
+            background: #fff7f7;
+            color: #a23b3b;
+            border: 1px solid #efc5c5;
+        }
+        .icon-button svg {
+            width: 18px;
+            height: 18px;
+        }
+        .inventory-main {
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .inventory-toggle {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 12px;
+            align-items: start;
+            cursor: pointer;
+        }
+        .inventory-toggle input {
+            margin-top: 3px;
+        }
+        .icon-button--subtle {
+            width: 32px;
+            height: 32px;
+            background: #fff;
+            color: #8f4a4a;
+            border-color: #e5d0d0;
+        }
+        .inline-add-form {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .inline-add-label-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+        .inline-add-controls {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: stretch;
+        }
+        .inline-add-controls input {
+            width: 100%;
+            min-width: 0;
+        }
+        input[type="text"],
+        input[type="url"],
+        textarea,
+        select {
+            width: 100%;
+            max-width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #c7d2e5;
+            border-radius: 8px;
+        }
+        button {
+            border: 0;
+            border-radius: 8px;
+            padding: 10px 14px;
+            background: #2251cc;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        .secondary-button {
+            background: #eef3ff;
+            color: #2240a1;
+            border: 1px solid #c9d7ff;
+        }
+        .secondary-button--subtle {
+            padding: 8px 12px;
+            font-size: 14px;
+        }
+        .secondary-button--visible {
+            background: #edf4ff;
+            border-color: #86a9ff;
+            color: #16378e;
+            box-shadow: 0 1px 3px rgba(34, 81, 204, 0.12);
+        }
+        .primary-cta {
+            padding: 14px 22px;
+            font-size: 15px;
+            min-width: 132px;
+            box-shadow: 0 8px 22px rgba(34, 81, 204, 0.2);
+        }
+        .pipeline-bar--final {
+            margin-top: 26px;
+            justify-content: flex-end;
+        }
+        .source-option {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 12px;
+            align-items: start;
+            padding: 14px;
+            border: 1px solid #d9e2f1;
+            border-radius: 10px;
+            background: #fbfcfe;
+        }
+        .source-option input { margin-top: 3px; }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 3px 10px;
+            background: #eef3ff;
+            color: #2240a1;
+            font-size: 13px;
+        }
+        .pill--quality-high { background: #e8f7ee; color: #1f7a46; }
+        .pill--quality-medium { background: #fff5dd; color: #8b5e00; }
+        .pill--quality-manual { background: #f1ecff; color: #6132b4; }
+        .inline-link,
+        a {
+            color: #2251cc;
+            overflow-wrap: anywhere;
+        }
+        .error {
+            color: #9b1c1c;
+            font-weight: 600;
+        }
+        .feedback {
+            margin: 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #d9e2f1;
+            background: #fbfcfe;
+        }
+        .feedback--success { border-color: #bfe3c9; background: #effaf3; color: #175c35; }
+        .feedback--error { border-color: #efc5c5; background: #fff3f3; color: #8f1d1d; }
+        .feedback--info { border-color: #c9d7ff; background: #eef3ff; color: #2240a1; }
+        .source-inline-feedback {
+            margin: 8px 0 0;
+            font-size: 13px;
+            line-height: 1.45;
+            color: #7b4f11;
+        }
+        .source-inline-feedback strong {
+            font-weight: 500;
+        }
+        .source-inline-feedback[hidden] {
+            display: none;
+        }
+        ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        @media (max-width: 720px) {
+            .workflow-header,
+            .section-header,
+            .pipeline-bar,
+            .inventory-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .inventory-actions {
+                justify-content: flex-start;
+            }
+        }
+        @media (max-width: 640px) {
+            .inline-add-controls {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 </head>
 <body>
-    <h1>DigestFlow</h1>
+    <div class="page">
+        {% if discovered_topic %}
+            <p style="margin: 0 0 14px;">
+                <a href="{% url 'topic-list' %}" class="inline-link">&larr; Back to topics</a>
+            </p>
 
-    <h2>Generate digest</h2>
-    <p>Enter a topic, and DigestFlow will generate a structured digest and a LinkedIn-ready content package.</p>
-    <p>A new topic will be created automatically.</p>
-    <form method="post" action="{% url 'create-topic-and-run' %}" novalidate>
-        {% csrf_token %}
-        <p>
-            <label for="{{ topic_form.topic_name.id_for_label }}">Topic name</label><br>
-            {{ topic_form.topic_name }}
-        </p>
-        <p>
-            <label for="{{ topic_form.source_url.id_for_label }}">Source RSS URL</label><br>
-            {{ topic_form.source_url }}<br>
-            {% if topic_form.source_url.help_text %}
-                <small>{{ topic_form.source_url.help_text }}</small>
-            {% endif %}
-        </p>
-        {% if topic_form_error %}
-            <p><strong>{{ topic_form_error }}</strong></p>
-        {% endif %}
-        {% if topic_form.topic_name.errors and not topic_form_error %}
-            <ul>
-                {% for error in topic_form.topic_name.errors %}
-                    <li>{{ error }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-        {% if topic_form.source_url.errors %}
-            <ul>
-                {% for error in topic_form.source_url.errors %}
-                    <li>{{ error }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-        <button type="submit">Generate digest</button>
-    </form>
+            <h1 class="page-title">{{ discovered_topic.name }}</h1>
 
-    <h2>Topics</h2>
-    {% if topics %}
-        <ul>
-            {% for topic in topics %}
-                <li>
-                    <strong>{{ topic.name }}</strong>
-                    {% if topic.source_url %}
-                        <div>Source: {{ topic.source_url }}</div>
+            <section class="card">
+                <div class="meta-strip">
+                    <span class="pill">{{ source_review_summary.mode_label }}</span>
+                    <span class="pill">{{ topic_source_inventory|length }} saved</span>
+                    <span class="pill">{{ source_review_summary.candidate_count }} new</span>
+                </div>
+                <form method="post" action="{% url 'discover-sources' %}" novalidate class="workspace-settings-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
+                    <div class="field-row">
+                        <label for="{{ topic_form.topic_name.id_for_label }}">Topic</label>
+                        <input
+                            type="text"
+                            name="{{ topic_form.topic_name.html_name }}"
+                            id="{{ topic_form.topic_name.id_for_label }}"
+                            value="{{ topic_form.topic_name.value|default_if_none:'' }}"
+                            maxlength="160"
+                            onchange="this.form.requestSubmit();"
+                        >
+                    </div>
+                    <div class="field-row">
+                        <label for="{{ topic_form.source_mode.id_for_label }}">Where to look</label>
+                        <select
+                            name="{{ topic_form.source_mode.html_name }}"
+                            id="{{ topic_form.source_mode.id_for_label }}"
+                            onchange="this.form.requestSubmit();"
+                        >
+                            {% for value, label in topic_form.source_mode.field.choices %}
+                                <option value="{{ value }}"{% if topic_form.source_mode.value == value %} selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% if topic_form_error %}
+                        <p class="error">{{ topic_form_error }}</p>
                     {% endif %}
-                    {% if topic.description %}
-                        <div>{{ topic.description }}</div>
+                    {% if topic_form.topic_name.errors and not topic_form_error %}
+                        <ul class="error">
+                            {% for error in topic_form.topic_name.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
                     {% endif %}
-                    <form method="post" action="{% url 'run-pipeline' topic.id %}" style="margin-top: 8px;">
+                    {% if topic_form.source_url.errors %}
+                        <ul class="error">
+                            {% for error in topic_form.source_url.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                    {% if topic_form.source_mode.errors %}
+                        <ul class="error">
+                            {% for error in topic_form.source_mode.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                </form>
+            </section>
+        {% else %}
+            <h1>DigestFlow</h1>
+            <section class="card">
+                <h2>Start a topic</h2>
+                <p class="muted">
+                    Start with a topic and choose how DigestFlow should combine new and saved sources.
+                </p>
+                <form method="post" action="{% url 'discover-sources' %}" novalidate class="topic-form">
+                    {% csrf_token %}
+                    <div class="field-row">
+                        <label for="{{ topic_form.topic_name.id_for_label }}">Topic</label>
+                        {{ topic_form.topic_name }}
+                    </div>
+                    <div class="field-row">
+                        <label for="{{ topic_form.source_mode.id_for_label }}">Where to look</label>
+                        {{ topic_form.source_mode }}
+                    </div>
+                    {% if topic_form_error %}
+                        <p class="error">{{ topic_form_error }}</p>
+                    {% endif %}
+                    {% if topic_form.topic_name.errors and not topic_form_error %}
+                        <ul class="error">
+                            {% for error in topic_form.topic_name.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                    {% if topic_form.source_url.errors %}
+                        <ul class="error">
+                            {% for error in topic_form.source_url.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                    {% if topic_form.source_mode.errors %}
+                        <ul class="error">
+                            {% for error in topic_form.source_mode.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                    <div>
+                        <button type="submit">Find sources</button>
+                    </div>
+                </form>
+            </section>
+        {% endif %}
+
+        {% if discovered_topic %}
+            <section class="card">
+                <div class="section-header section-header--stack">
+                    <div>
+                        <h3 class="section-heading">Focus</h3>
+                    </div>
+                </div>
+                <form
+                    method="post"
+                    action="{% url 'update-topic-focus' discovered_topic.id %}"
+                    class="focus-form"
+                    data-focus-form
+                >
+                    {% csrf_token %}
+                    <input type="hidden" name="focus_terms" value="{% for term in focus_terms %}{{ term }}{% if not forloop.last %}&#10;{% endif %}{% endfor %}" data-focus-hidden>
+                    <input
+                        type="text"
+                        class="focus-input"
+                        placeholder="Add a phrase and press Enter"
+                        autocomplete="off"
+                        value="{{ focus_input_value }}"
+                        data-focus-input
+                    >
+                    <div class="focus-chip-list" data-focus-chip-list>
+                        {% for term in focus_terms %}
+                            <span class="focus-chip" data-focus-chip data-focus-value="{{ term }}">
+                                <span>{{ term }}</span>
+                                <button type="button" aria-label="Remove focus term {{ term }}" data-focus-remove>&times;</button>
+                            </span>
+                        {% endfor %}
+                    </div>
+                    {% if focus_feedback %}
+                        <p class="feedback feedback--{{ focus_feedback.level }}">
+                            <strong>{{ focus_feedback.message }}</strong>
+                        </p>
+                    {% endif %}
+                </form>
+            </section>
+
+            <section class="card workflow-card">
+                {% if discovered_topic.uses_curated_sources %}
+                    <div class="workflow-section">
+                        <div class="section-header section-header--stack">
+                            <div>
+                                <h3 class="section-heading">Saved sources</h3>
+                            </div>
+                        </div>
+                        <form method="post" action="{% url 'add-topic-source' discovered_topic.id %}" class="inline-add-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
+                            <div class="inline-add-controls">
+                                <input
+                                    id="topic-source-url"
+                                    type="url"
+                                    name="source_url"
+                                    placeholder="Add a link and press Enter"
+                                    value="{{ source_add_input_value|default_if_none:'' }}"
+                                    data-source-feedback-input
+                                >
+                            </div>
+                        </form>
+                        {% if source_add_feedback and source_add_feedback.level != "success" %}
+                            <p
+                                class="source-inline-feedback"
+                                data-source-feedback
+                                data-initial-value="{{ source_add_input_value|default_if_none:''|escape }}"
+                            >
+                                <strong>{{ source_add_feedback.message }}</strong>
+                            </p>
+                        {% endif %}
+                        {% if topic_source_inventory %}
+                            <div class="inventory-list" style="margin-top: 14px;">
+                                {% for source in topic_source_inventory %}
+                                    <div class="inventory-row{% if not source.is_active %} inventory-row--disabled{% endif %}">
+                                        <div class="inventory-main">
+                                            <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id source.id %}">
+                                                {% csrf_token %}
+                                                <label class="inventory-toggle">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="is_active"
+                                                        value="1"
+                                                        {% if source.is_active %}checked{% endif %}
+                                                        onchange="this.form.requestSubmit();"
+                                                    >
+                                                    <span class="source-identity">
+                                                        <span class="source-line">
+                                                            <strong>{{ source.name }}</strong>
+                                                            <span class="source-separator">&middot;</span>
+                                                            <a class="source-url" href="{{ source.url }}" target="_blank" rel="noreferrer">{{ source.display_url }}</a>
+                                                        </span>
+                                                    </span>
+                                                </label>
+                                            </form>
+                                        </div>
+                                        <div class="inventory-actions">
+                                            <form method="post" action="{% url 'remove-topic-source' discovered_topic.id source.id %}">
+                                                {% csrf_token %}
+                                                <button type="submit" class="icon-button icon-button--subtle" aria-label="Remove saved source {{ source.name }}" title="Remove">
+                                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                                        <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11V8h12v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>
+                                                    </svg>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                {% if discovered_topic.uses_source_discovery %}
+                    <div class="workflow-section">
+                        <div class="section-header">
+                            <div>
+                                <h3 class="section-heading">New sources</h3>
+                                <p class="section-hint">Choose sources to use in the next run.</p>
+                            </div>
+                            <div class="stack" style="gap: 10px; align-items: flex-end;">
+                                <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
+                                    <input type="hidden" name="source_url" value="">
+                                    <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
+                                    <button type="submit" class="secondary-button secondary-button--subtle secondary-button--visible">Find sources</button>
+                                </form>
+                            </div>
+                        </div>
+                        {% if source_selection_error %}
+                            <p class="error">{{ source_selection_error }}</p>
+                        {% endif %}
+                        {% if discovered_source_candidates %}
+                            <form id="workspace-run-form" method="post" action="{% url 'run-with-selected-sources' discovered_topic.id %}" class="stack">
+                                {% csrf_token %}
+                                {% for saved_source_url in active_saved_source_urls %}
+                                    <input type="hidden" name="selected_source_urls" value="{{ saved_source_url }}">
+                                {% endfor %}
+                                <div class="source-list">
+                                    {% for candidate in discovered_source_candidates %}
+                                        <label class="source-option">
+                                            <input
+                                                type="checkbox"
+                                                name="selected_source_urls"
+                                                value="{{ candidate.url }}"
+                                                {% if candidate.selected %}checked{% endif %}
+                                            >
+                                            <span class="source-identity">
+                                                <span class="source-line">
+                                                    <strong>{{ candidate.title }}</strong>
+                                                    <span class="source-separator">&middot;</span>
+                                                    <a class="source-url" href="{{ candidate.url }}" target="_blank" rel="noreferrer">{{ candidate.display_url }}</a>
+                                                </span>
+                                                {% if candidate.description %}
+                                                    <div class="muted" style="margin-top: 6px;">{{ candidate.description }}</div>
+                                                {% endif %}
+                                                <div class="source-meta">
+                                                    <span class="pill">
+                                                        {% if candidate.has_recent_article_count %}
+                                                            {{ candidate.recent_article_count }} recent articles
+                                                        {% else %}
+                                                            Recent articles unknown
+                                                        {% endif %}
+                                                    </span>
+                                                </div>
+                                            </span>
+                                        </label>
+                                    {% endfor %}
+                                </div>
+                            </form>
+                        {% else %}
+                            <p class="muted">No new sources were found for this topic yet.</p>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </section>
+
+            {% if discovered_topic.uses_source_discovery %}
+                {% if discovered_source_candidates %}
+                    <div class="pipeline-bar pipeline-bar--final">
+                        <button type="submit" form="workspace-run-form" class="primary-cta">Run</button>
+                    </div>
+                {% endif %}
+            {% else %}
+                <div class="pipeline-bar pipeline-bar--final">
+                    <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
                         {% csrf_token %}
-                        <button type="submit">Run pipeline</button>
+                        <button type="submit" class="primary-cta">Run</button>
                     </form>
-                </li>
-            {% endfor %}
-        </ul>
-    {% else %}
-        <p>No topics yet. Enter a topic above to create one and start a digest.</p>
-    {% endif %}
+                </div>
+            {% endif %}
+        {% else %}
+            <section class="card">
+                <h2>Saved topics</h2>
+                {% if topics %}
+                    <div id="saved-topics-list" class="topics-list">
+                        {% for topic in topics %}
+                            <div class="topic-row" data-topic-id="{{ topic.id }}">
+                                <form
+                                    method="post"
+                                    action="{% url 'delete-topic' topic.id %}"
+                                    class="topic-delete-form"
+                                    onsubmit="return confirm('Delete this topic?');"
+                                >
+                                    {% csrf_token %}
+                                    <button type="submit" class="icon-button" aria-label="Delete topic" title="Delete">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                            <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11V8h12v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>
+                                        </svg>
+                                    </button>
+                                </form>
+                                <div class="topic-title-row">
+                                    <span class="drag-handle" aria-hidden="true" title="Reorder" draggable="true">⋮⋮</span>
+                                    <strong>{{ topic.name }}</strong>
+                                </div>
+                                <div class="topic-meta">
+                                    <span class="pill">{{ topic.source_count }} saved</span>
+                                    <span class="pill">{{ topic.get_source_mode_display }}</span>
+                                </div>
+                                {% if topic.description %}
+                                    <div class="muted" style="margin-top: 6px;">{{ topic.description }}</div>
+                                {% endif %}
+                                <div class="topic-card-actions">
+                                    <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="topic_name" value="{{ topic.name }}">
+                                        <input type="hidden" name="source_url" value="">
+                                        <input type="hidden" name="source_mode" value="{{ topic.source_mode }}">
+                                        <button type="submit" class="secondary-button">Settings</button>
+                                    </form>
+                                    <form method="post" action="{% url 'run-pipeline' topic.id %}" style="margin: 0;">
+                                        {% csrf_token %}
+                                        <button type="submit">Run</button>
+                                    </form>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No topics yet. Enter a topic above to find sources and start a digest.</p>
+                {% endif %}
+            </section>
 
-    <h2>Recent Digest Runs</h2>
-    {% if recent_runs %}
-        <ul>
-            {% for run in recent_runs %}
-                <li>
-                    <a href="{% url 'run-detail' run.id %}">Run {{ run.id }}</a>
-                    - {{ run.topic.name }}
-                    - {{ run.status }}
-                </li>
-            {% endfor %}
-        </ul>
-    {% else %}
-        <p>No runs yet.</p>
-    {% endif %}
+            <section class="card">
+                <h2>Recent Digest Runs</h2>
+                {% if recent_runs %}
+                    <div class="runs-list">
+                        {% for run in recent_runs %}
+                            <div class="run-row">
+                                <a href="{% url 'run-detail' run.id %}">Run {{ run.id }}</a>
+                                - {{ run.topic.name }}
+                                - {{ run.status }}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No runs yet.</p>
+                {% endif %}
+            </section>
+        {% endif %}
 
-    <p><a href="/admin/">Open Django admin</a></p>
+        <p><a href="/admin/">Open Django admin</a></p>
+    </div>
+    {% if not discovered_topic and topics %}
+    <script>
+(() => {
+    const list = document.getElementById("saved-topics-list");
+    if (!list) {
+        return;
+    }
+
+    const csrfInput = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    const csrfToken = csrfInput ? csrfInput.value : "";
+
+    function getDragAfterElement(container, y) {
+        const cards = [...container.querySelectorAll(".topic-row:not(.topic-row--dragging)")];
+        let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
+
+        for (const card of cards) {
+            const box = card.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                closest = { offset, element: card };
+            }
+        }
+
+        return closest.element;
+    }
+
+    async function persistTopicOrder() {
+        const orderedIds = [...list.querySelectorAll(".topic-row")].map((card) => card.dataset.topicId).filter(Boolean);
+        if (!orderedIds.length || !csrfToken) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("csrfmiddlewaretoken", csrfToken);
+        for (const topicId of orderedIds) {
+            formData.append("topic_ids", topicId);
+        }
+
+        const response = await fetch("{% url 'reorder-topics' %}", {
+            method: "POST",
+            body: formData,
+            credentials: "same-origin",
+        });
+
+        if (!response.ok) {
+            window.location.reload();
+        }
+    }
+
+    for (const card of list.querySelectorAll(".topic-row")) {
+        const handle = card.querySelector(".drag-handle");
+        if (!handle) {
+            continue;
+        }
+
+        handle.addEventListener("dragstart", (event) => {
+            card.classList.add("topic-row--dragging");
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", card.dataset.topicId || "");
+            }
+        });
+
+        handle.addEventListener("dragend", async () => {
+            card.classList.remove("topic-row--dragging");
+            await persistTopicOrder();
+        });
+    }
+
+    list.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        const dragging = list.querySelector(".topic-row--dragging");
+        if (!dragging) {
+            return;
+        }
+        const afterElement = getDragAfterElement(list, event.clientY);
+        if (!afterElement) {
+            list.appendChild(dragging);
+        } else if (afterElement !== dragging) {
+            list.insertBefore(dragging, afterElement);
+        }
+    });
+})();
+    </script>
+    {% endif %}
+    {% if discovered_topic %}
+    <script>
+(() => {
+    const form = document.querySelector("[data-focus-form]");
+    if (!form) {
+        return;
+    }
+
+    const hiddenInput = form.querySelector("[data-focus-hidden]");
+    const textInput = form.querySelector("[data-focus-input]");
+    const chipList = form.querySelector("[data-focus-chip-list]");
+
+    if (!hiddenInput || !textInput || !chipList) {
+        return;
+    }
+
+    function getTerms() {
+        return hiddenInput.value
+            .split("\n")
+            .map((value) => value.trim())
+            .filter(Boolean);
+    }
+
+    function setTerms(terms) {
+        hiddenInput.value = terms.join("\n");
+    }
+
+    function addTerm(rawValue) {
+        const nextValue = rawValue.trim().replace(/\s+/g, " ");
+        if (!nextValue) {
+            return;
+        }
+        const terms = getTerms();
+        const normalized = nextValue.toLocaleLowerCase();
+        const exists = terms.some((term) => term.toLocaleLowerCase() === normalized);
+        if (exists) {
+            textInput.value = "";
+            return;
+        }
+        terms.push(nextValue);
+        setTerms(terms);
+        textInput.value = "";
+        form.requestSubmit();
+    }
+
+    textInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") {
+            return;
+        }
+        event.preventDefault();
+        addTerm(textInput.value);
+    });
+
+    chipList.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-focus-remove]");
+        if (!button) {
+            return;
+        }
+        const chip = button.closest("[data-focus-chip]");
+        if (!chip) {
+            return;
+        }
+        const value = chip.getAttribute("data-focus-value") || "";
+        const terms = getTerms().filter((term) => term !== value);
+        setTerms(terms);
+        form.requestSubmit();
+    });
+})();
+(() => {
+    const sourceInput = document.querySelector("[data-source-feedback-input]");
+    const sourceFeedback = document.querySelector("[data-source-feedback]");
+    if (!sourceInput || !sourceFeedback) {
+        return;
+    }
+
+    const initialValue = sourceFeedback.dataset.initialValue || "";
+    sourceInput.addEventListener("input", () => {
+        if (!sourceInput.value || sourceInput.value !== initialValue) {
+            sourceFeedback.hidden = true;
+        }
+    });
+})();
+    </script>
+    {% endif %}
 </body>
 </html>

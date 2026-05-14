@@ -1,18 +1,29 @@
 from django.conf import settings
 from django.db import models
+from django.db.models import Max
+from django.db.models import Q
+
+
+class TopicSourceMode(models.TextChoices):
+    DISCOVERY_ONLY = "discovery_only", "new only"
+    CURATED_ONLY = "curated_only", "saved only"
+    HYBRID = "hybrid", "saved & new"
+
+
+class TopicSourceOrigin(models.TextChoices):
+    MANUAL = "manual", "Manual"
+    DISCOVERED = "discovered", "Discovered"
+    CURATED = "curated", "Curated"
 
 
 class Topic(models.Model):
     """User-owned topic for digest generation."""
 
-    SOURCE_MODE_AUTOMATIC = "automatic"
-    SOURCE_MODE_CUSTOM_ONLY = "custom_only"
-    SOURCE_MODE_HYBRID = "hybrid"
-    SOURCE_MODE_CHOICES = [
-        (SOURCE_MODE_AUTOMATIC, "Automatic"),
-        (SOURCE_MODE_CUSTOM_ONLY, "Custom only"),
-        (SOURCE_MODE_HYBRID, "Hybrid"),
-    ]
+    # Backward-compatible aliases used across existing pipeline/tests.
+    SOURCE_MODE_AUTOMATIC = TopicSourceMode.DISCOVERY_ONLY
+    SOURCE_MODE_CUSTOM_ONLY = TopicSourceMode.CURATED_ONLY
+    SOURCE_MODE_HYBRID = TopicSourceMode.HYBRID
+    SOURCE_MODE_CHOICES = TopicSourceMode.choices
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     name = models.CharField(max_length=160)
@@ -20,18 +31,20 @@ class Topic(models.Model):
     source_mode = models.CharField(
         max_length=20,
         choices=SOURCE_MODE_CHOICES,
-        default=SOURCE_MODE_AUTOMATIC,
+        default=TopicSourceMode.DISCOVERY_ONLY,
     )
     default_quality_threshold = models.FloatField(default=0.4)
     description = models.TextField(blank=True)
     keywords = models.JSONField(default=list, blank=True)
     excluded_keywords = models.JSONField(default=list, blank=True)
+    focus_initialized = models.BooleanField(default=False)
+    display_order = models.PositiveIntegerField(default=0, db_index=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["display_order", "name"]
         constraints = [
             models.UniqueConstraint(fields=["user", "name"], name="unique_topic_per_user")
         ]
@@ -39,9 +52,31 @@ class Topic(models.Model):
     def __str__(self) -> str:
         return self.name
 
+    def save(self, *args, **kwargs):
+        if self._state.adding and not self.display_order:
+            max_display_order = (
+                type(self).objects.filter(user=self.user).aggregate(max_value=Max("display_order")).get("max_value") or 0
+            )
+            self.display_order = max_display_order + 1
+        super().save(*args, **kwargs)
 
-class Source(models.Model):
-    """Minimal persistent topic-level source record."""
+    @property
+    def uses_source_discovery(self) -> bool:
+        return self.source_mode in {
+            TopicSourceMode.DISCOVERY_ONLY,
+            TopicSourceMode.HYBRID,
+        }
+
+    @property
+    def uses_curated_sources(self) -> bool:
+        return self.source_mode in {
+            TopicSourceMode.CURATED_ONLY,
+            TopicSourceMode.HYBRID,
+        }
+
+
+class TopicSource(models.Model):
+    """Persistent topic-level source record."""
 
     VALIDATION_PENDING = "pending"
     VALIDATION_VALID = "valid"
@@ -57,9 +92,15 @@ class Source(models.Model):
         on_delete=models.CASCADE,
         related_name="sources",
     )
-    original_url = models.URLField()
+    name = models.CharField(max_length=160, blank=True)
+    url = models.URLField()
     normalized_url = models.URLField()
     source_type = models.CharField(max_length=50, blank=True)
+    origin = models.CharField(
+        max_length=16,
+        choices=TopicSourceOrigin.choices,
+        default=TopicSourceOrigin.CURATED,
+    )
     platform = models.CharField(max_length=50, blank=True)
     validation_status = models.CharField(
         max_length=16,
@@ -73,9 +114,32 @@ class Source(models.Model):
 
     class Meta:
         ordering = ["topic_id", "id"]
+        db_table = "topics_source"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["topic", "normalized_url"],
+                condition=Q(is_active=True),
+                name="unique_active_topic_source_url",
+            )
+        ]
 
     def __str__(self) -> str:
-        return self.normalized_url or self.original_url
+        return self.name or self.normalized_url or self.url
+
+    @property
+    def original_url(self) -> str:
+        return self.url
+
+    @original_url.setter
+    def original_url(self, value: str) -> None:
+        self.url = value
+
+
+class Source(TopicSource):
+    """Backward-compatible proxy alias during the TopicSource transition."""
+
+    class Meta:
+        proxy = True
 
 
 class DigestSettings(models.Model):

@@ -1,19 +1,30 @@
 import json
 import logging
+from collections import Counter
 from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
-from django.http import HttpRequest, HttpResponse
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.digests import result_messages
 from apps.digests.models import DigestRun
-from apps.topics.models import Topic
+from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, clean_focus_terms, validate_new_focus_terms
+from apps.topics.focus_suggestions import generate_focus_suggestions, should_seed_focus_terms
+from apps.topics.models import Source, Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
 from services.pipeline.run_pipeline import run_digest_pipeline
-from services.sources import get_demo_articles_for_topic
-from services.sources.rss_adapter import fetch_rss_articles
+from services.sources import (
+    CuratedSourceSeed,
+    TopicSourceDiscoveryRequest,
+    get_demo_articles_for_topic,
+    resolve_source_candidates,
+)
+from services.sources.detector import classify_source_url
+from services.sources.rss_adapter import fetch_dev_to_article_content, fetch_generic_web_article, fetch_rss_articles
 
 from .forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 
@@ -28,6 +39,40 @@ def topic_list_view(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
+def discover_sources_view(request: HttpRequest) -> HttpResponse:
+    form = TopicInputForm(request.POST)
+    if not form.is_valid():
+        context = _build_topic_list_context(form=form)
+        context["topic_form_error"] = _get_topic_form_error(form)
+        return render(request, "digestflow/topic_list.html", context, status=400)
+
+    topic_name = form.cleaned_data["topic_name"]
+    source_url = str(form.cleaned_data.get("source_url") or "").strip()
+    source_mode = form.cleaned_data.get("source_mode") or TopicSourceMode.HYBRID
+    try:
+        topic = _get_or_create_ui_topic(
+            topic_name,
+            source_urls=[source_url] if source_url else [],
+            source_mode=source_mode,
+            topic_id=request.POST.get("topic_id"),
+        )
+    except ValidationError as exc:
+        context = _build_topic_list_context(form=form)
+        context["topic_form_error"] = str(exc)
+        return render(request, "digestflow/topic_list.html", context, status=400)
+    topic.manual_source_inputs = [source_url] if source_url else []
+    return render(
+        request,
+        "digestflow/topic_list.html",
+        _build_topic_list_context(
+            form=form,
+            discovered_topic=topic,
+            discovered_source_candidates=_discover_and_prepare_candidates(topic),
+        ),
+    )
+
+
+@require_POST
 def create_topic_and_run_view(request: HttpRequest) -> HttpResponse:
     form = TopicInputForm(request.POST)
     if not form.is_valid():
@@ -36,12 +81,79 @@ def create_topic_and_run_view(request: HttpRequest) -> HttpResponse:
         return render(request, "digestflow/topic_list.html", context, status=400)
 
     topic_name = form.cleaned_data["topic_name"]
-    source_url = form.cleaned_data.get("source_url") or ""
-    topic = _get_or_create_ui_topic(topic_name, source_url=source_url)
+    source_url = str(form.cleaned_data.get("source_url") or "").strip()
+    source_mode = form.cleaned_data.get("source_mode") or TopicSourceMode.HYBRID
+    topic = _get_or_create_ui_topic(topic_name, source_urls=[source_url] if source_url else [], source_mode=source_mode)
+    topic.manual_source_inputs = [source_url] if source_url else []
     run = _create_ui_digest_run(topic, source="web_ui_form")
 
     _start_topic_run(run, topic, default_source="web_ui_form")
     return redirect("run-detail", run_id=run.id)
+
+
+@require_POST
+def add_topic_source_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    raw_source_url = str(request.POST.get("source_url") or "")
+    source_url = raw_source_url.strip()
+    source_mode = str(request.POST.get("source_mode") or topic.source_mode or TopicSourceMode.HYBRID).strip()
+    form = TopicInputForm(
+        initial={
+            "topic_name": topic.name,
+            "source_url": "",
+            "source_mode": source_mode,
+        }
+    )
+
+    validation = _validate_topic_source_submission(topic, source_url)
+    if not validation["ok"]:
+        context = _build_topic_list_context(
+            form=form,
+            discovered_topic=topic,
+            discovered_source_candidates=_discover_and_prepare_candidates(topic),
+        )
+        context["source_add_feedback"] = validation
+        context["source_add_input_value"] = raw_source_url
+        return render(request, "digestflow/topic_list.html", context, status=400)
+
+    _ensure_manual_topic_source(
+        topic,
+        source_url,
+        source_name=str(validation.get("resolved_title") or "").strip(),
+    )
+    topic.source_mode = source_mode
+    topic.save(update_fields=["source_mode", "updated_at"])
+    return _render_topic_source_review(
+        request,
+        topic,
+        source_add_feedback=validation,
+    )
+
+
+@require_POST
+def update_topic_focus_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    focus_terms = _parse_focus_terms(request.POST)
+    validation_error = validate_new_focus_terms(_build_topic_focus_terms(topic), focus_terms)
+    if validation_error:
+        return _render_topic_source_review(
+            request,
+            topic,
+            focus_feedback={
+                "level": "error",
+                "message": FOCUS_VALIDATION_MESSAGE,
+            },
+            focus_input_value=validation_error,
+            status=400,
+        )
+    if topic.keywords != focus_terms:
+        topic.keywords = focus_terms
+        topic.focus_initialized = True
+        topic.save(update_fields=["keywords", "focus_initialized", "updated_at"])
+    elif not topic.focus_initialized:
+        topic.focus_initialized = True
+        topic.save(update_fields=["focus_initialized", "updated_at"])
+    return _render_topic_source_review(request, topic)
 
 
 @require_POST
@@ -51,6 +163,99 @@ def run_pipeline_view(request: HttpRequest, topic_id: int) -> HttpResponse:
 
     _start_topic_run(run, topic, default_source="web_ui")
     return redirect("run-detail", run_id=run.id)
+
+
+@require_POST
+def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    discovered_source_candidates = _discover_and_prepare_candidates(topic)
+    selected_source_urls = [str(raw_url).strip() for raw_url in request.POST.getlist("selected_source_urls") if str(raw_url).strip()]
+    selected_candidates = _resolve_selected_source_candidates(
+        selected_source_urls,
+        discovered_source_candidates,
+    )
+
+    if not selected_candidates:
+        context = _build_topic_list_context(
+            discovered_topic=topic,
+            discovered_source_candidates=discovered_source_candidates,
+        )
+        context["source_selection_error"] = "Select at least one source before generating the digest."
+        return render(request, "digestflow/topic_list.html", context, status=400)
+
+    selected_sources = _persist_selected_topic_sources(topic, selected_candidates)
+    selected_source_ids = [source.id for source in selected_sources]
+    topic.sources.filter(id__in=selected_source_ids).update(
+        is_active=True,
+        validation_status=Source.VALIDATION_PENDING,
+        last_validation_error="",
+    )
+    topic.sources.exclude(id__in=selected_source_ids).update(is_active=False)
+    topic.source_mode = Topic.SOURCE_MODE_CUSTOM_ONLY
+    topic.save(update_fields=["source_mode", "updated_at"])
+
+    run = _create_ui_digest_run(topic, source="selected_sources_web_ui")
+    _start_topic_run(run, topic, default_source="selected_sources_web_ui")
+    return redirect("run-detail", run_id=run.id)
+
+
+@require_POST
+def toggle_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
+    source.is_active = not source.is_active
+    source.save(update_fields=["is_active", "updated_at"])
+    return _render_topic_source_review(request, topic)
+
+
+@require_POST
+def remove_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
+    source.delete()
+    return _render_topic_source_review(request, topic)
+
+
+@require_POST
+def delete_topic_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    topic.delete()
+    return redirect("topic-list")
+
+
+@require_POST
+def reorder_topics_view(request: HttpRequest) -> JsonResponse:
+    user = _get_or_create_ui_user()
+    raw_topic_ids = request.POST.getlist("topic_ids")
+    ordered_topic_ids: list[int] = []
+    seen_topic_ids: set[int] = set()
+
+    for raw_topic_id in raw_topic_ids:
+        try:
+            topic_id = int(str(raw_topic_id).strip())
+        except (TypeError, ValueError):
+            continue
+        if topic_id in seen_topic_ids:
+            continue
+        seen_topic_ids.add(topic_id)
+        ordered_topic_ids.append(topic_id)
+
+    user_topics = list(Topic.objects.filter(user=user).order_by("display_order", "name"))
+    if not ordered_topic_ids:
+        return JsonResponse({"ok": False, "error": "No topics were provided."}, status=400)
+
+    topic_by_id = {topic.id: topic for topic in user_topics}
+    if set(ordered_topic_ids) != set(topic_by_id.keys()):
+        return JsonResponse({"ok": False, "error": "Topic order did not match the saved topics list."}, status=400)
+
+    for position, topic_id in enumerate(ordered_topic_ids, start=1):
+        topic = topic_by_id[topic_id]
+        if topic.display_order == position:
+            continue
+        topic.display_order = position
+        topic.save(update_fields=["display_order", "updated_at"])
+
+    return JsonResponse({"ok": True})
 
 
 @require_GET
@@ -944,35 +1149,636 @@ def _get_topic_form_error(form: TopicInputForm) -> str:
         return str(topic_errors[0])
     return TOPIC_NAME_REQUIRED_MESSAGE
 
-def _build_topic_list_context(form: TopicInputForm | None = None) -> dict:
-    topics = Topic.objects.order_by("name")
-    recent_runs = DigestRun.objects.select_related("topic").order_by("-created_at")[:10]
+def _build_topic_list_context(
+    form: TopicInputForm | None = None,
+    *,
+    discovered_topic: Topic | None = None,
+    discovered_source_candidates: list[dict] | None = None,
+    focus_feedback: dict | None = None,
+    focus_input_value: str = "",
+) -> dict:
+    user = _get_or_create_ui_user()
+    all_candidate_records = discovered_source_candidates or []
+    visible_new_source_candidates = _build_visible_new_source_candidates(all_candidate_records)
+    topics = list(
+        Topic.objects.filter(user=user)
+        .order_by("display_order", "name")
+        .prefetch_related("sources")
+    )
+    for topic in topics:
+        topic.source_count = len(topic.sources.all())
+        topic.active_source_count = sum(1 for source in topic.sources.all() if source.is_active)
+        topic.legacy_source_display = _build_legacy_source_display(topic)
+    recent_runs = DigestRun.objects.filter(topic__user=user).select_related("topic").order_by("-created_at")[:10]
     return {
         "topics": topics,
         "recent_runs": recent_runs,
         "topic_form": form or TopicInputForm(),
+        "discovered_topic": discovered_topic,
+        "focus_terms": _build_topic_focus_terms(discovered_topic),
+        "focus_feedback": focus_feedback,
+        "focus_input_value": focus_input_value,
+        "discovered_source_candidates": visible_new_source_candidates,
+        "source_review_summary": _build_source_review_summary(discovered_topic, visible_new_source_candidates),
+        "topic_source_inventory": _build_topic_source_inventory(discovered_topic),
+        "active_saved_source_urls": _build_active_saved_source_urls(discovered_topic),
+        "legacy_topic_source": _build_legacy_source_display(discovered_topic),
+        "source_add_feedback": None,
     }
 
 
-def _get_or_create_ui_topic(topic_name: str, source_url: str = "") -> Topic:
+def _render_topic_source_review(
+    request: HttpRequest,
+    topic: Topic,
+    *,
+    status: int = 200,
+    source_add_feedback: dict | None = None,
+    source_add_input_value: str = "",
+    focus_feedback: dict | None = None,
+    focus_input_value: str = "",
+) -> HttpResponse:
+    if focus_feedback is None:
+        _ensure_topic_focus_seeded(topic)
+    form = TopicInputForm(
+        initial={
+            "topic_name": topic.name,
+            "source_url": "",
+            "source_mode": topic.source_mode,
+        }
+    )
+    context = _build_topic_list_context(
+        form=form,
+        discovered_topic=topic,
+        discovered_source_candidates=_discover_and_prepare_candidates(topic),
+        focus_feedback=focus_feedback,
+        focus_input_value=focus_input_value,
+    )
+    context["source_add_feedback"] = source_add_feedback
+    context["source_add_input_value"] = source_add_input_value
+    return render(
+        request,
+        "digestflow/topic_list.html",
+        context,
+        status=status,
+    )
+
+
+def _build_topic_focus_terms(topic: Topic | None) -> list[str]:
+    if topic is None:
+        return []
+    raw_terms = topic.keywords if isinstance(topic.keywords, list) else []
+    return clean_focus_terms(raw_terms)
+
+
+def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
+    candidate_records = resolve_source_candidates(
+        TopicSourceDiscoveryRequest(
+            topic=topic.name,
+            focus_terms=_build_topic_focus_terms(topic),
+            source_mode=topic.source_mode,
+            manual_source_urls=list(getattr(topic, "manual_source_inputs", []) or []),
+            curated_sources=_build_curated_source_seeds(topic),
+        )
+    )
+    return _upsert_and_build_source_candidates(topic, candidate_records)
+
+
+def _build_source_review_summary(
+    topic: Topic | None,
+    candidate_records: list[dict],
+) -> dict:
+    if topic is None:
+        return {
+            "mode": TopicSourceMode.HYBRID,
+            "mode_label": TopicSourceMode(TopicSourceMode.HYBRID).label,
+            "candidate_count": 0,
+            "deduped_source_count": 0,
+            "origin_counts": {},
+            "discovered_candidates": [],
+            "curated_candidates": [],
+            "manual_candidates": [],
+        }
+
+    origin_counter = Counter()
+    discovered_candidates: list[dict] = []
+    curated_candidates: list[dict] = []
+    manual_candidates: list[dict] = []
+
+    for candidate in candidate_records:
+        origin = str(candidate.get("candidate_origin") or "discovered")
+        if candidate.get("is_manual"):
+            origin = "manual"
+        origin_counter[origin] += 1
+        if origin == "manual":
+            manual_candidates.append(candidate)
+        elif origin == "curated":
+            curated_candidates.append(candidate)
+        else:
+            discovered_candidates.append(candidate)
+
+    mode = str(topic.source_mode or TopicSourceMode.HYBRID)
+    try:
+        mode_label = TopicSourceMode(mode).label
+    except ValueError:
+        mode_label = mode
+
+    return {
+        "mode": mode,
+        "mode_label": mode_label,
+        "candidate_count": len(candidate_records),
+        "deduped_source_count": len(
+            {
+                str(candidate.get("normalized_url") or candidate.get("url") or "").strip()
+                for candidate in candidate_records
+                if str(candidate.get("normalized_url") or candidate.get("url") or "").strip()
+            }
+        ),
+        "origin_counts": dict(origin_counter),
+        "discovered_candidates": discovered_candidates,
+        "curated_candidates": curated_candidates,
+        "manual_candidates": manual_candidates,
+    }
+
+
+def _build_visible_new_source_candidates(candidate_records: list[dict]) -> list[dict]:
+    visible_candidates: list[dict] = []
+    for candidate in candidate_records:
+        if str(candidate.get("candidate_origin") or "").strip().lower() != TopicSourceOrigin.DISCOVERED:
+            continue
+        if candidate.get("persisted_source_id"):
+            continue
+        visible_candidates.append(candidate)
+    return visible_candidates
+
+
+def _build_active_saved_source_urls(topic: Topic | None) -> list[str]:
+    if topic is None:
+        return []
+    return [
+        str(source.url).strip()
+        for source in topic.sources.filter(is_active=True).order_by("id")
+        if str(source.url).strip()
+    ]
+
+
+def _build_curated_source_seeds(topic: Topic) -> list[CuratedSourceSeed]:
+    curated_sources: list[CuratedSourceSeed] = []
+    for source in topic.sources.filter(is_active=True).order_by("id"):
+        curated_sources.append(
+            CuratedSourceSeed(
+                url=source.url,
+                title=source.name or f"Saved source / {source.url}",
+                description=_build_topic_source_description(source),
+                quality_estimate="manual" if source.origin == TopicSourceOrigin.MANUAL else "curated",
+                is_manual=source.origin == TopicSourceOrigin.MANUAL,
+                default_selected=source.is_active,
+            )
+        )
+    return curated_sources
+
+
+def _build_topic_source_inventory(topic: Topic | None) -> list[dict]:
+    if topic is None:
+        return []
+
+    inventory: list[dict] = []
+    for source in topic.sources.all().order_by("-id"):
+        inventory.append(
+            {
+                "id": source.id,
+                "name": source.name or _fallback_source_label(source.url),
+                "url": source.url,
+                "display_url": _build_compact_source_url(source.url),
+                "source_type": source.source_type or "unknown",
+                "origin": source.origin,
+                "origin_label": source.get_origin_display(),
+                "is_active": source.is_active,
+                "validation_status": source.validation_status,
+                "validation_status_label": source.get_validation_status_display(),
+                "last_validation_error": source.last_validation_error,
+            }
+        )
+    return inventory
+
+
+def _build_legacy_source_display(topic: Topic | None) -> dict | None:
+    if topic is None or not topic.source_url:
+        return None
+
+    normalized_source = classify_source_url(topic.source_url)
+    if topic.sources.filter(normalized_url=normalized_source.normalized_url).exists():
+        return None
+
+    return {
+        "url": topic.source_url,
+        "normalized_url": normalized_source.normalized_url,
+    }
+
+
+def _validate_topic_source_submission(topic: Topic, source_url: str) -> dict:
+    return _validate_topic_source_submission_v2(topic, source_url)
+
+def _validate_topic_source_submission_v2(topic: Topic, source_url: str) -> dict:
+    source_url = str(source_url or "").strip()
+    if not source_url:
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "Please add a source address before saving it to this topic.",
+        }
+
+    try:
+        URLValidator()(source_url)
+    except ValidationError:
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "Please check the address - it does not look like a valid URL. Make sure the link is correct and starts with http:// or https:// so it can be used for the digest.",
+        }
+
+    try:
+        normalized_source = classify_source_url(source_url)
+    except Exception:
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "Enter a valid URL before adding a source.",
+        }
+
+    if topic.sources.filter(normalized_url=normalized_source.normalized_url).exists():
+        return {
+            "ok": True,
+            "level": "info",
+            "message": "This source has already been added to this topic. Please check the address or use another source.",
+            "normalized_source": normalized_source,
+        }
+
+    if normalized_source.source_type not in {
+        "rss_feed",
+        "devto_tag",
+        "devto_article",
+        "devto_author",
+        "generic_html",
+        "blog_index",
+        "publication",
+    }:
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "Please check the address or try another article.",
+        }
+
+    availability = _validate_topic_source_availability(normalized_source)
+    if not availability["ok"]:
+        return availability
+
+    return {
+        "ok": True,
+        "level": "success",
+        "message": "Source added and saved for this topic. It will be used when generating the digest.",
+        "normalized_source": normalized_source,
+        "resolved_title": str(availability.get("resolved_title") or "").strip(),
+    }
+
+
+def _validate_topic_source_availability(normalized_source) -> dict:
+    source_type = normalized_source.source_type
+
+    if source_type == "devto_article":
+        article = fetch_dev_to_article_content(normalized_source.normalized_url)
+        content = str(article.get("content") or "").strip() if isinstance(article, dict) else ""
+        if not isinstance(article, dict) or not content:
+            return {
+                "ok": False,
+                "level": "error",
+                "message": "We could not find content at this address. Please check the URL and try again.",
+            }
+        return {"ok": True, "resolved_title": str(article.get("title") or "").strip()}
+
+    if source_type in {"generic_html", "blog_index", "publication"}:
+        article = fetch_generic_web_article(normalized_source.normalized_url)
+        content = str(article.get("content") or "").strip() if isinstance(article, dict) else ""
+        title = str(article.get("title") or "").strip() if isinstance(article, dict) else ""
+        if not isinstance(article, dict) or not content or not title:
+            return {
+                "ok": False,
+                "level": "error",
+                "message": "Please check the address or try another article.",
+            }
+        return {"ok": True, "resolved_title": title}
+
+    items = fetch_rss_articles(normalized_source.normalized_url)
+    if items:
+        return {"ok": True}
+
+    if source_type == "rss_feed":
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "We could not read this RSS feed. Please check the URL and make sure it is a valid RSS or Atom feed.",
+        }
+
+    if source_type in {"devto_tag", "devto_author"}:
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "This source does not seem to contain any articles yet. Please check the address or use another source.",
+        }
+
+    return {
+        "ok": False,
+        "level": "error",
+        "message": "We could not find content at this address. Please check the URL and try again.",
+    }
+
+
+def _build_topic_source_description(source: TopicSource) -> str:
+    if source.origin == TopicSourceOrigin.MANUAL:
+        return "User-added source for this topic."
+    if source.origin == TopicSourceOrigin.DISCOVERED:
+        return "Previously discovered source saved on this topic."
+    return "Persistent curated source for this topic."
+
+
+def _fallback_source_label(url: str) -> str:
+    parsed = urlparse(str(url or ""))
+    return parsed.netloc or str(url or "Source")
+
+
+def _build_compact_source_url(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if not parsed.scheme and not parsed.netloc:
+        return str(url or "").strip()
+
+    compact = f"{parsed.netloc}{parsed.path}".rstrip("/")
+    if parsed.query:
+        compact = f"{compact}?{parsed.query}"
+    return compact or str(url or "").strip()
+
+
+def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[dict]) -> list[dict]:
+    existing_sources = list(topic.sources.all())
+    existing_by_normalized = {source.normalized_url: source for source in existing_sources}
+    prepared_candidates: list[dict] = []
+
+    for candidate in candidate_records:
+        source_url = str(candidate.get("url") or "").strip()
+        if not source_url:
+            continue
+
+        normalized = classify_source_url(source_url)
+        source = existing_by_normalized.get(normalized.normalized_url)
+        source_origin = source.origin if source is not None else TopicSourceOrigin.CURATED
+
+        prepared_candidates.append(
+            {
+                **candidate,
+                "display_url": _build_compact_source_url(source_url),
+                "persisted_source_id": source.id if source is not None else None,
+                "normalized_url": normalized.normalized_url,
+                "candidate_origin": _normalize_candidate_origin(candidate, source_origin),
+                "selected": source.is_active if source is not None else bool(candidate.get("default_selected")),
+                "has_recent_article_count": candidate.get("has_recent_article_count")
+                if "has_recent_article_count" in candidate
+                else candidate.get("recent_article_count") is not None,
+            }
+        )
+
+    return prepared_candidates
+
+
+def _resolve_selected_source_candidates(
+    selected_source_urls: list[str],
+    candidate_records: list[dict],
+) -> list[dict]:
+    allowed_candidates: dict[str, dict] = {}
+    for candidate in candidate_records:
+        candidate_url = str(candidate.get("url") or "").strip()
+        if not candidate_url:
+            continue
+        normalized_url = str(candidate.get("normalized_url") or classify_source_url(candidate_url).normalized_url).strip()
+        if normalized_url:
+            allowed_candidates[normalized_url] = candidate
+
+    selected_candidates: list[dict] = []
+    seen_normalized_urls: set[str] = set()
+    for source_url in selected_source_urls:
+        normalized_url = classify_source_url(source_url).normalized_url
+        candidate = allowed_candidates.get(normalized_url)
+        if candidate is None or normalized_url in seen_normalized_urls:
+            continue
+        seen_normalized_urls.add(normalized_url)
+        selected_candidates.append(candidate)
+    return selected_candidates
+
+
+def _persist_selected_topic_sources(topic: Topic, selected_candidates: list[dict]) -> list[TopicSource]:
+    selected_sources: list[TopicSource] = []
+    for candidate in selected_candidates:
+        source_url = str(candidate.get("url") or "").strip()
+        if not source_url:
+            continue
+
+        normalized = classify_source_url(source_url)
+        source = topic.sources.filter(normalized_url=normalized.normalized_url).first()
+        if source is None:
+            source = TopicSource.objects.create(
+                topic=topic,
+                name=str(candidate.get("title") or "").strip(),
+                url=source_url,
+                normalized_url=normalized.normalized_url,
+                source_type=normalized.source_type,
+                origin=_normalize_candidate_origin(candidate),
+                platform=normalized.platform,
+                validation_status=TopicSource.VALIDATION_PENDING,
+                last_validation_error="",
+                is_active=True,
+            )
+        else:
+            source.name = str(candidate.get("title") or source.name or "").strip()
+            source.url = source_url
+            source.normalized_url = normalized.normalized_url
+            source.source_type = normalized.source_type
+            source.origin = _normalize_candidate_origin(candidate, source.origin)
+            source.platform = normalized.platform
+            source.is_active = True
+            source.save(
+                update_fields=[
+                    "name",
+                    "url",
+                    "normalized_url",
+                    "source_type",
+                    "origin",
+                    "platform",
+                    "is_active",
+                    "updated_at",
+                ]
+            )
+        selected_sources.append(source)
+    return selected_sources
+
+
+def _normalize_candidate_origin(candidate: dict, fallback_origin: str = TopicSourceOrigin.CURATED) -> str:
+    origin = str(candidate.get("candidate_origin") or "").strip().lower()
+    if candidate.get("is_manual"):
+        return TopicSourceOrigin.MANUAL
+    if origin in {TopicSourceOrigin.MANUAL, TopicSourceOrigin.DISCOVERED, TopicSourceOrigin.CURATED}:
+        return origin
+    return fallback_origin
+
+
+def _get_or_create_ui_topic(
+    topic_name: str,
+    source_urls: list[str] | None = None,
+    source_mode: str = TopicSourceMode.HYBRID,
+    topic_id: int | str | None = None,
+) -> Topic:
     user = _get_or_create_ui_user()
+    normalized_source_urls = _dedupe_source_urls(source_urls or [])
+    primary_source_url = normalized_source_urls[0] if normalized_source_urls else ""
+
+    if topic_id:
+        topic = get_object_or_404(Topic, pk=topic_id, user=user)
+        conflicting_topic_exists = (
+            Topic.objects.filter(user=user, name=topic_name)
+            .exclude(pk=topic.id)
+            .exists()
+        )
+        if conflicting_topic_exists:
+            raise ValidationError("A topic with this name already exists.")
+
+        update_fields: list[str] = []
+        if topic.name != topic_name:
+            topic.name = topic_name
+            update_fields.append("name")
+        if primary_source_url and topic.source_url != primary_source_url:
+            topic.source_url = primary_source_url
+            update_fields.append("source_url")
+        if source_mode and topic.source_mode != source_mode:
+            topic.source_mode = source_mode
+            update_fields.append("source_mode")
+        if update_fields:
+            update_fields.append("updated_at")
+            topic.save(update_fields=update_fields)
+
+        for source_url in normalized_source_urls:
+            _ensure_manual_topic_source(topic, source_url)
+
+        _ensure_topic_focus_seeded(topic)
+        return topic
+
     topic, created = Topic.objects.get_or_create(
         user=user,
         name=topic_name,
         defaults={
-            "source_url": source_url or None,
+            "source_url": primary_source_url or None,
+            "source_mode": source_mode,
             "description": "",
             "keywords": [topic_name],
             "excluded_keywords": [],
+            "focus_initialized": False,
             "is_active": True,
         },
     )
 
-    if not created and source_url and topic.source_url != source_url:
-        topic.source_url = source_url
-        topic.save(update_fields=["source_url", "updated_at"])
+    update_fields: list[str] = []
+    if primary_source_url and topic.source_url != primary_source_url:
+        topic.source_url = primary_source_url
+        update_fields.append("source_url")
+    if source_mode and topic.source_mode != source_mode:
+        topic.source_mode = source_mode
+        update_fields.append("source_mode")
+    if update_fields:
+        update_fields.append("updated_at")
+        topic.save(update_fields=update_fields)
 
+    for source_url in normalized_source_urls:
+        _ensure_manual_topic_source(topic, source_url)
+
+    _ensure_topic_focus_seeded(topic)
     return topic
+
+
+def _dedupe_source_urls(source_urls: list[str]) -> list[str]:
+    deduped_urls: list[str] = []
+    seen_normalized_urls: set[str] = set()
+    for raw_url in source_urls:
+        source_url = str(raw_url or "").strip()
+        if not source_url:
+            continue
+        normalized_url = classify_source_url(source_url).normalized_url
+        if normalized_url in seen_normalized_urls:
+            continue
+        seen_normalized_urls.add(normalized_url)
+        deduped_urls.append(source_url)
+    return deduped_urls
+
+
+def _parse_focus_terms(data) -> list[str]:
+    raw_values: list[str] = []
+    raw_focus_value = data.get("focus_terms")
+    if raw_focus_value is not None:
+        raw_values.extend(str(raw_focus_value).split("\n"))
+    raw_values.extend(data.getlist("focus_terms[]"))
+    return clean_focus_terms(raw_values)
+
+
+def _ensure_topic_focus_seeded(topic: Topic) -> None:
+    current_terms = topic.keywords if isinstance(topic.keywords, list) else []
+    if not should_seed_focus_terms(topic.name, current_terms, focus_initialized=bool(topic.focus_initialized)):
+        return
+
+    suggested_terms = generate_focus_suggestions(topic.name, existing_terms=current_terms)
+    if not suggested_terms:
+        return
+
+    topic.keywords = suggested_terms
+    topic.focus_initialized = True
+    topic.save(update_fields=["keywords", "focus_initialized", "updated_at"])
+
+
+def _ensure_manual_topic_source(topic: Topic, source_url: str, source_name: str = "") -> TopicSource:
+    normalized = classify_source_url(source_url)
+    source = topic.sources.filter(normalized_url=normalized.normalized_url).first()
+    cleaned_source_name = str(source_name or "").strip()
+    if source is None:
+        source = TopicSource.objects.create(
+            topic=topic,
+            name=cleaned_source_name,
+            url=normalized.original_url,
+            normalized_url=normalized.normalized_url,
+            source_type=normalized.source_type,
+            origin=TopicSourceOrigin.MANUAL,
+            platform=normalized.platform,
+            validation_status=TopicSource.VALIDATION_VALID,
+            last_validation_error="",
+            is_active=True,
+        )
+    else:
+        source.url = normalized.original_url
+        if cleaned_source_name:
+            source.name = cleaned_source_name
+        source.source_type = normalized.source_type
+        source.origin = TopicSourceOrigin.MANUAL
+        source.platform = normalized.platform
+        source.validation_status = TopicSource.VALIDATION_VALID
+        source.last_validation_error = ""
+        if not source.is_active:
+            source.is_active = True
+        source.save(
+            update_fields=[
+                "url",
+                "name",
+                "source_type",
+                "origin",
+                "platform",
+                "validation_status",
+                "last_validation_error",
+                "is_active",
+                "updated_at",
+            ]
+        )
+    return source
 
 
 def _get_or_create_ui_user():
@@ -996,11 +1802,52 @@ def _create_ui_digest_run(topic: Topic, source: str) -> DigestRun:
             "source": source,
             "topic_name": topic.name,
             "source_url": topic.source_url or "",
+            "selected_source_urls": list(
+                topic.sources.filter(is_active=True).values_list("url", flat=True)
+            ),
         },
     )
 
 
 def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
+    active_sources = list(topic.sources.filter(is_active=True).order_by("id"))
+    if active_sources:
+        raw_items = []
+        selected_source_urls: list[str] = []
+        valid_source_count = 0
+
+        for source in active_sources:
+            fetch_url = source.normalized_url or source.url
+            source_items = fetch_rss_articles(fetch_url)
+            selected_source_urls.append(source.url)
+
+            if source_items:
+                valid_source_count += 1
+                raw_items.extend(source_items)
+                source.validation_status = TopicSource.VALIDATION_VALID
+                source.last_validation_error = ""
+            else:
+                source.validation_status = TopicSource.VALIDATION_INVALID
+                source.last_validation_error = "Source returned no valid items."
+            source.save(update_fields=["validation_status", "last_validation_error", "updated_at"])
+
+        if not raw_items:
+            _mark_run_failed_for_empty_selected_sources(run, selected_source_urls)
+            return
+
+        run.input_snapshot = {
+            **run.input_snapshot,
+            "source": "selected_sources",
+            "source_url": "",
+            "selected_source_urls": selected_source_urls,
+            "selected_source_count": len(selected_source_urls),
+            "validated_source_count": valid_source_count,
+            "raw_items_count": len(raw_items),
+        }
+        run.save(update_fields=["input_snapshot", "updated_at"])
+        run_digest_pipeline(run.id, raw_items=raw_items)
+        return
+
     if topic.source_url:
         raw_items = fetch_rss_articles(topic.source_url)
         if not raw_items:
@@ -1028,6 +1875,32 @@ def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
     run_digest_pipeline(run.id, raw_items=raw_items)
 
 
+def _mark_run_failed_for_empty_selected_sources(run: DigestRun, source_urls: list[str]) -> None:
+    joined_sources = ", ".join(source_urls) if source_urls else "selected sources"
+    run.status = DigestRun.STATUS_FAILED
+    run.error_message = f"Selected sources returned no valid items: {joined_sources}"
+    run.result_message = result_messages.SOURCE_NO_USABLE_ARTICLES
+    run.finished_at = timezone.now()
+    run.input_snapshot = {
+        **run.input_snapshot,
+        "source": "selected_sources",
+        "source_url": "",
+        "selected_source_urls": source_urls,
+        "selected_source_count": len(source_urls),
+        "raw_items_count": 0,
+    }
+    run.save(
+        update_fields=[
+            "status",
+            "error_message",
+            "result_message",
+            "finished_at",
+            "input_snapshot",
+            "updated_at",
+        ]
+    )
+
+
 def _mark_run_failed_for_empty_rss(run: DigestRun, source_url: str) -> None:
     run.status = DigestRun.STATUS_FAILED
     run.error_message = f"RSS source returned no valid items: {source_url}"
@@ -1049,3 +1922,4 @@ def _mark_run_failed_for_empty_rss(run: DigestRun, source_url: str) -> None:
             "updated_at",
         ]
     )
+
