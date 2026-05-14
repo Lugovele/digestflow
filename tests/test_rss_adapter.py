@@ -15,6 +15,7 @@ from services.sources.rss_adapter import (
     build_dev_to_api_url,
     detect_source_type,
     fetch_dev_to_article_content,
+    fetch_generic_web_article,
     fetch_rss_articles,
     get_rss_debug_snapshot,
     normalize_source_url,
@@ -33,6 +34,45 @@ class RSSAdapterTests(SimpleTestCase):
         self.assertEqual(normalized.normalized_url, "https://dev.to/api/articles?tag=ai")
         self.assertEqual(detect_source_type("https://dev.to/t/ai"), "devto_tag")
         self.assertEqual(build_dev_to_api_url("ai"), "https://dev.to/api/articles?tag=ai")
+
+    def test_normalize_source_url_accepts_dev_to_tag_variants_and_author_profiles(self):
+        tag_variant = normalize_source_url(" https://DEV.to//t/ai/?ref=top#section ")
+        author_variant = normalize_source_url("https://dev.to/michael_rakutko/?ref=foo#about")
+
+        self.assertEqual(tag_variant.original_url, "https://dev.to/t/ai")
+        self.assertEqual(tag_variant.normalized_url, "https://dev.to/api/articles?tag=ai")
+        self.assertEqual(tag_variant.source_type, "devto_tag")
+        self.assertEqual(tag_variant.platform, "dev.to")
+
+        self.assertEqual(author_variant.original_url, "https://dev.to/michael_rakutko")
+        self.assertEqual(author_variant.normalized_url, "https://dev.to/feed/michael_rakutko")
+        self.assertEqual(author_variant.source_type, "devto_author")
+        self.assertEqual(author_variant.platform, "dev.to")
+        self.assertEqual(author_variant.metadata["author"], "michael_rakutko")
+        self.assertEqual(author_variant.detection_reason, "matched dev.to author profile")
+
+    def test_normalize_source_url_preserves_meaningful_query_params_for_generic_article_pages(self):
+        normalized = normalize_source_url(
+            "https://www.stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237"
+        )
+
+        self.assertEqual(
+            normalized.original_url,
+            "https://stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237",
+        )
+        self.assertEqual(
+            normalized.normalized_url,
+            "https://stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237",
+        )
+        self.assertEqual(normalized.source_type, "generic_html")
+
+    def test_normalize_source_url_removes_tracking_query_params_but_keeps_meaningful_ones(self):
+        normalized = normalize_source_url(
+            "https://example.com/article?id=123&utm_source=newsletter&utm_medium=email&fbclid=tracking"
+        )
+
+        self.assertEqual(normalized.original_url, "https://example.com/article?id=123")
+        self.assertEqual(normalized.normalized_url, "https://example.com/article?id=123")
 
     def test_fetch_dev_to_tag_page_uses_internal_api_and_returns_real_article_urls(self):
         article_list = [
@@ -123,6 +163,126 @@ class RSSAdapterTests(SimpleTestCase):
         self.assertGreater(items[0]["metadata"]["extracted_content_length"], 0)
         self.assertIsNone(items[0]["metadata"]["extraction_warning"])
 
+    def test_fetch_generic_web_article_accepts_readable_article_page(self):
+        html = """
+        <html>
+          <head><title>The science of safe and healthy baby sleep</title></head>
+          <body>
+            <article>
+              <h1>The science of safe and healthy baby sleep</h1>
+              <p>Researchers found that calmer bedtime routines, consistent sleep cues, and safer crib setup can reduce overnight disruption.</p>
+              <p>Parents also benefit from practical guidance on wake windows, naps, and age-appropriate sleep expectations during the first year.</p>
+            </article>
+          </body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            article = fetch_generic_web_article(
+                "https://www.bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep"
+            )
+
+        self.assertIsNotNone(article)
+        self.assertEqual(article["title"], "The science of safe and healthy baby sleep")
+        self.assertEqual(
+            article["url"],
+            "https://bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
+        )
+        self.assertEqual(article["source_type"], "web_article")
+        self.assertIn("wake windows", article["content"])
+
+    def test_fetch_rss_articles_accepts_generic_html_article_url(self):
+        html = """
+        <html>
+          <head><title>Workflow case study</title></head>
+          <body>
+            <main>
+              <article>
+                <p>Teams that documented approval rules before automation reduced rework and made article selection more reliable.</p>
+                <p>They also cleaned up intake forms so editors could judge source quality faster during each digest run.</p>
+              </article>
+            </main>
+          </body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            items = fetch_rss_articles("https://example.com/articles/workflow-case-study")
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["title"], "Workflow case study")
+        self.assertEqual(items[0]["source_type"], "web_article")
+        self.assertIn("approval rules", items[0]["content"])
+
+    def test_fetch_generic_web_article_rejects_navigation_only_page(self):
+        html = """
+        <html>
+          <head><title>Home</title></head>
+          <body>
+            <nav>Products Pricing Login About Contact</nav>
+            <footer>Cookie settings Newsletter Support</footer>
+          </body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            article = fetch_generic_web_article("https://example.com/")
+
+        self.assertIsNone(article)
+
+    def test_fetch_generic_web_article_accepts_lullaby_trust_live_page_shape(self):
+        html = """
+        <html>
+          <head><title>Baby sleep patterns | The Lullaby Trust</title></head>
+          <body class="wp-singular page-template-default mobile-slide-out-menu-enabled">
+            <nav>Baby safety Bereavement support Professionals hub Donate</nav>
+            <main role="main" id="main-content">
+              <section class="featured-banner__textbox">
+                <h1 class="featured-banner__heading">Baby sleep patterns: how long should my baby sleep?</h1>
+                <div class="featured-banner__copy">
+                  <p>Parents and carers often worry about their babies' sleep and might try tips and hacks to get them to sleep longer, but these can actually be dangerous.</p>
+                </div>
+              </section>
+              <section class="text-and-media">
+                <div class="text-and-media__copy wysiwyg">
+                  <h2>It's typical for babies to wake up often</h2>
+                  <p>The first year when your baby wakes up often can be tough, and just when you think you have things figured out, your baby's sleep pattern changes again.</p>
+                  <h3>How much sleep do babies need?</h3>
+                  <p>Babies have small stomachs and will wake often throughout the night to feed. Every baby is different and sleep patterns vary greatly, so use this as a guide.</p>
+                  <h3>Feeling exhausted?</h3>
+                  <p>Sleep deprivation can feel intense, so many families benefit from simple routines, shared support, and realistic expectations during the first months.</p>
+                </div>
+              </section>
+            </main>
+            <footer>Learn more about keeping your baby safe Newsletter Contact us</footer>
+          </body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            article = fetch_generic_web_article(
+                "https://www.lullabytrust.org.uk/baby-safety/being-a-parent-or-caregiver/baby-sleep-patterns/"
+            )
+
+        self.assertIsNotNone(article)
+        self.assertEqual(article["title"], "Baby sleep patterns | The Lullaby Trust")
+        self.assertIn("wake up often", article["content"])
+
+    def test_fetch_generic_web_article_rejects_short_unstructured_page_even_with_title(self):
+        html = """
+        <html>
+          <head><title>Baby sleep</title></head>
+          <body>
+            <div>Baby sleep basics. Learn more today.</div>
+          </body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            article = fetch_generic_web_article("https://example.com/baby-sleep")
+
+        self.assertIsNone(article)
+
     def test_fetch_dev_to_article_content_preserves_markdown_headings(self):
         payload = {
             "id": 101,
@@ -167,6 +327,15 @@ class RSSAdapterTests(SimpleTestCase):
                 "Governance Layer",
             ],
         )
+
+    def test_fetch_dev_to_article_content_does_not_treat_numeric_id_as_url_when_api_lookup_fails(self):
+        with patch("services.sources.rss_adapter._fetch_json", return_value=None), patch(
+            "services.sources.rss_adapter._fetch_url_text"
+        ) as mock_fetch_url_text:
+            article = fetch_dev_to_article_content("3630333")
+
+        self.assertIsNone(article)
+        mock_fetch_url_text.assert_not_called()
 
     def test_extract_html_content_diagnostics_prefers_article_tag_and_removes_boilerplate(self):
         html = """
@@ -502,15 +671,16 @@ class RSSAdapterTests(SimpleTestCase):
             def __exit__(self, exc_type, exc, tb):
                 self.close()
 
+        class FakeOpener:
+            def open(self, request, timeout):
+                captured["user_agent"] = request.headers.get("User-agent")
+                captured["accept"] = request.headers.get("Accept")
+                captured["timeout"] = timeout
+                return FakeResponse(b"<rss></rss>")
+
         captured = {}
 
-        def fake_urlopen(request, timeout):
-            captured["user_agent"] = request.headers.get("User-agent")
-            captured["accept"] = request.headers.get("Accept")
-            captured["timeout"] = timeout
-            return FakeResponse(b"<rss></rss>")
-
-        with patch("services.sources.rss_adapter.urlopen", side_effect=fake_urlopen):
+        with patch("services.sources.rss_adapter.build_opener", return_value=FakeOpener()):
             content = _fetch_feed_content("https://example.com/feed")
 
         self.assertEqual(content, b"<rss></rss>")

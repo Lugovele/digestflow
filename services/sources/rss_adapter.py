@@ -10,7 +10,7 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
@@ -44,6 +44,10 @@ def fetch_rss_articles(source_url: str, limit: int = 10) -> list[dict]:
 
     if normalized_source.source_type == "devto_article":
         article = _fetch_dev_to_single_article(normalized_source)
+        return [article] if article else []
+
+    if normalized_source.source_type in {"generic_html", "blog_index", "publication"}:
+        article = fetch_generic_web_article(normalized_source.normalized_url)
         return [article] if article else []
 
     return _fetch_rss_feed_articles(normalized_source, limit=limit)
@@ -167,6 +171,7 @@ def fetch_dev_to_article_content(article_id_or_url: int | str) -> dict[str, Any]
                     "sample_detected_headings": content_diagnostics["sample_detected_headings"],
                 },
             }
+        return None
 
     article_url = str(article_id_or_url).strip()
     if not article_url:
@@ -196,6 +201,79 @@ def fetch_dev_to_article_content(article_id_or_url: int | str) -> dict[str, Any]
             "sample_detected_headings": extraction["sample_detected_headings"],
         },
     }
+
+
+def fetch_generic_web_article(source_url: str) -> dict[str, Any] | None:
+    article_url = str(source_url or "").strip()
+    if not article_url:
+        return None
+
+    normalized_source = normalize_source_url(article_url)
+    html = _fetch_url_text(normalized_source.normalized_url)
+    if not html:
+        return None
+
+    extraction = _extract_html_content_diagnostics(html)
+    content = str(extraction.get("content") or "").strip()
+    title = _extract_html_title(html)
+
+    if not content:
+        return None
+
+    if not _looks_like_useful_generic_article(title, extraction):
+        return None
+
+    source_name = title or _get_fallback_source_name(normalized_source.normalized_url)
+    return {
+        "title": title or source_name,
+        "url": normalized_source.original_url,
+        "source_url": normalized_source.original_url,
+        "source_api_url": None,
+        "source_name": source_name,
+        "source_type": "web_article",
+        "platform": normalized_source.platform,
+        "content": content,
+        "snippet": _build_snippet(content),
+        "description": None,
+        "published_at": None,
+        "metadata": {
+            "platform": normalized_source.platform,
+            "source_type": "web_article",
+            "content_unavailable": False,
+            "detection_reason": normalized_source.detection_reason,
+            "extraction_method": extraction["extraction_method"],
+            "extracted_content_length": extraction["extracted_content_length"],
+            "extraction_warning": extraction["extraction_warning"],
+            "extraction_candidates": extraction["extraction_candidates"],
+            "headings": extraction["headings"],
+            "raw_html_heading_count": extraction["raw_html_heading_count"],
+            "extracted_heading_count": extraction["extracted_heading_count"],
+            "heading_extraction_strategy": extraction["heading_extraction_strategy"],
+            "sample_detected_headings": extraction["sample_detected_headings"],
+        },
+    }
+
+
+def _looks_like_useful_generic_article(title: str, extraction: dict[str, Any]) -> bool:
+    content = _clean_text(str(extraction.get("content") or ""))
+    content_length = len(content)
+    if not content or not str(title or "").strip():
+        return False
+
+    extraction_method = str(extraction.get("extraction_method") or "")
+    heading_count = int(extraction.get("extracted_heading_count") or 0)
+    paragraph_like_count = content.count(". ") + content.count("! ") + content.count("? ")
+
+    if content_length >= WEAK_EXTRACTION_LENGTH:
+        return True
+
+    if content_length >= 120 and (heading_count > 0 or extraction_method != "fallback_text"):
+        return True
+
+    if content_length >= 140 and paragraph_like_count >= 2:
+        return True
+
+    return False
 
 
 def _fetch_dev_to_articles_from_list_source(
@@ -687,7 +765,6 @@ def _remove_boilerplate_nodes(soup: BeautifulSoup) -> None:
 
     boilerplate_markers = (
         "cookie",
-        "banner",
         "subscribe",
         "newsletter",
         "share",
@@ -703,6 +780,8 @@ def _remove_boilerplate_nodes(soup: BeautifulSoup) -> None:
     )
     for node in list(soup.find_all(True)):
         if not isinstance(node, Tag):
+            continue
+        if node.name in {"html", "body", "main", "article"}:
             continue
         attrs = getattr(node, "attrs", None)
         if not isinstance(attrs, dict):
@@ -844,7 +923,8 @@ def _fetch_url_bytes(
         },
     )
     try:
-        with urlopen(request, timeout=15) as response:
+        opener = build_opener(ProxyHandler({}), HTTPRedirectHandler(), HTTPSHandler())
+        with opener.open(request, timeout=15) as response:
             return response.read()
     except Exception:
         return None
