@@ -1,0 +1,170 @@
+{
+  "keywords": ["ai agents"],
+  "items": [
+    {
+      "title": "Deploying a Multi-Agent System with Terraform and Cloud Run",
+      "url": "https://dev.to/googleai/deploying-a-multi-agent-system-with-terraform-and-cloud-run-2a9c",
+      "source": "DEV Community",
+      "snippet": "In support of our mission to accelerate the developer journey on Google Cloud, we built Dev Signal: a multi-agent system designed to transform raw community signals into reliable technical guidance.",
+      "content": "In support of our mission to accelerate the developer journey on Google Cloud, we built Dev Signal: a multi-agent system designed to transform raw community signals into reliable technical guidance by automating the path from discovery to expert creation. In part 1, we standardize the agent's capabilities through the Model Context Protocol (MCP), connecting it to Reddit for trend discovery and Google Cloud Docs for technical grounding. In part 2, we built a multi-agent architecture and integrated the Vertex AI memory bank. This tutorial explains how to deploy the Dev Signal multi-agent system with Terraform, Cloud Run, and MCP-connected services on Google Cloud.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 21949,
+        "headings": [
+          "Deployment to Cloud Run and the Path to Production",
+          "Production Utilities and Server: Building the System's Body",
+          "The Application Server",
+          "--- Initialization & Secure Secret Retrieval ---",
+          "--- MEMORY BANK CONNECTION ---",
+          "--- Initialize FastAPI with ADK ---"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Deployment to Cloud Run and the Path to Production",
+          "Production Utilities and Server: Building the System's Body",
+          "The Application Server"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3597101,
+        "tag_list": "googlecloud, terraform, ai, agents"
+      }
+    },
+    {
+      "title": "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "url": "https://dev.to/googleai/building-capabilities-for-a-multi-agent-system-with-google-adk-mcp-and-cloud-run-ab9",
+      "source": "DEV Community",
+      "snippet": "My team's mission is to accelerate the developer journey from writing code to running secure AI workloads on Google Cloud. It led me to build Dev Signal—a multi-agent system designed with Google Agent Development Kit (ADK).",
+      "content": "My team's mission is to accelerate the developer journey from writing code to running secure AI workloads on Google Cloud. Recently, I was struck with inspiration when the new Developer Knowledge MCP server was released. It led me to build Dev Signal—a multi-agent system designed with Google Agent Development Kit (ADK)—to identify technical questions from Reddit, research them using official documentation, and draft detailed technical blogs. This tutorial walks through building capabilities for the Dev Signal multi-agent system using Google ADK, MCP, and Cloud Run.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 25367,
+        "headings": [
+          "What you'll learn",
+          "Getting started with Dev Signal",
+          "Project Setup",
+          "Building the agent capabilities: MCP tools",
+          "Tools Configuration",
+          "Google Cloud Docs (Knowledge Tool)"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "What you'll learn",
+          "Getting started with Dev Signal",
+          "Project Setup"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3588787,
+        "tag_list": "ai, googlecloud, python, agents"
+      }
+    },
+    {
+      "title": "AI Agents Have Two Souls. You Only Control One",
+      "url": "https://dev.to/auth0/ai-agents-have-two-souls-you-only-control-one-3bm4",
+      "source": "DEV Community",
+      "snippet": "Everyone seems to be building AI agents now. But ask ten developers what an AI agent actually is, and you'll get ten different answers. This definitional vagueness is not just an academic problem. It leads to a security problem.",
+      "content": "Everyone seems to be building AI agents now. But ask ten developers what an AI agent actually is, and you'll get ten different answers. Beyond the generic definitions that emphasize autonomy, the more useful framing is technical: an AI agent is a system that reasons, uses tools, and takes actions under some level of delegated authority. The security architecture for AI agents depends on data control, command control, and decision control. Authorization, authentication, access control, and policy boundaries all matter because a tool-using agent can cross trust boundaries on behalf of a user or service.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 16160,
+        "headings": [
+          "Looking for an AI Agent Definition",
+          "The Two Souls of an AI Agent",
+          "The Three Laws of AI Security Applied",
+          "Your Takeaways for Securing AI Agents"
+        ],
+        "raw_html_heading_count": 7,
+        "extracted_heading_count": 7,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Looking for an AI Agent Definition",
+          "The Two Souls of an AI Agent",
+          "The Three Laws of AI Security Applied"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3634876,
+        "tag_list": "ai, security, architecture, llm"
+      }
+    },
+    {
+      "title": "Best MCP Gateways for Enterprise Teams in 2026",
+      "url": "https://dev.to/varshithvhegde/best-mcp-gateways-for-enterprise-teams-in-2026-5fk8",
+      "source": "DEV Community",
+      "snippet": "I spent the last few months evaluating MCP gateways for a mid-size financial services client. Their agentic stack had grown organically and nobody had a clear answer when the CISO asked who can see what tools our agents are calling.",
+      "content": "I spent the last few months evaluating MCP gateways for a mid-size financial services client. Their agentic stack had grown organically: one team was using local STDIO servers, another had hand-rolled HTTP wrappers, and nobody had a clear answer when the CISO asked who can see what tools our agents are calling. This writeup is the distilled version of that evaluation. It explains MCP gateway internals for enterprise teams and tool-using agents, focusing on routing, capability boundaries, and policy enforcement.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 16168,
+        "headings": [
+          "Why You Even Need a Gateway",
+          "The Contenders",
+          "1. TrueFoundry MCP Gateway",
+          "4. Docker MCP Gateway",
+          "7. Lasso Security MCP Gateway",
+          "The Comparison Table"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Why You Even Need a Gateway",
+          "The Contenders",
+          "1. TrueFoundry MCP Gateway"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3618298,
+        "tag_list": "ai, webdev, productivity, mcp"
+      }
+    },
+    {
+      "title": "AI Is Escaping The Browser | The Gemma 4 Edition",
+      "url": "https://dev.to/hemapriya_kanagala/ai-is-escaping-the-browser-the-gemma-4-edition-14nd",
+      "source": "DEV Community",
+      "snippet": "Gemma 4 changes the relationship between local models, browser interfaces, and what people assume an autonomous agent needs in practice.",
+      "content": "AI used to live somewhere else. The browser became the interface for AI, and open models changed the relationship. Gemma 4 makes it easier to think about local execution, browser-native interfaces, and what people assume autonomous agents need. The article is thoughtful and technical, but it is centered on local AI, browser interfaces, and product implications more than agent systems, MCP tooling, or enterprise agent control planes.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 17582,
+        "headings": [
+          "AI used to live somewhere else",
+          "The browser became the interface for AI",
+          "Why Gemma 4 feels important",
+          "The workflow starts collapsing inward",
+          "Cloud AI still matters enormously"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "AI used to live somewhere else",
+          "The browser became the interface for AI",
+          "Why Gemma 4 feels important"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3629523,
+        "tag_list": "ai, gemma, browser, localai"
+      }
+    }
+  ],
+  "expected": {
+    "must_select": [
+      "AI Agents Have Two Souls. You Only Control One",
+      "Best MCP Gateways for Enterprise Teams in 2026"
+    ],
+    "must_reject": [
+      "AI Is Escaping The Browser | The Gemma 4 Edition"
+    ],
+    "similar_cluster_titles": [
+      "Deploying a Multi-Agent System with Terraform and Cloud Run",
+      "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run"
+    ]
+  }
+}

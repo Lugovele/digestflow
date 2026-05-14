@@ -1,0 +1,113 @@
+{
+  "keywords": ["ai agents"],
+  "items": [
+    {
+      "title": "Deploying a Multi-Agent System with Terraform and Cloud Run",
+      "url": "https://example.com/fixtures/run-143-deploying-multi-agent",
+      "source": "DEV Community",
+      "snippet": "A deployment tutorial for a multi-agent system using Terraform, Cloud Run, and MCP-connected infrastructure on Google Cloud.",
+      "content": "This tutorial explains how to deploy a multi-agent system with Terraform, Cloud Run, and MCP-connected services on Google Cloud.\n\n## Architecture\nThe multi-agent system uses shared services and deployment boundaries.\n\n## MCP Services\nMCP routes tool access between the agent runtime and external services.\n\n## Terraform\nTerraform provisions the infrastructure and deployment resources.\n\n## Cloud Run Deployment\nCloud Run hosts the runtime and supporting services.\n\n## Validation\nTesting and rollout checks verify the deployed system.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 918,
+        "headings": [
+          "Architecture",
+          "MCP Services",
+          "Terraform",
+          "Cloud Run Deployment",
+          "Validation"
+        ],
+        "raw_html_heading_count": 5,
+        "extracted_heading_count": 5,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "MCP Services",
+          "Terraform",
+          "Cloud Run Deployment"
+        ]
+      }
+    },
+    {
+      "title": "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "url": "https://example.com/fixtures/run-143-building-capabilities",
+      "source": "DEV Community",
+      "snippet": "A practical guide to building multi-agent capabilities with Google ADK, MCP, Cloud Run, and Google Cloud runtime components.",
+      "content": "This tutorial walks through building capabilities for a multi-agent system using Google ADK, MCP, and Cloud Run.\n\n## System Overview\nThe multi-agent system coordinates agent capabilities and shared tools.\n\n## Google ADK\nGoogle ADK defines the capability structure and agent behavior.\n\n## MCP Integration\nMCP provides tool routing and capability boundaries.\n\n## Cloud Run Runtime\nCloud Run hosts the runtime and deployment surfaces.\n\n## Operational Notes\nTesting and deployment guidance support rollout readiness.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 902,
+        "headings": [
+          "System Overview",
+          "Google ADK",
+          "MCP Integration",
+          "Cloud Run Runtime",
+          "Operational Notes"
+        ],
+        "raw_html_heading_count": 5,
+        "extracted_heading_count": 5,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Google ADK",
+          "MCP Integration",
+          "Cloud Run Runtime"
+        ]
+      }
+    },
+    {
+      "title": "How to Authorize AI Agents Using Token Exchange Open Standards",
+      "url": "https://example.com/fixtures/run-143-authorize-agents",
+      "source": "DEV Community",
+      "snippet": "An architecture and security article on authorization, token exchange, permissions, and policy boundaries for AI agents.",
+      "content": "This article explains authorization, token exchange, and policy boundaries for AI agents.\n\n## Authorization Model\nThe authorization model defines permissions and delegated access.\n\n## Token Exchange\nToken exchange creates scoped access for agent workflows.\n\n## Policy Boundaries\nSecurity rules protect tool execution and delegated operations.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 744,
+        "headings": [
+          "Authorization Model",
+          "Token Exchange",
+          "Policy Boundaries"
+        ],
+        "raw_html_heading_count": 3,
+        "extracted_heading_count": 3,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Authorization Model",
+          "Token Exchange"
+        ]
+      }
+    },
+    {
+      "title": "Best MCP Gateways for Enterprise Teams in 2026",
+      "url": "https://example.com/fixtures/run-143-mcp-gateways",
+      "source": "DEV Community",
+      "snippet": "A deep technical analysis of MCP gateways, request routing, and capability boundaries for enterprise teams.",
+      "content": "This article explains MCP gateway internals for enterprise teams and tool-using agents.\n\n## MCP Gateway\nThe MCP gateway coordinates routing and capability boundaries.\n\n## Policy Enforcement\nSecurity rules are applied before tool execution.\n\n## Enterprise Controls\nOperational controls help larger teams manage tool access.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 688,
+        "headings": [
+          "MCP Gateway",
+          "Policy Enforcement",
+          "Enterprise Controls"
+        ],
+        "raw_html_heading_count": 3,
+        "extracted_heading_count": 3,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "MCP Gateway",
+          "Policy Enforcement"
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "selected_titles": [
+      "How to Authorize AI Agents Using Token Exchange Open Standards",
+      "Best MCP Gateways for Enterprise Teams in 2026"
+    ],
+    "similar_cluster_titles": [
+      "Deploying a Multi-Agent System with Terraform and Cloud Run",
+      "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run"
+    ]
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "keywords": ["ai agents"],
+  "items": [
+    {
+      "title": "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "url": "https://example.com/fixtures/run-141-capabilities",
+      "source": "DEV Community",
+      "snippet": "A practical guide to building capabilities for a multi-agent system with Google ADK, MCP, Cloud Run deployment, and supporting security guidance.",
+      "content": "This tutorial walks through a multi-agent system that uses Google ADK, MCP, and Cloud Run to coordinate tools and capabilities.\n\n## System Overview\nThe multi-agent system coordinates specialist agents and shared tool access.\n\n## Google ADK Capabilities\nGoogle ADK defines capabilities and agent behaviors.\n\n## MCP Integration\nMCP provides tool contracts, routing, and capability boundaries.\n\n## Cloud Run Deployment\nCloud Run hosts the capability services and the agent runtime.\n\n## Security and Credentials\nCredentials and access boundaries are covered as supporting operational guidance.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 896,
+        "headings": [
+          "System Overview",
+          "Google ADK Capabilities",
+          "MCP Integration",
+          "Cloud Run Deployment",
+          "Security and Credentials"
+        ],
+        "raw_html_heading_count": 5,
+        "extracted_heading_count": 5,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Google ADK Capabilities",
+          "MCP Integration",
+          "Cloud Run Deployment"
+        ]
+      }
+    },
+    {
+      "title": "Best MCP Gateways for Enterprise Teams in 2026",
+      "url": "https://example.com/fixtures/run-141-mcp-gateways",
+      "source": "DEV Community",
+      "snippet": "A deep technical analysis of MCP gateways, request routing, capability boundaries, and one Google Cloud knowledge-tool section.",
+      "content": "This article explains MCP gateway internals for tool-using agents, including request routing, capability boundaries, and delegated access.\n\n## Architecture\nThe gateway sits between agent callers and tool adapters.\n\n## MCP Gateway\nThe MCP gateway coordinates tool calls and capability boundaries.\n\n## OAuth Tokens\nOAuth token exchange protects one delegated access flow in the gateway.\n\n## Policy Enforcement\nSecurity and authorization rules are applied before tool execution.\n\n## Google Cloud Docs (Knowledge Tool)\nOne knowledge tool uses Google Cloud Docs as a document source.\n\nThe MCP gateway is the central mechanism throughout the article.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 944,
+        "headings": [
+          "Architecture",
+          "MCP Gateway",
+          "OAuth Tokens",
+          "Policy Enforcement",
+          "Google Cloud Docs (Knowledge Tool)"
+        ],
+        "raw_html_heading_count": 5,
+        "extracted_heading_count": 5,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "MCP Gateway",
+          "OAuth Tokens",
+          "Google Cloud Docs (Knowledge Tool)"
+        ]
+      }
+    },
+    {
+      "title": "How to Authorize AI Agents Using Token Exchange Open Standards",
+      "url": "https://example.com/fixtures/run-141-authorize-agents",
+      "source": "DEV Community",
+      "snippet": "An architecture and security article on authorization, token exchange, and policy boundaries for AI agents.",
+      "content": "This article explains authorization, token exchange, and security controls for AI agents using OAuth-style standards and policy boundaries.\n\n## Authorization Model\nThe authorization model defines permissions and delegated access.\n\n## Token Exchange\nToken exchange creates scoped access for agent workflows.\n\n## Policy Boundaries\nSecurity policies and access-control boundaries protect tool execution.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 742,
+        "headings": [
+          "Authorization Model",
+          "Token Exchange",
+          "Policy Boundaries"
+        ],
+        "raw_html_heading_count": 3,
+        "extracted_heading_count": 3,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Authorization Model",
+          "Token Exchange",
+          "Policy Boundaries"
+        ]
+      }
+    },
+    {
+      "title": "Congrats to the OpenClaw Challenge Winners!",
+      "url": "https://example.com/fixtures/run-141-community-update",
+      "source": "DEV Community",
+      "snippet": "A community roundup celebrating challenge winners, event highlights, and a few brief agent-project mentions from the week.",
+      "content": "This community update highlights challenge winners, an event recap, and a few brief project references.\n\n## Winners\nThe winners are announced with short notes.\n\n## Event Recap\nThe event recap highlights talks and demos.\n\n## Project Mentions\nA few agent projects are mentioned in passing.",
+      "metadata": {
+        "content_tier": "rich_summary",
+        "content_length": 412,
+        "headings": [
+          "Winners",
+          "Event Recap",
+          "Project Mentions"
+        ],
+        "raw_html_heading_count": 3,
+        "extracted_heading_count": 3,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Winners",
+          "Event Recap"
+        ]
+      }
+    },
+    {
+      "title": "I Built My Mom an AI Recipe Helper for Mother's Day",
+      "url": "https://example.com/fixtures/run-141-recipe-helper",
+      "source": "Personal Blog",
+      "snippet": "A personal project using OpenAI, a small app interface, and cloud hosting to suggest recipes and shopping ideas.",
+      "content": "This personal project uses AI prompts to suggest recipes and shopping ideas. The app runs in the cloud and includes a lightweight workflow for generating meal plans. It does not discuss agents, orchestration, tool use, delegation, or memory beyond a passing note about conversation history.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 596
+      }
+    }
+  ],
+  "expected": {
+    "selected_titles": [
+      "Best MCP Gateways for Enterprise Teams in 2026",
+      "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "How to Authorize AI Agents Using Token Exchange Open Standards"
+    ],
+    "unselected_titles": [
+      "Congrats to the OpenClaw Challenge Winners!",
+      "I Built My Mom an AI Recipe Helper for Mother's Day"
+    ],
+    "community_article_type": "community_update",
+    "community_dominant_tags": ["event"],
+    "broad_ai_max_topic_specificity_score": 0.5
+  }
+}

@@ -1,0 +1,206 @@
+{
+  "keywords": ["ai agents"],
+  "items": [
+    {
+      "title": "Deploying a Multi-Agent System with Terraform and Cloud Run",
+      "url": "https://dev.to/googleai/deploying-a-multi-agent-system-with-terraform-and-cloud-run-2a9c",
+      "source": "DEV Community",
+      "snippet": "In support of our mission to accelerate the developer journey on Google Cloud, we built Dev Signal: a multi-agent system designed to transform raw community signals into reliable technical guidance.",
+      "content": "In support of our mission to accelerate the developer journey on Google Cloud, we built Dev Signal: a multi-agent system designed to transform raw community signals into reliable technical guidance by automating the path from discovery to expert creation. In the first three parts of this series, we laid the essential groundwork by establishing its core capabilities and local verification process. In part 1, we standardize the agent's capabilities through the Model Context Protocol (MCP), connecting it to Reddit for trend discovery and Google Cloud Docs for technical grounding. In part 2, we built a multi-agent architecture and integrated the Vertex AI memory bank. This tutorial explains how to deploy the Dev Signal multi-agent system with Terraform, Cloud Run, and MCP-connected services on Google Cloud.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 21949,
+        "headings": [
+          "Deployment to Cloud Run and the Path to Production",
+          "Production Utilities and Server: Building the System's Body",
+          "The Application Server",
+          "--- Initialization & Secure Secret Retrieval ---",
+          "We now unpack the SECRETS dictionary returned by our updated env.py",
+          "Access sensitive credentials from the SECRETS dictionary",
+          "These keys stay in memory and are NOT injected into os.environ",
+          "--- Configuration & Sessions ---",
+          "Non-sensitive configuration uses environment variables",
+          "--- MEMORY BANK CONNECTION ---",
+          "--- Initialize FastAPI with ADK ---",
+          "Implementing Telemetry"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Deployment to Cloud Run and the Path to Production",
+          "Production Utilities and Server: Building the System's Body",
+          "The Application Server",
+          "--- Initialization & Secure Secret Retrieval ---",
+          "We now unpack the SECRETS dictionary returned by our updated env.py"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3597101,
+        "tag_list": "googlecloud, terraform, ai, agents"
+      }
+    },
+    {
+      "title": "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "url": "https://dev.to/googleai/building-capabilities-for-a-multi-agent-system-with-google-adk-mcp-and-cloud-run-ab9",
+      "source": "DEV Community",
+      "snippet": "My team's mission is to accelerate the developer journey from writing code to running secure AI workloads on Google Cloud. It led me to build Dev Signal—a multi-agent system designed with Google Agent Development Kit (ADK).",
+      "content": "My team's mission is to accelerate the developer journey from writing code to running secure AI workloads on Google Cloud. To help developers succeed, we focus on identifying their most pressing questions and building demos that provide straightforward, easy-to-implement solutions. Recently, I was struck with inspiration when the new Developer Knowledge MCP server was released. It led me to build Dev Signal—a multi-agent system designed with Google Agent Development Kit (ADK)—to identify technical questions from Reddit, research them using official documentation, and draft detailed technical blogs. This tutorial walks through building capabilities for the Dev Signal multi-agent system using Google ADK, MCP, and Cloud Run.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 25367,
+        "headings": [
+          "What you'll learn",
+          "Getting started with Dev Signal",
+          "Prerequisites",
+          "Project Setup",
+          "1. Initialize the Project",
+          "2. Folder Structure",
+          "3. Define Dependencies",
+          "Building the agent capabilities: MCP tools",
+          "Tools Configuration",
+          "Reddit Search (Discovery Tool)",
+          "Google Cloud Docs (Knowledge Tool)",
+          "The Image Generator (Nano Banana MCP)"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "What you'll learn",
+          "Getting started with Dev Signal",
+          "Prerequisites",
+          "Project Setup",
+          "1. Initialize the Project"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3588787,
+        "tag_list": "ai, googlecloud, python, agents"
+      }
+    },
+    {
+      "title": "AI Agents Have Two Souls. You Only Control One",
+      "url": "https://dev.to/auth0/ai-agents-have-two-souls-you-only-control-one-3bm4",
+      "source": "DEV Community",
+      "snippet": "Everyone seems to be building AI agents now. But ask ten developers what an AI agent actually is, and you'll get ten different answers. This definitional vagueness is not just an academic problem. It leads to a security problem.",
+      "content": "Everyone seems to be building AI agents now. But ask ten developers what an AI agent actually is, and you'll get ten different answers. Some say it is any LLM with tool access. Others define it by the ability to autonomously take actions in the world. A few will point at an existing chatbot and call it an agent. This definitional vagueness is not just an academic problem. It leads to a security problem. How can you protect a system you cannot describe precisely?\n\n## Looking for an AI Agent Definition\nBeyond the generic definitions that emphasize autonomy, the more useful framing is technical: an AI agent is a system that reasons, uses tools, and takes actions under some level of delegated authority.\n\n## The Two Souls of an AI Agent\nThat is where the two souls of an AI agent appear. One soul is data and context. The other is command and decision authority.\n\n## The Three Laws of AI Security Applied\nThe security architecture for AI agents depends on data control, command control, and decision control. Authorization, authentication, access control, and policy boundaries all matter because a tool-using agent can cross trust boundaries on behalf of a user or service.\n\n## Your Takeaways for Securing AI Agents\nYour takeaways for securing AI agents should center on permissions, delegated access, architectural boundaries, protocol-level control, command control, and the decisions an agent is allowed to make.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 16160,
+        "headings": [
+          "Looking for an AI Agent Definition",
+          "The Two Souls of an AI Agent",
+          "The Three Laws of AI Security Applied",
+          "The Data Control Law",
+          "The Command Control Law",
+          "The Decision Control Law",
+          "Your Takeaways for Securing AI Agents"
+        ],
+        "raw_html_heading_count": 7,
+        "extracted_heading_count": 7,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Looking for an AI Agent Definition",
+          "The Two Souls of an AI Agent",
+          "The Three Laws of AI Security Applied",
+          "The Data Control Law",
+          "The Command Control Law"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3634876,
+        "tag_list": "ai, security, architecture, llm"
+      }
+    },
+    {
+      "title": "Best MCP Gateways for Enterprise Teams in 2026",
+      "url": "https://dev.to/varshithvhegde/best-mcp-gateways-for-enterprise-teams-in-2026-5fk8",
+      "source": "DEV Community",
+      "snippet": "I spent the last few months evaluating MCP gateways for a mid-size financial services client. Their agentic stack had grown organically and nobody had a clear answer when the CISO asked who can see what tools our agents are calling.",
+      "content": "I spent the last few months evaluating MCP gateways for a mid-size financial services client. Their agentic stack had grown organically: one team was using local STDIO servers, another had hand-rolled HTTP wrappers, and nobody had a clear answer when the CISO asked who can see what tools our agents are calling. This writeup is the distilled version of that evaluation. It explains MCP gateway internals for enterprise teams and tool-using agents, focusing on routing, capability boundaries, and policy enforcement.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 16168,
+        "headings": [
+          "Why You Even Need a Gateway",
+          "The Contenders",
+          "1. TrueFoundry MCP Gateway",
+          "2. MintMCP",
+          "3. Composio",
+          "4. Docker MCP Gateway",
+          "5. MCPJungle",
+          "6. IBM ContextForge",
+          "7. Lasso Security MCP Gateway",
+          "The Comparison Table",
+          "What I Learned From the Actual Evaluation",
+          "A Few Questions Worth Asking Before You Pick"
+        ],
+        "raw_html_heading_count": 12,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Why You Even Need a Gateway",
+          "The Contenders",
+          "1. TrueFoundry MCP Gateway",
+          "2. MintMCP",
+          "3. Composio"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3618298,
+        "tag_list": "ai, webdev, productivity, mcp"
+      }
+    },
+    {
+      "title": "I Built My Mom an AI Recipe Helper for Mother's Day",
+      "url": "https://dev.to/aws/i-built-my-mom-an-ai-recipe-helper-for-mothers-day-2hc5",
+      "source": "DEV Community",
+      "snippet": "A project about a fridge, Strands agents and trying to keep up with Mom's seasons. The issue is not the recipe, it's that she's missing ingredients and her preferences keep changing.",
+      "content": "A project about a fridge, Strands agents and trying to keep up with Mom's seasons. My mom has a drawer full of recipes and is always missing ingredients or changing dietary preferences. I built a simple recipe helper with OpenAI prompts, a basic app screen, and meal-planning suggestions for her. The project focuses on recipes, shopping ideas, and a lightweight helper experience rather than agent orchestration or tool-using systems.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 13359,
+        "headings": [
+          "My Mom's Problem",
+          "What it does in 30 seconds",
+          "Why an agent and not a prompt",
+          "The tools and why there aren't very many",
+          "Preference handling",
+          "The \"send a photo of your groceries\" part",
+          "The Architecture",
+          "What it costs me to keep it running",
+          "Try it yourself",
+          "paste the ApiUrl into web/config.js",
+          "open the CloudFront URL",
+          "The Hug"
+        ],
+        "raw_html_heading_count": 11,
+        "extracted_heading_count": 12,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "My Mom's Problem",
+          "What it does in 30 seconds",
+          "Why an agent and not a prompt",
+          "The tools and why there aren't very many",
+          "Preference handling"
+        ],
+        "platform": "dev.to",
+        "source_type": "devto_tag",
+        "devto_id": 3589148,
+        "tag_list": "aws, ai, agents, mothersday"
+      }
+    }
+  ],
+  "expected": {
+    "selected_titles": [
+      "AI Agents Have Two Souls. You Only Control One",
+      "Best MCP Gateways for Enterprise Teams in 2026"
+    ],
+    "similar_cluster_titles": [
+      "Deploying a Multi-Agent System with Terraform and Cloud Run",
+      "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run"
+    ],
+    "broad_ai_title": "I Built My Mom an AI Recipe Helper for Mother's Day"
+  }
+}

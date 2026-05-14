@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 from typing import Iterable
 
 
@@ -34,8 +35,13 @@ TOPIC_EDITORIAL_ALIGNMENT_TAGS: dict[str, tuple[str, ...]] = {
         "security",
         "auth",
         "oauth",
-        "workflow",
     ),
+}
+TOPIC_CORE_TITLE_SPECIFICITY_BONUS_MAP: dict[str, dict[str, float]] = {
+    "ai agents": {
+        "mcp": 0.55,
+        "model context protocol": 0.55,
+    },
 }
 TOPIC_SPECIFICITY_SIGNAL_MAP: dict[str, tuple[str, ...]] = {
     "ai agents": (
@@ -204,6 +210,21 @@ CASE_STUDY_ACTION_TERMS = ("uses", "builds", "helps", "reduces", "improves")
 CASE_STUDY_SUBJECT_TERMS = ("company", "team", "startup", "platform", "customer", "business")
 OPINION_TERMS = ("analysis", "why", "lessons", "tradeoffs", "trend", "trends")
 GENERIC_INFRASTRUCTURE_TAGS = {"cloud", "devops", "google_cloud", "testing"}
+TITLE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "for",
+    "from",
+    "how",
+    "in",
+    "of",
+    "on",
+    "the",
+    "to",
+    "using",
+    "with",
+}
 
 
 def rank_source_items(
@@ -278,17 +299,23 @@ def rank_source_items(
             "quality_reasons": scoring_details["quality_reasons"],
             "rejection_reasons": scoring_details["rejection_reasons"],
             "diagnostic_warnings": scoring_details["diagnostic_warnings"],
+            "diversity_penalty": 0.0,
+            "similarity_reasons": [],
+            "diversity_adjusted_score": raw_score,
             "scoring_mode": "rule_based",
         }
         for raw_score, quality_score, _, item, scoring_details in scored_items
     ]
 
-    filtered_items = [
-        item
-        for raw_score, quality_score, _, item, _scoring_details in scored_items
+    filtered_entries = [
+        (
+            item,
+            ranking_scores[index],
+        )
+        for index, (_raw_score, quality_score, _position, item, _scoring_details) in enumerate(scored_items)
         if quality_score >= min_quality_score
     ]
-    selected_items = filtered_items[:top_n]
+    selected_items = _select_diverse_items(filtered_entries, top_n=top_n)
     return selected_items, ranking_scores
 
 
@@ -630,6 +657,13 @@ def _score_topic_specificity(
 
     if len(specificity_signals) >= 3:
         score += 0.5
+
+    core_title_bonus_map = TOPIC_CORE_TITLE_SPECIFICITY_BONUS_MAP.get(strongest_keyword, {})
+    if core_title_bonus_map and title_specific_hits:
+        score += max(
+            (float(core_title_bonus_map.get(hit, 0.0)) for hit in title_specific_hits),
+            default=0.0,
+        )
 
     if generic_topic_signals and not specificity_signals:
         score = max(score - 0.5, 0.0)
@@ -1455,10 +1489,207 @@ def _score_editorial_alignment(
 
     aligned_tags = set(TOPIC_EDITORIAL_ALIGNMENT_TAGS.get(topic_key, ()))
     if aligned_tags & set(dominant_tags):
-        return 0.35, "editorial center aligns with topic"
+        return 0.55, "editorial center aligns with topic"
     if aligned_tags & set(supporting_tags):
-        return 0.12, "supporting editorial theme aligns with topic"
+        return 0.08, "supporting editorial theme aligns with topic"
     return 0.0, None
+
+
+def _select_diverse_items(filtered_entries: list[tuple[dict, dict]], *, top_n: int) -> list[dict]:
+    if top_n <= 0 or not filtered_entries:
+        return []
+
+    remaining = list(filtered_entries)
+    selected_items: list[dict] = []
+    selected_scores: list[dict] = []
+
+    while remaining and len(selected_items) < top_n:
+        best_index = 0
+        best_adjusted_score = None
+        best_penalty = 0.0
+        best_reasons: list[str] = []
+
+        for index, (_item, score_entry) in enumerate(remaining):
+            penalty, reasons = _calculate_diversity_penalty(score_entry, selected_scores)
+            raw_score = float(score_entry.get("score") or 0.0)
+            adjusted_score = round(max(raw_score - penalty, 0.0), 2)
+
+            score_entry["diversity_penalty"] = round(penalty, 2)
+            score_entry["similarity_reasons"] = reasons
+            score_entry["diversity_adjusted_score"] = adjusted_score
+
+            candidate_key = (adjusted_score, raw_score, -index)
+            best_key = None if best_adjusted_score is None else (best_adjusted_score, float(remaining[best_index][1].get("score") or 0.0), -best_index)
+            if best_key is None or candidate_key > best_key:
+                best_index = index
+                best_adjusted_score = adjusted_score
+                best_penalty = penalty
+                best_reasons = reasons
+
+        selected_item, selected_score = remaining.pop(best_index)
+        selected_score["diversity_penalty"] = round(best_penalty, 2)
+        selected_score["similarity_reasons"] = best_reasons
+        selected_score["diversity_adjusted_score"] = round(best_adjusted_score or float(selected_score.get("score") or 0.0), 2)
+        selected_items.append(selected_item)
+        selected_scores.append(selected_score)
+
+    return selected_items
+
+
+def _calculate_diversity_penalty(candidate: dict, selected_scores: list[dict]) -> tuple[float, list[str]]:
+    if not selected_scores:
+        return 0.0, []
+
+    strongest_penalty = 0.0
+    strongest_reasons: list[str] = []
+    for selected in selected_scores:
+        penalty, reasons = _compare_editorial_similarity(candidate, selected)
+        if penalty > strongest_penalty:
+            strongest_penalty = penalty
+            strongest_reasons = reasons
+
+    if strongest_penalty <= 0:
+        return 0.0, []
+    max_penalty = 2.1 if any("near-duplicate editorial cluster" in reason for reason in strongest_reasons) else 1.2
+    return round(min(strongest_penalty, max_penalty), 2), strongest_reasons
+
+
+def _compare_editorial_similarity(candidate: dict, selected: dict) -> tuple[float, list[str]]:
+    reasons: list[str] = []
+    penalty = 0.0
+
+    candidate_dominant = set(candidate.get("dominant_tags") or [])
+    selected_dominant = set(selected.get("dominant_tags") or [])
+    dominant_overlap = sorted(candidate_dominant & selected_dominant)
+    if len(dominant_overlap) >= 2:
+        penalty += 0.45
+        reasons.append(f"shared dominant tags with selected article ({', '.join(dominant_overlap[:4])})")
+    elif len(dominant_overlap) == 1:
+        penalty += 0.18
+        reasons.append(f"shared dominant theme with selected article ({dominant_overlap[0]})")
+
+    candidate_supporting = set(candidate.get("supporting_tags") or [])
+    selected_supporting = set(selected.get("supporting_tags") or [])
+    supporting_overlap = sorted((candidate_dominant | candidate_supporting) & (selected_dominant | selected_supporting))
+    if len(supporting_overlap) >= 4:
+        penalty += 0.24
+        reasons.append("high supporting-tag overlap with an already selected article")
+    elif len(supporting_overlap) >= 2:
+        penalty += 0.12
+        reasons.append("moderate supporting-tag overlap with an already selected article")
+
+    if candidate.get("primary_article_type") == selected.get("primary_article_type"):
+        candidate_type = str(candidate.get("primary_article_type") or "")
+        if candidate_type in {"tutorial", "deep_technical", "system_design", "architecture_security"}:
+            penalty += 0.16
+            reasons.append(f"same editorial framing as selected article ({candidate_type.replace('_', ' ')})")
+
+    if _same_source_family(candidate, selected):
+        penalty += 0.16
+        reasons.append("same source or publication family as selected article")
+
+    title_overlap = _significant_title_overlap(
+        str(candidate.get("title") or ""),
+        str(selected.get("title") or ""),
+    )
+    if title_overlap >= 4:
+        penalty += 0.32
+        reasons.append("very similar title phrasing to an already selected article")
+    elif title_overlap >= 2:
+        penalty += 0.14
+        reasons.append("similar title phrasing to an already selected article")
+
+    if _shared_named_system(candidate, selected):
+        penalty += 0.18
+        reasons.append("repeats the same named system or platform focus")
+
+    if _is_near_duplicate_editorial_cluster(
+        candidate,
+        selected,
+        dominant_overlap=dominant_overlap,
+        supporting_overlap=supporting_overlap,
+        title_overlap=title_overlap,
+    ):
+        penalty += 0.6
+        reasons.append("near-duplicate editorial cluster with an already selected article")
+
+    return round(penalty, 2), _unique_reasons(reasons)
+
+
+def _same_source_family(candidate: dict, selected: dict) -> bool:
+    candidate_source = _normalize_term(str(candidate.get("source_name") or ""))
+    selected_source = _normalize_term(str(selected.get("source_name") or ""))
+    if candidate_source and candidate_source == selected_source:
+        return True
+
+    candidate_domain = _extract_domain(str(candidate.get("url") or ""))
+    selected_domain = _extract_domain(str(selected.get("url") or ""))
+    return bool(candidate_domain and candidate_domain == selected_domain)
+
+
+def _extract_domain(url: str) -> str:
+    parsed = urlparse(url)
+    return (parsed.netloc or "").lower()
+
+
+def _significant_title_overlap(first_title: str, second_title: str) -> int:
+    first_tokens = {
+        token
+        for token in _tokenize_text(first_title)
+        if len(token) > 2 and token not in TITLE_STOPWORDS
+    }
+    second_tokens = {
+        token
+        for token in _tokenize_text(second_title)
+        if len(token) > 2 and token not in TITLE_STOPWORDS
+    }
+    return len(first_tokens & second_tokens)
+
+
+def _shared_named_system(candidate: dict, selected: dict) -> bool:
+    candidate_title = _similarity_marker_text(candidate)
+    selected_title = _similarity_marker_text(selected)
+    system_markers = (
+        "google adk",
+        "adk",
+        "cloud run",
+        "mcp",
+        "dev signal",
+        "terraform",
+        "gemma",
+        "vertex ai",
+    )
+    shared = [marker for marker in system_markers if marker in candidate_title and marker in selected_title]
+    return len(shared) >= 2
+
+
+def _similarity_marker_text(score_entry: dict) -> str:
+    title = str(score_entry.get("title") or "")
+    heading_diagnostics = score_entry.get("heading_diagnostics") or {}
+    headings = heading_diagnostics.get("detected_headings") or []
+    combined = " ".join([title, *[str(heading) for heading in headings]])
+    return _normalize_term(combined)
+
+
+def _is_near_duplicate_editorial_cluster(
+    candidate: dict,
+    selected: dict,
+    *,
+    dominant_overlap: list[str],
+    supporting_overlap: list[str],
+    title_overlap: int,
+) -> bool:
+    if candidate.get("primary_article_type") != "tutorial" or selected.get("primary_article_type") != "tutorial":
+        return False
+    if not _same_source_family(candidate, selected):
+        return False
+    if len(dominant_overlap) < 3:
+        return False
+    if len(supporting_overlap) < 5:
+        return False
+    if title_overlap < 4:
+        return False
+    return True
 
 
 def _count_matching_tags(normalized_keywords: list[str], secondary_tags: list[str]) -> int:

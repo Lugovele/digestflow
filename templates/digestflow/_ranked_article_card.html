@@ -285,6 +285,36 @@
         </details>
     {% endif %}
 
+    {% if article.diversity_penalty or article.diversity_adjusted_score or article.similarity_reasons %}
+        <details class="detail-block">
+            <summary>Show diversity diagnostics</summary>
+            <dl class="compact-def-list">
+                <div class="compact-def-list__block">
+                    <dt>Diversity penalty</dt>
+                    <dd>{{ article.diversity_penalty|default_if_none:"0" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>Diversity-adjusted score</dt>
+                    <dd>{{ article.diversity_adjusted_score|default_if_none:"-" }}</dd>
+                </div>
+                <div class="compact-def-list__block">
+                    <dt>Similarity reasons</dt>
+                    <dd>
+                        {% if article.similarity_reasons %}
+                            <ul class="compact-list">
+                                {% for reason in article.similarity_reasons %}
+                                    <li>{{ reason }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            none
+                        {% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </details>
+    {% endif %}
+
     {% if article.article_card.weak_tags %}
         <details class="detail-block detail-block--muted">
             <summary>Show weak tags ({{ article.article_card.weak_tag_count }})</summary>

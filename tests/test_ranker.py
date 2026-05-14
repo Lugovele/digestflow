@@ -170,6 +170,9 @@ class RankSourceItemsTests(SimpleTestCase):
         self.assertIn("dominant_theme_reason", ranking_scores[0])
         self.assertIn("primary_type_override_reason", ranking_scores[0])
         self.assertIn("heading_diagnostics", ranking_scores[0])
+        self.assertIn("diversity_penalty", ranking_scores[0])
+        self.assertIn("similarity_reasons", ranking_scores[0])
+        self.assertIn("diversity_adjusted_score", ranking_scores[0])
         self.assertTrue(ranking_scores[0]["quality_reasons"])
         self.assertTrue(ranking_scores[0]["rejection_reasons"])
         self.assertEqual(
@@ -648,6 +651,254 @@ class RankSourceItemsTests(SimpleTestCase):
         self.assertLessEqual(score["topic_specificity_score"], expected["max_topic_specificity_score"])
         self.assertEqual(selected, [])
         self.assertIn("low novelty", score["rejection_reasons"])
+
+    def test_fixture_run_141_mixed_ai_agents_prefers_technical_agentic_articles(self):
+        fixture = load_ranking_fixture("run_141_mixed_ai_agents")
+
+        selected, ranking_scores = rank_source_items(
+            fixture["items"],
+            keywords=fixture["keywords"],
+            top_n=3,
+            min_quality_score=0.2,
+        )
+
+        expected = fixture["expected"]
+        selected_titles = [item["title"] for item in selected]
+        self.assertCountEqual(selected_titles, expected["selected_titles"])
+
+        score_by_title = {score["title"]: score for score in ranking_scores}
+        for title in expected["unselected_titles"]:
+            self.assertNotIn(title, selected_titles)
+
+        community_score = score_by_title["Congrats to the OpenClaw Challenge Winners!"]
+        self.assertEqual(community_score["primary_article_type"], expected["community_article_type"])
+        self.assertEqual(community_score["dominant_tags"], expected["community_dominant_tags"])
+        self.assertIn("community update", community_score["rejection_reasons"])
+
+        broad_ai_score = score_by_title["I Built My Mom an AI Recipe Helper for Mother's Day"]
+        self.assertLessEqual(
+            broad_ai_score["topic_specificity_score"],
+            expected["broad_ai_max_topic_specificity_score"],
+        )
+        self.assertTrue(broad_ai_score["rejection_reasons"])
+
+        self.assertGreater(
+            score_by_title["How to Authorize AI Agents Using Token Exchange Open Standards"]["score"],
+            community_score["score"],
+        )
+        self.assertGreater(
+            score_by_title["Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run"][
+                "score"
+            ],
+            community_score["score"],
+        )
+        self.assertGreater(
+            score_by_title["Best MCP Gateways for Enterprise Teams in 2026"]["score"],
+            community_score["score"],
+        )
+
+    def test_fixture_run_143_similarity_cluster_prefers_more_diverse_selection(self):
+        fixture = load_ranking_fixture("run_143_similarity_cluster")
+
+        selected, ranking_scores = rank_source_items(
+            fixture["items"],
+            keywords=fixture["keywords"],
+            top_n=3,
+            min_quality_score=0.2,
+        )
+
+        expected = fixture["expected"]
+        selected_titles = [item["title"] for item in selected]
+        for title in expected["selected_titles"]:
+            self.assertIn(title, selected_titles)
+
+        cluster_titles = expected["similar_cluster_titles"]
+        selected_cluster_titles = [title for title in selected_titles if title in cluster_titles]
+        self.assertEqual(len(selected_cluster_titles), 1)
+
+        score_by_title = {score["title"]: score for score in ranking_scores}
+        penalized_title = next(title for title in cluster_titles if title not in selected_cluster_titles)
+        retained_title = selected_cluster_titles[0]
+        penalized = score_by_title[penalized_title]
+        retained = score_by_title[retained_title]
+
+        self.assertGreater(penalized["diversity_penalty"], 0.0)
+        self.assertTrue(penalized["similarity_reasons"])
+        self.assertLess(penalized["diversity_adjusted_score"], penalized["score"])
+        self.assertIn("shared dominant", " ".join(penalized["similarity_reasons"]))
+        self.assertGreaterEqual(retained["diversity_adjusted_score"], penalized["diversity_adjusted_score"])
+
+    def test_fixture_related_but_distinct_articles_both_survive_diversity_pass(self):
+        fixture = load_ranking_fixture("run_143_related_but_distinct")
+
+        selected, ranking_scores = rank_source_items(
+            fixture["items"],
+            keywords=fixture["keywords"],
+            top_n=2,
+            min_quality_score=0.2,
+        )
+
+        expected = fixture["expected"]
+        selected_titles = [item["title"] for item in selected]
+        self.assertCountEqual(selected_titles, expected["selected_titles"])
+        for title in expected["unselected_titles"]:
+            self.assertNotIn(title, selected_titles)
+
+        score_by_title = {score["title"]: score for score in ranking_scores}
+        for title in expected["related_titles"]:
+            self.assertIn(title, selected_titles)
+            self.assertIn("diversity_penalty", score_by_title[title])
+            self.assertIn("similarity_reasons", score_by_title[title])
+            self.assertIn("diversity_adjusted_score", score_by_title[title])
+
+        selected_related_scores = [score_by_title[title] for title in expected["related_titles"]]
+        weaker_scores = [score_by_title[title] for title in expected["unselected_titles"]]
+        self.assertTrue(any(score["diversity_penalty"] > 0.0 for score in selected_related_scores))
+        self.assertTrue(any(score["similarity_reasons"] for score in selected_related_scores))
+        self.assertTrue(
+            all(
+                related["diversity_adjusted_score"] > weaker["diversity_adjusted_score"]
+                for related in selected_related_scores
+                for weaker in weaker_scores
+            )
+        )
+
+    def test_fixture_run_144_near_duplicate_cluster_keeps_only_one_dev_signal_tutorial(self):
+        fixture = load_ranking_fixture("run_144_near_duplicate_cluster")
+
+        selected, ranking_scores = rank_source_items(
+            fixture["items"],
+            keywords=fixture["keywords"],
+            top_n=3,
+            min_quality_score=0.2,
+        )
+
+        expected = fixture["expected"]
+        selected_titles = [item["title"] for item in selected]
+        for title in expected["selected_titles"]:
+            self.assertIn(title, selected_titles)
+        for title in expected["unselected_titles"]:
+            self.assertNotIn(title, selected_titles)
+
+        cluster_titles = expected["similar_cluster_titles"]
+        selected_cluster_titles = [title for title in selected_titles if title in cluster_titles]
+        self.assertEqual(len(selected_cluster_titles), 1)
+
+        score_by_title = {score["title"]: score for score in ranking_scores}
+        penalized_title = next(title for title in cluster_titles if title not in selected_cluster_titles)
+        penalized = score_by_title[penalized_title]
+        reasons_blob = " ".join(penalized["similarity_reasons"])
+
+        self.assertGreater(penalized["diversity_penalty"], 0.0)
+        self.assertLess(penalized["diversity_adjusted_score"], penalized["score"])
+        self.assertIn("same source", reasons_blob)
+        self.assertTrue("named system" in reasons_blob or "title phrasing" in reasons_blob or "editorial cluster" in reasons_blob)
+
+    def test_fixture_run_146_real_payload_shape_suppresses_second_dev_signal_article(self):
+        fixture = load_ranking_fixture("run_146_real_payload_shape")
+
+        selected, ranking_scores = rank_source_items(
+            fixture["items"],
+            keywords=fixture["keywords"],
+            top_n=3,
+            min_quality_score=0.2,
+        )
+
+        expected = fixture["expected"]
+        selected_titles = [item["title"] for item in selected]
+        for title in expected["selected_titles"]:
+            self.assertIn(title, selected_titles)
+        self.assertNotIn(expected["broad_ai_title"], selected_titles)
+
+        cluster_titles = expected["similar_cluster_titles"]
+        selected_cluster_titles = [title for title in selected_titles if title in cluster_titles]
+        self.assertEqual(len(selected_cluster_titles), 1)
+
+        score_by_title = {score["title"]: score for score in ranking_scores}
+        suppressed_title = next(title for title in cluster_titles if title not in selected_cluster_titles)
+        suppressed = score_by_title[suppressed_title]
+        gateway = score_by_title["Best MCP Gateways for Enterprise Teams in 2026"]
+
+        self.assertGreater(suppressed["diversity_penalty"], 0.0)
+        self.assertLess(suppressed["diversity_adjusted_score"], suppressed["score"])
+        self.assertIn("near-duplicate editorial cluster", " ".join(suppressed["similarity_reasons"]))
+        self.assertIn("named system", " ".join(suppressed["similarity_reasons"]))
+        self.assertLess(suppressed["diversity_adjusted_score"], gateway["diversity_adjusted_score"])
+
+    def test_fixture_run_147_real_payload_shape_prefers_mcp_gateway_over_broad_gemma_article(self):
+        fixture = load_ranking_fixture("run_147_real_payload_shape")
+
+        selected, ranking_scores = rank_source_items(
+            fixture["items"],
+            keywords=fixture["keywords"],
+            top_n=3,
+            min_quality_score=0.2,
+        )
+
+        expected = fixture["expected"]
+        selected_titles = [item["title"] for item in selected]
+        for title in expected["must_select"]:
+            self.assertIn(title, selected_titles)
+        for title in expected["must_reject"]:
+            self.assertNotIn(title, selected_titles)
+
+        cluster_titles = expected["similar_cluster_titles"]
+        selected_cluster_titles = [title for title in selected_titles if title in cluster_titles]
+        self.assertEqual(len(selected_cluster_titles), 1)
+
+        score_by_title = {score["title"]: score for score in ranking_scores}
+        gateway = score_by_title["Best MCP Gateways for Enterprise Teams in 2026"]
+        gemma = score_by_title["AI Is Escaping The Browser | The Gemma 4 Edition"]
+        suppressed_title = next(title for title in cluster_titles if title not in selected_cluster_titles)
+        suppressed = score_by_title[suppressed_title]
+
+        self.assertGreater(gateway["diversity_adjusted_score"], gemma["diversity_adjusted_score"])
+        self.assertGreaterEqual(gateway["topic_specificity_score"], gemma["topic_specificity_score"])
+        self.assertIn("mcp", gateway["dominant_tags"])
+        self.assertIn("diversity_adjusted_score", gateway)
+        self.assertIn("diversity_penalty", suppressed)
+        self.assertIn("similarity_reasons", suppressed)
+
+    def test_diversity_penalty_does_not_overpower_clear_quality_gap(self):
+        items = [
+            {
+                "title": "Advanced MCP Gateway Internals for Tool-Using Agents",
+                "url": "https://example.com/diversity-best",
+                "source": "DEV Community",
+                "snippet": "A deep technical article on MCP gateway internals, routing, and capability boundaries for tool-using agents.",
+                "content": "This article covers MCP gateway routing, capability boundaries, and tool execution internals.\n\n## MCP Gateway\nMCP routing is the central mechanism.\n\n## Capability Boundaries\nCapability boundaries and request routing are explained in depth.",
+                "metadata": {"content_tier": "full_article", "content_length": 760, "headings": ["MCP Gateway", "Capability Boundaries"]},
+            },
+            {
+                "title": "Another MCP Gateway Tutorial for Tool-Using Agents",
+                "url": "https://example.com/diversity-similar",
+                "source": "DEV Community",
+                "snippet": "A similar MCP tutorial that covers gateway routing and capability boundaries again.",
+                "content": "This article also covers MCP routing and capability boundaries.\n\n## MCP Gateway\nMCP routing is discussed again.\n\n## Capability Boundaries\nCapability boundaries are repeated here as well.",
+                "metadata": {"content_tier": "full_article", "content_length": 640, "headings": ["MCP Gateway", "Capability Boundaries"]},
+            },
+            {
+                "title": "Short community roundup",
+                "url": "https://example.com/diversity-weak",
+                "source": "DEV Community",
+                "snippet": "A quick event roundup with a passing mention of agents.",
+                "content": "Congrats to the challenge winners.\n\n## Winners\nA short event update.",
+                "metadata": {"content_tier": "rich_summary", "content_length": 220, "headings": ["Winners"]},
+            },
+        ]
+
+        selected, ranking_scores = rank_source_items(
+            items,
+            keywords=["ai agents"],
+            top_n=2,
+            min_quality_score=0.0,
+        )
+
+        selected_titles = [item["title"] for item in selected]
+        self.assertIn("Advanced MCP Gateway Internals for Tool-Using Agents", selected_titles)
+        self.assertIn("Another MCP Gateway Tutorial for Tool-Using Agents", selected_titles)
+        weak_score = next(score for score in ranking_scores if score["title"] == "Short community roundup")
+        self.assertTrue(weak_score["rejection_reasons"])
 
     def test_capability_building_article_does_not_become_architecture_security_from_credentials_mentions(self):
         items = [

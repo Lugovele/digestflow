@@ -1,0 +1,101 @@
+{
+  "keywords": ["ai agents"],
+  "items": [
+    {
+      "title": "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "url": "https://example.com/fixtures/diversity-building-capabilities",
+      "source": "DEV Community",
+      "snippet": "A practical guide to building multi-agent capabilities with Google ADK, MCP, Cloud Run, and Google Cloud runtime components.",
+      "content": "This tutorial walks through building capabilities for a multi-agent system using Google ADK, MCP, and Cloud Run.\n\n## System Overview\nThe multi-agent system coordinates agent capabilities and shared tools.\n\n## Google ADK\nGoogle ADK defines the capability structure and agent behavior.\n\n## MCP Integration\nMCP provides tool routing and capability boundaries.\n\n## Cloud Run Runtime\nCloud Run hosts the runtime and deployment surfaces.\n\n## Operational Notes\nTesting and deployment guidance support rollout readiness.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 902,
+        "headings": [
+          "System Overview",
+          "Google ADK",
+          "MCP Integration",
+          "Cloud Run Runtime",
+          "Operational Notes"
+        ],
+        "raw_html_heading_count": 5,
+        "extracted_heading_count": 5,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Google ADK",
+          "MCP Integration",
+          "Cloud Run Runtime"
+        ]
+      }
+    },
+    {
+      "title": "Best MCP Gateways for Enterprise Teams in 2026",
+      "url": "https://example.com/fixtures/diversity-mcp-gateways",
+      "source": "DEV Community",
+      "snippet": "A deep technical analysis of MCP gateways, request routing, and capability boundaries for enterprise teams.",
+      "content": "This article explains MCP gateway internals for enterprise teams and tool-using agents.\n\n## MCP Gateway\nThe MCP gateway coordinates routing and capability boundaries.\n\n## Policy Enforcement\nSecurity rules are applied before tool execution.\n\n## Enterprise Controls\nOperational controls help larger teams manage tool access.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 688,
+        "headings": [
+          "MCP Gateway",
+          "Policy Enforcement",
+          "Enterprise Controls"
+        ],
+        "raw_html_heading_count": 3,
+        "extracted_heading_count": 3,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "MCP Gateway",
+          "Policy Enforcement"
+        ]
+      }
+    },
+    {
+      "title": "I Built My Mom an AI Recipe Helper for Mother's Day",
+      "url": "https://example.com/fixtures/diversity-recipe-helper",
+      "source": "Example Personal Blog",
+      "snippet": "A personal project using OpenAI and a small app interface to suggest recipes, shopping ideas, and meal planning help.",
+      "content": "I built a simple recipe helper with OpenAI prompts, a basic app screen, and meal-planning suggestions for my mom. The project focuses on recipes, shopping ideas, and a lightweight helper experience rather than agent orchestration or tool-using systems.",
+      "metadata": {
+        "content_tier": "full_article",
+        "content_length": 720
+      }
+    },
+    {
+      "title": "Congrats to the OpenClaw Challenge Winners!",
+      "url": "https://example.com/fixtures/diversity-community-update",
+      "source": "DEV Community",
+      "snippet": "A community update celebrating challenge winners and highlighting recent submissions.",
+      "content": "Congrats to the OpenClaw challenge winners and thanks to everyone who submitted entries this month.\n\n## Winners\nThis roundup highlights the winning projects and community participation.\n\n## Community Highlights\nA short review of event activity and notable entries.",
+      "metadata": {
+        "content_tier": "rich_summary",
+        "content_length": 388,
+        "headings": [
+          "Winners",
+          "Community Highlights"
+        ],
+        "raw_html_heading_count": 2,
+        "extracted_heading_count": 2,
+        "heading_extraction_strategy": "markdown_headings",
+        "sample_detected_headings": [
+          "Winners",
+          "Community Highlights"
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "selected_titles": [
+      "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "Best MCP Gateways for Enterprise Teams in 2026"
+    ],
+    "unselected_titles": [
+      "I Built My Mom an AI Recipe Helper for Mother's Day",
+      "Congrats to the OpenClaw Challenge Winners!"
+    ],
+    "related_titles": [
+      "Building Capabilities for a Multi-Agent System with Google ADK, MCP, and Cloud Run",
+      "Best MCP Gateways for Enterprise Teams in 2026"
+    ]
+  }
+}
