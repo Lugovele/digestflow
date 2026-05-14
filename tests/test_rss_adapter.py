@@ -268,6 +268,65 @@ class RSSAdapterTests(SimpleTestCase):
         self.assertEqual(article["title"], "Baby sleep patterns | The Lullaby Trust")
         self.assertIn("wake up often", article["content"])
 
+    def test_fetch_generic_web_article_accepts_johns_hopkins_style_medical_article_layout(self):
+        html = """
+        <html>
+          <head>
+            <title>Infant Safe Sleep | Johns Hopkins Medicine</title>
+          </head>
+          <body class="site-body utility-nav-enabled">
+            <header>
+              <nav>Find a Doctor Locations MyChart Pay Bill Request Appointment</nav>
+            </header>
+            <div class="layout">
+              <aside class="sidebar-nav">
+                <h2>In this section</h2>
+                <ul>
+                  <li><a href="/health/conditions-and-diseases">Conditions and diseases</a></li>
+                  <li><a href="/health/wellness-and-prevention">Wellness and prevention</a></li>
+                  <li><a href="/health/treatment-tests-and-therapies">Treatments and tests</a></li>
+                </ul>
+              </aside>
+              <main role="main">
+                <article class="article-content">
+                  <h1>Infant Safe Sleep</h1>
+                  <p class="article-intro">Safe sleep guidance helps lower the risk of sleep-related infant deaths and gives families a clearer bedtime routine from the first days at home.</p>
+                  <div class="article-body">
+                    <p>Babies should always be placed on their backs for every sleep, including naps and overnight sleep. A firm, flat sleep surface and a crib free of loose blankets, pillows, and toys helps reduce risk.</p>
+                    <p>Room-sharing without bed-sharing is recommended during the early months. Parents and caregivers can also watch for overheating, keep sleep clothing simple, and ask their pediatrician for help if they are worried about frequent waking or feeding patterns.</p>
+                    <h2>Creating a safer sleep space</h2>
+                    <p>Use a safety-approved crib, bassinet, or portable play yard with a fitted sheet. Keep soft bedding and sleep positioners out of the sleep space, and return the baby to their own sleep surface after feeding or comforting.</p>
+                  </div>
+                </article>
+                <section class="related-content">
+                  <h2>Related</h2>
+                  <p>Learn more about pediatric wellness, childbirth classes, and hospital visitor information.</p>
+                </section>
+                <section class="promo-callout">
+                  <p>Request an appointment or sign up for our health newsletter.</p>
+                </section>
+              </main>
+            </div>
+            <footer>About us Contact us Newsroom For providers</footer>
+          </body>
+        </html>
+        """
+
+        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+            article = fetch_generic_web_article(
+                "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep"
+            )
+
+        self.assertIsNotNone(article)
+        self.assertEqual(article["title"], "Infant Safe Sleep | Johns Hopkins Medicine")
+        self.assertEqual(article["source_type"], "web_article")
+        self.assertIn("placed on their backs for every sleep", article["content"])
+        self.assertIn("firm, flat sleep surface", article["content"])
+        self.assertIn("Room-sharing without bed-sharing is recommended", article["content"])
+        self.assertGreater(len(article["content"]), 450)
+        self.assertNotIn("Find a Doctor Locations MyChart Pay Bill Request Appointment", article["content"])
+        self.assertNotIn("Request an appointment or sign up for our health newsletter", article["content"])
+
     def test_fetch_generic_web_article_rejects_short_unstructured_page_even_with_title(self):
         html = """
         <html>
