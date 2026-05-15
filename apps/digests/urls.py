@@ -12,12 +12,14 @@ from .views import (
     remove_topic_source_view,
     toggle_topic_source_view,
     topic_list_view,
+    topic_workspace_view,
     update_topic_focus_view,
 )
 
 
 urlpatterns = [
     path("", topic_list_view, name="topic-list"),
+    path("topics/<int:topic_id>/", topic_workspace_view, name="topic-workspace"),
     path("discover-sources/", discover_sources_view, name="discover-sources"),
     path("topics/reorder/", reorder_topics_view, name="reorder-topics"),
     path("topics/<int:topic_id>/delete/", delete_topic_view, name="delete-topic"),

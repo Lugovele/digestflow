@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 from bs4 import BeautifulSoup
@@ -204,27 +205,126 @@ def fetch_dev_to_article_content(article_id_or_url: int | str) -> dict[str, Any]
 
 
 def fetch_generic_web_article(source_url: str) -> dict[str, Any] | None:
+    return inspect_generic_web_article(source_url).get("article")
+
+
+def inspect_generic_web_article(source_url: str) -> dict[str, Any]:
     article_url = str(source_url or "").strip()
     if not article_url:
-        return None
+        return {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "",
+                "source_type": "",
+                "fetch_status": None,
+                "fetch_failure_reason": "empty source url",
+                "content_type": "",
+                "final_fetch_url": "",
+                "title": "",
+                "extraction_strategy": "empty_source_url",
+                "usable_text_length": 0,
+                "rejection_reason": "empty source url",
+            },
+        }
 
     normalized_source = normalize_source_url(article_url)
-    html = _fetch_url_text(normalized_source.normalized_url)
+    fetch_result = _fetch_url_response(
+        normalized_source.normalized_url,
+        accept_header="text/html, application/xhtml+xml, */*",
+    )
+    html = fetch_result["content"].decode("utf-8", errors="ignore") if fetch_result["content"] else ""
+    title = _extract_html_title(html) if html else ""
+    diagnostics: dict[str, Any] = {
+        "normalized_url": normalized_source.normalized_url,
+        "source_type": normalized_source.source_type,
+        "fetch_status": fetch_result["status"],
+        "fetch_failure_reason": fetch_result["fetch_failure_reason"],
+        "content_type": fetch_result["content_type"],
+        "final_fetch_url": fetch_result["final_url"],
+        "title": title,
+        "extraction_strategy": "fetch_failed",
+        "usable_text_length": 0,
+        "rejection_reason": "",
+    }
+
+    blocked_reason = _detect_blocked_article_fetch(
+        fetch_result["status"],
+        fetch_result["content_type"],
+        html,
+    )
+    if blocked_reason:
+        reader_fallback = _fetch_reader_fallback_article(normalized_source.original_url)
+        diagnostics["blocked_fetch_reason"] = blocked_reason
+        diagnostics["reader_fallback_attempted"] = True
+        if reader_fallback is not None:
+            content = str(reader_fallback.get("content") or "").strip()
+            title = str(reader_fallback.get("title") or "").strip()
+            diagnostics.update(
+                {
+                    "title": title,
+                    "extraction_strategy": "reader_markdown_fallback",
+                    "usable_text_length": len(content),
+                    "reader_fallback_used": True,
+                    "rejection_reason": "",
+                }
+            )
+            return {
+                "article": {
+                    "title": title or _get_fallback_source_name(normalized_source.normalized_url),
+                    "url": normalized_source.original_url,
+                    "source_url": normalized_source.original_url,
+                    "source_api_url": None,
+                    "source_name": title or _get_fallback_source_name(normalized_source.normalized_url),
+                    "source_type": "web_article",
+                    "platform": normalized_source.platform,
+                    "content": content,
+                    "snippet": _build_snippet(content),
+                    "description": None,
+                    "published_at": None,
+                    "metadata": {
+                        "platform": normalized_source.platform,
+                        "source_type": "web_article",
+                        "content_unavailable": False,
+                        "detection_reason": normalized_source.detection_reason,
+                        "extraction_method": "reader_markdown_fallback",
+                        "extracted_content_length": len(content),
+                        "extraction_warning": "primary fetch was blocked; reader fallback used",
+                        "extraction_candidates": [],
+                        "headings": [],
+                        "raw_html_heading_count": 0,
+                        "extracted_heading_count": 0,
+                        "heading_extraction_strategy": "reader_markdown_fallback",
+                        "sample_detected_headings": [],
+                    },
+                },
+                "diagnostics": diagnostics,
+            }
+
     if not html:
-        return None
+        diagnostics["rejection_reason"] = fetch_result["fetch_failure_reason"] or "html fetch failed"
+        return {"article": None, "diagnostics": diagnostics}
 
     extraction = _extract_html_content_diagnostics(html)
     content = str(extraction.get("content") or "").strip()
-    title = _extract_html_title(html)
+    diagnostics.update(
+        {
+            "extraction_strategy": extraction["extraction_method"],
+            "usable_text_length": int(extraction.get("extracted_content_length") or 0),
+            "extraction_warning": extraction.get("extraction_warning"),
+            "content_preview": extraction.get("content_preview") or "",
+        }
+    )
 
     if not content:
-        return None
+        diagnostics["rejection_reason"] = "no readable article text was extracted"
+        return {"article": None, "diagnostics": diagnostics}
 
     if not _looks_like_useful_generic_article(title, extraction):
-        return None
+        diagnostics["rejection_reason"] = _build_generic_article_rejection_reason(title, extraction)
+        return {"article": None, "diagnostics": diagnostics}
 
     source_name = title or _get_fallback_source_name(normalized_source.normalized_url)
-    return {
+    article = {
         "title": title or source_name,
         "url": normalized_source.original_url,
         "source_url": normalized_source.original_url,
@@ -252,6 +352,8 @@ def fetch_generic_web_article(source_url: str) -> dict[str, Any] | None:
             "sample_detected_headings": extraction["sample_detected_headings"],
         },
     }
+    diagnostics["rejection_reason"] = ""
+    return {"article": article, "diagnostics": diagnostics}
 
 
 def _looks_like_useful_generic_article(title: str, extraction: dict[str, Any]) -> bool:
@@ -267,13 +369,135 @@ def _looks_like_useful_generic_article(title: str, extraction: dict[str, Any]) -
     if content_length >= WEAK_EXTRACTION_LENGTH:
         return True
 
-    if content_length >= 120 and (heading_count > 0 or extraction_method != "fallback_text"):
+    if extraction_method != "fallback_text" and content_length >= 120:
         return True
 
-    if content_length >= 140 and paragraph_like_count >= 2:
+    if extraction_method == "fallback_text" and heading_count >= 2 and content_length >= 120:
+        return True
+
+    if extraction_method == "fallback_text" and heading_count >= 1 and content_length >= 180 and paragraph_like_count >= 3:
+        return True
+
+    if extraction_method != "fallback_text" and content_length >= 140 and paragraph_like_count >= 2:
         return True
 
     return False
+
+
+def _build_generic_article_rejection_reason(title: str, extraction: dict[str, Any]) -> str:
+    content = _clean_text(str(extraction.get("content") or ""))
+    content_length = len(content)
+    extraction_method = str(extraction.get("extraction_method") or "")
+    heading_count = int(extraction.get("extracted_heading_count") or 0)
+    paragraph_like_count = content.count(". ") + content.count("! ") + content.count("? ")
+
+    if not str(title or "").strip():
+        return "page title was missing"
+    if not content:
+        return "no readable article text was extracted"
+    if content_length < 120:
+        return f"usable text was too short ({content_length} chars)"
+    if extraction_method == "fallback_text" and heading_count == 0 and paragraph_like_count < 2:
+        return "page content looked too weak or unstructured"
+    return "page content did not look article-like enough"
+
+
+def _detect_blocked_article_fetch(status: int | None, content_type: str, html: str) -> str:
+    normalized_html = str(html or "").lower()
+    normalized_type = str(content_type or "").lower()
+    if status not in {401, 403}:
+        return ""
+    if "text/html" not in normalized_type:
+        return ""
+    if "just a moment" in normalized_html:
+        return "bot protection interstitial"
+    if "cf-browser-verification" in normalized_html or "cf-chl-" in normalized_html:
+        return "cloudflare challenge"
+    return "blocked html response"
+
+
+def _fetch_reader_fallback_article(source_url: str) -> dict[str, str] | None:
+    for candidate_url in _build_reader_fallback_source_urls(source_url):
+        reader_url = f"https://r.jina.ai/http://{candidate_url}"
+        result = _fetch_url_response(reader_url, accept_header="text/plain, text/markdown, */*")
+        if int(result.get("status") or 0) != 200 or not result.get("content"):
+            continue
+
+        payload = result["content"].decode("utf-8", errors="ignore")
+        title, content = _parse_reader_markdown_payload(payload)
+        if not title or not content:
+            continue
+
+        if len(content) < 120:
+            continue
+
+        if title.strip().lower() == "just a moment...":
+            continue
+
+        return {"title": title, "content": content}
+    return None
+
+
+def _build_reader_fallback_source_urls(source_url: str) -> list[str]:
+    raw_source = str(source_url or "").strip()
+    if not raw_source:
+        return []
+
+    parsed = urlparse(raw_source)
+    candidates = [raw_source]
+    if parsed.scheme in {"http", "https"} and parsed.netloc and not parsed.netloc.lower().startswith("www."):
+        www_url = urlunparse(
+            (
+                parsed.scheme,
+                f"www.{parsed.netloc}",
+                parsed.path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+        candidates.append(www_url)
+    return candidates
+
+
+def _parse_reader_markdown_payload(payload: str) -> tuple[str, str]:
+    raw_text = str(payload or "").strip()
+    if not raw_text:
+        return "", ""
+
+    title = ""
+    title_match = re.search(r"^Title:\s*(.+)$", raw_text, re.MULTILINE)
+    if title_match:
+        title = _clean_text(title_match.group(1))
+
+    content_match = re.search(r"Markdown Content:\s*(.*)$", raw_text, re.DOTALL)
+    if not content_match:
+        return title, ""
+
+    markdown = content_match.group(1).strip()
+    content = _clean_reader_markdown(markdown)
+    return title, content
+
+
+def _clean_reader_markdown(markdown: str) -> str:
+    text = str(markdown or "")
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[*-]\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    lines = []
+    for line in text.splitlines():
+        normalized = _clean_text(line)
+        if not normalized:
+            continue
+        if normalized.startswith("URL Source:"):
+            continue
+        if normalized.startswith("Published Time:"):
+            continue
+        lines.append(normalized)
+    return _clean_text(" ".join(lines))
 
 
 def _fetch_dev_to_articles_from_list_source(
@@ -606,6 +830,8 @@ def _extract_html_content_diagnostics(html: str) -> dict[str, Any]:
                 ".blog-post",
                 ".blog-content",
                 ".c-article-body",
+                ".ms-rtestate-field",
+                ".layout-content",
             )
         ]
     )
@@ -758,10 +984,14 @@ def _extract_html_title(html: str) -> str:
 
 
 def _remove_boilerplate_nodes(soup: BeautifulSoup) -> None:
-    for tag_name in ("script", "style", "nav", "header", "footer", "aside", "noscript", "form", "svg"):
+    for tag_name in ("script", "style", "nav", "header", "footer", "aside", "noscript", "svg"):
         for node in soup.find_all(tag_name):
             if isinstance(node, Tag):
                 node.decompose()
+
+    for node in soup.find_all("form"):
+        if isinstance(node, Tag) and _is_boilerplate_form(node):
+            node.decompose()
 
     boilerplate_markers = (
         "cookie",
@@ -800,6 +1030,24 @@ def _remove_boilerplate_nodes(soup: BeautifulSoup) -> None:
         marker_text = " ".join((classes, node_id, aria_label)).lower()
         if any(marker in marker_text for marker in boilerplate_markers):
             node.decompose()
+
+
+def _is_boilerplate_form(node: Tag) -> bool:
+    if node.find("article") or node.find("main"):
+        return False
+
+    content_like_selector = node.select_one(
+        ".ms-rtestate-field, .layout-content, .article-content, .post-content, .entry-content, .article-body, .post-body, .story-body, .content__body, .blog-post, .blog-content, .c-article-body"
+    )
+    if content_like_selector is not None:
+        return False
+
+    paragraph_count = len(node.find_all("p"))
+    readable_text = _clean_text(node.get_text(separator=" ", strip=True))
+    if paragraph_count >= 3 and len(readable_text) >= 300:
+        return False
+
+    return True
 
 
 def _extract_readable_block_text(node) -> str:
@@ -904,16 +1152,28 @@ def _fetch_feed_content(feed_url: str) -> bytes | None:
     return _fetch_url_bytes(feed_url)
 
 
-def _fetch_url_bytes(
+def _fetch_url_response(
     source_url: str,
     accept_header: str = "application/rss+xml, application/xml, text/xml, */*",
-) -> bytes | None:
+) -> dict[str, Any]:
     local_path = _resolve_local_feed_path(source_url)
     if local_path is not None:
         try:
-            return local_path.read_bytes()
-        except Exception:
-            return None
+            return {
+                "content": local_path.read_bytes(),
+                "status": 200,
+                "content_type": "",
+                "final_url": str(local_path),
+                "fetch_failure_reason": "",
+            }
+        except Exception as exc:
+            return {
+                "content": b"",
+                "status": None,
+                "content_type": "",
+                "final_url": "",
+                "fetch_failure_reason": str(exc),
+            }
 
     request = Request(
         source_url,
@@ -925,9 +1185,67 @@ def _fetch_url_bytes(
     try:
         opener = build_opener(ProxyHandler({}), HTTPRedirectHandler(), HTTPSHandler())
         with opener.open(request, timeout=15) as response:
-            return response.read()
-    except Exception:
-        return None
+            headers = getattr(response, "headers", None)
+            if headers is None and hasattr(response, "info"):
+                try:
+                    headers = response.info()
+                except Exception:
+                    headers = None
+            content_type = ""
+            if headers is not None and hasattr(headers, "get"):
+                content_type = str(headers.get("Content-Type") or "")
+            final_url = source_url
+            if hasattr(response, "geturl"):
+                try:
+                    final_url = response.geturl()
+                except Exception:
+                    final_url = source_url
+            status = getattr(response, "status", None)
+            if status is None and hasattr(response, "getcode"):
+                try:
+                    status = response.getcode()
+                except Exception:
+                    status = None
+            return {
+                "content": response.read(),
+                "status": status,
+                "content_type": content_type,
+                "final_url": final_url,
+                "fetch_failure_reason": "",
+            }
+    except HTTPError as exc:
+        return {
+            "content": b"",
+            "status": exc.code,
+            "content_type": str(exc.headers.get("Content-Type") or "") if exc.headers else "",
+            "final_url": exc.geturl(),
+            "fetch_failure_reason": f"http {exc.code}",
+        }
+    except URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        return {
+            "content": b"",
+            "status": None,
+            "content_type": "",
+            "final_url": source_url,
+            "fetch_failure_reason": str(reason),
+        }
+    except Exception as exc:
+        return {
+            "content": b"",
+            "status": None,
+            "content_type": "",
+            "final_url": source_url,
+            "fetch_failure_reason": str(exc),
+        }
+
+
+def _fetch_url_bytes(
+    source_url: str,
+    accept_header: str = "application/rss+xml, application/xml, text/xml, */*",
+) -> bytes | None:
+    result = _fetch_url_response(source_url, accept_header=accept_header)
+    return result["content"] or None
 
 
 def _fetch_json(source_url: str) -> Any:

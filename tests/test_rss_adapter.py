@@ -18,6 +18,7 @@ from services.sources.rss_adapter import (
     fetch_generic_web_article,
     fetch_rss_articles,
     get_rss_debug_snapshot,
+    inspect_generic_web_article,
     normalize_source_url,
 )
 
@@ -177,7 +178,16 @@ class RSSAdapterTests(SimpleTestCase):
         </html>
         """
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
+                "fetch_failure_reason": "",
+            },
+        ):
             article = fetch_generic_web_article(
                 "https://www.bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep"
             )
@@ -206,7 +216,16 @@ class RSSAdapterTests(SimpleTestCase):
         </html>
         """
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://example.com/articles/workflow-case-study",
+                "fetch_failure_reason": "",
+            },
+        ):
             items = fetch_rss_articles("https://example.com/articles/workflow-case-study")
 
         self.assertEqual(len(items), 1)
@@ -225,7 +244,16 @@ class RSSAdapterTests(SimpleTestCase):
         </html>
         """
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://example.com/",
+                "fetch_failure_reason": "",
+            },
+        ):
             article = fetch_generic_web_article("https://example.com/")
 
         self.assertIsNone(article)
@@ -259,7 +287,16 @@ class RSSAdapterTests(SimpleTestCase):
         </html>
         """
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://lullabytrust.org.uk/baby-safety/being-a-parent-or-caregiver/baby-sleep-patterns",
+                "fetch_failure_reason": "",
+            },
+        ):
             article = fetch_generic_web_article(
                 "https://www.lullabytrust.org.uk/baby-safety/being-a-parent-or-caregiver/baby-sleep-patterns/"
             )
@@ -312,7 +349,16 @@ class RSSAdapterTests(SimpleTestCase):
         </html>
         """
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep",
+                "fetch_failure_reason": "",
+            },
+        ):
             article = fetch_generic_web_article(
                 "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep"
             )
@@ -327,6 +373,124 @@ class RSSAdapterTests(SimpleTestCase):
         self.assertNotIn("Find a Doctor Locations MyChart Pay Bill Request Appointment", article["content"])
         self.assertNotIn("Request an appointment or sign up for our health newsletter", article["content"])
 
+    def test_fetch_generic_web_article_accepts_healthychildren_style_aspnet_article_layout(self):
+        html = """
+        <html>
+          <head>
+            <title>Sleep - HealthyChildren.org</title>
+          </head>
+          <body class="v4master">
+            <header>
+              <nav>Home Ages and Stages Baby Toddler Teen Healthy Living Safety Tips</nav>
+            </header>
+            <div id="s4-bodyContainer">
+              <section class="page-content">
+                <div class="middle-col-container col-xs-12 col-sm-9 col-md-9 col-lg-9">
+                  <div class="layout-content">
+                    <h1>Sleep</h1>
+                    <div id="ctl00_cphPageContent_PublishingPageContentField__ControlWrapper_RichHtmlField" class="ms-rtestate-field">
+                      <p>Babies do not have regular sleep cycles until about 6 months of age. While newborns sleep about 16 to 17 hours per day, they may only sleep 1 or 2 hours at a time.</p>
+                      <p>As babies get older, they need less sleep. However, different babies have different sleep needs. It is normal for a 6-month-old to wake up during the night but go back to sleep after a few minutes.</p>
+                      <p>Babies can become overtired when they stay awake for too long, so bedtime routines and age-appropriate sleep windows can help parents settle them more easily.</p>
+                    </div>
+                  </div>
+                </div>
+                <aside class="article-rollup-container rollup-container">
+                  <h2>Articles</h2>
+                  <ul class="article-rollup rollup">
+                    <li><a href="/English/ages-stages/baby/sleep/Pages/getting-your-baby-to-sleep.aspx">Getting Your Baby to Sleep</a></li>
+                    <li><a href="/English/ages-stages/baby/sleep/Pages/how-to-keep-your-sleeping-baby-safe.aspx">How to Keep Your Sleeping Baby Safe</a></li>
+                  </ul>
+                </aside>
+              </section>
+            </div>
+            <footer>About Us Contact Us Advertise</footer>
+          </body>
+        </html>
+        """
+
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://www.healthychildren.org/English/ages-stages/baby/sleep/Pages/default.aspx",
+                "fetch_failure_reason": "",
+            },
+        ):
+            article = fetch_generic_web_article(
+                "https://www.healthychildren.org/English/ages-stages/baby/sleep/Pages/default.aspx"
+            )
+
+        self.assertIsNotNone(article)
+        self.assertEqual(article["title"], "Sleep - HealthyChildren.org")
+        self.assertEqual(article["source_type"], "web_article")
+        self.assertIn("Babies do not have regular sleep cycles until about 6 months of age", article["content"])
+        self.assertIn("bedtime routines and age-appropriate sleep windows", article["content"])
+        self.assertNotIn("Getting Your Baby to Sleep", article["content"])
+        self.assertNotIn("How to Keep Your Sleeping Baby Safe", article["content"])
+
+    def test_fetch_generic_web_article_uses_reader_fallback_when_primary_fetch_hits_bot_interstitial(self):
+        challenge_html = """
+        <!DOCTYPE html>
+        <html lang="en-US">
+          <head><title>Just a moment...</title></head>
+          <body>
+            <h1>Just a moment...</h1>
+            <p>Checking your browser before accessing the site.</p>
+          </body>
+        </html>
+        """
+        reader_payload = """
+Title: Infant Safe Sleep
+
+URL Source: https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep
+
+Published Time: 2025-05-08
+
+Markdown Content:
+[Babies and Toddlers Health](https://www.hopkinsmedicine.org/health/wellness-and-prevention/babies-and-toddlers-health)
+
+According to the Centers for Disease Control and Prevention, each year there are about 3,400 sudden unexplained infant deaths (SUID) — the unexpected death of an infant under 1 year of age due to unknown causes.
+
+A safe sleeping area — along with how you lay your baby down to sleep — can prevent SUID.
+
+## Reducing the Risk for Sleep-Related Infant Deaths
+
+* Babies should sleep on a firm, flat surface.
+* Keep loose blankets, pillows, and toys out of the crib.
+* Room-sharing without bed-sharing is recommended during the early months.
+"""
+
+        def fake_fetch(url: str, accept_header: str = ""):
+            if url.startswith("https://r.jina.ai/http://"):
+                return {
+                    "content": reader_payload.encode("utf-8"),
+                    "status": 200,
+                    "content_type": "text/plain; charset=utf-8",
+                    "final_url": url,
+                    "fetch_failure_reason": "",
+                }
+            return {
+                "content": challenge_html.encode("utf-8"),
+                "status": 403,
+                "content_type": "text/html; charset=UTF-8",
+                "final_url": "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep",
+                "fetch_failure_reason": "http 403",
+            }
+
+        with patch("services.sources.rss_adapter._fetch_url_response", side_effect=fake_fetch):
+            article = fetch_generic_web_article(
+                "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep"
+            )
+
+        self.assertIsNotNone(article)
+        self.assertEqual(article["title"], "Infant Safe Sleep")
+        self.assertEqual(article["source_type"], "web_article")
+        self.assertIn("firm, flat surface", article["content"])
+        self.assertIn("Room-sharing without bed-sharing is recommended", article["content"])
+
     def test_fetch_generic_web_article_rejects_short_unstructured_page_even_with_title(self):
         html = """
         <html>
@@ -337,10 +501,50 @@ class RSSAdapterTests(SimpleTestCase):
         </html>
         """
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=html):
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://example.com/baby-sleep",
+                "fetch_failure_reason": "",
+            },
+        ):
             article = fetch_generic_web_article("https://example.com/baby-sleep")
 
         self.assertIsNone(article)
+
+    def test_inspect_generic_web_article_reports_diagnostics_when_reachable_page_has_no_readable_content(self):
+        html = """
+        <html>
+          <head><title>Example Page</title></head>
+          <body>
+            <div>Just a thin promo block.</div>
+          </body>
+        </html>
+        """
+
+        with patch(
+            "services.sources.rss_adapter._fetch_url_response",
+            return_value={
+                "content": html.encode("utf-8"),
+                "status": 200,
+                "content_type": "text/html; charset=utf-8",
+                "final_url": "https://example.com/thin-page",
+                "fetch_failure_reason": "",
+            },
+        ):
+            result = inspect_generic_web_article("https://example.com/thin-page")
+
+        self.assertIsNone(result["article"])
+        self.assertEqual(result["diagnostics"]["fetch_status"], 200)
+        self.assertEqual(result["diagnostics"]["source_type"], "generic_html")
+        self.assertEqual(result["diagnostics"]["extraction_strategy"], "fallback_text")
+        self.assertIn(
+            "usable text was too short",
+            result["diagnostics"]["rejection_reason"],
+        )
 
     def test_fetch_dev_to_article_content_preserves_markdown_headings(self):
         payload = {

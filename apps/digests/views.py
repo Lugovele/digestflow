@@ -1,12 +1,14 @@
 import json
 import logging
 from collections import Counter
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.db.models import F
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
@@ -24,7 +26,12 @@ from services.sources import (
     resolve_source_candidates,
 )
 from services.sources.detector import classify_source_url
-from services.sources.rss_adapter import fetch_dev_to_article_content, fetch_generic_web_article, fetch_rss_articles
+from services.sources.rss_adapter import (
+    fetch_dev_to_article_content,
+    fetch_generic_web_article,
+    fetch_rss_articles,
+    inspect_generic_web_article,
+)
 
 from .forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 
@@ -36,6 +43,12 @@ INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were a
 @require_GET
 def topic_list_view(request: HttpRequest) -> HttpResponse:
     return render(request, "digestflow/topic_list.html", _build_topic_list_context())
+
+
+@require_GET
+def topic_workspace_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    return _render_topic_source_review(request, topic)
 
 
 @require_POST
@@ -114,6 +127,7 @@ def add_topic_source_view(request: HttpRequest, topic_id: int) -> HttpResponse:
         )
         context["source_add_feedback"] = validation
         context["source_add_input_value"] = raw_source_url
+        context["source_add_diagnostics_json"] = _serialize_source_add_diagnostics(validation)
         return render(request, "digestflow/topic_list.html", context, status=400)
 
     _ensure_manual_topic_source(
@@ -127,6 +141,7 @@ def add_topic_source_view(request: HttpRequest, topic_id: int) -> HttpResponse:
         request,
         topic,
         source_add_feedback=validation,
+        source_add_diagnostics_json=_serialize_source_add_diagnostics(validation),
     )
 
 
@@ -1170,6 +1185,8 @@ def _build_topic_list_context(
         topic.active_source_count = sum(1 for source in topic.sources.all() if source.is_active)
         topic.legacy_source_display = _build_legacy_source_display(topic)
     recent_runs = DigestRun.objects.filter(topic__user=user).select_related("topic").order_by("-created_at")[:10]
+    for run in recent_runs:
+        run.display_time = _format_recent_run_time(run.created_at)
     return {
         "topics": topics,
         "recent_runs": recent_runs,
@@ -1187,6 +1204,25 @@ def _build_topic_list_context(
     }
 
 
+def _format_recent_run_time(created_at):
+    local_created_at = timezone.localtime(created_at)
+    now = timezone.localtime()
+    today = now.date()
+    created_date = local_created_at.date()
+    if created_date == today:
+        elapsed = max(now - local_created_at, timedelta(minutes=1))
+        if elapsed < timedelta(hours=1):
+            minutes = max(1, int(elapsed.total_seconds() // 60))
+            unit = "minute" if minutes == 1 else "minutes"
+            return f"{minutes} {unit} ago"
+        hours = max(1, int(elapsed.total_seconds() // 3600))
+        unit = "hour" if hours == 1 else "hours"
+        return f"{hours} {unit} ago"
+    if created_date == today - timedelta(days=1):
+        return "Yesterday"
+    return f"{local_created_at.strftime('%b')} {local_created_at.day}"
+
+
 def _render_topic_source_review(
     request: HttpRequest,
     topic: Topic,
@@ -1194,6 +1230,7 @@ def _render_topic_source_review(
     status: int = 200,
     source_add_feedback: dict | None = None,
     source_add_input_value: str = "",
+    source_add_diagnostics_json: str = "",
     focus_feedback: dict | None = None,
     focus_input_value: str = "",
 ) -> HttpResponse:
@@ -1215,6 +1252,7 @@ def _render_topic_source_review(
     )
     context["source_add_feedback"] = source_add_feedback
     context["source_add_input_value"] = source_add_input_value
+    context["source_add_diagnostics_json"] = source_add_diagnostics_json
     return render(
         request,
         "digestflow/topic_list.html",
@@ -1393,7 +1431,15 @@ def _validate_topic_source_submission_v2(topic: Topic, source_url: str) -> dict:
         return {
             "ok": False,
             "level": "error",
-            "message": "Please check the address - it does not look like a valid URL. Make sure the link is correct and starts with http:// or https:// so it can be used for the digest.",
+            "message": "Please check the URL format.",
+        }
+
+    parsed_source = urlparse(source_url)
+    if parsed_source.scheme not in {"http", "https"}:
+        return {
+            "ok": False,
+            "level": "error",
+            "message": "Please check the URL format.",
         }
 
     try:
@@ -1428,20 +1474,24 @@ def _validate_topic_source_submission_v2(topic: Topic, source_url: str) -> dict:
             "message": "Please check the address or try another article.",
         }
 
-    availability = _validate_topic_source_availability(normalized_source)
+    availability = _validate_topic_source_availability(normalized_source, original_source_url=source_url)
     if not availability["ok"]:
         return availability
 
     return {
         "ok": True,
-        "level": "success",
-        "message": "Source added and saved for this topic. It will be used when generating the digest.",
+        "level": str(availability.get("level") or "success"),
+        "message": str(
+            availability.get("message")
+            or "Source added and saved for this topic. It will be used when generating the digest."
+        ),
         "normalized_source": normalized_source,
         "resolved_title": str(availability.get("resolved_title") or "").strip(),
+        "diagnostics": availability.get("diagnostics"),
     }
 
 
-def _validate_topic_source_availability(normalized_source) -> dict:
+def _validate_topic_source_availability(normalized_source, original_source_url: str = "") -> dict:
     source_type = normalized_source.source_type
 
     if source_type == "devto_article":
@@ -1456,16 +1506,29 @@ def _validate_topic_source_availability(normalized_source) -> dict:
         return {"ok": True, "resolved_title": str(article.get("title") or "").strip()}
 
     if source_type in {"generic_html", "blog_index", "publication"}:
-        article = fetch_generic_web_article(normalized_source.normalized_url)
+        inspection = inspect_generic_web_article(original_source_url or normalized_source.normalized_url)
+        article = inspection.get("article")
+        diagnostics = inspection.get("diagnostics", {})
         content = str(article.get("content") or "").strip() if isinstance(article, dict) else ""
         title = str(article.get("title") or "").strip() if isinstance(article, dict) else ""
-        if not isinstance(article, dict) or not content or not title:
+        if isinstance(article, dict) and content and title:
+            return {"ok": True, "resolved_title": title, "diagnostics": diagnostics}
+
+        reachability = _assess_generic_source_reachability(diagnostics)
+        if not reachability["ok"]:
             return {
                 "ok": False,
                 "level": "error",
-                "message": "Please check the address or try another article.",
+                "message": reachability["message"],
+                "diagnostics": diagnostics,
             }
-        return {"ok": True, "resolved_title": title}
+
+        return {
+            "ok": True,
+            "level": "success",
+            "resolved_title": str(diagnostics.get("title") or "").strip() or _fallback_source_label(normalized_source.original_url),
+            "diagnostics": diagnostics,
+        }
 
     items = fetch_rss_articles(normalized_source.normalized_url)
     if items:
@@ -1490,6 +1553,43 @@ def _validate_topic_source_availability(normalized_source) -> dict:
         "level": "error",
         "message": "We could not find content at this address. Please check the URL and try again.",
     }
+
+
+def _serialize_source_add_diagnostics(validation: dict | None) -> str:
+    diagnostics = validation.get("diagnostics") if isinstance(validation, dict) else None
+    if not isinstance(diagnostics, dict) or not diagnostics:
+        return ""
+    return json.dumps(diagnostics, ensure_ascii=False, sort_keys=True)
+
+
+def _assess_generic_source_reachability(diagnostics: dict) -> dict:
+    if not isinstance(diagnostics, dict):
+        return {"ok": False, "message": "We could not reach this URL."}
+
+    status = diagnostics.get("fetch_status")
+    try:
+        status_code = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+
+    failure_reason = str(diagnostics.get("fetch_failure_reason") or "").strip().casefold()
+
+    if status_code in {404, 410}:
+        return {"ok": False, "message": "This page returned 404/410."}
+
+    if "timed out" in failure_reason or "timeout" in failure_reason:
+        return {"ok": False, "message": "We could not reach this URL."}
+
+    if any(marker in failure_reason for marker in ("name or service not known", "nodename nor servname", "getaddrinfo", "dns", "failed to resolve", "temporary failure in name resolution")):
+        return {"ok": False, "message": "We could not reach this URL."}
+
+    if status_code is not None and status_code >= 500:
+        return {"ok": False, "message": "We could not reach this URL."}
+
+    if status_code is None and failure_reason:
+        return {"ok": False, "message": "We could not reach this URL."}
+
+    return {"ok": True, "message": ""}
 
 
 def _build_topic_source_description(source: TopicSource) -> str:
@@ -1680,6 +1780,11 @@ def _get_or_create_ui_topic(
             "is_active": True,
         },
     )
+
+    if created and topic.display_order != 1:
+        Topic.objects.filter(user=user).exclude(pk=topic.pk).update(display_order=F("display_order") + 1)
+        topic.display_order = 1
+        topic.save(update_fields=["display_order", "updated_at"])
 
     update_fields: list[str] = []
     if primary_source_url and topic.source_url != primary_source_url:
