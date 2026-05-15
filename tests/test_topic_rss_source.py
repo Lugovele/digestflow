@@ -4,6 +4,7 @@ from html import unescape
 
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
@@ -226,12 +227,13 @@ class TopicRssSourceTests(TestCase):
 
         response = self.client.get(reverse("topic-list"))
 
-        self.assertContains(response, "Where to look")
+        self.assertContains(response, "What do you want to explore?")
+        self.assertNotContains(response, "Where to look")
         self.assertNotContains(response, "Source mode")
         self.assertNotContains(response, "Choose how this topic should find sources.")
         self.assertContains(response, 'value="hybrid"', html=False)
         self.assertContains(response, "Saved topics")
-        self.assertContains(response, "Recent Digest Runs")
+        self.assertContains(response, "Recent digests")
         self.assertContains(response, "Open Django admin")
         self.assertContains(response, "Find sources")
         self.assertContains(response, "Settings")
@@ -244,6 +246,19 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, ">Delete<", html=False)
         self.assertContains(response, 'class="drag-handle"', html=False)
         self.assertContains(response, 'draggable="true"', html=False)
+
+    def test_dashboard_recent_digests_show_human_readable_time_without_run_metadata(self) -> None:
+        topic = Topic.objects.create(name="AI agents", source_mode=TopicSourceMode.HYBRID, user=self._get_ui_user())
+        run = DigestRun.objects.create(topic=topic, source_mode=topic.source_mode, status=DigestRun.STATUS_COMPLETED)
+        DigestRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(days=1, hours=1))
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertContains(response, "Recent digests")
+        self.assertContains(response, "AI agents")
+        self.assertContains(response, "Yesterday")
+        self.assertNotContains(response, f"Digest {run.id}")
+        self.assertNotContains(response, DigestRun.STATUS_COMPLETED)
 
     def test_topic_workspace_renders_focus_chip_editor(self) -> None:
         topic = Topic.objects.create(
@@ -328,18 +343,38 @@ class TopicRssSourceTests(TestCase):
 
     def test_travel_gets_more_than_topic_echo_focus_suggestions(self) -> None:
         suggestions = generate_focus_suggestions("travel")
+        lowered = [term.casefold() for term in suggestions]
 
         self.assertGreater(len(suggestions), 1)
         self._assert_not_topic_echo("travel", suggestions)
-        self._assert_any_term_contains(
+        self.assertTrue(
+            any(
+                keyword in term
+                for term in lowered
+                for keyword in ("travel", "traveler", "tourism", "vacation", "trip")
+            ),
             suggestions,
-            "travel planning",
-            "budget travel",
-            "family travel",
-            "travel destination",
-            "travel tip",
-            "digital nomad",
         )
+        self.assertTrue(
+            any(
+                keyword in term
+                for term in lowered
+                for keyword in (
+                    "family",
+                    "cuisine",
+                    "culture",
+                    "cultural",
+                    "safety",
+                    "eco",
+                    "hidden gems",
+                    "destination",
+                    "spot",
+                    "local",
+                )
+            ),
+            suggestions,
+        )
+        self.assertTrue(any(" " in term.strip() for term in suggestions), suggestions)
         self.assertGreaterEqual(len({term.casefold() for term in suggestions}), 3)
         self.assertNotIn("industry tools", suggestions)
         self.assertNotIn("implementation patterns", suggestions)
@@ -789,6 +824,62 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, f'data-topic-id="{second.id}"', html=False)
         self.assertContains(response, f'data-topic-id="{first.id}"', html=False)
 
+    def test_dashboard_sections_render_section_level_collapse_controls(self) -> None:
+        user = self._get_ui_user()
+        topic = Topic.objects.create(
+            user=user,
+            name="Collapsible topic",
+            keywords=["Collapsible topic"],
+            excluded_keywords=[],
+        )
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertContains(response, 'id="saved-topics-section-body"', html=False)
+        self.assertContains(response, 'data-collapse-key="saved-topics"', html=False)
+        self.assertContains(response, 'aria-controls="saved-topics-section-body"', html=False)
+        self.assertContains(response, 'id="recent-runs-section-body"', html=False)
+        self.assertContains(response, 'data-collapse-key="recent-runs"', html=False)
+        self.assertContains(response, 'aria-controls="recent-runs-section-body"', html=False)
+        self.assertContains(response, 'aria-expanded="true"', html=False)
+        self.assertContains(response, 'data-collapse-button', html=False)
+        self.assertNotContains(response, f'aria-controls="topic-details-{topic.id}"', html=False)
+        self.assertNotContains(response, f'id="topic-details-{topic.id}"', html=False)
+
+    def test_newly_created_topic_appears_first_on_dashboard(self) -> None:
+        user = self._get_ui_user()
+        older = Topic.objects.create(
+            user=user,
+            name="Older topic",
+            keywords=["Older topic"],
+            excluded_keywords=[],
+        )
+        oldest = Topic.objects.create(
+            user=user,
+            name="Oldest topic",
+            keywords=["Oldest topic"],
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Newest topic",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        newest = Topic.objects.get(user=user, name="Newest topic")
+        older.refresh_from_db()
+        oldest.refresh_from_db()
+        self.assertEqual((newest.display_order, older.display_order, oldest.display_order), (1, 2, 3))
+
+        dashboard_response = self.client.get(reverse("topic-list"))
+        html = dashboard_response.content.decode("utf-8")
+        self.assertLess(html.index("Newest topic"), html.index("Older topic"))
+        self.assertLess(html.index("Older topic"), html.index("Oldest topic"))
+
     def test_saved_topics_dashboard_only_renders_ui_user_topics(self) -> None:
         user = self._get_ui_user()
         other_user_model = Topic._meta.get_field("user").remote_field.model
@@ -1043,7 +1134,7 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, ">Save<", html=False)
         self.assertNotContains(response, "Refresh source discovery")
         self.assertNotContains(response, "Saved topics")
-        self.assertNotContains(response, "Recent Digest Runs")
+        self.assertNotContains(response, "Recent digests")
         self.assertNotContains(response, "Topic settings")
         self.assertContains(response, "0 saved")
         self.assertContains(response, "1 new")
@@ -1824,6 +1915,77 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(source.name, "Infant Safe Sleep")
         self.assertNotContains(response, "Please check the address or try another article.")
 
+    @patch("services.sources.rss_adapter._fetch_url_response")
+    def test_add_topic_source_accepts_healthychildren_article_via_saved_source_path(
+        self,
+        mock_fetch_url_response,
+    ) -> None:
+        healthychildren_html = """
+        <html>
+          <head>
+            <title>Sleep - HealthyChildren.org</title>
+          </head>
+          <body class="v4master">
+            <header>
+              <nav>Home Ages and Stages Baby Toddler Teen Healthy Living Safety Tips</nav>
+            </header>
+            <div id="s4-bodyContainer">
+              <section class="page-content">
+                <div class="middle-col-container col-xs-12 col-sm-9 col-md-9 col-lg-9">
+                  <div class="layout-content">
+                    <h1>Sleep</h1>
+                    <div id="ctl00_cphPageContent_PublishingPageContentField__ControlWrapper_RichHtmlField" class="ms-rtestate-field">
+                      <p>Babies do not have regular sleep cycles until about 6 months of age. While newborns sleep about 16 to 17 hours per day, they may only sleep 1 or 2 hours at a time.</p>
+                      <p>As babies get older, they need less sleep. However, different babies have different sleep needs. It is normal for a 6-month-old to wake up during the night but go back to sleep after a few minutes.</p>
+                      <p>Babies can become overtired when they stay awake for too long, so bedtime routines and age-appropriate sleep windows can help parents settle them more easily.</p>
+                    </div>
+                  </div>
+                </div>
+                <aside class="article-rollup-container rollup-container">
+                  <h2>Articles</h2>
+                  <ul class="article-rollup rollup">
+                    <li><a href="/English/ages-stages/baby/sleep/Pages/getting-your-baby-to-sleep.aspx">Getting Your Baby to Sleep</a></li>
+                  </ul>
+                </aside>
+              </section>
+            </div>
+            <footer>About Us Contact Us Advertise</footer>
+          </body>
+        </html>
+        """
+
+        mock_fetch_url_response.return_value = {
+            "content": healthychildren_html.encode("utf-8"),
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "final_url": "https://www.healthychildren.org/English/ages-stages/baby/sleep/Pages/default.aspx",
+            "fetch_failure_reason": "",
+        }
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="HealthyChildren article topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://www.healthychildren.org/English/ages-stages/baby/sleep/Pages/default.aspx",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        source = topic.sources.get()
+        self.assertEqual(
+            source.url,
+            "https://healthychildren.org/English/ages-stages/baby/sleep/Pages/default.aspx",
+        )
+        self.assertEqual(source.source_type, "generic_html")
+        self.assertEqual(source.name, "Sleep - HealthyChildren.org")
+        self.assertNotContains(response, "Please check the address or try another article.")
+
     @patch("apps.digests.views.inspect_generic_web_article")
     def test_add_topic_source_accepts_lullaby_trust_style_parenting_article(
         self,
@@ -1869,7 +2031,10 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         )
 
     @patch("apps.digests.views.inspect_generic_web_article")
-    def test_add_topic_source_rejects_unreadable_web_article(self, mock_inspect_generic_web_article) -> None:
+    def test_add_topic_source_saves_reachable_web_article_even_when_extraction_is_unverified(
+        self,
+        mock_inspect_generic_web_article,
+    ) -> None:
         mock_inspect_generic_web_article.return_value = {
             "article": None,
             "diagnostics": {
@@ -1896,17 +2061,20 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(topic.sources.count(), 0)
-        self.assertContains(
-            response,
-            "Please check the address or try another article.",
-            status_code=400,
-        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        source = topic.sources.get()
+        self.assertEqual(source.url, "https://example.com/some-article")
         html = unescape(response.content.decode("utf-8"))
         self.assertIn('"normalized_url": "https://example.com/some-article"', html)
         self.assertIn('"source_type": "generic_html"', html)
         self.assertIn('"rejection_reason": "page content looked too weak or unstructured"', html)
+        self.assertNotIn('class="feedback feedback--error"', html)
+        self.assertNotIn(
+            "Source saved. We reached this URL, but article extraction has not been verified yet. Extraction will be checked during digest generation.",
+            html,
+        )
+        self.assertNotIn('class="source-inline-feedback"', html)
 
     @patch("apps.digests.views.inspect_generic_web_article")
     def test_add_topic_source_prevents_duplicate_normalized_web_article_url(self, mock_inspect_generic_web_article) -> None:
@@ -1974,10 +2142,75 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(topic.sources.count(), 0)
         self.assertContains(
             response,
-            "Please check the address - it does not look like a valid URL. Make sure the link is correct and starts with http:// or https:// so it can be used for the digest.",
+            "Please check the URL format.",
             status_code=400,
         )
         self.assertContains(response, 'value="not-a-url"', html=False, status_code=400)
+
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_add_topic_source_rejects_unreachable_generic_web_article(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "https://missing.example/article",
+                "source_type": "generic_html",
+                "fetch_status": None,
+                "fetch_failure_reason": "Temporary failure in name resolution",
+                "extraction_strategy": "fetch_failed",
+                "usable_text_length": 0,
+                "rejection_reason": "temporary failure in name resolution",
+            },
+        }
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Unreachable source topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://missing.example/article",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(topic.sources.count(), 0)
+        self.assertContains(response, "We could not reach this URL.", status_code=400)
+        self.assertContains(response, 'value="https://missing.example/article"', html=False, status_code=400)
+
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_add_topic_source_rejects_generic_web_article_that_returns_404(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "https://example.com/missing-article",
+                "source_type": "generic_html",
+                "fetch_status": 404,
+                "fetch_failure_reason": "http 404",
+                "extraction_strategy": "fetch_failed",
+                "usable_text_length": 0,
+                "rejection_reason": "http 404",
+            },
+        }
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="404 source topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://example.com/missing-article",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(topic.sources.count(), 0)
+        self.assertContains(response, "This page returned 404/410.", status_code=400)
 
     def test_add_source_feedback_renders_below_form_and_without_technical_strings(self) -> None:
         topic = Topic.objects.create(
@@ -1995,7 +2228,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         )
 
         html = response.content.decode("utf-8")
-        form_marker = '<form method="post" action="{}" class="inline-add-form"'.format(
+        form_marker = '<form method="post" action="{}" novalidate autocomplete="off" class="inline-add-form"'.format(
             reverse("add-topic-source", args=[topic.id])
         )
         controls_marker = '<div class="inline-add-controls">'
@@ -2012,6 +2245,162 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertNotIn('class="feedback feedback--error"', html)
         self.assertLess(html.index(form_marker), html.index(controls_marker))
         self.assertLess(html.index(controls_marker), html.index(feedback_marker))
+        self.assertIn('autocomplete="off"', html)
+
+    def test_saved_source_form_disables_browser_native_validation(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Saved source novalidate topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        add_source_action = reverse("add-topic-source", args=[topic.id])
+        self.assertIn(f'action="{add_source_action}"', html)
+        self.assertIn('class="inline-add-form"', html)
+        self.assertIn("novalidate", html)
+        self.assertIn('autocomplete="off"', html)
+        self.assertIn(f'const workspaceUrl = "{reverse("topic-workspace", args=[topic.id])}";', html)
+        self.assertIn('window.history.replaceState({}, "", workspaceUrl);', html)
+        self.assertIn('data-preserve-scroll', html)
+        self.assertIn('const storageKey = "digestflow:scroll-restore";', html)
+        self.assertIn('const collapseStoragePrefix = "digestflow:collapse:";', html)
+
+    def test_failed_saved_source_post_preserves_submitted_url_only_on_that_response(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Saved source failed input topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        failed_response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "not-a-url",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+        refreshed_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(failed_response.status_code, 400)
+        self.assertContains(failed_response, 'value="not-a-url"', html=False, status_code=400)
+        self.assertNotContains(refreshed_response, 'value="not-a-url"', html=False)
+        self.assertContains(
+            refreshed_response,
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            html=False,
+        )
+
+    def test_workspace_get_renders_empty_saved_source_input(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Saved source workspace get topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            html=False,
+            status_code=200,
+        )
+
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_successful_saved_source_add_renders_empty_input(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": {
+                "title": "Reachable article",
+                "url": "https://example.com/reachable-article",
+                "content": "Readable article content about sleep routines and parenting decisions.",
+                "source_type": "web_article",
+            },
+            "diagnostics": {
+                "normalized_url": "https://example.com/reachable-article",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "fetch_failure_reason": "",
+                "extraction_strategy": "article_tag",
+                "usable_text_length": 68,
+            },
+        }
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Saved source success input topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://example.com/reachable-article",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'value="https://example.com/reachable-article"', html=False, status_code=200)
+        self.assertContains(
+            response,
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            html=False,
+            status_code=200,
+        )
+
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_reachable_but_extraction_unverified_source_saves_without_visible_warning(
+        self,
+        mock_inspect_generic_web_article,
+    ) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "https://example.com/reachable-page",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "fetch_failure_reason": "",
+                "extraction_strategy": "no_candidate_text",
+                "usable_text_length": 0,
+                "rejection_reason": "no readable article text was extracted",
+            },
+        }
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Reachable warning topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://example.com/reachable-page",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        self.assertNotIn('class="feedback feedback--error"', html)
+        self.assertNotIn(
+            'class="source-inline-feedback"',
+            html,
+        )
+        self.assertNotIn(
+            "Source saved. We reached this URL, but article extraction has not been verified yet. Extraction will be checked during digest generation.",
+            html,
+        )
 
     @patch("apps.digests.views.inspect_generic_web_article")
     def test_source_add_error_clears_when_input_is_edited(self, mock_inspect_generic_web_article) -> None:
@@ -2020,11 +2409,11 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             "diagnostics": {
                 "normalized_url": "https://example.com/unreadable-article",
                 "source_type": "generic_html",
-                "fetch_status": 200,
-                "fetch_failure_reason": "",
-                "extraction_strategy": "fallback_text",
-                "usable_text_length": 31,
-                "rejection_reason": "usable text was too short (31 chars)",
+                "fetch_status": None,
+                "fetch_failure_reason": "Temporary failure in name resolution",
+                "extraction_strategy": "fetch_failed",
+                "usable_text_length": 0,
+                "rejection_reason": "temporary failure in name resolution",
             },
         }
         topic = Topic.objects.create(
@@ -2047,6 +2436,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn('data-source-feedback-input', html)
         self.assertIn('data-initial-value="https://example.com/unreadable-article"', html)
         self.assertIn('data-source-add-diagnostics', html)
+        self.assertContains(response, "We could not reach this URL.", status_code=400)
 
     @patch("apps.digests.views.fetch_rss_articles")
     def test_add_topic_source_rejects_unreadable_rss_feed(self, mock_fetch_rss_articles) -> None:
@@ -2336,3 +2726,4 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         return user_model.objects.create_user(username="tester")
 
 
+from datetime import timedelta

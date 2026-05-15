@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -47,6 +47,21 @@
             gap: 14px;
         }
         .field-row { display: flex; flex-direction: column; gap: 6px; }
+        .topic-form-prompt {
+            margin: 0;
+            font-size: 22px;
+            line-height: 1.2;
+            color: #111827;
+        }
+        .topic-form-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .topic-form-actions select {
+            min-width: 160px;
+        }
         .section-hint {
             margin: 4px 0 0;
             color: #5b6472;
@@ -168,10 +183,36 @@
             border: 1px solid #d9e2f1;
             border-radius: 10px;
             background: #fbfcfe;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .inventory-row {
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .run-title {
+            font-weight: 600;
+            color: #1f2937;
+            text-decoration: none;
+        }
+        .run-title:hover,
+        .run-title:focus {
+            text-decoration: underline;
+        }
+        .run-meta {
+            color: #5b6472;
+            font-size: 14px;
         }
         .topic-row {
-            position: relative;
-            padding-right: 56px;
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 10px 14px;
         }
         .inventory-row--disabled {
             opacity: 0.72;
@@ -180,17 +221,57 @@
             opacity: 0.58;
             box-shadow: 0 10px 24px rgba(31, 41, 55, 0.12);
         }
+        .topic-main {
+            min-width: 0;
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            align-items: flex-start;
+            text-align: left;
+        }
+        .topic-header-row {
+            display: flex;
+            flex: 1 1 auto;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            width: 100%;
+        }
         .topic-card-actions {
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-top: 12px;
+            gap: 8px;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: flex-end;
+            flex: 0 0 auto;
+            margin-left: auto;
+            align-self: center;
         }
         .topic-title-row {
             display: flex;
             align-items: center;
             gap: 10px;
             min-width: 0;
+            flex: 1 1 auto;
+        }
+        .topic-title-block {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+            align-items: flex-start;
+        }
+        .topic-meta {
+            gap: 6px;
+            justify-content: flex-start;
+        }
+        .topic-title-row strong {
+            min-width: 0;
+            font-weight: 600;
+        }
+        .topic-card-actions .topic-delete-form {
+            margin: 0 0 0 48px;
         }
         .drag-handle {
             color: #94a3b8;
@@ -200,9 +281,6 @@
             user-select: none;
         }
         .topic-delete-form {
-            position: absolute;
-            top: 12px;
-            right: 12px;
             margin: 0;
         }
         .icon-button {
@@ -224,6 +302,11 @@
         .inventory-main {
             min-width: 0;
             flex: 1 1 auto;
+        }
+        .inventory-actions {
+            margin-left: auto;
+            align-self: flex-start;
+            flex: 0 0 auto;
         }
         .inventory-toggle {
             display: grid;
@@ -374,6 +457,21 @@
                 flex-direction: column;
                 align-items: stretch;
             }
+            .topic-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .topic-title-row {
+                flex: 1 1 auto;
+            }
+            .topic-card-actions {
+                justify-content: flex-start;
+                flex-wrap: wrap;
+                margin-left: 0;
+            }
+            .topic-form-actions > * {
+                width: 100%;
+            }
             .inventory-actions {
                 justify-content: flex-start;
             }
@@ -400,7 +498,7 @@
                     <span class="pill">{{ topic_source_inventory|length }} saved</span>
                     <span class="pill">{{ source_review_summary.candidate_count }} new</span>
                 </div>
-                <form method="post" action="{% url 'discover-sources' %}" novalidate class="workspace-settings-form">
+                <form method="post" action="{% url 'discover-sources' %}" novalidate class="workspace-settings-form" data-preserve-scroll>
                     {% csrf_token %}
                     <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
                     <div class="field-row">
@@ -455,19 +553,40 @@
         {% else %}
             <h1>DigestFlow</h1>
             <section class="card">
-                <h2>Start a topic</h2>
-                <p class="muted">
-                    Start with a topic and choose how DigestFlow should combine new and saved sources.
-                </p>
                 <form method="post" action="{% url 'discover-sources' %}" novalidate class="topic-form">
                     {% csrf_token %}
+                    <p class="topic-form-prompt">What do you want to explore?</p>
                     <div class="field-row">
-                        <label for="{{ topic_form.topic_name.id_for_label }}">Topic</label>
-                        {{ topic_form.topic_name }}
+                        <input
+                            type="text"
+                            name="{{ topic_form.topic_name.html_name }}"
+                            id="{{ topic_form.topic_name.id_for_label }}"
+                            value="{{ topic_form.topic_name.value|default_if_none:'' }}"
+                            maxlength="{{ topic_form.topic_name.field.max_length }}"
+                            placeholder="AI agents, baby sleep, travel planning"
+                            required
+                        >
                     </div>
-                    <div class="field-row">
-                        <label for="{{ topic_form.source_mode.id_for_label }}">Where to look</label>
-                        {{ topic_form.source_mode }}
+                    <div class="topic-form-actions">
+                        <select
+                            name="{{ topic_form.source_mode.html_name }}"
+                            id="{{ topic_form.source_mode.id_for_label }}"
+                        >
+                            {% for value, label in topic_form.source_mode.field.choices %}
+                                <option value="{{ value }}"{% if topic_form.source_mode.value == value %} selected{% endif %}>
+                                    {% if value == "hybrid" %}
+                                        Use saved and new sources
+                                    {% elif value == "curated_only" %}
+                                        Use saved sources only
+                                    {% elif value == "discovery_only" %}
+                                        Use new sources only
+                                    {% else %}
+                                        {{ label }}
+                                    {% endif %}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="secondary-button">Find sources</button>
                     </div>
                     {% if topic_form_error %}
                         <p class="error">{{ topic_form_error }}</p>
@@ -493,9 +612,6 @@
                             {% endfor %}
                         </ul>
                     {% endif %}
-                    <div>
-                        <button type="submit">Find sources</button>
-                    </div>
                 </form>
             </section>
         {% endif %}
@@ -512,6 +628,7 @@
                     action="{% url 'update-topic-focus' discovered_topic.id %}"
                     class="focus-form"
                     data-focus-form
+                    data-preserve-scroll
                 >
                     {% csrf_token %}
                     <input type="hidden" name="focus_terms" value="{% for term in focus_terms %}{{ term }}{% if not forloop.last %}&#10;{% endif %}{% endfor %}" data-focus-hidden>
@@ -547,7 +664,7 @@
                                 <h3 class="section-heading">Saved sources</h3>
                             </div>
                         </div>
-                        <form method="post" action="{% url 'add-topic-source' discovered_topic.id %}" class="inline-add-form">
+                        <form method="post" action="{% url 'add-topic-source' discovered_topic.id %}" novalidate autocomplete="off" class="inline-add-form" data-preserve-scroll>
                             {% csrf_token %}
                             <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
                             <div class="inline-add-controls">
@@ -557,6 +674,7 @@
                                     name="source_url"
                                     placeholder="Add a link and press Enter"
                                     value="{{ source_add_input_value|default_if_none:'' }}"
+                                    autocomplete="off"
                                     data-source-feedback-input
                                 >
                             </div>
@@ -570,12 +688,15 @@
                                 <strong>{{ source_add_feedback.message }}</strong>
                             </p>
                         {% endif %}
+                        {% if source_add_diagnostics_json %}
+                            <textarea hidden data-source-add-diagnostics>{{ source_add_diagnostics_json }}</textarea>
+                        {% endif %}
                         {% if topic_source_inventory %}
                             <div class="inventory-list" style="margin-top: 14px;">
                                 {% for source in topic_source_inventory %}
                                     <div class="inventory-row{% if not source.is_active %} inventory-row--disabled{% endif %}">
                                         <div class="inventory-main">
-                                            <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id source.id %}">
+                                            <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
                                                 {% csrf_token %}
                                                 <label class="inventory-toggle">
                                                     <input
@@ -596,7 +717,7 @@
                                             </form>
                                         </div>
                                         <div class="inventory-actions">
-                                            <form method="post" action="{% url 'remove-topic-source' discovered_topic.id source.id %}">
+                                            <form method="post" action="{% url 'remove-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
                                                 {% csrf_token %}
                                                 <button type="submit" class="icon-button icon-button--subtle" aria-label="Remove saved source {{ source.name }}" title="Remove">
                                                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -620,7 +741,7 @@
                                 <p class="section-hint">Choose sources to use in the next run.</p>
                             </div>
                             <div class="stack" style="gap: 10px; align-items: flex-end;">
-                                <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;">
+                                <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
                                     {% csrf_token %}
                                     <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
                                     <input type="hidden" name="source_url" value="">
@@ -693,76 +814,223 @@
             {% endif %}
         {% else %}
             <section class="card">
-                <h2>Saved topics</h2>
+                <div class="section-header">
+                    <h2 style="margin: 0;">Saved topics</h2>
+                    <button
+                        type="button"
+                        class="secondary-button secondary-button--subtle"
+                        data-collapse-button
+                        aria-expanded="true"
+                        aria-controls="saved-topics-section-body"
+                        data-expand-label="Expand"
+                        data-collapse-label="Collapse"
+                    >
+                        Collapse
+                    </button>
+                </div>
+                <div
+                    id="saved-topics-section-body"
+                    data-collapse-root
+                    data-collapse-key="saved-topics"
+                    data-default-expanded="true"
+                    data-collapse-region
+                    style="margin-top: 14px;"
+                >
                 {% if topics %}
                     <div id="saved-topics-list" class="topics-list">
                         {% for topic in topics %}
                             <div class="topic-row" data-topic-id="{{ topic.id }}">
-                                <form
-                                    method="post"
-                                    action="{% url 'delete-topic' topic.id %}"
-                                    class="topic-delete-form"
-                                    onsubmit="return confirm('Delete this topic?');"
-                                >
-                                    {% csrf_token %}
-                                    <button type="submit" class="icon-button" aria-label="Delete topic" title="Delete">
-                                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                            <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11V8h12v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>
-                                        </svg>
-                                    </button>
-                                </form>
-                                <div class="topic-title-row">
-                                    <span class="drag-handle" aria-hidden="true" title="Reorder" draggable="true">⋮⋮</span>
-                                    <strong>{{ topic.name }}</strong>
-                                </div>
-                                <div class="topic-meta">
-                                    <span class="pill">{{ topic.source_count }} saved</span>
-                                    <span class="pill">{{ topic.get_source_mode_display }}</span>
-                                </div>
-                                {% if topic.description %}
-                                    <div class="muted" style="margin-top: 6px;">{{ topic.description }}</div>
-                                {% endif %}
-                                <div class="topic-card-actions">
-                                    <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="topic_name" value="{{ topic.name }}">
-                                        <input type="hidden" name="source_url" value="">
-                                        <input type="hidden" name="source_mode" value="{{ topic.source_mode }}">
-                                        <button type="submit" class="secondary-button">Settings</button>
-                                    </form>
-                                    <form method="post" action="{% url 'run-pipeline' topic.id %}" style="margin: 0;">
-                                        {% csrf_token %}
-                                        <button type="submit">Run</button>
-                                    </form>
-                                </div>
-                            </div>
+    <div class="topic-main">
+        <div class="topic-title-row">
+            <span class="drag-handle" aria-hidden="true" title="Reorder" draggable="true">⋮⋮</span>
+            <strong>{{ topic.name }}</strong>
+        </div>
+        <div class="topic-meta">
+            <span class="pill">{{ topic.source_count }} saved</span>
+            <span class="pill">{{ topic.get_source_mode_display }}</span>
+        </div>
+        {% if topic.description %}
+            <div class="muted">{{ topic.description }}</div>
+        {% endif %}
+    </div>
+    <div class="topic-card-actions">
+        <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;">
+            {% csrf_token %}
+            <input type="hidden" name="topic_name" value="{{ topic.name }}">
+            <input type="hidden" name="source_url" value="">
+            <input type="hidden" name="source_mode" value="{{ topic.source_mode }}">
+            <button type="submit" class="secondary-button">Settings</button>
+        </form>
+        <form method="post" action="{% url 'run-pipeline' topic.id %}" style="margin: 0;">
+            {% csrf_token %}
+            <button type="submit">Run</button>
+        </form>
+        <form
+            method="post"
+            action="{% url 'delete-topic' topic.id %}"
+            class="topic-delete-form"
+            onsubmit="return confirm('Delete this topic?');"
+            data-preserve-scroll
+        >
+            {% csrf_token %}
+            <button type="submit" class="icon-button" aria-label="Delete topic" title="Delete">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11V8h12v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>
+                </svg>
+            </button>
+        </form>
+    </div>
+</div>
                         {% endfor %}
                     </div>
                 {% else %}
                     <p>No topics yet. Enter a topic above to find sources and start a digest.</p>
                 {% endif %}
+                </div>
             </section>
 
             <section class="card">
-                <h2>Recent Digest Runs</h2>
+                <div class="section-header">
+                    <h2 style="margin: 0;">Recent digests</h2>
+                    <button
+                        type="button"
+                        class="secondary-button secondary-button--subtle"
+                        data-collapse-button
+                        aria-expanded="true"
+                        aria-controls="recent-runs-section-body"
+                        data-expand-label="Expand"
+                        data-collapse-label="Collapse"
+                    >
+                        Collapse
+                    </button>
+                </div>
+                <div
+                    id="recent-runs-section-body"
+                    data-collapse-root
+                    data-collapse-key="recent-runs"
+                    data-default-expanded="true"
+                    data-collapse-region
+                    style="margin-top: 14px;"
+                >
                 {% if recent_runs %}
                     <div class="runs-list">
                         {% for run in recent_runs %}
                             <div class="run-row">
-                                <a href="{% url 'run-detail' run.id %}">Run {{ run.id }}</a>
-                                - {{ run.topic.name }}
-                                - {{ run.status }}
+                                <a href="{% url 'run-detail' run.id %}" class="run-title">{{ run.topic.name }}</a>
+                                <div class="run-meta">{{ run.display_time }}</div>
                             </div>
                         {% endfor %}
                     </div>
                 {% else %}
                     <p>No runs yet.</p>
                 {% endif %}
+                </div>
             </section>
         {% endif %}
 
         <p><a href="/admin/">Open Django admin</a></p>
     </div>
+    {% if discovered_topic %}
+    <script>
+(() => {
+    const workspaceUrl = "{% url 'topic-workspace' discovered_topic.id %}";
+    if (window.location.pathname !== workspaceUrl) {
+        window.history.replaceState({}, "", workspaceUrl);
+    }
+})();
+    </script>
+    {% endif %}
+    <script>
+(() => {
+    const storageKey = "digestflow:scroll-restore";
+
+    try {
+        const rawValue = window.sessionStorage.getItem(storageKey);
+        if (rawValue) {
+            const payload = JSON.parse(rawValue);
+            if (payload && payload.path === window.location.pathname && Number.isFinite(payload.scrollY)) {
+                window.scrollTo(0, payload.scrollY);
+            }
+            window.sessionStorage.removeItem(storageKey);
+        }
+    } catch (error) {
+        window.sessionStorage.removeItem(storageKey);
+    }
+
+    for (const form of document.querySelectorAll("form[data-preserve-scroll]")) {
+        form.addEventListener("submit", () => {
+            try {
+                window.sessionStorage.setItem(
+                    storageKey,
+                    JSON.stringify({
+                        path: window.location.pathname,
+                        scrollY: window.scrollY,
+                    }),
+                );
+            } catch (error) {
+                // Ignore storage failures and let the normal navigation continue.
+            }
+        });
+    }
+})();
+    </script>
+    <script>
+(() => {
+    const collapseStoragePrefix = "digestflow:collapse:";
+
+    function applyState(root, expanded) {
+        const button = document.querySelector(`[aria-controls="${root.id}"]`);
+        const region = root;
+        if (!button || !region) {
+            return;
+        }
+
+        const expandLabel = button.dataset.expandLabel || "Expand";
+        const collapseLabel = button.dataset.collapseLabel || "Collapse";
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+        button.textContent = expanded ? collapseLabel : expandLabel;
+        region.hidden = !expanded;
+    }
+
+    for (const root of document.querySelectorAll("[data-collapse-root]")) {
+        const key = root.dataset.collapseKey;
+        const defaultExpanded = root.dataset.defaultExpanded !== "false";
+        if (!key) {
+            continue;
+        }
+
+        const storageKey = `${collapseStoragePrefix}${window.location.pathname}:${key}`;
+        let expanded = defaultExpanded;
+        try {
+            const storedValue = window.sessionStorage.getItem(storageKey);
+            if (storedValue === "collapsed") {
+                expanded = false;
+            } else if (storedValue === "expanded") {
+                expanded = true;
+            }
+        } catch (error) {
+            expanded = defaultExpanded;
+        }
+
+        applyState(root, expanded);
+
+        const button = document.querySelector(`[aria-controls="${root.id}"]`);
+        if (!button) {
+            continue;
+        }
+
+        button.addEventListener("click", () => {
+            const nextExpanded = button.getAttribute("aria-expanded") !== "true";
+            applyState(root, nextExpanded);
+            try {
+                window.sessionStorage.setItem(storageKey, nextExpanded ? "expanded" : "collapsed");
+            } catch (error) {
+                // Ignore storage failures and keep the current UI state.
+            }
+        });
+    }
+})();
+    </script>
     {% if not discovered_topic and topics %}
     <script>
 (() => {
@@ -934,3 +1202,4 @@
     {% endif %}
 </body>
 </html>
+
