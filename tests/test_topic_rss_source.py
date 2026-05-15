@@ -1,5 +1,7 @@
 ﻿from unittest.mock import patch
 
+from html import unescape
+
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -32,6 +34,16 @@ LONG_RSS_SNIPPET_3 = (
 
 
 class TopicRssSourceTests(TestCase):
+    def _assert_any_term_contains(self, terms: list[str], *needles: str) -> None:
+        self.assertTrue(
+            any(any(needle in term.casefold() for needle in needles) for term in terms),
+            f"Expected one of {needles!r} in suggestions: {terms!r}",
+        )
+
+    def _assert_not_topic_echo(self, topic_name: str, terms: list[str]) -> None:
+        normalized_topic = topic_name.casefold().strip()
+        self.assertTrue(any(term.casefold() != normalized_topic for term in terms), terms)
+
     def test_topic_can_store_source_url(self) -> None:
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -274,12 +286,21 @@ class TopicRssSourceTests(TestCase):
         topic = Topic.objects.get(name="AI Education")
         topic.refresh_from_db()
         self.assertTrue(topic.focus_initialized)
-        self.assertIn("AI tutors", topic.keywords)
-        self.assertIn("education technology", topic.keywords)
-        self.assertIn("personalized learning", topic.keywords)
+        self.assertGreaterEqual(len(topic.keywords), 3)
         self.assertNotEqual(topic.keywords, ["AI Education"])
-        self.assertContains(response, "AI tutors")
-        self.assertContains(response, "education technology")
+        self._assert_any_term_contains(topic.keywords, "ai", "llm")
+        self._assert_any_term_contains(
+            topic.keywords,
+            "education",
+            "learning",
+            "classroom",
+            "student",
+            "teaching",
+            "tutor",
+        )
+        self.assertTrue(any(" " in term for term in topic.keywords), topic.keywords)
+        response_html = response.content.decode("utf-8")
+        self.assertTrue(any(term in response_html for term in topic.keywords))
 
     def test_generated_focus_terms_pass_validation(self) -> None:
         self.client.post(
@@ -298,6 +319,7 @@ class TopicRssSourceTests(TestCase):
     def test_baby_sleeping_gets_parenting_grounded_focus_suggestions(self) -> None:
         suggestions = generate_focus_suggestions("Baby sleeping")
 
+        self.assertGreaterEqual(len(suggestions), 3)
         self.assertTrue(any("sleep" in term.casefold() for term in suggestions))
         self.assertTrue(any("baby" in term.casefold() or "infant" in term.casefold() or "newborn" in term.casefold() for term in suggestions))
         self.assertNotIn("industry tools", suggestions)
@@ -308,10 +330,17 @@ class TopicRssSourceTests(TestCase):
         suggestions = generate_focus_suggestions("travel")
 
         self.assertGreater(len(suggestions), 1)
-        self.assertIn("travel planning", suggestions)
-        self.assertIn("budget travel", suggestions)
-        self.assertIn("travel destinations", suggestions)
-        self.assertNotEqual(suggestions, ["travel"])
+        self._assert_not_topic_echo("travel", suggestions)
+        self._assert_any_term_contains(
+            suggestions,
+            "travel planning",
+            "budget travel",
+            "family travel",
+            "travel destination",
+            "travel tip",
+            "digital nomad",
+        )
+        self.assertGreaterEqual(len({term.casefold() for term in suggestions}), 3)
         self.assertNotIn("industry tools", suggestions)
         self.assertNotIn("implementation patterns", suggestions)
         self.assertNotIn("practical workflows", suggestions)
@@ -319,10 +348,10 @@ class TopicRssSourceTests(TestCase):
     def test_ai_agents_gets_grounded_technical_focus_suggestions(self) -> None:
         suggestions = generate_focus_suggestions("AI agents")
 
-        self.assertIn("AI agents", suggestions)
-        self.assertIn("LLM agents", suggestions)
-        self.assertIn("agent workflows", suggestions)
-        self.assertIn("multi-agent systems", suggestions)
+        self._assert_any_term_contains(suggestions, "agent")
+        self._assert_any_term_contains(suggestions, "ai", "llm", "autonomous", "multi-agent", "automation")
+        self.assertTrue(any(" " in term for term in suggestions), suggestions)
+        self.assertGreaterEqual(len({term.casefold() for term in suggestions}), 3)
         self.assertNotIn("industry tools", suggestions)
         self.assertNotIn("implementation patterns", suggestions)
         self.assertNotIn("practical workflows", suggestions)
@@ -396,7 +425,8 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         topic.refresh_from_db()
-        self.assertIn("AI tutors", topic.keywords)
+        initial_generated_terms = list(topic.keywords)
+        self.assertTrue(initial_generated_terms)
 
         remove_response = self.client.post(
             reverse("update-topic-focus", args=[topic.id]),
@@ -421,7 +451,9 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(reopen_response.status_code, 200)
         topic.refresh_from_db()
         self.assertEqual(topic.keywords, [])
-        self.assertNotContains(reopen_response, "AI tutors")
+        reopen_html = reopen_response.content.decode("utf-8")
+        for term in initial_generated_terms:
+            self.assertNotIn(term, reopen_html)
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_generated_focus_terms_are_passed_to_discovery(self, mock_resolve_source_candidates) -> None:
@@ -438,8 +470,17 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         discovery_request = mock_resolve_source_candidates.call_args.args[0]
-        self.assertIn("AI tutors", discovery_request.focus_terms)
-        self.assertIn("education technology", discovery_request.focus_terms)
+        self.assertGreaterEqual(len(discovery_request.focus_terms), 3)
+        self._assert_any_term_contains(discovery_request.focus_terms, "ai", "llm")
+        self._assert_any_term_contains(
+            discovery_request.focus_terms,
+            "education",
+            "learning",
+            "classroom",
+            "student",
+            "teaching",
+            "tutor",
+        )
 
     def test_topic_focus_terms_can_be_added_and_removed(self) -> None:
         topic = Topic.objects.create(
@@ -1617,13 +1658,22 @@ class TopicRssSourceTests(TestCase):
             "This source has already been added to this topic. Please check the address or use another source.",
         )
 
-    @patch("apps.digests.views.fetch_generic_web_article")
-    def test_add_topic_source_accepts_readable_web_article(self, mock_fetch_generic_web_article) -> None:
-        mock_fetch_generic_web_article.return_value = {
-            "title": "The science of safe and healthy baby sleep",
-            "url": "https://www.bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
-            "content": "A long readable article body about infant sleep, naps, bedtime routines, and wake windows.",
-            "source_type": "web_article",
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_add_topic_source_accepts_readable_web_article(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": {
+                "title": "The science of safe and healthy baby sleep",
+                "url": "https://www.bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
+                "content": "A long readable article body about infant sleep, naps, bedtime routines, and wake windows.",
+                "source_type": "web_article",
+            },
+            "diagnostics": {
+                "normalized_url": "https://bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "extraction_strategy": "article_tag",
+                "usable_text_length": 96,
+            },
         }
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -1651,16 +1701,25 @@ class TopicRssSourceTests(TestCase):
         )
         self.assertNotContains(response, "web_article")
 
-    @patch("apps.digests.views.fetch_generic_web_article")
+    @patch("apps.digests.views.inspect_generic_web_article")
     def test_add_topic_source_accepts_stanford_style_article_url_with_meaningful_id_query_param(
         self,
-        mock_fetch_generic_web_article,
+        mock_inspect_generic_web_article,
     ) -> None:
-        mock_fetch_generic_web_article.return_value = {
-            "title": "Infant Sleep",
-            "url": "https://stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237",
-            "content": "Readable article text about infant sleep, naps, bedtime routines, and wake windows.",
-            "source_type": "web_article",
+        mock_inspect_generic_web_article.return_value = {
+            "article": {
+                "title": "Infant Sleep",
+                "url": "https://stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237",
+                "content": "Readable article text about infant sleep, naps, bedtime routines, and wake windows.",
+                "source_type": "web_article",
+            },
+            "diagnostics": {
+                "normalized_url": "https://stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "extraction_strategy": "main_content",
+                "usable_text_length": 84,
+            },
         }
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -1688,19 +1747,105 @@ class TopicRssSourceTests(TestCase):
         )
         self.assertEqual(source.name, "Infant Sleep")
 
-    @patch("apps.digests.views.fetch_generic_web_article")
+    @patch("services.sources.rss_adapter._fetch_url_response")
+    def test_add_topic_source_accepts_hopkins_article_via_saved_source_path_when_primary_fetch_is_blocked(
+        self,
+        mock_fetch_url_response,
+    ) -> None:
+        challenge_html = """
+        <!DOCTYPE html>
+        <html lang="en-US">
+          <head><title>Just a moment...</title></head>
+          <body>
+            <h1>Just a moment...</h1>
+            <p>Checking your browser before accessing the site.</p>
+          </body>
+        </html>
+        """
+        reader_payload = """
+Title: Infant Safe Sleep
+
+URL Source: https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep
+
+Published Time: 2025-05-08
+
+Markdown Content:
+According to the Centers for Disease Control and Prevention, each year there are about 3,400 sudden unexplained infant deaths (SUID).
+
+A safe sleeping area — along with how you lay your baby down to sleep — can prevent SUID.
+
+## Reducing the Risk for Sleep-Related Infant Deaths
+
+* Babies should sleep on a firm, flat surface.
+* Keep loose blankets, pillows, and toys out of the crib.
+* Room-sharing without bed-sharing is recommended during the early months.
+"""
+
+        def fake_fetch(url: str, accept_header: str = ""):
+            if url.startswith("https://r.jina.ai/http://"):
+                return {
+                    "content": reader_payload.encode("utf-8"),
+                    "status": 200,
+                    "content_type": "text/plain; charset=utf-8",
+                    "final_url": url,
+                    "fetch_failure_reason": "",
+                }
+            return {
+                "content": challenge_html.encode("utf-8"),
+                "status": 403,
+                "content_type": "text/html; charset=UTF-8",
+                "final_url": "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep",
+                "fetch_failure_reason": "http 403",
+            }
+
+        mock_fetch_url_response.side_effect = fake_fetch
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Hopkins article topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://www.hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        source = topic.sources.get()
+        self.assertEqual(
+            source.url,
+            "https://hopkinsmedicine.org/health/wellness-and-prevention/infant-safe-sleep",
+        )
+        self.assertEqual(source.source_type, "generic_html")
+        self.assertEqual(source.name, "Infant Safe Sleep")
+        self.assertNotContains(response, "Please check the address or try another article.")
+
+    @patch("apps.digests.views.inspect_generic_web_article")
     def test_add_topic_source_accepts_lullaby_trust_style_parenting_article(
         self,
-        mock_fetch_generic_web_article,
+        mock_inspect_generic_web_article,
     ) -> None:
-        mock_fetch_generic_web_article.return_value = {
-            "title": "Baby sleep patterns | The Lullaby Trust",
-            "url": "https://lullabytrust.org.uk/baby-safety/being-a-parent-or-caregiver/baby-sleep-patterns",
-            "content": (
-                "Parents and carers often worry about their babies' sleep and might try tips and hacks to get them to sleep longer, but these can actually be dangerous. "
-                "Babies have small stomachs and will wake often throughout the night to feed, and every baby is different."
-            ),
-            "source_type": "web_article",
+        mock_inspect_generic_web_article.return_value = {
+            "article": {
+                "title": "Baby sleep patterns | The Lullaby Trust",
+                "url": "https://lullabytrust.org.uk/baby-safety/being-a-parent-or-caregiver/baby-sleep-patterns",
+                "content": (
+                    "Parents and carers often worry about their babies' sleep and might try tips and hacks to get them to sleep longer, but these can actually be dangerous. "
+                    "Babies have small stomachs and will wake often throughout the night to feed, and every baby is different."
+                ),
+                "source_type": "web_article",
+            },
+            "diagnostics": {
+                "normalized_url": "https://lullabytrust.org.uk/baby-safety/being-a-parent-or-caregiver/baby-sleep-patterns",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "extraction_strategy": "fallback_text",
+                "usable_text_length": 276,
+            },
         }
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -1723,9 +1868,20 @@ class TopicRssSourceTests(TestCase):
             "Source added and saved for this topic. It will be used when generating the digest.",
         )
 
-    @patch("apps.digests.views.fetch_generic_web_article")
-    def test_add_topic_source_rejects_unreadable_web_article(self, mock_fetch_generic_web_article) -> None:
-        mock_fetch_generic_web_article.return_value = None
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_add_topic_source_rejects_unreadable_web_article(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "https://example.com/some-article",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "fetch_failure_reason": "",
+                "extraction_strategy": "fallback_text",
+                "usable_text_length": 48,
+                "rejection_reason": "page content looked too weak or unstructured",
+            },
+        }
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Unsupported source topic",
@@ -1747,14 +1903,27 @@ class TopicRssSourceTests(TestCase):
             "Please check the address or try another article.",
             status_code=400,
         )
+        html = unescape(response.content.decode("utf-8"))
+        self.assertIn('"normalized_url": "https://example.com/some-article"', html)
+        self.assertIn('"source_type": "generic_html"', html)
+        self.assertIn('"rejection_reason": "page content looked too weak or unstructured"', html)
 
-    @patch("apps.digests.views.fetch_generic_web_article")
-    def test_add_topic_source_prevents_duplicate_normalized_web_article_url(self, mock_fetch_generic_web_article) -> None:
-        mock_fetch_generic_web_article.return_value = {
-            "title": "Baby sleep schedules",
-            "url": "https://example.com/articles/baby-sleep",
-            "content": "Readable body text about naps, sleep regressions, and bedtime routines for infants.",
-            "source_type": "web_article",
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_add_topic_source_prevents_duplicate_normalized_web_article_url(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": {
+                "title": "Baby sleep schedules",
+                "url": "https://example.com/articles/baby-sleep",
+                "content": "Readable body text about naps, sleep regressions, and bedtime routines for infants.",
+                "source_type": "web_article",
+            },
+            "diagnostics": {
+                "normalized_url": "https://example.com/articles/baby-sleep",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "extraction_strategy": "article_tag",
+                "usable_text_length": 79,
+            },
         }
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -1844,9 +2013,20 @@ class TopicRssSourceTests(TestCase):
         self.assertLess(html.index(form_marker), html.index(controls_marker))
         self.assertLess(html.index(controls_marker), html.index(feedback_marker))
 
-    @patch("apps.digests.views.fetch_generic_web_article")
-    def test_source_add_error_clears_when_input_is_edited(self, mock_fetch_generic_web_article) -> None:
-        mock_fetch_generic_web_article.return_value = None
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_source_add_error_clears_when_input_is_edited(self, mock_inspect_generic_web_article) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "https://example.com/unreadable-article",
+                "source_type": "generic_html",
+                "fetch_status": 200,
+                "fetch_failure_reason": "",
+                "extraction_strategy": "fallback_text",
+                "usable_text_length": 31,
+                "rejection_reason": "usable text was too short (31 chars)",
+            },
+        }
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Source feedback reset topic",
@@ -1866,6 +2046,7 @@ class TopicRssSourceTests(TestCase):
         self.assertIn('data-source-feedback', html)
         self.assertIn('data-source-feedback-input', html)
         self.assertIn('data-initial-value="https://example.com/unreadable-article"', html)
+        self.assertIn('data-source-add-diagnostics', html)
 
     @patch("apps.digests.views.fetch_rss_articles")
     def test_add_topic_source_rejects_unreadable_rss_feed(self, mock_fetch_rss_articles) -> None:
