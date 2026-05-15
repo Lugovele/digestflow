@@ -1,7 +1,13 @@
 import re
+from dataclasses import dataclass
 
 
-FOCUS_VALIDATION_MESSAGE = "This focus term does not look useful. Try a clearer word or phrase."
+FOCUS_VALIDATION_MESSAGE = "Enter a focus word or phrase."
+FOCUS_TOO_SHORT_MESSAGE = "This is too short to use as a focus."
+FOCUS_NUMBER_ONLY_MESSAGE = "Add a word so this focus is understandable."
+FOCUS_DUPLICATE_MESSAGE = "This focus is already added."
+FOCUS_TOO_LONG_MESSAGE = "Try a shorter word or phrase."
+MAX_FOCUS_TERM_LENGTH = 80
 
 _FOCUS_ABBREVIATIONS = {
     "ai", "api", "llm", "ml", "nlp", "rag", "mcp", "etl", "seo", "crm", "erp",
@@ -26,6 +32,12 @@ _REPEATED_CHUNK_RE = re.compile(r"^([A-Za-zА-Яа-яЁё]{1,4})\1+$", re.IGNORE
 _CYRILLIC_VOWELS = set("аеёиоуыэюя")
 
 
+@dataclass(frozen=True)
+class FocusValidationIssue:
+    term: str
+    message: str
+
+
 def clean_focus_terms(raw_terms: list[str]) -> list[str]:
     cleaned_terms: list[str] = []
     seen_terms: set[str] = set()
@@ -41,19 +53,32 @@ def clean_focus_terms(raw_terms: list[str]) -> list[str]:
     return cleaned_terms
 
 
-def validate_new_focus_terms(existing_terms: list[str], submitted_terms: list[str]) -> str | None:
+def validate_new_focus_terms(existing_terms: list[str], submitted_terms: list[str]) -> FocusValidationIssue | None:
     existing_lookup = {str(term).casefold() for term in existing_terms}
     for term in submitted_terms:
         if term.casefold() in existing_lookup:
             continue
         if not is_meaningful_focus_term(term):
-            return term
+            return FocusValidationIssue(term=term, message=get_focus_validation_message(term))
     return None
+
+
+def get_focus_validation_message(term: str) -> str:
+    normalized = " ".join(str(term or "").strip().split())
+    if not normalized or not any(char.isalnum() for char in normalized):
+        return FOCUS_VALIDATION_MESSAGE
+    if len(normalized) > MAX_FOCUS_TERM_LENGTH:
+        return FOCUS_TOO_LONG_MESSAGE
+    if all(part.isdigit() for part in normalized.split()):
+        return FOCUS_NUMBER_ONLY_MESSAGE
+    return FOCUS_TOO_SHORT_MESSAGE
 
 
 def is_meaningful_focus_term(term: str) -> bool:
     normalized = " ".join(str(term or "").strip().split())
     if not normalized:
+        return False
+    if len(normalized) > MAX_FOCUS_TERM_LENGTH:
         return False
 
     lowered = normalized.casefold()
@@ -62,8 +87,6 @@ def is_meaningful_focus_term(term: str) -> bool:
     if lowered in _FOCUS_ABBREVIATIONS:
         return True
     if _INVALID_CHAR_RE.search(normalized):
-        return False
-    if any(char.isdigit() for char in normalized):
         return False
     if _KEYBOARD_MASH_RE.search(normalized):
         return False
@@ -80,6 +103,8 @@ def is_meaningful_focus_term(term: str) -> bool:
 def _is_meaningful_focus_phrase_token(token: str) -> bool:
     lowered = token.casefold()
     if lowered in _FOCUS_ABBREVIATIONS:
+        return True
+    if _is_contextual_numeric_token(token):
         return True
 
     alpha_only = _alpha_only(lowered)
@@ -117,6 +142,11 @@ def _is_meaningful_focus_token(token: str) -> bool:
 
 def _alpha_only(value: str) -> str:
     return _ALPHA_ONLY_RE.sub("", value)
+
+
+def _is_contextual_numeric_token(token: str) -> bool:
+    stripped = str(token or "").strip()
+    return stripped.isdigit() and 1 <= len(stripped) <= 2
 
 
 def _has_too_little_signal(alpha_only: str) -> bool:

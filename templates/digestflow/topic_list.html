@@ -439,6 +439,18 @@
             line-height: 1.45;
             color: #7b4f11;
         }
+        .focus-inline-feedback {
+            margin: 2px 0 0;
+            font-size: 13px;
+            line-height: 1.45;
+            color: #8f1d1d;
+        }
+        .focus-inline-feedback strong {
+            font-weight: 500;
+        }
+        .focus-inline-feedback[hidden] {
+            display: none;
+        }
         .source-inline-feedback strong {
             font-weight: 500;
         }
@@ -640,6 +652,11 @@
                         value="{{ focus_input_value }}"
                         data-focus-input
                     >
+                    <p
+                        class="focus-inline-feedback"
+                        data-focus-feedback
+                        {% if not focus_feedback %}hidden{% endif %}
+                    ><strong>{% if focus_feedback %}{{ focus_feedback.message }}{% endif %}</strong></p>
                     <div class="focus-chip-list" data-focus-chip-list>
                         {% for term in focus_terms %}
                             <span class="focus-chip" data-focus-chip data-focus-value="{{ term }}">
@@ -648,11 +665,6 @@
                             </span>
                         {% endfor %}
                     </div>
-                    {% if focus_feedback %}
-                        <p class="feedback feedback--{{ focus_feedback.level }}">
-                            <strong>{{ focus_feedback.message }}</strong>
-                        </p>
-                    {% endif %}
                 </form>
             </section>
 
@@ -1127,9 +1139,24 @@
     const hiddenInput = form.querySelector("[data-focus-hidden]");
     const textInput = form.querySelector("[data-focus-input]");
     const chipList = form.querySelector("[data-focus-chip-list]");
+    const feedback = form.querySelector("[data-focus-feedback]");
 
-    if (!hiddenInput || !textInput || !chipList) {
+    if (!hiddenInput || !textInput || !chipList || !feedback) {
         return;
+    }
+
+    function showFeedback(message) {
+        const strong = feedback.querySelector("strong");
+        if (strong) {
+            strong.textContent = message;
+        } else {
+            feedback.textContent = message;
+        }
+        feedback.hidden = false;
+    }
+
+    function hideFeedback() {
+        feedback.hidden = true;
     }
 
     function getTerms() {
@@ -1146,20 +1173,26 @@
     function addTerm(rawValue) {
         const nextValue = rawValue.trim().replace(/\s+/g, " ");
         if (!nextValue) {
+            showFeedback("Enter a focus word or phrase.");
             return;
         }
         const terms = getTerms();
         const normalized = nextValue.toLocaleLowerCase();
         const exists = terms.some((term) => term.toLocaleLowerCase() === normalized);
         if (exists) {
-            textInput.value = "";
+            showFeedback("This focus is already added.");
             return;
         }
+        hideFeedback();
         terms.push(nextValue);
         setTerms(terms);
         textInput.value = "";
         form.requestSubmit();
     }
+
+    textInput.addEventListener("input", () => {
+        hideFeedback();
+    });
 
     textInput.addEventListener("keydown", (event) => {
         if (event.key !== "Enter") {

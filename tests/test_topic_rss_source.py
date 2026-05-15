@@ -10,7 +10,13 @@ from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun
 from apps.sources.models import Article
-from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, is_meaningful_focus_term
+from apps.topics.focus import (
+    FOCUS_DUPLICATE_MESSAGE,
+    FOCUS_NUMBER_ONLY_MESSAGE,
+    FOCUS_TOO_SHORT_MESSAGE,
+    FOCUS_VALIDATION_MESSAGE,
+    is_meaningful_focus_term,
+)
 from apps.topics.focus_suggestions import generate_focus_suggestions
 from apps.topics.models import Topic, TopicSource, TopicSourceMode
 
@@ -567,7 +573,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.keywords, ["AI automation"])
         self.assertContains(
             response,
-            FOCUS_VALIDATION_MESSAGE,
+            FOCUS_TOO_SHORT_MESSAGE,
             status_code=400,
         )
         self.assertNotContains(response, 'data-focus-value="pumpumpum"', html=False, status_code=400)
@@ -592,7 +598,7 @@ class TopicRssSourceTests(TestCase):
             self.assertEqual(response.status_code, 400)
             topic.refresh_from_db()
             self.assertEqual(topic.keywords, ["AI automation"])
-            self.assertContains(response, FOCUS_VALIDATION_MESSAGE, status_code=400)
+            self.assertContains(response, FOCUS_TOO_SHORT_MESSAGE, status_code=400)
             self.assertNotContains(response, f'data-focus-value="{term}"', html=False, status_code=400)
 
     def test_focus_rejects_short_cyrillic_fragments(self) -> None:
@@ -615,7 +621,7 @@ class TopicRssSourceTests(TestCase):
             self.assertEqual(response.status_code, 400)
             topic.refresh_from_db()
             self.assertEqual(topic.keywords, ["AI automation"])
-            self.assertContains(response, FOCUS_VALIDATION_MESSAGE, status_code=400)
+            self.assertContains(response, FOCUS_TOO_SHORT_MESSAGE, status_code=400)
             self.assertNotContains(response, f'data-focus-value="{term}"', html=False, status_code=400)
 
     def test_focus_rejects_repeated_pattern_term(self) -> None:
@@ -637,7 +643,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.keywords, [])
         self.assertContains(
             response,
-            FOCUS_VALIDATION_MESSAGE,
+            FOCUS_TOO_SHORT_MESSAGE,
             status_code=400,
         )
         self.assertNotContains(response, 'data-focus-value="asdfasdf"', html=False, status_code=400)
@@ -723,6 +729,106 @@ class TopicRssSourceTests(TestCase):
         topic.refresh_from_db()
         self.assertEqual(topic.keywords, ["workflow automation"])
         self.assertContains(response, 'data-focus-value="workflow automation"', html=False)
+
+    def test_focus_accepts_contextual_numeric_hint(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Physical exercises for pregnant women",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=[],
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("update-topic-focus", args=[topic.id]),
+            data={"focus_terms": "8 month"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        topic.refresh_from_db()
+        self.assertEqual(topic.keywords, ["8 month"])
+        self.assertContains(response, 'data-focus-value="8 month"', html=False)
+        self.assertNotContains(response, FOCUS_VALIDATION_MESSAGE)
+
+    def test_focus_accepts_short_contextual_phrases(self) -> None:
+        accepted_terms = ["8 months", "third trimester", "low impact", "safe", "beginner", "no equipment"]
+        user = self._get_ui_user()
+        for term in accepted_terms:
+            topic = Topic.objects.create(
+                user=user,
+                name=f"Contextual focus {term}",
+                source_mode=TopicSourceMode.HYBRID,
+                keywords=[],
+                excluded_keywords=[],
+            )
+
+            response = self.client.post(
+                reverse("update-topic-focus", args=[topic.id]),
+                data={"focus_terms": term},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            topic.refresh_from_db()
+            self.assertEqual(topic.keywords, [term])
+            self.assertContains(response, f'data-focus-value="{term}"', html=False)
+            self.assertNotContains(response, FOCUS_VALIDATION_MESSAGE)
+
+    def test_focus_rejects_number_only_input_with_specific_message(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Numeric focus topic",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["third trimester"],
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("update-topic-focus", args=[topic.id]),
+            data={"focus_terms": "third trimester\n567"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        topic.refresh_from_db()
+        self.assertEqual(topic.keywords, ["third trimester"])
+        self.assertContains(response, FOCUS_NUMBER_ONLY_MESSAGE, status_code=400)
+        self.assertContains(response, 'value="567"', html=False, status_code=400)
+        self.assertNotContains(response, 'data-focus-value="567"', html=False, status_code=400)
+
+    def test_focus_error_renders_between_input_and_chips(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Focus message placement",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["third trimester"],
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("update-topic-focus", args=[topic.id]),
+            data={"focus_terms": "third trimester\n567"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        html = response.content.decode("utf-8")
+        input_index = html.index("data-focus-input")
+        message_index = html.index(FOCUS_NUMBER_ONLY_MESSAGE)
+        chips_index = html.index("data-focus-chip-list")
+        self.assertLess(input_index, message_index)
+        self.assertLess(message_index, chips_index)
+
+    def test_focus_workspace_js_includes_duplicate_message(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Duplicate focus workspace",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["third trimester"],
+            excluded_keywords=[],
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertContains(response, 'data-focus-feedback', html=False)
+        self.assertContains(response, FOCUS_DUPLICATE_MESSAGE)
 
     def test_focus_duplicate_terms_are_deduped_after_normalization(self) -> None:
         topic = Topic.objects.create(

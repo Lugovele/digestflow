@@ -156,9 +156,9 @@ def update_topic_focus_view(request: HttpRequest, topic_id: int) -> HttpResponse
             topic,
             focus_feedback={
                 "level": "error",
-                "message": FOCUS_VALIDATION_MESSAGE,
+                "message": validation_error.message,
             },
-            focus_input_value=validation_error,
+            focus_input_value=validation_error.term,
             status=400,
         )
     if topic.keywords != focus_terms:
