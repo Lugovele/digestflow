@@ -26,6 +26,58 @@ PRACTICAL_TERMS = (
     "tooling",
     "infrastructure",
 )
+GENERAL_PRACTICAL_TERMS = (
+    "guide",
+    "tips",
+    "how to",
+    "step-by-step",
+    "step by step",
+    "routine",
+    "checklist",
+    "exercise",
+    "exercises",
+    "planning",
+    "plan",
+    "safe",
+    "safety",
+    "advice",
+    "support",
+)
+GENERAL_CREDIBILITY_TERMS = (
+    "study",
+    "research",
+    "review",
+    "evidence",
+    "clinical",
+    "doctor",
+    "pediatrician",
+    "obstetrician",
+    "midwife",
+    "expert",
+    "cdc",
+    "nih",
+    "journal",
+)
+TECHNICAL_TOPIC_HINTS = (
+    "ai",
+    "llm",
+    "agent",
+    "agents",
+    "api",
+    "python",
+    "django",
+    "software",
+    "developer",
+    "devops",
+    "cloud",
+    "infrastructure",
+    "deployment",
+    "security engineering",
+    "mcp",
+    "automation",
+    "terraform",
+    "testing",
+)
 TOPIC_EDITORIAL_ALIGNMENT_TAGS: dict[str, tuple[str, ...]] = {
     "ai agents": (
         "ai_agents",
@@ -266,6 +318,7 @@ def rank_source_items(
             "title": item.get("title", ""),
             "url": item.get("url", ""),
             "source_name": item.get("source_name") or item.get("source") or "",
+            "topic_domain": scoring_details["topic_domain"],
             "content_tier": scoring_details["content_tier"],
             "content_length": scoring_details["content_length"],
             "score": raw_score,
@@ -339,6 +392,7 @@ def _score_item(
     heading_diagnostics = _build_heading_diagnostics(metadata, content)
     headings_lower = " ".join(heading_diagnostics["normalized_headings"])
     intro_lower = snippet_lower or content_lower[:280]
+    topic_domain = _detect_topic_domain(normalized_keywords)
     (
         primary_article_type,
         secondary_article_tags,
@@ -362,6 +416,7 @@ def _score_item(
         source_lower=source_lower,
         content_tier=content_tier,
         content_length=content_length,
+        topic_domain=topic_domain,
     )
 
     quality_reasons: list[str] = []
@@ -385,7 +440,13 @@ def _score_item(
         topic_specificity_reason,
         specificity_signals,
         generic_topic_signals,
-    ) = _score_topic_specificity(title_lower, text_blob, normalized_keywords)
+    ) = _score_topic_specificity(
+        title_lower,
+        text_blob,
+        normalized_keywords,
+        headings_lower=headings_lower,
+        topic_domain=topic_domain,
+    )
     if topic_relevance_score >= 3:
         quality_reasons.append("strong relevance to topic")
     elif topic_relevance_score >= 1:
@@ -415,16 +476,16 @@ def _score_item(
         quality_reasons.append("insufficient evidence/detail")
         rejection_reasons.append("insufficient detail")
 
-    practical_value_score = _score_practical_value(text_blob, snippet_lower, content_tier)
+    practical_value_score = _score_practical_value(text_blob, snippet_lower, content_tier, topic_domain=topic_domain)
     if practical_value_score >= 1.5:
-        quality_reasons.append("good technical/practical article")
+        quality_reasons.append("good practical guidance" if topic_domain == "general" else "good technical/practical article")
     elif practical_value_score <= 0.5:
         quality_reasons.append("low practical value")
         rejection_reasons.append("low practical value")
 
-    novelty_score = _score_novelty(text_blob, source_lower)
+    novelty_score = _score_novelty(text_blob, source_lower, topic_domain=topic_domain)
     if novelty_score >= 1.5:
-        quality_reasons.append("high novelty or strategic value")
+        quality_reasons.append("strong evidence or source credibility" if topic_domain == "general" else "high novelty or strategic value")
     elif novelty_score <= 0.5:
         quality_reasons.append("low novelty")
         rejection_reasons.append("low novelty")
@@ -504,6 +565,7 @@ def _score_item(
         "dominant_theme_reason": dominant_theme_reason,
         "primary_type_override_reason": primary_type_override_reason,
         "heading_diagnostics": heading_diagnostics,
+        "topic_domain": topic_domain,
         "quality_reasons": _unique_reasons(quality_reasons),
         "rejection_reasons": _unique_reasons(rejection_reasons),
         "diagnostic_warnings": _unique_reasons(diagnostic_warnings),
@@ -614,9 +676,20 @@ def _score_topic_specificity(
     title_lower: str,
     text_blob: str,
     normalized_keywords: list[str],
+    *,
+    headings_lower: str,
+    topic_domain: str,
 ) -> tuple[float, str, list[str], list[str]]:
     if not normalized_keywords:
         return 0.0, "no topic keywords were provided", [], []
+
+    if topic_domain != "technical":
+        return _score_general_topic_specificity(
+            title_lower,
+            text_blob,
+            normalized_keywords,
+            headings_lower=headings_lower,
+        )
 
     keyword_blob = " ".join(normalized_keywords)
     strongest_keyword = next((keyword for keyword in TOPIC_SPECIFICITY_SIGNAL_MAP if keyword in keyword_blob), "")
@@ -682,6 +755,61 @@ def _score_topic_specificity(
     return min(score, 2.5), reason, _unique_reasons(specificity_signals), _unique_reasons(generic_topic_signals)
 
 
+def _score_general_topic_specificity(
+    title_lower: str,
+    text_blob: str,
+    normalized_keywords: list[str],
+    *,
+    headings_lower: str,
+) -> tuple[float, str, list[str], list[str]]:
+    exact_title_hits = _collect_matches(title_lower, normalized_keywords)
+    exact_heading_hits = _collect_matches(headings_lower, normalized_keywords)
+    exact_body_hits = _collect_repeated_body_matches(text_blob, normalized_keywords, min_hits=1)
+
+    support_terms = _general_specificity_support_terms(normalized_keywords)
+    support_title_hits = _collect_matches(title_lower, support_terms)
+    support_heading_hits = _collect_matches(headings_lower, support_terms)
+    support_body_hits = _collect_repeated_body_matches(text_blob, support_terms, min_hits=2)
+
+    specificity_signals = _unique_reasons(
+        exact_title_hits
+        + exact_heading_hits
+        + exact_body_hits
+        + support_title_hits
+        + support_heading_hits
+        + support_body_hits
+    )
+    generic_topic_signals = _unique_reasons(support_title_hits + support_heading_hits + support_body_hits)
+
+    score = 0.0
+    if exact_title_hits:
+        score += min(len(exact_title_hits) * 1.25, 1.5)
+    if exact_heading_hits:
+        score += min(len(exact_heading_hits) * 0.75, 1.0)
+    if exact_body_hits:
+        score += min(len(exact_body_hits) * 0.5, 0.75)
+    if support_title_hits or support_heading_hits:
+        score += 0.5
+    if len(support_body_hits) >= 2:
+        score += 0.5
+    elif support_body_hits:
+        score += 0.25
+
+    if len(specificity_signals) >= 3:
+        score += 0.25
+
+    if score >= 2.0:
+        reason = "matched multiple clear topic or focus terms"
+    elif score >= 1.0:
+        reason = "matched clear topic or focus terms"
+    elif generic_topic_signals:
+        reason = "matched broad topic wording with limited focus specificity"
+    else:
+        reason = "no strong topic-specific signals were detected"
+
+    return min(score, 2.5), reason, specificity_signals, generic_topic_signals
+
+
 def _score_evidence(snippet: str, content_length: int) -> float:
     if content_length >= 900:
         return 2.0
@@ -694,9 +822,10 @@ def _score_evidence(snippet: str, content_length: int) -> float:
     return 0.0
 
 
-def _score_practical_value(text_blob: str, snippet_lower: str, content_tier: str) -> float:
+def _score_practical_value(text_blob: str, snippet_lower: str, content_tier: str, *, topic_domain: str) -> float:
     score = 0.0
-    if any(keyword in text_blob for keyword in PRACTICAL_TERMS):
+    practical_terms = PRACTICAL_TERMS if topic_domain == "technical" else GENERAL_PRACTICAL_TERMS
+    if any(keyword in text_blob for keyword in practical_terms):
         score += 1.0
     if re.search(r"\d|%", snippet_lower) or any(keyword in snippet_lower for keyword in RANKING_KEYWORDS):
         score += 1.0
@@ -705,11 +834,12 @@ def _score_practical_value(text_blob: str, snippet_lower: str, content_tier: str
     return min(score, 2.0)
 
 
-def _score_novelty(text_blob: str, source_lower: str) -> float:
+def _score_novelty(text_blob: str, source_lower: str, *, topic_domain: str) -> float:
     score = 0.0
-    if "research" in source_lower or "report" in source_lower:
+    if "research" in source_lower or "report" in source_lower or (topic_domain == "general" and any(term in source_lower for term in ("health", "medical", "journal", "cdc", "nih"))):
         score += 1.0
-    if any(keyword in text_blob for keyword in NOVELTY_TERMS):
+    novelty_terms = NOVELTY_TERMS if topic_domain == "technical" else GENERAL_CREDIBILITY_TERMS
+    if any(keyword in text_blob for keyword in novelty_terms):
         score += 1.0
     return min(score, 2.0)
 
@@ -726,6 +856,7 @@ def _classify_article_type(
     source_lower: str,
     content_tier: str,
     content_length: int,
+    topic_domain: str,
 ) -> tuple[
     str,
     list[str],
@@ -739,6 +870,17 @@ def _classify_article_type(
     str,
     str | None,
 ]:
+    if topic_domain != "technical":
+        return _classify_general_article_type(
+            title_lower=title_lower,
+            text_blob=text_blob,
+            intro_lower=intro_lower,
+            headings_lower=headings_lower,
+            content_tier=content_tier,
+            content_length=content_length,
+            source_lower=source_lower,
+        )
+
     (
         secondary_tags,
         weighted_secondary_tags,
@@ -965,6 +1107,157 @@ def _classify_article_type(
         0.0,
         ["no strong format signal"],
         dominant_theme_reason="no single editorial center of gravity clearly dominated the article",
+    )
+
+
+def _classify_general_article_type(
+    *,
+    title_lower: str,
+    text_blob: str,
+    intro_lower: str,
+    headings_lower: str,
+    content_tier: str,
+    content_length: int,
+    source_lower: str,
+) -> tuple[
+    str,
+    list[str],
+    dict[str, dict[str, object]],
+    list[str],
+    list[str],
+    list[str],
+    str,
+    float,
+    dict[str, list[str] | str],
+    str,
+    str | None,
+]:
+    classification_signal_summary: dict[str, list[str] | str] = {
+        "primary_signals": [],
+        "tag_signals": [],
+    }
+
+    def build_general_result(
+        primary_type: str,
+        article_type_reason_value: str,
+        article_type_score_modifier_value: float,
+        primary_signals: list[str],
+        *,
+        dominant_theme_reason: str,
+    ) -> tuple[
+        str,
+        list[str],
+        dict[str, dict[str, object]],
+        list[str],
+        list[str],
+        list[str],
+        str,
+        float,
+        dict[str, list[str] | str],
+        str,
+        str | None,
+    ]:
+        classification_signal_summary["primary_signals"] = primary_signals
+        return (
+            primary_type,
+            [],
+            {},
+            [],
+            [],
+            [],
+            article_type_reason_value,
+            article_type_score_modifier_value,
+            classification_signal_summary,
+            dominant_theme_reason,
+            None,
+        )
+
+    safety_hits = _collect_matches(text_blob, ("safe sleep", "safe", "safety", "warning", "prevent", "avoid", "risk", "guidance"))
+    scientific_hits = _collect_matches(text_blob, ("study", "studies", "research", "review", "evidence", "clinical", "journal"))
+    expert_hits = _collect_matches(text_blob, ("doctor", "pediatrician", "obstetrician", "midwife", "expert", "specialist"))
+    practical_hits = _collect_matches(text_blob, ("how to", "guide", "tips", "routine", "steps", "exercise", "exercises", "planning", "plan"))
+    resource_hits = _collect_matches(text_blob, ("resources", "resource", "faq", "checklist", "toolkit"))
+    overview_hits = _collect_matches(text_blob, ("overview", "basics", "what is", "introduction", "understanding"))
+    opinion_hits = _collect_matches(text_blob, ("perspective", "opinion", "experience", "lessons"))
+
+    if safety_hits and (title_lower or intro_lower or headings_lower):
+        return build_general_result(
+            "safety_guidance",
+            "matched clear safety-oriented guidance",
+            ARTICLE_TYPE_REWARD,
+            [f"safety signals: {', '.join(safety_hits[:5])}"],
+            dominant_theme_reason="safety recommendations and prevention guidance are central to the article",
+        )
+    if scientific_hits:
+        return build_general_result(
+            "scientific_review",
+            "matched research, review, or evidence-oriented language",
+            ARTICLE_TYPE_REWARD,
+            [f"evidence signals: {', '.join(scientific_hits[:5])}"],
+            dominant_theme_reason="evidence and research framing are central to the article",
+        )
+    if practical_hits:
+        return build_general_result(
+            "practical_guide",
+            "matched practical how-to or step-by-step guidance",
+            ARTICLE_TYPE_REWARD,
+            [f"practical signals: {', '.join(practical_hits[:5])}"],
+            dominant_theme_reason="practical instructions or usable tips are the article's main purpose",
+        )
+    if expert_hits:
+        return build_general_result(
+            "expert_advice",
+            "matched expert or specialist guidance",
+            ARTICLE_TYPE_REWARD,
+            [f"expert signals: {', '.join(expert_hits[:5])}"],
+            dominant_theme_reason="expert guidance is the article's main framing",
+        )
+    if resource_hits:
+        return build_general_result(
+            "resource_page",
+            "matched resource or checklist-style language",
+            0.0,
+            [f"resource signals: {', '.join(resource_hits[:5])}"],
+            dominant_theme_reason="the article is organized more like a resource page than a narrative article",
+        )
+    if opinion_hits:
+        return build_general_result(
+            "opinion_or_perspective",
+            "matched perspective or reflective language",
+            0.0,
+            [f"perspective signals: {', '.join(opinion_hits[:5])}"],
+            dominant_theme_reason="personal perspective or reflective framing dominates the article",
+        )
+    if overview_hits:
+        return build_general_result(
+            "general_overview",
+            "matched overview or basics-oriented language",
+            0.0,
+            [f"overview signals: {', '.join(overview_hits[:5])}"],
+            dominant_theme_reason="the article reads like a general overview of the topic",
+        )
+    if content_tier == "weak_snippet" or content_length < 180:
+        return build_general_result(
+            "informational_article",
+            "content is short and low-structure",
+            ARTICLE_TYPE_PENALTY,
+            ["short or low-structure content"],
+            dominant_theme_reason="the article does not show enough structure to infer a stronger general-purpose type",
+        )
+    if any(term in source_lower for term in ("health", "medical", "clinic", "hospital", "cdc", "nih")):
+        return build_general_result(
+            "informational_article",
+            "matched a domain source with general informational content",
+            0.0,
+            ["credible informational source"],
+            dominant_theme_reason="the article is primarily informational without a narrower editorial subtype",
+        )
+    return build_general_result(
+        "informational_article",
+        "matched general informational content",
+        0.0,
+        ["general informational framing"],
+        dominant_theme_reason="the article is mainly informative without a stronger specialized framing",
     )
 
 
@@ -1784,6 +2077,28 @@ def _looks_opinionated(title_lower: str, snippet_lower: str) -> bool:
     )
     text_blob = f"{title_lower} {snippet_lower}"
     return any(term in text_blob for term in opinion_terms)
+
+
+def _detect_topic_domain(normalized_keywords: list[str]) -> str:
+    if not normalized_keywords:
+        return "technical"
+    keyword_blob = " ".join(normalized_keywords)
+    if any(term in keyword_blob for term in TECHNICAL_TOPIC_HINTS):
+        return "technical"
+    return "general"
+
+
+def _general_specificity_support_terms(normalized_keywords: list[str]) -> tuple[str, ...]:
+    tokens: list[str] = []
+    for keyword in normalized_keywords:
+        for token in _tokenize_text(keyword):
+            if len(token) <= 2 and not token.isdigit():
+                continue
+            if token in TITLE_STOPWORDS:
+                continue
+            if token not in tokens:
+                tokens.append(token)
+    return tuple(tokens)
 
 
 def _unique_reasons(reasons: list[str]) -> list[str]:

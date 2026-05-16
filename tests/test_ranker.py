@@ -250,6 +250,83 @@ class RankSourceItemsTests(SimpleTestCase):
             {"strong relevance to topic", "relevant topic signal present"},
         )
 
+    def test_nontechnical_baby_sleep_article_uses_domain_neutral_classification(self):
+        items = [
+            {
+                "title": "Safe sleep tips for babies and tired parents",
+                "url": "https://example.com/baby-sleep",
+                "source": "Healthy Families",
+                "snippet": (
+                    "A practical guide to infant sleep, safe sleep positioning, bedtime routines, "
+                    "and when to talk to a pediatrician."
+                ),
+                "content": (
+                    "Safe sleep guidance helps reduce risk and supports better infant sleep.\n"
+                    "## Bedtime routine\n"
+                    "A calm bedtime routine can support baby sleep patterns.\n"
+                    "## Night waking\n"
+                    "Parents can respond consistently to night waking while keeping safe sleep habits."
+                ),
+                "metadata": {"content_tier": "full_article", "content_length": 860},
+            }
+        ]
+
+        _, ranking_scores = rank_source_items(
+            items,
+            keywords=["Baby sleeping", "infant sleep", "safe sleep", "bedtime routine"],
+            top_n=1,
+            min_quality_score=0.0,
+        )
+
+        score = ranking_scores[0]
+        self.assertEqual(score["topic_domain"], "general")
+        self.assertIn(score["primary_article_type"], {"practical_guide", "safety_guidance", "informational_article"})
+        self.assertNotIn(
+            score["primary_article_type"],
+            {"deep_technical", "product_update", "benchmark", "performance", "security", "testing"},
+        )
+        self.assertEqual(score["secondary_article_tags"], [])
+        self.assertEqual(score["dominant_tags"], [])
+
+    def test_nontechnical_topic_specificity_uses_topic_and_focus_terms(self):
+        items = [
+            {
+                "title": "Low-impact prenatal exercises for the third trimester",
+                "url": "https://example.com/prenatal-exercises",
+                "source": "Prenatal Health Center",
+                "snippet": (
+                    "A safe guide to low-impact prenatal exercise, pelvic floor work, and third-trimester movement."
+                ),
+                "content": (
+                    "## Third trimester movement\n"
+                    "These low-impact exercises are designed for pregnant women in late pregnancy.\n"
+                    "## Pelvic floor support\n"
+                    "Gentle pelvic floor support and safe exercise guidance can help during the third trimester."
+                ),
+                "metadata": {"content_tier": "full_article", "content_length": 920},
+            }
+        ]
+
+        _, ranking_scores = rank_source_items(
+            items,
+            keywords=["Physical exercises for pregnant women", "third trimester", "low impact", "pelvic floor", "safe exercise"],
+            top_n=1,
+            min_quality_score=0.0,
+        )
+
+        score = ranking_scores[0]
+        self.assertEqual(score["topic_domain"], "general")
+        self.assertGreater(score["topic_specificity_score"], 0.0)
+        self.assertNotEqual(score["topic_specificity_reason"], "no topic-specific signal model is configured for these keywords")
+        self.assertTrue(score["specificity_signals"])
+        self.assertTrue(
+            any(
+                signal in score["specificity_signals"]
+                for signal in ("third trimester", "low impact", "pelvic floor", "safe exercise")
+            ),
+            score["specificity_signals"],
+        )
+
     def test_oauth_agents_article_is_classified_as_architecture_security(self):
         items = [
             {
