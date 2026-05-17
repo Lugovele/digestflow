@@ -198,19 +198,12 @@ def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpR
         context["source_selection_error"] = "Select at least one source before generating the digest."
         return render(request, "digestflow/topic_list.html", context, status=400)
 
-    selected_sources = _persist_selected_topic_sources(topic, selected_candidates)
-    selected_source_ids = [source.id for source in selected_sources]
-    topic.sources.filter(id__in=selected_source_ids).update(
-        is_active=True,
-        validation_status=Source.VALIDATION_PENDING,
-        last_validation_error="",
+    run = _create_ui_digest_run(
+        topic,
+        source="selected_sources_web_ui",
+        selected_source_urls=[str(candidate.get("url") or "").strip() for candidate in selected_candidates if str(candidate.get("url") or "").strip()],
     )
-    topic.sources.exclude(id__in=selected_source_ids).update(is_active=False)
-    topic.source_mode = Topic.SOURCE_MODE_CUSTOM_ONLY
-    topic.save(update_fields=["source_mode", "updated_at"])
-
-    run = _create_ui_digest_run(topic, source="selected_sources_web_ui")
-    _start_topic_run(run, topic, default_source="selected_sources_web_ui")
+    _start_selected_source_run(run, topic, selected_candidates, default_source="selected_sources_web_ui")
     return redirect("run-detail", run_id=run.id)
 
 
@@ -218,9 +211,11 @@ def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpR
 def toggle_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
-    source.is_active = not source.is_active
-    source.save(update_fields=["is_active", "updated_at"])
-    return _render_topic_source_review(request, topic)
+    next_is_active = "is_active" in request.POST
+    if source.is_active != next_is_active:
+        source.is_active = next_is_active
+        source.save(update_fields=["is_active", "updated_at"])
+    return redirect("topic-workspace", topic_id=topic.id)
 
 
 @require_POST
@@ -1181,8 +1176,10 @@ def _build_topic_list_context(
         .prefetch_related("sources")
     )
     for topic in topics:
-        topic.source_count = len(topic.sources.all())
-        topic.active_source_count = sum(1 for source in topic.sources.all() if source.is_active)
+        topic.source_count = sum(1 for source in topic.sources.all() if source.origin != TopicSourceOrigin.DISCOVERED)
+        topic.active_source_count = sum(
+            1 for source in topic.sources.all() if source.is_active and source.origin != TopicSourceOrigin.DISCOVERED
+        )
         topic.legacy_source_display = _build_legacy_source_display(topic)
     recent_runs = DigestRun.objects.filter(topic__user=user).select_related("topic").order_by("-created_at")[:10]
     for run in recent_runs:
@@ -1199,6 +1196,8 @@ def _build_topic_list_context(
         "source_review_summary": _build_source_review_summary(discovered_topic, visible_new_source_candidates),
         "topic_source_inventory": _build_topic_source_inventory(discovered_topic),
         "active_saved_source_urls": _build_active_saved_source_urls(discovered_topic),
+        "active_selected_source_urls": _build_active_selected_source_urls(discovered_topic),
+        "selected_source_count": _build_selected_source_count(discovered_topic, visible_new_source_candidates),
         "legacy_topic_source": _build_legacy_source_display(discovered_topic),
         "source_add_feedback": None,
     }
@@ -1341,9 +1340,10 @@ def _build_source_review_summary(
 def _build_visible_new_source_candidates(candidate_records: list[dict]) -> list[dict]:
     visible_candidates: list[dict] = []
     for candidate in candidate_records:
-        if str(candidate.get("candidate_origin") or "").strip().lower() != TopicSourceOrigin.DISCOVERED:
+        candidate_origin = str(candidate.get("candidate_origin") or "").strip().lower()
+        if candidate_origin != TopicSourceOrigin.DISCOVERED:
             continue
-        if candidate.get("persisted_source_id"):
+        if candidate.get("persisted_source_id") and candidate_origin != TopicSourceOrigin.DISCOVERED:
             continue
         visible_candidates.append(candidate)
     return visible_candidates
@@ -1354,14 +1354,32 @@ def _build_active_saved_source_urls(topic: Topic | None) -> list[str]:
         return []
     return [
         str(source.url).strip()
+        for source in topic.sources.filter(is_active=True).exclude(origin=TopicSourceOrigin.DISCOVERED).order_by("id")
+        if str(source.url).strip()
+    ]
+
+
+def _build_active_selected_source_urls(topic: Topic | None) -> list[str]:
+    if topic is None:
+        return []
+    return [
+        str(source.url).strip()
         for source in topic.sources.filter(is_active=True).order_by("id")
         if str(source.url).strip()
     ]
 
 
+def _build_selected_source_count(topic: Topic | None, candidate_records: list[dict]) -> int:
+    saved_source_count = len(_build_active_saved_source_urls(topic))
+    if topic is None or not topic.uses_source_discovery:
+        return saved_source_count
+    new_source_count = sum(1 for candidate in candidate_records if candidate.get("selected"))
+    return saved_source_count + new_source_count
+
+
 def _build_curated_source_seeds(topic: Topic) -> list[CuratedSourceSeed]:
     curated_sources: list[CuratedSourceSeed] = []
-    for source in topic.sources.filter(is_active=True).order_by("id"):
+    for source in topic.sources.filter(is_active=True).exclude(origin=TopicSourceOrigin.DISCOVERED).order_by("id"):
         curated_sources.append(
             CuratedSourceSeed(
                 url=source.url,
@@ -1689,6 +1707,42 @@ def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[di
 
         normalized = classify_source_url(source_url)
         source = existing_by_normalized.get(normalized.normalized_url)
+        candidate_origin = _normalize_candidate_origin(
+            candidate,
+            source.origin if source is not None else TopicSourceOrigin.CURATED,
+        )
+        if source is not None and source.origin != TopicSourceOrigin.DISCOVERED:
+            candidate_origin = source.origin
+        if candidate_origin == TopicSourceOrigin.DISCOVERED:
+            candidate_title = str(candidate.get("title") or "").strip()
+            if source is None:
+                source = TopicSource.objects.create(
+                    topic=topic,
+                    name=candidate_title,
+                    url=source_url,
+                    normalized_url=normalized.normalized_url,
+                    source_type=normalized.source_type,
+                    origin=TopicSourceOrigin.DISCOVERED,
+                    platform=normalized.platform,
+                    validation_status=TopicSource.VALIDATION_PENDING,
+                    last_validation_error="",
+                    is_active=True,
+                )
+                existing_by_normalized[normalized.normalized_url] = source
+            elif source.origin == TopicSourceOrigin.DISCOVERED:
+                source.name = candidate_title or source.name
+                source.url = source_url
+                source.source_type = normalized.source_type
+                source.platform = normalized.platform
+                source.save(
+                    update_fields=[
+                        "name",
+                        "url",
+                        "source_type",
+                        "platform",
+                        "updated_at",
+                    ]
+                )
         source_origin = source.origin if source is not None else TopicSourceOrigin.CURATED
 
         prepared_candidates.append(
@@ -1697,7 +1751,7 @@ def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[di
                 "display_url": _build_compact_source_url(source_url),
                 "persisted_source_id": source.id if source is not None else None,
                 "normalized_url": normalized.normalized_url,
-                "candidate_origin": _normalize_candidate_origin(candidate, source_origin),
+                "candidate_origin": candidate_origin,
                 "selected": source.is_active if source is not None else bool(candidate.get("default_selected")),
                 "has_recent_article_count": candidate.get("has_recent_article_count")
                 if "has_recent_article_count" in candidate
@@ -1960,7 +2014,7 @@ def _get_or_create_ui_user():
     return user
 
 
-def _create_ui_digest_run(topic: Topic, source: str) -> DigestRun:
+def _create_ui_digest_run(topic: Topic, source: str, selected_source_urls: list[str] | None = None) -> DigestRun:
     return DigestRun.objects.create(
         topic=topic,
         input_snapshot={
@@ -1968,9 +2022,7 @@ def _create_ui_digest_run(topic: Topic, source: str) -> DigestRun:
             "source": source,
             "topic_name": topic.name,
             "source_url": topic.source_url or "",
-            "selected_source_urls": list(
-                topic.sources.filter(is_active=True).values_list("url", flat=True)
-            ),
+            "selected_source_urls": list(selected_source_urls or topic.sources.filter(is_active=True).values_list("url", flat=True)),
         },
     )
 
@@ -2035,6 +2087,54 @@ def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
         **run.input_snapshot,
         "source": default_source,
         "source_url": "",
+        "raw_items_count": len(raw_items),
+    }
+    run.save(update_fields=["input_snapshot", "updated_at"])
+    run_digest_pipeline(run.id, raw_items=raw_items)
+
+
+def _start_selected_source_run(run: DigestRun, topic: Topic, selected_candidates: list[dict], default_source: str) -> None:
+    if not selected_candidates:
+        _mark_run_failed_for_empty_selected_sources(run, [])
+        return
+
+    raw_items: list[dict] = []
+    selected_source_urls: list[str] = []
+    valid_source_count = 0
+
+    for candidate in selected_candidates:
+        source_url = str(candidate.get("url") or "").strip()
+        if not source_url:
+            continue
+
+        normalized_url = str(candidate.get("normalized_url") or classify_source_url(source_url).normalized_url).strip()
+        source_items = fetch_rss_articles(normalized_url)
+        selected_source_urls.append(source_url)
+
+        persisted_source = topic.sources.filter(normalized_url=normalized_url).first()
+        if source_items:
+            valid_source_count += 1
+            raw_items.extend(source_items)
+            if persisted_source is not None:
+                persisted_source.validation_status = TopicSource.VALIDATION_VALID
+                persisted_source.last_validation_error = ""
+                persisted_source.save(update_fields=["validation_status", "last_validation_error", "updated_at"])
+        elif persisted_source is not None:
+            persisted_source.validation_status = TopicSource.VALIDATION_INVALID
+            persisted_source.last_validation_error = "Source returned no valid items."
+            persisted_source.save(update_fields=["validation_status", "last_validation_error", "updated_at"])
+
+    if not raw_items:
+        _mark_run_failed_for_empty_selected_sources(run, selected_source_urls)
+        return
+
+    run.input_snapshot = {
+        **run.input_snapshot,
+        "source": "selected_sources",
+        "source_url": "",
+        "selected_source_urls": selected_source_urls,
+        "selected_source_count": len(selected_source_urls),
+        "validated_source_count": valid_source_count,
         "raw_items_count": len(raw_items),
     }
     run.save(update_fields=["input_snapshot", "updated_at"])

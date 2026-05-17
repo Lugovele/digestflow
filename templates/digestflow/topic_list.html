@@ -755,30 +755,24 @@
                             <div class="stack" style="gap: 10px; align-items: flex-end;">
                                 <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
                                     {% csrf_token %}
+                                    <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
                                     <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
                                     <input type="hidden" name="source_url" value="">
                                     <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
                                     <button type="submit" class="secondary-button secondary-button--subtle secondary-button--visible">Find sources</button>
                                 </form>
                             </div>
-                        </div>
-                        {% if source_selection_error %}
-                            <p class="error">{{ source_selection_error }}</p>
-                        {% endif %}
-                        {% if discovered_source_candidates %}
-                            <form id="workspace-run-form" method="post" action="{% url 'run-with-selected-sources' discovered_topic.id %}" class="stack">
-                                {% csrf_token %}
-                                {% for saved_source_url in active_saved_source_urls %}
-                                    <input type="hidden" name="selected_source_urls" value="{{ saved_source_url }}">
-                                {% endfor %}
-                                <div class="source-list">
-                                    {% for candidate in discovered_source_candidates %}
+                            <div class="source-list">
+                                {% for candidate in discovered_source_candidates %}
+                                    <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id candidate.persisted_source_id %}" data-preserve-scroll>
+                                        {% csrf_token %}
                                         <label class="source-option">
                                             <input
                                                 type="checkbox"
-                                                name="selected_source_urls"
-                                                value="{{ candidate.url }}"
+                                                name="is_active"
+                                                value="1"
                                                 {% if candidate.selected %}checked{% endif %}
+                                                onchange="this.form.requestSubmit();"
                                             >
                                             <span class="source-identity">
                                                 <span class="source-line">
@@ -800,9 +794,9 @@
                                                 </div>
                                             </span>
                                         </label>
-                                    {% endfor %}
-                                </div>
-                            </form>
+                                    </form>
+                                {% endfor %}
+                            </div>
                         {% else %}
                             <p class="muted">No new sources were found for this topic yet.</p>
                         {% endif %}
@@ -811,11 +805,39 @@
             </section>
 
             {% if discovered_topic.uses_source_discovery %}
-                {% if discovered_source_candidates %}
-                    <div class="pipeline-bar pipeline-bar--final">
-                        <button type="submit" form="workspace-run-form" class="primary-cta">Run</button>
+                <section class="card workflow-card">
+                    <div class="workflow-section">
+                        <div class="section-header">
+                            <div>
+                                <h3 class="section-heading">Ready to generate</h3>
+                                <p class="section-hint" data-run-source-count-text>
+                                {% if selected_source_count == 0 %}
+                                    Please select at least one source to run a new digest.
+                                {% elif selected_source_count == 1 %}
+                                    1 selected source will be used in the next digest run.
+                                {% else %}
+                                    {{ selected_source_count }} selected sources will be used in the next digest run.
+                                {% endif %}
+                                </p>
+                            </div>
+                            <div>
+                                <form id="workspace-run-form" method="post" action="{% url 'run-with-selected-sources' discovered_topic.id %}" style="margin: 0;">
+                                    {% csrf_token %}
+                                    {% for selected_source_url in active_selected_source_urls %}
+                                        <input type="hidden" name="selected_source_urls" value="{{ selected_source_url }}">
+                                    {% endfor %}
+                                </form>
+                                <button
+                                    type="submit"
+                                    form="workspace-run-form"
+                                    class="primary-cta"
+                                    data-run-source-count-button
+                                    {% if selected_source_count == 0 %}disabled{% endif %}
+                                >Run digest</button>
+                            </div>
+                        </div>
                     </div>
-                {% endif %}
+                </section>
             {% else %}
                 <div class="pipeline-bar pipeline-bar--final">
                     <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">

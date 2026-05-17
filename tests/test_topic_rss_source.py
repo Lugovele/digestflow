@@ -1,6 +1,7 @@
 ﻿from unittest.mock import patch
 
 from html import unescape
+import re
 
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -1265,9 +1266,12 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "suggestions")
         self.assertNotContains(response, "Hybrid")
         self.assertNotContains(response, "Run pipeline")
-        self.assertContains(response, "Run")
+        self.assertContains(response, "Run digest")
         topic = Topic.objects.get(name="AI agents")
-        self.assertEqual(topic.sources.count(), 0)
+        self.assertEqual(topic.sources.count(), 1)
+        discovered_source = topic.sources.get()
+        self.assertEqual(discovered_source.origin, TopicSourceOrigin.DISCOVERED)
+        self.assertTrue(discovered_source.is_active)
         self.assertEqual(topic.source_mode, TopicSourceMode.HYBRID)
         self.assertNotContains(response, "Legacy source")
         self.assertNotContains(response, "Curated")
@@ -1284,11 +1288,11 @@ class TopicRssSourceTests(TestCase):
         self.assertNotIn('<h2 class="workflow-title">AI agents</h2>', html)
         self.assertLess(html.index('<h1 class="page-title">AI agents</h1>'), html.index("Saved sources"))
         self.assertLess(html.index("New sources"), html.index("Find sources"))
-        self.assertLess(html.index("New sources"), html.index('class="pipeline-bar pipeline-bar--final"'))
-        self.assertLess(html.index('class="pipeline-bar pipeline-bar--final"'), html.index(">Run<"))
+        self.assertLess(html.index("New sources"), html.index("Run digest"))
+        self.assertIn("1 selected source will be used in the next digest run.", html)
         self.assertIn('name="topic_id" value="', html)
         self.assertIn('onchange="this.form.requestSubmit();"', html)
-        self.assertEqual(html.count(">Run<"), 1)
+        self.assertEqual(html.count('class="primary-cta"'), 1)
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_workspace_topic_configuration_autosaves_without_explicit_save_button(
@@ -1393,7 +1397,9 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "New sources")
         self.assertContains(response, "Find sources")
         self.assertContains(response, "DEV Community / #ai")
-        self.assertContains(response, "Run")
+        self.assertContains(response, "Run digest")
+        self.assertContains(response, "1 selected source will be used in the next digest run.")
+        self.assertNotContains(response, "No new sources yet.")
         self.assertNotContains(response, "Saved sources")
         self.assertNotContains(response, "Add a link and press Enter")
         self.assertNotContains(response, "Add source")
@@ -1531,12 +1537,12 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         topic.refresh_from_db()
-        self.assertEqual(topic.source_mode, Topic.SOURCE_MODE_CUSTOM_ONLY)
+        self.assertEqual(topic.source_mode, TopicSourceMode.CURATED_ONLY)
         source_one.refresh_from_db()
         source_two.refresh_from_db()
         source_three.refresh_from_db()
         self.assertTrue(source_one.is_active)
-        self.assertFalse(source_two.is_active)
+        self.assertTrue(source_two.is_active)
         self.assertTrue(source_three.is_active)
         self.assertEqual(mock_fetch_rss_articles.call_count, 2)
         mock_fetch_rss_articles.assert_any_call("https://dev.to/api/articles?tag=ai")
@@ -2753,7 +2759,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
     @patch("apps.digests.views.resolve_source_candidates")
     @patch("apps.digests.views.run_digest_pipeline")
     @patch("apps.digests.views.fetch_rss_articles")
-    def test_selected_discovered_candidate_becomes_persistent_topic_source(
+    def test_selected_discovered_candidate_stays_in_new_sources_and_does_not_become_saved_source(
         self,
         mock_fetch_rss_articles,
         mock_run_digest_pipeline,
@@ -2796,10 +2802,239 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(response.status_code, 302)
         persisted_source = topic.sources.get()
         self.assertEqual(persisted_source.url, "https://dev.to/t/ai")
-        self.assertEqual(persisted_source.origin, "discovered")
+        self.assertEqual(persisted_source.origin, TopicSourceOrigin.DISCOVERED)
         self.assertTrue(persisted_source.is_active)
+        topic.refresh_from_db()
+        self.assertEqual(topic.source_mode, TopicSourceMode.HYBRID)
         mock_fetch_rss_articles.assert_called_once_with("https://dev.to/api/articles?tag=ai")
         mock_run_digest_pipeline.assert_called_once()
+
+        workspace_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(workspace_response.status_code, 200)
+        workspace_html = workspace_response.content.decode("utf-8")
+        self.assertIn("Saved sources", workspace_html)
+        self.assertIn("New sources", workspace_html)
+        self.assertIn("DEV Community / #ai", workspace_html)
+        self.assertIn("1 selected source will be used in the next digest run.", workspace_html)
+        saved_section = workspace_html.split("Saved sources", 1)[1].split("New sources", 1)[0]
+        new_section = workspace_html.split("New sources", 1)[1]
+        self.assertNotIn("DEV Community / #ai", saved_section)
+        self.assertIn("DEV Community / #ai", new_section)
+
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_new_sources_are_checked_by_default_after_discovery_and_persist_when_toggled(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = [
+            {
+                "url": "https://dev.to/t/python",
+                "title": "DEV Community / #python",
+                "description": "Broad Python engineering stream.",
+                "source_type": "devto_tag",
+                "platform": "dev.to",
+                "recent_article_count": 8,
+                "has_recent_article_count": True,
+                "default_selected": False,
+                "candidate_origin": "discovered",
+            }
+        ]
+
+        discovery_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Python discovery",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(discovery_response.status_code, 200)
+        topic = Topic.objects.get(name="Python discovery")
+        source = topic.sources.get()
+        self.assertEqual(source.origin, TopicSourceOrigin.DISCOVERED)
+        self.assertTrue(source.is_active)
+        self.assertContains(discovery_response, "1 selected source will be used in the next digest run.")
+        self.assertNotContains(discovery_response, 'class="primary-cta" disabled', html=False)
+        discovery_html = discovery_response.content.decode("utf-8")
+        checkbox_pattern = re.compile(
+            rf'<form method="post" action="{re.escape(reverse("toggle-topic-source", args=[topic.id, source.id]))}".*?<input[^>]*type="checkbox"[^>]*checked',
+            re.DOTALL,
+        )
+        self.assertRegex(discovery_html, checkbox_pattern)
+        self.assertContains(
+            discovery_response,
+            f'<input type="hidden" name="topic_id" value="{topic.id}">',
+            html=False,
+        )
+
+        toggle_response = self.client.post(reverse("toggle-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(toggle_response.status_code, 302)
+        self.assertEqual(toggle_response.headers["Location"], reverse("topic-workspace", args=[topic.id]))
+        source.refresh_from_db()
+        self.assertFalse(source.is_active)
+
+        refreshed_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+        refreshed_html = refreshed_response.content.decode("utf-8")
+        self.assertEqual(refreshed_response.status_code, 200)
+        self.assertIn("DEV Community / #python", refreshed_html)
+        self.assertIn("Please select at least one source to run a new digest.", refreshed_html)
+        self.assertNotIn("Saved sources", refreshed_html)
+        self.assertIn("data-run-source-count-button", refreshed_html)
+        self.assertIn("disabled", refreshed_html)
+        new_section = refreshed_html.split("New sources", 1)[1]
+        self.assertIn("DEV Community / #python", new_section)
+        self.assertNotIn('checked', new_section.split('value="1"', 1)[1].split('>', 1)[0])
+
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_unchecked_discovered_source_post_matches_browser_shape_and_stays_unchecked_after_refresh(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = [
+            {
+                "url": "https://dev.to/t/python",
+                "title": "DEV Community / #python",
+                "description": "Broad Python engineering stream.",
+                "source_type": "devto_tag",
+                "platform": "dev.to",
+                "recent_article_count": 8,
+                "has_recent_article_count": True,
+                "default_selected": True,
+                "candidate_origin": "discovered",
+            }
+        ]
+
+        discovery_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Python browser flow",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(discovery_response.status_code, 200)
+        topic = Topic.objects.get(name="Python browser flow")
+        source = topic.sources.get()
+        self.assertTrue(source.is_active)
+
+        unchecked_post_response = self.client.post(
+            reverse("toggle-topic-source", args=[topic.id, source.id]),
+            data={},
+        )
+
+        self.assertEqual(unchecked_post_response.status_code, 302)
+        self.assertEqual(unchecked_post_response.headers["Location"], reverse("topic-workspace", args=[topic.id]))
+        source.refresh_from_db()
+        self.assertFalse(source.is_active)
+
+        refreshed_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+        refreshed_html = refreshed_response.content.decode("utf-8")
+        self.assertEqual(refreshed_response.status_code, 200)
+        self.assertIn("New sources", refreshed_html)
+        self.assertNotIn("Saved sources", refreshed_html)
+        self.assertIn("DEV Community / #python", refreshed_html)
+        self.assertIn("Please select at least one source to run a new digest.", refreshed_html)
+        self.assertIn("data-run-source-count-button", refreshed_html)
+        self.assertIn("disabled", refreshed_html)
+        new_section = refreshed_html.split("New sources", 1)[1]
+        self.assertIn("DEV Community / #python", new_section)
+        self.assertNotIn('checked', new_section.split('value="1"', 1)[1].split('>', 1)[0])
+
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_rediscovery_keeps_existing_discovered_source_unchecked_instead_of_resetting_default_selection(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = [
+            {
+                "url": "https://dev.to/t/python",
+                "title": "DEV Community / #python",
+                "description": "Broad Python engineering stream.",
+                "source_type": "devto_tag",
+                "platform": "dev.to",
+                "recent_article_count": 8,
+                "has_recent_article_count": True,
+                "default_selected": False,
+                "candidate_origin": "discovered",
+            },
+            {
+                "url": "https://dev.to/t/django",
+                "title": "DEV Community / #django",
+                "description": "Broad Django engineering stream.",
+                "source_type": "devto_tag",
+                "platform": "dev.to",
+                "recent_article_count": 6,
+                "has_recent_article_count": True,
+                "default_selected": False,
+                "candidate_origin": "discovered",
+            },
+        ]
+
+        discovery_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Python rediscovery flow",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(discovery_response.status_code, 200)
+        topic = Topic.objects.get(name="Python rediscovery flow")
+        discovered_sources = {source.url: source for source in topic.sources.order_by("id")}
+        python_source = discovered_sources["https://dev.to/t/python"]
+        django_source = discovered_sources["https://dev.to/t/django"]
+        self.assertTrue(python_source.is_active)
+        self.assertTrue(django_source.is_active)
+        self.assertContains(discovery_response, "2 selected sources will be used in the next digest run.")
+
+        unchecked_post_response = self.client.post(
+            reverse("toggle-topic-source", args=[topic.id, python_source.id]),
+            data={},
+        )
+
+        self.assertEqual(unchecked_post_response.status_code, 302)
+        python_source.refresh_from_db()
+        django_source.refresh_from_db()
+        self.assertFalse(python_source.is_active)
+        self.assertTrue(django_source.is_active)
+
+        rediscovery_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(rediscovery_response.status_code, 200)
+        python_source.refresh_from_db()
+        django_source.refresh_from_db()
+        self.assertFalse(python_source.is_active)
+        self.assertTrue(django_source.is_active)
+        self.assertContains(rediscovery_response, "1 selected source will be used in the next digest run.")
+        html = rediscovery_response.content.decode("utf-8")
+        new_section = html.split("New sources", 1)[1]
+        self.assertIn("DEV Community / #python", new_section)
+        self.assertIn("DEV Community / #django", new_section)
+        python_checkbox = new_section.split("DEV Community / #python", 1)[0].rsplit('value="1"', 1)[1].split('>', 1)[0]
+        django_checkbox = new_section.split("DEV Community / #django", 1)[0].rsplit('value="1"', 1)[1].split('>', 1)[0]
+        self.assertNotIn("checked", python_checkbox)
+        self.assertIn("checked", django_checkbox)
 
     def test_topic_list_hides_legacy_source_when_persistent_topic_source_exists(self) -> None:
         topic = Topic.objects.create(
