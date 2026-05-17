@@ -183,6 +183,7 @@ switch ($normalizedLevel) {
             "tests.test_topic_rss_source.TopicRssSourceTests.test_workspace_topic_configuration_autosaves_without_explicit_save_button",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_curated_only_workspace_hides_discovery_section",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_discovery_only_workspace_hides_saved_sources_section",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_empty_discovery_workspace_still_renders_run_digest_card_disabled",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_saved_source_does_not_render_inside_new_sources_section",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_new_sources_are_checked_by_default_after_discovery_and_persist_when_toggled",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_unchecked_discovered_source_post_matches_browser_shape_and_stays_unchecked_after_refresh",

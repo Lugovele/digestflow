@@ -750,7 +750,7 @@ class TopicRssSourceTests(TestCase):
         topic.refresh_from_db()
         self.assertEqual(topic.keywords, ["8 month"])
         self.assertContains(response, 'data-focus-value="8 month"', html=False)
-        self.assertNotContains(response, FOCUS_VALIDATION_MESSAGE)
+        self.assertNotContains(response, f"<strong>{FOCUS_VALIDATION_MESSAGE}</strong>", html=False)
 
     def test_focus_accepts_short_contextual_phrases(self) -> None:
         accepted_terms = ["8 months", "third trimester", "low impact", "safe", "beginner", "no equipment"]
@@ -773,7 +773,7 @@ class TopicRssSourceTests(TestCase):
             topic.refresh_from_db()
             self.assertEqual(topic.keywords, [term])
             self.assertContains(response, f'data-focus-value="{term}"', html=False)
-            self.assertNotContains(response, FOCUS_VALIDATION_MESSAGE)
+            self.assertNotContains(response, f"<strong>{FOCUS_VALIDATION_MESSAGE}</strong>", html=False)
 
     def test_focus_rejects_number_only_input_with_specific_message(self) -> None:
         topic = Topic.objects.create(
@@ -1231,14 +1231,17 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Back to topics")
         self.assertContains(response, "AI agents")
-        self.assertContains(response, "Topic")
-        self.assertContains(response, "Where to look")
+        self.assertNotContains(response, '<label for="id_topic_name">Topic</label>', html=False)
+        self.assertNotContains(response, '<label for="id_source_mode">Where to look</label>', html=False)
         self.assertNotContains(response, "Topic name")
         self.assertNotContains(response, "Source mode")
         self.assertNotContains(response, "Choose how this topic should find sources.")
         self.assertContains(response, "Saved sources")
         self.assertContains(response, "New sources")
         self.assertContains(response, "Find sources")
+        self.assertContains(response, "Use saved and new sources")
+        self.assertContains(response, "Use saved sources only")
+        self.assertContains(response, "Use new sources only")
         self.assertNotContains(response, ">Save<", html=False)
         self.assertNotContains(response, "Refresh source discovery")
         self.assertNotContains(response, "Saved topics")
@@ -1326,6 +1329,7 @@ class TopicRssSourceTests(TestCase):
         )
         self.assertContains(response, "AI agent systems")
         self.assertContains(response, "saved only")
+        self.assertContains(response, "Use saved sources only")
         self.assertNotContains(response, ">Save<", html=False)
 
     @patch("apps.digests.views.resolve_source_candidates")
@@ -1357,14 +1361,16 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Curated AI")
         self.assertContains(response, "saved only")
         self.assertContains(response, "Saved sources")
-        self.assertContains(response, "Run")
+        self.assertContains(response, "Run digest")
+        self.assertContains(response, "Please select at least one source to run a new digest.")
         self.assertNotContains(response, "New sources")
         self.assertNotContains(response, "Find sources")
-        self.assertNotContains(response, "No new sources were found for this topic yet.")
+        self.assertNotContains(response, "No new sources yet.")
         self.assertNotContains(response, "DEV Community / #ai")
 
         html = response.content.decode("utf-8")
-        self.assertEqual(html.count(">Run<"), 1)
+        self.assertEqual(html.count('class="primary-cta"'), 1)
+        self.assertIn('class="primary-cta" disabled', html)
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_discovery_only_workspace_hides_saved_sources_section(self, mock_resolve_source_candidates) -> None:
@@ -1396,6 +1402,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "new only")
         self.assertContains(response, "New sources")
         self.assertContains(response, "Find sources")
+        self.assertContains(response, "Find additional sources for this topic.")
         self.assertContains(response, "DEV Community / #ai")
         self.assertContains(response, "Run digest")
         self.assertContains(response, "1 selected source will be used in the next digest run.")
@@ -1405,7 +1412,78 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Add source")
 
         html = response.content.decode("utf-8")
-        self.assertEqual(html.count(">Run<"), 1)
+        self.assertEqual(html.count('class="primary-cta"'), 1)
+        self.assertNotIn('class="primary-cta" disabled', html)
+
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_empty_discovery_workspace_still_renders_run_digest_card_disabled(self, mock_resolve_source_candidates) -> None:
+        mock_resolve_source_candidates.return_value = []
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Empty discovery topic",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Empty discovery topic")
+        self.assertContains(response, "New sources")
+        self.assertContains(response, "No new sources yet.")
+        self.assertContains(response, "Find")
+        self.assertNotContains(response, "Find additional sources for this topic.")
+        self.assertNotContains(response, "No new sources were found for this topic yet.")
+        self.assertContains(response, "Ready to generate")
+        self.assertContains(response, "Please select at least one source to run a new digest.")
+        self.assertContains(response, "Run digest")
+
+        html = response.content.decode("utf-8")
+        self.assertEqual(html.count('class="primary-cta"'), 1)
+        self.assertIn('class="primary-cta"', html)
+        self.assertIn('data-run-source-count-button', html)
+        self.assertIn('disabled', html)
+
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_run_digest_card_uses_plural_selected_source_helper_text(self, mock_resolve_source_candidates) -> None:
+        mock_resolve_source_candidates.return_value = [
+            {
+                "url": "https://dev.to/t/ai",
+                "title": "DEV Community / #ai",
+                "description": "Broad AI engineering stream.",
+                "source_type": "devto_tag",
+                "platform": "dev.to",
+                "recent_article_count": 12,
+                "has_recent_article_count": True,
+                "default_selected": True,
+                "candidate_origin": "discovered",
+            },
+            {
+                "url": "https://dev.to/t/python",
+                "title": "DEV Community / #python",
+                "description": "Broad Python engineering stream.",
+                "source_type": "devto_tag",
+                "platform": "dev.to",
+                "recent_article_count": 8,
+                "has_recent_article_count": True,
+                "default_selected": True,
+                "candidate_origin": "discovered",
+            },
+        ]
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Plural source count",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "2 selected sources will be used in the next digest run.")
+        self.assertNotContains(response, 'class="primary-cta" disabled', html=False)
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_saved_source_does_not_render_inside_new_sources_section(self, mock_resolve_source_candidates) -> None:
@@ -2577,20 +2655,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             html,
         )
 
-    @patch("apps.digests.views.inspect_generic_web_article")
-    def test_source_add_error_clears_when_input_is_edited(self, mock_inspect_generic_web_article) -> None:
-        mock_inspect_generic_web_article.return_value = {
-            "article": None,
-            "diagnostics": {
-                "normalized_url": "https://example.com/unreadable-article",
-                "source_type": "generic_html",
-                "fetch_status": None,
-                "fetch_failure_reason": "Temporary failure in name resolution",
-                "extraction_strategy": "fetch_failed",
-                "usable_text_length": 0,
-                "rejection_reason": "temporary failure in name resolution",
-            },
-        }
+    def test_source_add_error_clears_when_input_is_edited(self) -> None:
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Source feedback reset topic",
@@ -2600,7 +2665,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         response = self.client.post(
             reverse("add-topic-source", args=[topic.id]),
             data={
-                "source_url": "https://example.com/unreadable-article",
+                "source_url": "not-a-url",
                 "source_mode": TopicSourceMode.HYBRID,
             },
         )

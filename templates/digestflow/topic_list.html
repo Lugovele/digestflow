@@ -66,6 +66,17 @@
             margin: 4px 0 0;
             color: #5b6472;
         }
+        .discovery-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            margin: 12px 0 16px;
+            flex-wrap: wrap;
+        }
+        .discovery-row .section-hint {
+            margin: 0;
+        }
         .workflow-header,
         .section-header,
         .pipeline-bar,
@@ -78,6 +89,10 @@
         .section-header--stack {
             flex-direction: column;
             align-items: stretch;
+            gap: 10px;
+        }
+        .section-header--stack + * {
+            margin-top: 10px;
         }
         .workflow-title {
             margin: 0;
@@ -387,6 +402,12 @@
             min-width: 132px;
             box-shadow: 0 8px 22px rgba(34, 81, 204, 0.2);
         }
+        .primary-cta:disabled {
+            background: #d8dfeb;
+            color: #6b7280;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
         .pipeline-bar--final {
             margin-top: 26px;
             justify-content: flex-end;
@@ -484,6 +505,13 @@
             .topic-form-actions > * {
                 width: 100%;
             }
+            .discovery-row {
+                align-items: stretch;
+            }
+            .discovery-row form,
+            .discovery-row .secondary-button {
+                width: 100%;
+            }
             .inventory-actions {
                 justify-content: flex-start;
             }
@@ -514,7 +542,6 @@
                     {% csrf_token %}
                     <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
                     <div class="field-row">
-                        <label for="{{ topic_form.topic_name.id_for_label }}">Topic</label>
                         <input
                             type="text"
                             name="{{ topic_form.topic_name.html_name }}"
@@ -525,14 +552,23 @@
                         >
                     </div>
                     <div class="field-row">
-                        <label for="{{ topic_form.source_mode.id_for_label }}">Where to look</label>
                         <select
                             name="{{ topic_form.source_mode.html_name }}"
                             id="{{ topic_form.source_mode.id_for_label }}"
                             onchange="this.form.requestSubmit();"
                         >
                             {% for value, label in topic_form.source_mode.field.choices %}
-                                <option value="{{ value }}"{% if topic_form.source_mode.value == value %} selected{% endif %}>{{ label }}</option>
+                                <option value="{{ value }}"{% if topic_form.source_mode.value == value %} selected{% endif %}>
+                                    {% if value == "hybrid" %}
+                                        Use saved and new sources
+                                    {% elif value == "curated_only" %}
+                                        Use saved sources only
+                                    {% elif value == "discovery_only" %}
+                                        Use new sources only
+                                    {% else %}
+                                        {{ label }}
+                                    {% endif %}
+                                </option>
                             {% endfor %}
                         </select>
                     </div>
@@ -668,8 +704,8 @@
                 </form>
             </section>
 
-            <section class="card workflow-card">
-                {% if discovered_topic.uses_curated_sources %}
+            {% if discovered_topic.uses_curated_sources %}
+                <section class="card workflow-card">
                     <div class="workflow-section">
                         <div class="section-header section-header--stack">
                             <div>
@@ -743,16 +779,21 @@
                             </div>
                         {% endif %}
                     </div>
-                {% endif %}
+                </section>
+            {% endif %}
 
-                {% if discovered_topic.uses_source_discovery %}
+            {% if discovered_topic.uses_source_discovery %}
+                <section class="card workflow-card">
                     <div class="workflow-section">
-                        <div class="section-header">
-                            <div>
-                                <h3 class="section-heading">New sources</h3>
-                                <p class="section-hint">Choose sources to use in the next run.</p>
-                            </div>
-                            <div class="stack" style="gap: 10px; align-items: flex-end;">
+                        <div>
+                            <h3 class="section-heading">New sources</h3>
+                        </div>
+                        {% if source_selection_error %}
+                            <p class="error">{{ source_selection_error }}</p>
+                        {% endif %}
+                        {% if discovered_source_candidates %}
+                            <div class="discovery-row">
+                                <p class="section-hint">Find additional sources for this topic.</p>
                                 <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
                                     {% csrf_token %}
                                     <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
@@ -798,11 +839,23 @@
                                 {% endfor %}
                             </div>
                         {% else %}
-                            <p class="muted">No new sources were found for this topic yet.</p>
+                            <div class="stack" style="gap: 10px; align-items: flex-start; margin-top: 12px;">
+                                <div>
+                                    <p class="muted" style="margin: 0; font-weight: 600; color: #374151;">No new sources yet.</p>
+                                </div>
+                                <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
+                                    {% csrf_token %}
+                                    <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
+                                    <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
+                                    <input type="hidden" name="source_url" value="">
+                                    <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
+                                    <button type="submit" class="secondary-button secondary-button--subtle secondary-button--visible">Find</button>
+                                </form>
+                            </div>
                         {% endif %}
                     </div>
-                {% endif %}
-            </section>
+                </section>
+            {% endif %}
 
             {% if discovered_topic.uses_source_discovery %}
                 <section class="card workflow-card">
@@ -839,12 +892,30 @@
                     </div>
                 </section>
             {% else %}
-                <div class="pipeline-bar pipeline-bar--final">
-                    <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
-                        {% csrf_token %}
-                        <button type="submit" class="primary-cta">Run</button>
-                    </form>
-                </div>
+                <section class="card workflow-card">
+                    <div class="workflow-section">
+                        <div class="section-header">
+                            <div>
+                                <h3 class="section-heading">Ready to generate</h3>
+                                <p class="section-hint">
+                                {% if selected_source_count == 0 %}
+                                    Please select at least one source to run a new digest.
+                                {% elif selected_source_count == 1 %}
+                                    1 selected source will be used in the next digest run.
+                                {% else %}
+                                    {{ selected_source_count }} selected sources will be used in the next digest run.
+                                {% endif %}
+                                </p>
+                            </div>
+                            <div>
+                                <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="primary-cta" {% if selected_source_count == 0 %}disabled{% endif %}>Run digest</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             {% endif %}
         {% else %}
             <section class="card">
