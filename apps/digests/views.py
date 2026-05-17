@@ -1633,7 +1633,10 @@ def _build_topic_source_description(source: TopicSource) -> str:
 
 def _fallback_source_label(url: str) -> str:
     parsed = urlparse(str(url or ""))
-    return parsed.netloc or str(url or "Source")
+    host = (parsed.netloc or "").strip()
+    if host.lower().startswith("www."):
+        host = host[4:]
+    return host or str(url or "Source")
 
 
 def _build_safe_saved_source_display_title(title: str, url: str) -> str:

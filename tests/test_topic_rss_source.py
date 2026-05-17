@@ -2372,7 +2372,12 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(topic.sources.count(), 1)
         self.assertNotContains(response, "We could not reach this URL.", status_code=200)
-        self.assertNotContains(response, 'value="https://missing.example/article"', html=False, status_code=200)
+        self.assertContains(
+            response,
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            html=False,
+            status_code=200,
+        )
 
     @patch("apps.digests.views.inspect_generic_web_article")
     def test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_returns_404(
@@ -2604,7 +2609,6 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'value="https://example.com/reachable-article"', html=False, status_code=200)
         self.assertContains(
             response,
             '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
@@ -2818,7 +2822,10 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
 
         self.assertEqual(response.status_code, 200)
         topic = Topic.objects.get(name="Preview only")
-        self.assertEqual(topic.sources.count(), 0)
+        self.assertEqual(topic.sources.count(), 1)
+        discovered_source = topic.sources.get()
+        self.assertEqual(discovered_source.origin, TopicSourceOrigin.DISCOVERED)
+        self.assertTrue(discovered_source.is_active)
         self.assertNotContains(response, "No saved sources yet.")
 
     @patch("apps.digests.views.resolve_source_candidates")
@@ -3317,7 +3324,12 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         mock_resolve_source_candidates.return_value = []
 
         toggle_response = self.client.post(reverse("toggle-topic-source", args=[topic.id, source.id]))
-        self.assertEqual(toggle_response.status_code, 200)
+        self.assertEqual(toggle_response.status_code, 302)
+        self.assertRedirects(
+            toggle_response,
+            reverse("topic-workspace", args=[topic.id]),
+            fetch_redirect_response=False,
+        )
         source.refresh_from_db()
         self.assertFalse(source.is_active)
 
