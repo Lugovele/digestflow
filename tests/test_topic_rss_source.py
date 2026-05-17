@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun
+from apps.digests.views import _build_curated_source_seeds
 from apps.sources.models import Article
 from apps.topics.focus import (
     FOCUS_DUPLICATE_MESSAGE,
@@ -18,7 +19,7 @@ from apps.topics.focus import (
     is_meaningful_focus_term,
 )
 from apps.topics.focus_suggestions import generate_focus_suggestions
-from apps.topics.models import Topic, TopicSource, TopicSourceMode
+from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
 
 LONG_RSS_SNIPPET_1 = (
     "A content team cut prep from 6 hours to 2.5 hours, but editors still checked "
@@ -2254,7 +2255,10 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertContains(response, 'value="not-a-url"', html=False, status_code=400)
 
     @patch("apps.digests.views.inspect_generic_web_article")
-    def test_add_topic_source_rejects_unreachable_generic_web_article(self, mock_inspect_generic_web_article) -> None:
+    def test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_fails(
+        self,
+        mock_inspect_generic_web_article,
+    ) -> None:
         mock_inspect_generic_web_article.return_value = {
             "article": None,
             "diagnostics": {
@@ -2281,13 +2285,16 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(topic.sources.count(), 0)
-        self.assertContains(response, "We could not reach this URL.", status_code=400)
-        self.assertContains(response, 'value="https://missing.example/article"', html=False, status_code=400)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        self.assertNotContains(response, "We could not reach this URL.", status_code=200)
+        self.assertNotContains(response, 'value="https://missing.example/article"', html=False, status_code=200)
 
     @patch("apps.digests.views.inspect_generic_web_article")
-    def test_add_topic_source_rejects_generic_web_article_that_returns_404(self, mock_inspect_generic_web_article) -> None:
+    def test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_returns_404(
+        self,
+        mock_inspect_generic_web_article,
+    ) -> None:
         mock_inspect_generic_web_article.return_value = {
             "article": None,
             "diagnostics": {
@@ -2314,9 +2321,45 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(topic.sources.count(), 0)
-        self.assertContains(response, "This page returned 404/410.", status_code=400)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        self.assertNotContains(response, "This page returned 404/410.", status_code=200)
+
+    @patch("apps.digests.views.inspect_generic_web_article")
+    def test_add_topic_source_accepts_spinning_babies_style_url_without_requiring_live_fetch(
+        self,
+        mock_inspect_generic_web_article,
+    ) -> None:
+        mock_inspect_generic_web_article.return_value = {
+            "article": None,
+            "diagnostics": {
+                "normalized_url": "https://spinningbabies.com/pregnancy-birth/daily-activities",
+                "source_type": "generic_html",
+                "fetch_status": 403,
+                "fetch_failure_reason": "blocked by anti-bot challenge",
+                "extraction_strategy": "fetch_failed",
+                "usable_text_length": 0,
+                "rejection_reason": "blocked by anti-bot challenge",
+            },
+        }
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Spinning Babies topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "https://www.spinningbabies.com/pregnancy-birth/daily-activities/",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        saved_source = topic.sources.get()
+        self.assertEqual(saved_source.normalized_url, "https://spinningbabies.com/pregnancy-birth/daily-activities")
+        self.assertNotContains(response, "We could not reach this URL.", status_code=200)
 
     def test_add_source_feedback_renders_below_form_and_without_technical_strings(self) -> None:
         topic = Topic.objects.create(
@@ -2381,6 +2424,26 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn('data-preserve-scroll', html)
         self.assertIn('const storageKey = "digestflow:scroll-restore";', html)
         self.assertIn('const collapseStoragePrefix = "digestflow:collapse:";', html)
+
+    def test_add_topic_source_rejects_unsupported_scheme(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Unsupported scheme topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+
+        response = self.client.post(
+            reverse("add-topic-source", args=[topic.id]),
+            data={
+                "source_url": "ftp://example.com/article",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(topic.sources.count(), 0)
+        self.assertContains(response, "Use an http or https URL.", status_code=400)
+        self.assertContains(response, 'value="ftp://example.com/article"', html=False, status_code=400)
 
     def test_failed_saved_source_post_preserves_submitted_url_only_on_that_response(self) -> None:
         topic = Topic.objects.create(
@@ -2540,12 +2603,11 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         html = response.content.decode("utf-8")
         self.assertIn('data-source-feedback', html)
         self.assertIn('data-source-feedback-input', html)
-        self.assertIn('data-initial-value="https://example.com/unreadable-article"', html)
-        self.assertIn('data-source-add-diagnostics', html)
-        self.assertContains(response, "We could not reach this URL.", status_code=400)
+        self.assertIn('data-initial-value="not-a-url"', html)
+        self.assertContains(response, "Please check the URL format.", status_code=400)
 
     @patch("apps.digests.views.fetch_rss_articles")
-    def test_add_topic_source_rejects_unreadable_rss_feed(self, mock_fetch_rss_articles) -> None:
+    def test_add_topic_source_accepts_valid_rss_feed_even_when_fetch_returns_no_items(self, mock_fetch_rss_articles) -> None:
         mock_fetch_rss_articles.return_value = []
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -2561,16 +2623,19 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(topic.sources.count(), 0)
-        self.assertContains(
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        self.assertNotContains(
             response,
             "We could not read this RSS feed. Please check the URL and make sure it is a valid RSS or Atom feed.",
-            status_code=400,
+            status_code=200,
         )
 
     @patch("apps.digests.views.fetch_dev_to_article_content")
-    def test_add_topic_source_rejects_missing_devto_article(self, mock_fetch_dev_to_article_content) -> None:
+    def test_add_topic_source_accepts_devto_article_even_when_fetch_returns_no_content(
+        self,
+        mock_fetch_dev_to_article_content,
+    ) -> None:
         mock_fetch_dev_to_article_content.return_value = None
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -2586,12 +2651,12 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(topic.sources.count(), 0)
-        self.assertContains(
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        self.assertNotContains(
             response,
             "We could not find content at this address. Please check the URL and try again.",
-            status_code=400,
+            status_code=200,
         )
 
     @patch("apps.digests.views.fetch_dev_to_article_content")
@@ -2623,7 +2688,10 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         )
 
     @patch("apps.digests.views.fetch_rss_articles")
-    def test_add_topic_source_rejects_devto_author_without_articles(self, mock_fetch_rss_articles) -> None:
+    def test_add_topic_source_accepts_devto_author_even_when_fetch_returns_no_articles(
+        self,
+        mock_fetch_rss_articles,
+    ) -> None:
         mock_fetch_rss_articles.return_value = []
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -2639,12 +2707,12 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(topic.sources.count(), 0)
-        self.assertContains(
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.count(), 1)
+        self.assertNotContains(
             response,
             "This source does not seem to contain any articles yet. Please check the address or use another source.",
-            status_code=400,
+            status_code=200,
         )
 
     @patch("apps.digests.views.resolve_source_candidates")
@@ -2802,6 +2870,136 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn('onchange="this.form.requestSubmit();"', html)
         self.assertIn('type="checkbox"', html)
         self.assertNotIn('checked', html.split('type="checkbox"', 1)[1].split('>', 1)[0])
+
+    def test_saved_source_card_falls_back_to_domain_when_title_is_access_block_page(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Blocked title topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Unfortunately we are unable to give you access to our site at this time.",
+            url="https://www.spinningbabies.com/pregnancy-birth/daily-activities/",
+            normalized_url="https://spinningbabies.com/pregnancy-birth/daily-activities",
+            source_type="generic_html",
+            origin="manual",
+            platform="web",
+            validation_status=TopicSource.VALIDATION_VALID,
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "spinningbabies.com")
+        self.assertContains(response, "spinningbabies.com/pregnancy-birth/daily-activities")
+        self.assertNotContains(response, "Unfortunately we are unable to give you access to our site at this time.")
+
+    def test_saved_source_card_falls_back_to_domain_when_title_is_403_forbidden(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Forbidden title topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="403 Forbidden",
+            url="https://example.com/protected-article",
+            normalized_url="https://example.com/protected-article",
+            source_type="generic_html",
+            origin="manual",
+            platform="web",
+            validation_status=TopicSource.VALIDATION_VALID,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<strong>example.com</strong>", html=False)
+        self.assertContains(response, "example.com/protected-article")
+        self.assertNotContains(response, "403 Forbidden")
+
+    def test_saved_source_card_falls_back_to_domain_when_title_is_anti_bot_wait_page(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Wait page title topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Just a moment...",
+            url="https://example.org/blocked",
+            normalized_url="https://example.org/blocked",
+            source_type="generic_html",
+            origin="manual",
+            platform="web",
+            validation_status=TopicSource.VALIDATION_VALID,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<strong>example.org</strong>", html=False)
+        self.assertContains(response, "example.org/blocked")
+        self.assertNotContains(response, "Just a moment...")
+
+    def test_saved_source_card_keeps_legitimate_article_title(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Legitimate title topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="The science of safe and healthy baby sleep",
+            url="https://www.bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
+            normalized_url="https://bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep",
+            source_type="generic_html",
+            origin="manual",
+            platform="web",
+            validation_status=TopicSource.VALIDATION_VALID,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The science of safe and healthy baby sleep")
+        self.assertContains(response, "bbc.com/future/article/20220131-the-science-of-safe-and-healthy-baby-sleep")
+
+    def test_curated_source_seed_uses_safe_title_for_blocked_saved_source_name(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Curated seed title topic",
+            source_mode=TopicSourceMode.HYBRID,
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Unfortunately we are unable to give you access to our site at this time.",
+            url="https://www.spinningbabies.com/pregnancy-birth/daily-activities/",
+            normalized_url="https://spinningbabies.com/pregnancy-birth/daily-activities",
+            source_type="generic_html",
+            origin="manual",
+            platform="web",
+            validation_status=TopicSource.VALIDATION_VALID,
+            is_active=True,
+        )
+
+        seeds = _build_curated_source_seeds(topic)
+
+        self.assertEqual(len(seeds), 1)
+        self.assertEqual(seeds[0].title, "spinningbabies.com")
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_can_disable_and_remove_topic_sources_from_review_ui(self, mock_resolve_source_candidates) -> None:

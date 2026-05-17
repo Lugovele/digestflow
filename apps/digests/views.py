@@ -17,7 +17,7 @@ from apps.digests import result_messages
 from apps.digests.models import DigestRun
 from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, clean_focus_terms, validate_new_focus_terms
 from apps.topics.focus_suggestions import generate_focus_suggestions, should_seed_focus_terms
-from apps.topics.models import Source, Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
+from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import (
     CuratedSourceSeed,
@@ -1365,7 +1365,7 @@ def _build_curated_source_seeds(topic: Topic) -> list[CuratedSourceSeed]:
         curated_sources.append(
             CuratedSourceSeed(
                 url=source.url,
-                title=source.name or f"Saved source / {source.url}",
+                title=_build_safe_saved_source_display_title(source.name, source.url),
                 description=_build_topic_source_description(source),
                 quality_estimate="manual" if source.origin == TopicSourceOrigin.MANUAL else "curated",
                 is_manual=source.origin == TopicSourceOrigin.MANUAL,
@@ -1380,11 +1380,12 @@ def _build_topic_source_inventory(topic: Topic | None) -> list[dict]:
         return []
 
     inventory: list[dict] = []
-    for source in topic.sources.all().order_by("-id"):
+    for source in topic.sources.exclude(origin=TopicSourceOrigin.DISCOVERED).order_by("-id"):
+        safe_display_title = _build_safe_saved_source_display_title(source.name, source.url)
         inventory.append(
             {
                 "id": source.id,
-                "name": source.name or _fallback_source_label(source.url),
+                "name": safe_display_title,
                 "url": source.url,
                 "display_url": _build_compact_source_url(source.url),
                 "source_type": source.source_type or "unknown",
@@ -1439,7 +1440,7 @@ def _validate_topic_source_submission_v2(topic: Topic, source_url: str) -> dict:
         return {
             "ok": False,
             "level": "error",
-            "message": "Please check the URL format.",
+            "message": "Use an http or https URL.",
         }
 
     try:
@@ -1495,33 +1496,48 @@ def _validate_topic_source_availability(normalized_source, original_source_url: 
     source_type = normalized_source.source_type
 
     if source_type == "devto_article":
-        article = fetch_dev_to_article_content(normalized_source.normalized_url)
+        try:
+            article = fetch_dev_to_article_content(normalized_source.normalized_url)
+        except Exception:
+            article = None
         content = str(article.get("content") or "").strip() if isinstance(article, dict) else ""
-        if not isinstance(article, dict) or not content:
-            return {
-                "ok": False,
-                "level": "error",
-                "message": "We could not find content at this address. Please check the URL and try again.",
-            }
-        return {"ok": True, "resolved_title": str(article.get("title") or "").strip()}
+        title = str(article.get("title") or "").strip() if isinstance(article, dict) else ""
+        return {
+            "ok": True,
+            "resolved_title": title or _fallback_source_label(normalized_source.original_url),
+            "diagnostics": {
+                "normalized_url": normalized_source.normalized_url,
+                "source_type": source_type,
+                "fetch_status": 200 if content else None,
+                "fetch_failure_reason": "" if content else "content unavailable during source entry validation",
+                "extraction_strategy": "devto_article_fetch" if content else "devto_article_unverified",
+                "usable_text_length": len(content),
+                "rejection_reason": "" if content else "content unavailable during source entry validation",
+            },
+        }
 
     if source_type in {"generic_html", "blog_index", "publication"}:
-        inspection = inspect_generic_web_article(original_source_url or normalized_source.normalized_url)
+        try:
+            inspection = inspect_generic_web_article(original_source_url or normalized_source.normalized_url)
+        except Exception:
+            inspection = {
+                "article": None,
+                "diagnostics": {
+                    "normalized_url": normalized_source.normalized_url,
+                    "source_type": source_type,
+                    "fetch_status": None,
+                    "fetch_failure_reason": "source inspection failed during source entry validation",
+                    "extraction_strategy": "inspection_failed",
+                    "usable_text_length": 0,
+                    "rejection_reason": "source inspection failed during source entry validation",
+                },
+            }
         article = inspection.get("article")
         diagnostics = inspection.get("diagnostics", {})
         content = str(article.get("content") or "").strip() if isinstance(article, dict) else ""
         title = str(article.get("title") or "").strip() if isinstance(article, dict) else ""
         if isinstance(article, dict) and content and title:
             return {"ok": True, "resolved_title": title, "diagnostics": diagnostics}
-
-        reachability = _assess_generic_source_reachability(diagnostics)
-        if not reachability["ok"]:
-            return {
-                "ok": False,
-                "level": "error",
-                "message": reachability["message"],
-                "diagnostics": diagnostics,
-            }
 
         return {
             "ok": True,
@@ -1530,28 +1546,25 @@ def _validate_topic_source_availability(normalized_source, original_source_url: 
             "diagnostics": diagnostics,
         }
 
-    items = fetch_rss_articles(normalized_source.normalized_url)
+    try:
+        items = fetch_rss_articles(normalized_source.normalized_url)
+    except Exception:
+        items = []
     if items:
         return {"ok": True}
 
-    if source_type == "rss_feed":
-        return {
-            "ok": False,
-            "level": "error",
-            "message": "We could not read this RSS feed. Please check the URL and make sure it is a valid RSS or Atom feed.",
-        }
-
-    if source_type in {"devto_tag", "devto_author"}:
-        return {
-            "ok": False,
-            "level": "error",
-            "message": "This source does not seem to contain any articles yet. Please check the address or use another source.",
-        }
-
     return {
-        "ok": False,
-        "level": "error",
-        "message": "We could not find content at this address. Please check the URL and try again.",
+        "ok": True,
+        "resolved_title": _fallback_source_label(normalized_source.original_url),
+        "diagnostics": {
+            "normalized_url": normalized_source.normalized_url,
+            "source_type": source_type,
+            "fetch_status": None,
+            "fetch_failure_reason": "source content unavailable during source entry validation",
+            "extraction_strategy": "unverified_source_entry",
+            "usable_text_length": 0,
+            "rejection_reason": "source content unavailable during source entry validation",
+        },
     }
 
 
@@ -1603,6 +1616,54 @@ def _build_topic_source_description(source: TopicSource) -> str:
 def _fallback_source_label(url: str) -> str:
     parsed = urlparse(str(url or ""))
     return parsed.netloc or str(url or "Source")
+
+
+def _build_safe_saved_source_display_title(title: str, url: str) -> str:
+    cleaned_title = str(title or "").strip()
+    if cleaned_title and not _looks_like_blocked_or_error_page_title(cleaned_title):
+        return cleaned_title
+    return _fallback_source_label(url)
+
+
+def _looks_like_blocked_or_error_page_title(title: str) -> bool:
+    normalized = " ".join(str(title or "").strip().casefold().split())
+    if not normalized:
+        return True
+
+    exact_blocked_titles = {
+        "access denied",
+        "forbidden",
+        "403 forbidden",
+        "not found",
+        "404 not found",
+        "just a moment...",
+        "please enable javascript",
+        "attention required",
+        "request blocked",
+        "service unavailable",
+        "temporarily unavailable",
+    }
+    if normalized in exact_blocked_titles:
+        return True
+
+    blocked_title_markers = (
+        "unable to give you access to our site",
+        "access denied",
+        "403 forbidden",
+        "404 not found",
+        "just a moment",
+        "please enable javascript",
+        "attention required",
+        "request blocked",
+        "service unavailable",
+        "temporarily unavailable",
+        "access to this page has been denied",
+        "verify you are human",
+        "checking your browser before accessing",
+        "blocked by",
+        "temporarily unavailable",
+    )
+    return any(marker in normalized for marker in blocked_title_markers)
 
 
 def _build_compact_source_url(url: str) -> str:
