@@ -132,12 +132,14 @@ switch ($normalizedLevel) {
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_saves_reachable_web_article_even_when_extraction_is_unverified",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_prevents_duplicate_normalized_web_article_url",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_invalid_url",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_unreachable_generic_web_article",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_generic_web_article_that_returns_404",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_unreadable_rss_feed",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_missing_devto_article",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_unsupported_scheme",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_fails",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_returns_404",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_spinning_babies_style_url_without_requiring_live_fetch",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_rss_feed_even_when_fetch_returns_no_items",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_devto_article_even_when_fetch_returns_no_content",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_devto_article",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_devto_author_without_articles",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_devto_author_even_when_fetch_returns_no_articles",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_can_disable_and_remove_topic_sources_from_review_ui"
         )
     }
@@ -149,12 +151,13 @@ switch ($normalizedLevel) {
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_hopkins_article_via_saved_source_path_when_primary_fetch_is_blocked",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_lullaby_trust_style_parenting_article",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_saves_reachable_web_article_even_when_extraction_is_unverified",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_unreachable_generic_web_article",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_generic_web_article_that_returns_404",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_unreadable_rss_feed",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_missing_devto_article",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_fails",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_generic_web_article_even_when_fetch_returns_404",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_spinning_babies_style_url_without_requiring_live_fetch",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_rss_feed_even_when_fetch_returns_no_items",
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_devto_article_even_when_fetch_returns_no_content",
             "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_valid_devto_article",
-            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_rejects_devto_author_without_articles"
+            "tests.test_topic_rss_source.TopicRssSourceTests.test_add_topic_source_accepts_devto_author_even_when_fetch_returns_no_articles"
         )
     }
     "sources" {
