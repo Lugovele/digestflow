@@ -35,6 +35,7 @@ class SourceCandidateStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     NEEDS_REVIEW = "needs_review"
+    INVALID_URL = "invalid_url"
     DUPLICATE = "duplicate"
     UNREACHABLE = "unreachable"
     WEAK_CONTENT = "weak_content"
@@ -107,6 +108,11 @@ def evaluate_source_candidate(
         }
     )
 
+    invalid_url = not _is_valid_candidate_url(normalized_url)
+    diagnostics["invalid_url"] = invalid_url
+    if invalid_url:
+        rejection_reasons.append("invalid url")
+
     existing_url_set = {str(value or "").strip() for value in existing_normalized_urls if str(value or "").strip()}
     existing_host_set = {str(value or "").strip().lower() for value in existing_hostnames if str(value or "").strip()}
     seen_url_set = {str(value or "").strip() for value in seen_normalized_urls if str(value or "").strip()}
@@ -153,6 +159,7 @@ def evaluate_source_candidate(
     diagnostics["score_breakdown"] = score_breakdown
 
     status = _resolve_candidate_status(
+        invalid_url=invalid_url,
         duplicate_url=duplicate_url,
         unreachable=is_unreachable,
         weak_content=weak_content,
@@ -163,6 +170,8 @@ def evaluate_source_candidate(
 
     if status == SourceCandidateStatus.LOW_RELEVANCE:
         rejection_reasons.append("low relevance")
+    elif status == SourceCandidateStatus.INVALID_URL and "invalid url" not in rejection_reasons:
+        rejection_reasons.append("invalid url")
     elif status == SourceCandidateStatus.NEEDS_REVIEW and duplicate_hostname:
         rejection_reasons.append("duplicate hostname")
     elif status == SourceCandidateStatus.REJECTED and not rejection_reasons:
@@ -222,10 +231,11 @@ def sort_evaluated_candidates(
         SourceCandidateStatus.ACCEPTED: 0,
         SourceCandidateStatus.NEEDS_REVIEW: 1,
         SourceCandidateStatus.DUPLICATE: 2,
-        SourceCandidateStatus.WEAK_CONTENT: 3,
-        SourceCandidateStatus.UNREACHABLE: 4,
-        SourceCandidateStatus.LOW_RELEVANCE: 5,
-        SourceCandidateStatus.REJECTED: 6,
+        SourceCandidateStatus.INVALID_URL: 3,
+        SourceCandidateStatus.WEAK_CONTENT: 4,
+        SourceCandidateStatus.UNREACHABLE: 5,
+        SourceCandidateStatus.LOW_RELEVANCE: 6,
+        SourceCandidateStatus.REJECTED: 7,
     }
     return sorted(
         candidates,
@@ -240,6 +250,7 @@ def sort_evaluated_candidates(
 
 def _resolve_candidate_status(
     *,
+    invalid_url: bool,
     duplicate_url: bool,
     unreachable: bool,
     weak_content: bool,
@@ -247,6 +258,8 @@ def _resolve_candidate_status(
     score: float,
     match_count: int,
 ) -> SourceCandidateStatus:
+    if invalid_url:
+        return SourceCandidateStatus.INVALID_URL
     if duplicate_url:
         return SourceCandidateStatus.DUPLICATE
     if unreachable:
@@ -317,3 +330,8 @@ def _extract_hostname(normalized_url: str, *, fallback: str) -> str:
     if hostname:
         return hostname
     return str(urlparse(str(fallback or "")).netloc or fallback).strip().lower()
+
+
+def _is_valid_candidate_url(url: str) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)

@@ -78,6 +78,21 @@ class SourceCandidateEvaluationTests(SimpleTestCase):
         self.assertIn("temporary failure in name resolution", candidate.rejection_reasons)
         self.assertTrue(candidate.diagnostics["is_unreachable"])
 
+    def test_invalid_url_candidate_is_classified_explicitly(self) -> None:
+        candidate = evaluate_source_candidate(
+            SourceCandidateInput(
+                url="not-a-valid-url",
+                title="Broken input",
+                snippet="No usable source here.",
+            ),
+            topic="Baby sleeping",
+            focus_terms=("safe sleep",),
+        )
+
+        self.assertEqual(candidate.status, SourceCandidateStatus.INVALID_URL)
+        self.assertIn("invalid url", candidate.rejection_reasons)
+        self.assertTrue(candidate.diagnostics["invalid_url"])
+
     def test_duplicate_url_is_detected(self) -> None:
         candidate = evaluate_source_candidate(
             SourceCandidateInput(

@@ -12,6 +12,11 @@ During development of candidate or research foundation code, run:
 
 This should cover pure service-layer candidate evaluation without pulling in broader source workflow regressions.
 
+It currently runs:
+
+- `tests.test_source_candidates`
+- `tests.test_source_candidate_review`
+
 ## Before committing source-layer work
 
 Run:

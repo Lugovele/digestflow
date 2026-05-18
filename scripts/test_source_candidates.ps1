@@ -6,7 +6,12 @@ if (-not (Test-Path $python)) {
     exit 1
 }
 
-$command = @($manage, "test", "tests.test_source_candidates")
+$command = @(
+    $manage,
+    "test",
+    "tests.test_source_candidates",
+    "tests.test_source_candidate_review"
+)
 Write-Host ("Running: {0} {1}" -f $python, ($command -join " "))
 
 & $python @command
