@@ -32,6 +32,11 @@ from .search_provider import (
     SearchProviderResult,
     search_research_query_plan,
 )
+from .search_candidates import (
+    search_provider_result_to_candidate_inputs,
+    search_result_to_candidate_input,
+    search_results_to_candidate_inputs,
+)
 from .storage import save_articles_for_topic
 
 __all__ = [
@@ -56,6 +61,9 @@ __all__ = [
     "save_articles_for_topic",
     "SearchProvider",
     "SearchProviderResult",
+    "search_provider_result_to_candidate_inputs",
+    "search_result_to_candidate_input",
+    "search_results_to_candidate_inputs",
     "search_research_query_plan",
     "sort_evaluated_candidates",
     "SourceCandidateInput",
