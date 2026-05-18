@@ -108,6 +108,7 @@ class TopicSource(models.Model):
         default=VALIDATION_PENDING,
     )
     last_validation_error = models.TextField(blank=True)
+    is_pinned = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

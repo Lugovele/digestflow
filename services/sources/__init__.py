@@ -47,6 +47,14 @@ from .search_candidates import (
     search_result_to_candidate_input,
     search_results_to_candidate_inputs,
 )
+from .topic_source_groups import (
+    TopicSourceGroups,
+    filter_new_source_candidates,
+    is_manual_saved_source,
+    is_new_research_source,
+    is_pinned_research_source,
+    split_topic_sources,
+)
 from .storage import save_articles_for_topic
 
 __all__ = [
@@ -84,5 +92,11 @@ __all__ = [
     "sort_evaluated_candidates",
     "SourceCandidateInput",
     "SourceCandidateStatus",
+    "TopicSourceGroups",
     "TopicSourceDiscoveryRequest",
+    "filter_new_source_candidates",
+    "is_manual_saved_source",
+    "is_new_research_source",
+    "is_pinned_research_source",
+    "split_topic_sources",
 ]

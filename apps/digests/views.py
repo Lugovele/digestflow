@@ -22,7 +22,9 @@ from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import (
     CuratedSourceSeed,
     TopicSourceDiscoveryRequest,
+    filter_new_source_candidates,
     get_demo_articles_for_topic,
+    is_new_research_source,
     resolve_source_candidates,
 )
 from services.sources.detector import classify_source_url
@@ -1268,7 +1270,7 @@ def _build_topic_focus_terms(topic: Topic | None) -> list[str]:
 
 
 def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
-    candidate_records = resolve_source_candidates(
+    raw_candidate_records = resolve_source_candidates(
         TopicSourceDiscoveryRequest(
             topic=topic.name,
             focus_terms=_build_topic_focus_terms(topic),
@@ -1277,6 +1279,7 @@ def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
             curated_sources=_build_curated_source_seeds(topic),
         )
     )
+    candidate_records = filter_new_source_candidates(raw_candidate_records, topic.sources.all())
     return _upsert_and_build_source_candidates(topic, candidate_records)
 
 
@@ -1342,6 +1345,8 @@ def _build_visible_new_source_candidates(candidate_records: list[dict]) -> list[
     for candidate in candidate_records:
         candidate_origin = str(candidate.get("candidate_origin") or "").strip().lower()
         if candidate_origin != TopicSourceOrigin.DISCOVERED:
+            continue
+        if candidate.get("is_pinned"):
             continue
         if candidate.get("persisted_source_id") and candidate_origin != TopicSourceOrigin.DISCOVERED:
             continue
@@ -1702,6 +1707,7 @@ def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[di
     existing_sources = list(topic.sources.all())
     existing_by_normalized = {source.normalized_url: source for source in existing_sources}
     prepared_candidates: list[dict] = []
+    seen_discovered_normalized_urls: set[str] = set()
 
     for candidate in candidate_records:
         source_url = str(candidate.get("url") or "").strip()
@@ -1709,6 +1715,7 @@ def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[di
             continue
 
         normalized = classify_source_url(source_url)
+        seen_discovered_normalized_urls.add(normalized.normalized_url)
         source = existing_by_normalized.get(normalized.normalized_url)
         candidate_origin = _normalize_candidate_origin(
             candidate,
@@ -1755,12 +1762,18 @@ def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[di
                 "persisted_source_id": source.id if source is not None else None,
                 "normalized_url": normalized.normalized_url,
                 "candidate_origin": candidate_origin,
+                "is_pinned": bool(source.is_pinned) if source is not None else False,
                 "selected": source.is_active if source is not None else bool(candidate.get("default_selected")),
                 "has_recent_article_count": candidate.get("has_recent_article_count")
                 if "has_recent_article_count" in candidate
                 else candidate.get("recent_article_count") is not None,
             }
         )
+
+    topic.sources.filter(
+        origin=TopicSourceOrigin.DISCOVERED,
+        is_pinned=False,
+    ).exclude(normalized_url__in=seen_discovered_normalized_urls).delete()
 
     return prepared_candidates
 

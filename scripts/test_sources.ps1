@@ -10,7 +10,8 @@ $command = @(
     $manage,
     "test",
     "tests.test_source_candidates",
-    "tests.test_topic_rss_source"
+    "tests.test_topic_rss_source",
+    "tests.test_source_pinning"
 )
 Write-Host ("Running: {0} {1}" -f $python, ($command -join " "))
 
