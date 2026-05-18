@@ -14,7 +14,8 @@ $command = @(
     "tests.test_source_research_queries",
     "tests.test_source_search_provider",
     "tests.test_source_search_candidates",
-    "tests.test_source_research_orchestrator"
+    "tests.test_source_research_orchestrator",
+    "tests.test_source_research_review"
 )
 Write-Host ("Running: {0} {1}" -f $python, ($command -join " "))
 

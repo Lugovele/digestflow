@@ -29,6 +29,12 @@ from .research_orchestrator import (
     SourceResearchResult,
     run_source_research,
 )
+from .research_review import (
+    ResearchReviewContext,
+    build_research_review_context,
+    build_topic_source_payloads_from_review_items,
+    get_persistable_research_candidates,
+)
 from .search_provider import (
     FakeSearchProvider,
     RawSearchResult,
@@ -60,9 +66,13 @@ __all__ = [
     "ResearchQueryIntent",
     "ResearchQueryItem",
     "ResearchQueryPlan",
+    "ResearchReviewContext",
     "SourceResearchResult",
     "RawSearchResult",
     "resolve_source_candidates",
+    "build_research_review_context",
+    "build_topic_source_payloads_from_review_items",
+    "get_persistable_research_candidates",
     "run_source_research",
     "save_articles_for_topic",
     "SearchProvider",
