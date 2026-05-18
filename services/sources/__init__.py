@@ -25,6 +25,10 @@ from .research_queries import (
     ResearchQueryPlan,
     build_research_query_plan,
 )
+from .research_orchestrator import (
+    SourceResearchResult,
+    run_source_research,
+)
 from .search_provider import (
     FakeSearchProvider,
     RawSearchResult,
@@ -56,8 +60,10 @@ __all__ = [
     "ResearchQueryIntent",
     "ResearchQueryItem",
     "ResearchQueryPlan",
+    "SourceResearchResult",
     "RawSearchResult",
     "resolve_source_candidates",
+    "run_source_research",
     "save_articles_for_topic",
     "SearchProvider",
     "SearchProviderResult",
