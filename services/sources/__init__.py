@@ -19,6 +19,12 @@ from .discovery import (
     discover_sources,
     resolve_source_candidates,
 )
+from .research_queries import (
+    ResearchQueryIntent,
+    ResearchQueryItem,
+    ResearchQueryPlan,
+    build_research_query_plan,
+)
 from .storage import save_articles_for_topic
 
 __all__ = [
@@ -33,6 +39,10 @@ __all__ = [
     "evaluate_source_candidate",
     "evaluate_source_candidates",
     "get_demo_articles_for_topic",
+    "build_research_query_plan",
+    "ResearchQueryIntent",
+    "ResearchQueryItem",
+    "ResearchQueryPlan",
     "resolve_source_candidates",
     "save_articles_for_topic",
     "sort_evaluated_candidates",
