@@ -258,7 +258,7 @@ class TopicRssSourceTests(TestCase):
     def test_dashboard_recent_digests_show_human_readable_time_without_run_metadata(self) -> None:
         topic = Topic.objects.create(name="AI agents", source_mode=TopicSourceMode.HYBRID, user=self._get_ui_user())
         run = DigestRun.objects.create(topic=topic, source_mode=topic.source_mode, status=DigestRun.STATUS_COMPLETED)
-        DigestRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(days=1, hours=1))
+        DigestRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(days=1))
 
         response = self.client.get(reverse("topic-list"))
 
