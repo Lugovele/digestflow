@@ -25,6 +25,13 @@ from .research_queries import (
     ResearchQueryPlan,
     build_research_query_plan,
 )
+from .search_provider import (
+    FakeSearchProvider,
+    RawSearchResult,
+    SearchProvider,
+    SearchProviderResult,
+    search_research_query_plan,
+)
 from .storage import save_articles_for_topic
 
 __all__ = [
@@ -34,6 +41,7 @@ __all__ = [
     "detect_source_type",
     "discover_sources",
     "EvaluatedSourceCandidate",
+    "FakeSearchProvider",
     "build_candidate_review_item",
     "build_candidate_review_items",
     "evaluate_source_candidate",
@@ -43,8 +51,12 @@ __all__ = [
     "ResearchQueryIntent",
     "ResearchQueryItem",
     "ResearchQueryPlan",
+    "RawSearchResult",
     "resolve_source_candidates",
     "save_articles_for_topic",
+    "SearchProvider",
+    "SearchProviderResult",
+    "search_research_query_plan",
     "sort_evaluated_candidates",
     "SourceCandidateInput",
     "SourceCandidateStatus",
