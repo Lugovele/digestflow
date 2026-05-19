@@ -2,6 +2,18 @@
 
 Use the narrowest test target that matches the layer you are changing.
 
+## Small source workspace UI changes
+
+For source workspace wording, layout, and small UI behavior changes, run:
+
+```powershell
+.\scripts\test_source_ui.ps1
+```
+
+This currently runs:
+
+- `tests.test_source_pinning`
+
 ## Source candidate and research foundation work
 
 During development of candidate or research foundation code, run:
