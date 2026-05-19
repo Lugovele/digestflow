@@ -5,6 +5,7 @@ from .views import (
     create_topic_and_run_view,
     delete_topic_view,
     discover_sources_view,
+    pin_topic_source_view,
     reorder_topics_view,
     run_detail_view,
     run_pipeline_view,
@@ -13,6 +14,7 @@ from .views import (
     toggle_topic_source_view,
     topic_list_view,
     topic_workspace_view,
+    unpin_topic_source_view,
     update_topic_focus_view,
 )
 
@@ -37,6 +39,16 @@ urlpatterns = [
         "topics/<int:topic_id>/sources/<int:source_id>/remove/",
         remove_topic_source_view,
         name="remove-topic-source",
+    ),
+    path(
+        "topics/<int:topic_id>/sources/<int:source_id>/pin/",
+        pin_topic_source_view,
+        name="pin-topic-source",
+    ),
+    path(
+        "topics/<int:topic_id>/sources/<int:source_id>/unpin/",
+        unpin_topic_source_view,
+        name="unpin-topic-source",
     ),
     path(
         "topics/<int:topic_id>/run-selected/",

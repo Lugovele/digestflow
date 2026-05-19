@@ -244,16 +244,44 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Recent digests")
         self.assertContains(response, "Open Django admin")
         self.assertContains(response, "Find sources")
-        self.assertContains(response, "Settings")
+        topic = Topic.objects.get(name="Visible Feed")
+        self.assertContains(
+            response,
+            f'<a href="{reverse("topic-workspace", args=[topic.id])}" class="inline-link">Visible Feed</a>',
+            html=False,
+        )
+        self.assertNotContains(response, ">Settings<", html=False)
         self.assertContains(response, 'aria-label="Delete topic"', html=False)
         self.assertContains(response, "⋮⋮")
         self.assertNotContains(response, "Review sources")
-        self.assertContains(response, "0 saved")
+        self.assertContains(response, "0 my sources")
         self.assertNotContains(response, "Legacy source URL saved")
         self.assertContains(response, "Delete this topic?")
         self.assertNotContains(response, ">Delete<", html=False)
         self.assertContains(response, 'class="drag-handle"', html=False)
         self.assertContains(response, 'draggable="true"', html=False)
+
+    def test_topic_title_link_opens_existing_workspace_page(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Workspace Link Topic",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["automation"],
+            excluded_keywords=[],
+        )
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertContains(
+            response,
+            f'<a href="{reverse("topic-workspace", args=[topic.id])}" class="inline-link">Workspace Link Topic</a>',
+            html=False,
+        )
+
+        workspace_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(workspace_response.status_code, 200)
+        self.assertContains(workspace_response, "Workspace Link Topic")
 
     def test_dashboard_recent_digests_show_human_readable_time_without_run_metadata(self) -> None:
         topic = Topic.objects.create(name="AI agents", source_mode=TopicSourceMode.HYBRID, user=self._get_ui_user())
@@ -288,9 +316,11 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Focus")
+        self.assertContains(response, "What should research focus on?")
         self.assertContains(response, "AI automation")
         self.assertContains(response, "workflow automation")
+        self.assertContains(response, "Add a research angle and press Enter")
+        self.assertNotContains(response, '<h3 class="section-heading">Focus</h3>', html=False)
         self.assertContains(response, 'data-focus-form', html=False)
         self.assertContains(response, 'data-focus-input', html=False)
         self.assertContains(response, 'data-focus-chip-list', html=False)
@@ -1236,24 +1266,25 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Topic name")
         self.assertNotContains(response, "Source mode")
         self.assertNotContains(response, "Choose how this topic should find sources.")
-        self.assertContains(response, "Saved sources")
-        self.assertContains(response, "New sources")
+        self.assertContains(response, "My sources")
+        self.assertContains(response, "Research sources")
+        self.assertContains(response, "New suggestions")
         self.assertContains(response, "Find sources")
-        self.assertContains(response, "Use saved and new sources")
-        self.assertContains(response, "Use saved sources only")
-        self.assertContains(response, "Use new sources only")
+        self.assertContains(response, "Use my sources & research")
+        self.assertContains(response, "Use my sources only")
+        self.assertContains(response, "Use research sources only")
         self.assertNotContains(response, ">Save<", html=False)
         self.assertNotContains(response, "Refresh source discovery")
         self.assertNotContains(response, "Saved topics")
         self.assertNotContains(response, "Recent digests")
         self.assertNotContains(response, "Topic settings")
-        self.assertContains(response, "0 saved")
-        self.assertContains(response, "1 new")
-        self.assertContains(response, "Add a link and press Enter")
+        self.assertContains(response, "0 my sources")
+        self.assertContains(response, "1 research")
+        self.assertContains(response, "Add a manual source link and press Enter")
         self.assertNotContains(response, "Add source")
         self.assertNotContains(response, "Р’РІРµРґРёС‚Рµ URL")
         self.assertContains(response, "DEV Community / #ai")
-        self.assertContains(response, "12 recent articles")
+        self.assertNotContains(response, "12 recent articles")
         self.assertNotContains(response, "Deduped")
         self.assertNotContains(response, "Temporary review set")
         self.assertNotContains(response, "Selected sources are saved to this topic and used for the run")
@@ -1266,7 +1297,8 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Use the selected sources to generate the next digest.")
         self.assertNotContains(response, "Discover new sources")
         self.assertNotContains(response, "Refresh suggestions")
-        self.assertNotContains(response, "suggestions")
+        self.assertNotContains(response, "Fresh suggestions from research.")
+        self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
         self.assertNotContains(response, "Hybrid")
         self.assertNotContains(response, "Run pipeline")
         self.assertContains(response, "Run digest")
@@ -1283,15 +1315,17 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "devto_tag")
 
         html = response.content.decode("utf-8")
-        self.assertIn("saved &amp; new", html)
+        self.assertIn("my sources &amp; research", html)
         self.assertNotIn("Saved + New", html)
         self.assertNotIn("Saved + new", html)
+        self.assertNotIn("saved &amp; new", html)
+        self.assertNotIn("saved &amp; research", html)
         self.assertIn('<h1 class="page-title">AI agents</h1>', html)
         self.assertNotIn("<h1>DigestFlow</h1>", html)
         self.assertNotIn('<h2 class="workflow-title">AI agents</h2>', html)
-        self.assertLess(html.index('<h1 class="page-title">AI agents</h1>'), html.index("Saved sources"))
-        self.assertLess(html.index("New sources"), html.index("Find sources"))
-        self.assertLess(html.index("New sources"), html.index("Run digest"))
+        self.assertLess(html.index('<h1 class="page-title">AI agents</h1>'), html.index("My sources"))
+        self.assertLess(html.index("Research sources"), html.index("Find sources"))
+        self.assertLess(html.index("Research sources"), html.index("Run digest"))
         self.assertIn("1 selected source will be used in the next digest run.", html)
         self.assertIn('name="topic_id" value="', html)
         self.assertIn('onchange="this.form.requestSubmit();"', html)
@@ -1328,8 +1362,8 @@ class TopicRssSourceTests(TestCase):
             1,
         )
         self.assertContains(response, "AI agent systems")
-        self.assertContains(response, "saved only")
-        self.assertContains(response, "Use saved sources only")
+        self.assertContains(response, "my sources only")
+        self.assertContains(response, "Use my sources only")
         self.assertNotContains(response, ">Save<", html=False)
 
     @patch("apps.digests.views.resolve_source_candidates")
@@ -1359,13 +1393,13 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Curated AI")
-        self.assertContains(response, "saved only")
-        self.assertContains(response, "Saved sources")
+        self.assertContains(response, "my sources only")
+        self.assertContains(response, "My sources")
         self.assertContains(response, "Run digest")
         self.assertContains(response, "Please select at least one source to run a new digest.")
-        self.assertNotContains(response, "New sources")
+        self.assertNotContains(response, "Research sources")
         self.assertNotContains(response, "Find sources")
-        self.assertNotContains(response, "No new sources yet.")
+        self.assertNotContains(response, "No new suggestions yet.")
         self.assertNotContains(response, "DEV Community / #ai")
 
         html = response.content.decode("utf-8")
@@ -1399,16 +1433,17 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Discovery AI")
-        self.assertContains(response, "new only")
-        self.assertContains(response, "New sources")
+        self.assertContains(response, "research only")
+        self.assertContains(response, "Research sources")
+        self.assertContains(response, "New suggestions")
         self.assertContains(response, "Find sources")
-        self.assertContains(response, "Find additional sources for this topic.")
+        self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
         self.assertContains(response, "DEV Community / #ai")
         self.assertContains(response, "Run digest")
         self.assertContains(response, "1 selected source will be used in the next digest run.")
-        self.assertNotContains(response, "No new sources yet.")
-        self.assertNotContains(response, "Saved sources")
-        self.assertNotContains(response, "Add a link and press Enter")
+        self.assertNotContains(response, "No new suggestions yet.")
+        self.assertNotContains(response, "My sources")
+        self.assertNotContains(response, "Add a manual source link and press Enter")
         self.assertNotContains(response, "Add source")
 
         html = response.content.decode("utf-8")
@@ -1430,10 +1465,11 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Empty discovery topic")
-        self.assertContains(response, "New sources")
-        self.assertContains(response, "No new sources yet.")
-        self.assertContains(response, "Find")
-        self.assertNotContains(response, "Find additional sources for this topic.")
+        self.assertContains(response, "Research sources")
+        self.assertContains(response, "New suggestions")
+        self.assertContains(response, "No new suggestions yet.")
+        self.assertContains(response, "Find sources")
+        self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
         self.assertNotContains(response, "No new sources were found for this topic yet.")
         self.assertContains(response, "Ready to generate")
         self.assertContains(response, "Please select at least one source to run a new digest.")
@@ -1537,11 +1573,12 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Saved sources")
-        self.assertContains(response, "New sources")
+        self.assertContains(response, "My sources")
+        self.assertContains(response, "Research sources")
+        self.assertContains(response, "New suggestions")
         self.assertContains(response, "Saved source")
         self.assertContains(response, "New source")
-        self.assertContains(response, "Fresh discovery result.")
+        self.assertNotContains(response, "Fresh discovery result.")
         self.assertNotContains(response, "Already saved on the topic.")
         self.assertContains(response, 'type="hidden" name="selected_source_urls" value="https://dev.to/t/ai"', html=False)
 
@@ -2374,7 +2411,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertNotContains(response, "We could not reach this URL.", status_code=200)
         self.assertContains(
             response,
-            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a manual source link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
             html=False,
             status_code=200,
         )
@@ -2472,7 +2509,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         controls_marker = '<div class="inline-add-controls">'
         feedback_marker = 'class="source-inline-feedback"'
 
-        self.assertIn("Add a link and press Enter", html)
+        self.assertIn("Add a manual source link and press Enter", html)
         self.assertNotIn("Р’РІРµРґРёС‚Рµ URL", html)
         self.assertNotIn("RSS feed detected", html)
         self.assertNotIn("matched RSS/XML URL pattern", html)
@@ -2555,7 +2592,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertNotContains(refreshed_response, 'value="not-a-url"', html=False)
         self.assertContains(
             refreshed_response,
-            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a manual source link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
             html=False,
         )
 
@@ -2571,7 +2608,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a manual source link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
             html=False,
             status_code=200,
         )
@@ -2611,7 +2648,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
+            '<input\n                                    id="topic-source-url"\n                                    type="url"\n                                    name="source_url"\n                                    placeholder="Add a manual source link and press Enter"\n                                    value=""\n                                    autocomplete="off"\n                                    data-source-feedback-input',
             html=False,
             status_code=200,
         )
@@ -2893,12 +2930,13 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
 
         self.assertEqual(workspace_response.status_code, 200)
         workspace_html = workspace_response.content.decode("utf-8")
-        self.assertIn("Saved sources", workspace_html)
-        self.assertIn("New sources", workspace_html)
+        self.assertIn("My sources", workspace_html)
+        self.assertIn("Research sources", workspace_html)
+        self.assertIn("New suggestions", workspace_html)
         self.assertIn("DEV Community / #ai", workspace_html)
         self.assertIn("1 selected source will be used in the next digest run.", workspace_html)
-        saved_section = workspace_html.split("Saved sources", 1)[1].split("New sources", 1)[0]
-        new_section = workspace_html.split("New sources", 1)[1]
+        saved_section = workspace_html.split("My sources", 1)[1].split("Research sources", 1)[0]
+        new_section = workspace_html.rsplit("New suggestions", 1)[1]
         self.assertNotIn("DEV Community / #ai", saved_section)
         self.assertIn("DEV Community / #ai", new_section)
 
@@ -2961,10 +2999,10 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertEqual(refreshed_response.status_code, 200)
         self.assertIn("DEV Community / #python", refreshed_html)
         self.assertIn("Please select at least one source to run a new digest.", refreshed_html)
-        self.assertNotIn("Saved sources", refreshed_html)
+        self.assertNotIn("My sources", refreshed_html)
         self.assertIn("data-run-source-count-button", refreshed_html)
         self.assertIn("disabled", refreshed_html)
-        new_section = refreshed_html.split("New sources", 1)[1]
+        new_section = refreshed_html.rsplit("New suggestions", 1)[1]
         self.assertIn("DEV Community / #python", new_section)
         self.assertNotIn('checked', new_section.split('value="1"', 1)[1].split('>', 1)[0])
 
@@ -3014,13 +3052,14 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         refreshed_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
         refreshed_html = refreshed_response.content.decode("utf-8")
         self.assertEqual(refreshed_response.status_code, 200)
-        self.assertIn("New sources", refreshed_html)
-        self.assertNotIn("Saved sources", refreshed_html)
+        self.assertIn("Research sources", refreshed_html)
+        self.assertIn("New suggestions", refreshed_html)
+        self.assertNotIn("My sources", refreshed_html)
         self.assertIn("DEV Community / #python", refreshed_html)
         self.assertIn("Please select at least one source to run a new digest.", refreshed_html)
         self.assertIn("data-run-source-count-button", refreshed_html)
         self.assertIn("disabled", refreshed_html)
-        new_section = refreshed_html.split("New sources", 1)[1]
+        new_section = refreshed_html.rsplit("New suggestions", 1)[1]
         self.assertIn("DEV Community / #python", new_section)
         self.assertNotIn('checked', new_section.split('value="1"', 1)[1].split('>', 1)[0])
 
@@ -3090,6 +3129,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
                 "topic_name": topic.name,
                 "source_url": "",
                 "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "run_research": "1",
             },
         )
 
@@ -3100,7 +3140,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertTrue(django_source.is_active)
         self.assertContains(rediscovery_response, "1 selected source will be used in the next digest run.")
         html = rediscovery_response.content.decode("utf-8")
-        new_section = html.split("New sources", 1)[1]
+        new_section = html.rsplit("New suggestions", 1)[1]
         self.assertIn("DEV Community / #python", new_section)
         self.assertIn("DEV Community / #django", new_section)
         python_checkbox = new_section.split("DEV Community / #python", 1)[0].rsplit('value="1"', 1)[1].split('>', 1)[0]

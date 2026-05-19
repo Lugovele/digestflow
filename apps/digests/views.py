@@ -25,6 +25,7 @@ from services.sources import (
     filter_new_source_candidates,
     get_demo_articles_for_topic,
     is_new_research_source,
+    split_topic_sources,
     resolve_source_candidates,
 )
 from services.sources.detector import classify_source_url
@@ -40,6 +41,19 @@ from .forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 logger = logging.getLogger(__name__)
 INSUFFICIENT_QUALITY_ERROR_FALLBACK = "Insufficient-quality diagnostics are available in metrics."
 INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were available for a full digest."
+
+
+def _get_user_facing_source_mode_label(mode: str) -> str:
+    if mode == TopicSourceMode.HYBRID:
+        return "my sources & research"
+    if mode == TopicSourceMode.CURATED_ONLY:
+        return "my sources only"
+    if mode == TopicSourceMode.DISCOVERY_ONLY:
+        return "research only"
+    try:
+        return TopicSourceMode(mode).label
+    except ValueError:
+        return mode
 
 
 @require_GET
@@ -76,13 +90,15 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
         context["topic_form_error"] = str(exc)
         return render(request, "digestflow/topic_list.html", context, status=400)
     topic.manual_source_inputs = [source_url] if source_url else []
+    should_run_research = _should_run_research_discovery(request, topic_id=request.POST.get("topic_id"))
+    discovered_source_candidates = _discover_and_prepare_candidates(topic) if should_run_research else None
     return render(
         request,
         "digestflow/topic_list.html",
         _build_topic_list_context(
             form=form,
             discovered_topic=topic,
-            discovered_source_candidates=_discover_and_prepare_candidates(topic),
+            discovered_source_candidates=discovered_source_candidates,
         ),
     )
 
@@ -217,6 +233,26 @@ def toggle_topic_source_view(request: HttpRequest, topic_id: int, source_id: int
     if source.is_active != next_is_active:
         source.is_active = next_is_active
         source.save(update_fields=["is_active", "updated_at"])
+    return redirect("topic-workspace", topic_id=topic.id)
+
+
+@require_POST
+def pin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
+    if source.origin == TopicSourceOrigin.DISCOVERED and not source.is_pinned:
+        source.is_pinned = True
+        source.save(update_fields=["is_pinned", "updated_at"])
+    return redirect("topic-workspace", topic_id=topic.id)
+
+
+@require_POST
+def unpin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
+    if source.origin == TopicSourceOrigin.DISCOVERED and source.is_pinned:
+        source.is_pinned = False
+        source.save(update_fields=["is_pinned", "updated_at"])
     return redirect("topic-workspace", topic_id=topic.id)
 
 
@@ -1170,7 +1206,9 @@ def _build_topic_list_context(
     focus_input_value: str = "",
 ) -> dict:
     user = _get_or_create_ui_user()
-    all_candidate_records = discovered_source_candidates or []
+    all_candidate_records = discovered_source_candidates
+    if all_candidate_records is None:
+        all_candidate_records = _build_persisted_new_source_candidates(discovered_topic)
     visible_new_source_candidates = _build_visible_new_source_candidates(all_candidate_records)
     topics = list(
         Topic.objects.filter(user=user)
@@ -1197,11 +1235,13 @@ def _build_topic_list_context(
         "discovered_source_candidates": visible_new_source_candidates,
         "source_review_summary": _build_source_review_summary(discovered_topic, visible_new_source_candidates),
         "topic_source_inventory": _build_topic_source_inventory(discovered_topic),
+        "pinned_research_source_inventory": _build_pinned_research_source_inventory(discovered_topic),
         "active_saved_source_urls": _build_active_saved_source_urls(discovered_topic),
         "active_selected_source_urls": _build_active_selected_source_urls(discovered_topic),
-        "selected_source_count": _build_selected_source_count(discovered_topic, visible_new_source_candidates),
+        "selected_source_count": _build_selected_source_count(discovered_topic),
         "legacy_topic_source": _build_legacy_source_display(discovered_topic),
         "source_add_feedback": None,
+        "can_find_research_sources": _can_find_research_sources(discovered_topic),
     }
 
 
@@ -1235,8 +1275,6 @@ def _render_topic_source_review(
     focus_feedback: dict | None = None,
     focus_input_value: str = "",
 ) -> HttpResponse:
-    if focus_feedback is None:
-        _ensure_topic_focus_seeded(topic)
     form = TopicInputForm(
         initial={
             "topic_name": topic.name,
@@ -1247,7 +1285,6 @@ def _render_topic_source_review(
     context = _build_topic_list_context(
         form=form,
         discovered_topic=topic,
-        discovered_source_candidates=_discover_and_prepare_candidates(topic),
         focus_feedback=focus_feedback,
         focus_input_value=focus_input_value,
     )
@@ -1267,6 +1304,15 @@ def _build_topic_focus_terms(topic: Topic | None) -> list[str]:
         return []
     raw_terms = topic.keywords if isinstance(topic.keywords, list) else []
     return clean_focus_terms(raw_terms)
+
+
+def _should_run_research_discovery(request: HttpRequest, *, topic_id: str | None) -> bool:
+    if not topic_id:
+        return True
+    if not str(request.POST.get("run_research") or "").strip():
+        return False
+    topic = Topic.objects.filter(pk=topic_id).first()
+    return _can_find_research_sources(topic)
 
 
 def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
@@ -1290,7 +1336,7 @@ def _build_source_review_summary(
     if topic is None:
         return {
             "mode": TopicSourceMode.HYBRID,
-            "mode_label": TopicSourceMode(TopicSourceMode.HYBRID).label,
+            "mode_label": _get_user_facing_source_mode_label(TopicSourceMode.HYBRID),
             "candidate_count": 0,
             "deduped_source_count": 0,
             "origin_counts": {},
@@ -1317,10 +1363,7 @@ def _build_source_review_summary(
             discovered_candidates.append(candidate)
 
     mode = str(topic.source_mode or TopicSourceMode.HYBRID)
-    try:
-        mode_label = TopicSourceMode(mode).label
-    except ValueError:
-        mode_label = mode
+    mode_label = _get_user_facing_source_mode_label(mode)
 
     return {
         "mode": mode,
@@ -1354,6 +1397,32 @@ def _build_visible_new_source_candidates(candidate_records: list[dict]) -> list[
     return visible_candidates
 
 
+def _build_persisted_new_source_candidates(topic: Topic | None) -> list[dict]:
+    if topic is None:
+        return []
+
+    groups = split_topic_sources(topic.sources.order_by("id"))
+    candidate_records: list[dict] = []
+    for source in groups.new_research_sources:
+        candidate_records.append(
+            {
+                "title": _build_safe_saved_source_display_title(source.name, source.url),
+                "url": source.url,
+                "display_url": _build_compact_source_url(source.url),
+                "normalized_url": source.normalized_url,
+                "source_type": source.source_type or "unknown",
+                "candidate_origin": TopicSourceOrigin.DISCOVERED,
+                "persisted_source_id": source.id,
+                "is_pinned": False,
+                "selected": source.is_active,
+                "description": _build_topic_source_description(source),
+                "has_recent_article_count": False,
+                "recent_article_count": None,
+            }
+        )
+    return candidate_records
+
+
 def _build_active_saved_source_urls(topic: Topic | None) -> list[str]:
     if topic is None:
         return []
@@ -1369,17 +1438,25 @@ def _build_active_selected_source_urls(topic: Topic | None) -> list[str]:
         return []
     return [
         str(source.url).strip()
-        for source in topic.sources.filter(is_active=True).order_by("id")
+        for source in _get_mode_active_sources(topic)
         if str(source.url).strip()
     ]
 
 
-def _build_selected_source_count(topic: Topic | None, candidate_records: list[dict]) -> int:
-    saved_source_count = len(_build_active_saved_source_urls(topic))
-    if topic is None or not topic.uses_source_discovery:
-        return saved_source_count
-    new_source_count = sum(1 for candidate in candidate_records if candidate.get("selected"))
-    return saved_source_count + new_source_count
+def _build_selected_source_count(topic: Topic | None) -> int:
+    if topic is None:
+        return 0
+    return len(_get_mode_active_sources(topic))
+
+
+def _get_mode_active_sources(topic: Topic) -> list[TopicSource]:
+    active_sources = list(topic.sources.filter(is_active=True).order_by("id"))
+    mode = str(topic.source_mode or TopicSourceMode.HYBRID)
+    if mode == TopicSourceMode.CURATED_ONLY:
+        return [source for source in active_sources if source.origin != TopicSourceOrigin.DISCOVERED]
+    if mode == TopicSourceMode.DISCOVERY_ONLY:
+        return [source for source in active_sources if source.origin == TopicSourceOrigin.DISCOVERED]
+    return active_sources
 
 
 def _build_curated_source_seeds(topic: Topic) -> list[CuratedSourceSeed]:
@@ -1421,6 +1498,36 @@ def _build_topic_source_inventory(topic: Topic | None) -> list[dict]:
             }
         )
     return inventory
+
+
+def _build_pinned_research_source_inventory(topic: Topic | None) -> list[dict]:
+    if topic is None:
+        return []
+
+    groups = split_topic_sources(topic.sources.order_by("id"))
+    inventory: list[dict] = []
+    for source in groups.pinned_research_sources:
+        inventory.append(
+            {
+                "id": source.id,
+                "name": _build_safe_saved_source_display_title(source.name, source.url),
+                "url": source.url,
+                "display_url": _build_compact_source_url(source.url),
+                "source_type": source.source_type or "unknown",
+                "origin": source.origin,
+                "origin_label": source.get_origin_display(),
+                "is_active": source.is_active,
+                "validation_status": source.validation_status,
+                "validation_status_label": source.get_validation_status_display(),
+                "last_validation_error": source.last_validation_error,
+                "is_pinned": True,
+            }
+        )
+    return inventory
+
+
+def _can_find_research_sources(topic: Topic | None) -> bool:
+    return bool(_build_topic_focus_terms(topic))
 
 
 def _build_legacy_source_display(topic: Topic | None) -> dict | None:
