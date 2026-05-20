@@ -1640,7 +1640,7 @@ class TopicRssSourceTests(TestCase):
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
-        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER="tavily",
         SEARCH_PROVIDER_API_KEY="test-key",
     )
     @patch("apps.digests.views.resolve_source_candidates")

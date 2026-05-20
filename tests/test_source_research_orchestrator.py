@@ -1,13 +1,15 @@
-from unittest.mock import patch
+import json
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.topics.models import Topic, TopicSource
 from services.sources.candidates import SourceCandidateStatus
 from services.sources.research_orchestrator import SourceResearchResult, run_source_research
 from services.sources.research_queries import build_research_query_plan
 from services.sources.search_provider import FakeSearchProvider, SearchProviderResult
+from services.sources.serpapi_provider import SerpApiSearchProvider
 
 
 class _TopicStub:
@@ -227,6 +229,60 @@ class SourceResearchOrchestratorTests(SimpleTestCase):
         result = run_source_research(_TopicStub("Travel planning", ["family travel"]), FakeSearchProvider({}))
 
         self.assertEqual(result.provider_result.results, ())
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.research_orchestrator.search_research_query_plan")
+    def test_orchestrator_uses_configured_serpapi_provider_when_no_provider_is_passed(
+        self,
+        mock_search,
+    ) -> None:
+        mock_search.return_value = SearchProviderResult(provider_name="serpapi", results=(), diagnostics={})
+
+        topic = _TopicStub("AI automation", ["Zapier", "Make"])
+        result = run_source_research(topic)
+
+        provider = mock_search.call_args.args[1]
+        self.assertIsInstance(provider, SerpApiSearchProvider)
+        self.assertEqual(result.diagnostics["search_provider_status"], "ready")
+        self.assertEqual(result.diagnostics["search_provider_name"], "serpapi")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_orchestrator_can_use_configured_serpapi_provider_end_to_end_with_mocked_http(
+        self,
+        mock_urlopen,
+    ) -> None:
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "organic_results": [
+                    {
+                        "position": 1,
+                        "title": "AI automation implementation guide",
+                        "link": "https://example.com/ai-guide",
+                        "snippet": "Practical guide for AI automation with Zapier and Make.",
+                        "source": "Example",
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+
+        result = run_source_research(_TopicStub("AI automation", ["Zapier", "Make"]))
+
+        self.assertEqual(result.diagnostics["search_provider_status"], "ready")
+        self.assertEqual(result.diagnostics["search_provider_name"], "serpapi")
+        self.assertEqual(result.diagnostics["raw_result_count"], 1)
+        self.assertEqual(len(result.candidate_inputs), 1)
+        self.assertEqual(result.candidate_inputs[0].url, "https://example.com/ai-guide")
 
 
 class SourceResearchOrchestratorPersistenceTests(TestCase):

@@ -7,6 +7,7 @@ from typing import Any
 
 from django.conf import settings
 
+from services.sources.serpapi_provider import SerpApiSearchProvider
 from services.sources.search_provider import FakeSearchProvider, SearchProvider
 
 
@@ -16,7 +17,7 @@ MISSING_CONFIG_STATUS = "missing_config"
 NOT_IMPLEMENTED_STATUS = "not_implemented"
 
 _DISCOVERY_SOURCE_MODES = {"discovery_only", "hybrid"}
-_SUPPORTED_PROVIDER_NAMES = {"fake"}
+_SUPPORTED_PROVIDER_NAMES = {"fake", "serpapi"}
 _PROVIDERS_REQUIRING_API_KEY = {"serpapi", "tavily", "brave", "bing"}
 
 
@@ -54,6 +55,8 @@ def resolve_configured_search_provider(topic=None) -> SearchProviderResolution:
             error = f"Search provider '{provider_name}' is not implemented yet."
         elif provider_name == "fake":
             provider = FakeSearchProvider({})
+        elif provider_name == "serpapi":
+            provider = SerpApiSearchProvider(api_key=provider_api_key)
 
     research_execution_status = "completed"
     if status != READY_STATUS:

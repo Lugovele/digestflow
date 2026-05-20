@@ -3,6 +3,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.topics.models import TopicSourceMode
 from services.sources.research_orchestrator import run_source_research
 from services.sources.search_config import resolve_configured_search_provider
+from services.sources.serpapi_provider import SerpApiSearchProvider
 
 
 class _TopicStub:
@@ -60,14 +61,29 @@ class SourceSearchConfigTests(SimpleTestCase):
         SEARCH_PROVIDER="serpapi",
         SEARCH_PROVIDER_API_KEY="test-key",
     )
-    def test_unimplemented_provider_returns_not_implemented_diagnostics(self) -> None:
+    def test_serpapi_provider_with_api_key_resolves_as_ready(self) -> None:
+        topic = _TopicStub("AI workflows", ["automation"], TopicSourceMode.DISCOVERY_ONLY)
+
+        resolution = resolve_configured_search_provider(topic)
+
+        self.assertIsInstance(resolution.provider, SerpApiSearchProvider)
+        self.assertEqual(resolution.diagnostics["search_provider_status"], "ready")
+        self.assertEqual(resolution.diagnostics["search_provider_name"], "serpapi")
+        self.assertTrue(resolution.diagnostics["search_provider_configured"])
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="tavily",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    def test_unsupported_provider_returns_not_implemented_diagnostics(self) -> None:
         topic = _TopicStub("AI workflows", ["automation"], TopicSourceMode.DISCOVERY_ONLY)
 
         result = run_source_research(topic)
 
         self.assertEqual(result.provider_result.results, ())
         self.assertEqual(result.diagnostics["search_provider_status"], "not_implemented")
-        self.assertEqual(result.diagnostics["search_provider_name"], "serpapi")
+        self.assertEqual(result.diagnostics["search_provider_name"], "tavily")
         self.assertIn("not implemented yet", result.diagnostics["search_provider_error"])
 
     @override_settings(

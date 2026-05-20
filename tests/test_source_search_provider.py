@@ -1,10 +1,13 @@
-from unittest.mock import patch
+import json
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 
 from apps.topics.models import Topic, TopicSource
 from services.sources.research_queries import build_research_query_plan
+from services.sources.serpapi_provider import SearchProviderRuntimeError, SerpApiSearchProvider
 from services.sources.search_provider import (
     FakeSearchProvider,
     RawSearchResult,
@@ -103,6 +106,62 @@ class SourceSearchProviderTests(SimpleTestCase):
 
         self.assertEqual(result.provider_name, "fake")
 
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_serpapi_provider_maps_organic_results(self, mock_urlopen) -> None:
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "organic_results": [
+                    {
+                        "position": 1,
+                        "title": "AI automation guide",
+                        "link": "https://example.com/ai-automation",
+                        "snippet": "Practical automation guide.",
+                        "source": "Example",
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        provider = SerpApiSearchProvider(api_key="test-key")
+
+        results = provider.search("AI automation", intent=plan_query_intent())
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "AI automation guide")
+        self.assertEqual(results[0]["url"], "https://example.com/ai-automation")
+        self.assertEqual(results[0]["snippet"], "Practical automation guide.")
+        self.assertEqual(results[0]["rank"], 1)
+        self.assertEqual(results[0]["source"], "Example")
+
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_serpapi_provider_handles_empty_organic_results_safely(self, mock_urlopen) -> None:
+        response = MagicMock()
+        response.read.return_value = json.dumps({"organic_results": []}).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        provider = SerpApiSearchProvider(api_key="test-key")
+
+        results = provider.search("AI automation", intent=plan_query_intent())
+
+        self.assertEqual(results, [])
+
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_serpapi_provider_raises_structured_runtime_error_on_http_failure(self, mock_urlopen) -> None:
+        mock_urlopen.side_effect = HTTPError(
+            url="https://serpapi.com/search.json",
+            code=503,
+            msg="service unavailable",
+            hdrs=None,
+            fp=None,
+        )
+        provider = SerpApiSearchProvider(api_key="test-key")
+
+        with self.assertRaises(SearchProviderRuntimeError) as exc_info:
+            provider.search("AI automation", intent=plan_query_intent())
+
+        self.assertEqual(exc_info.exception.diagnostics["provider_http_status"], 503)
+        self.assertEqual(exc_info.exception.diagnostics["provider_error_type"], "http_error")
+
     def test_diagnostics_include_query_count_and_raw_result_count(self) -> None:
         plan = build_research_query_plan(_TopicStub("Travel planning", ["family travel"]))
         first_query = plan.query_items[0].query
@@ -175,6 +234,26 @@ class SourceSearchProviderTests(SimpleTestCase):
 
         self.assertEqual(result.results, ())
 
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_search_provider_boundary_records_serpapi_runtime_failures_in_diagnostics(self, mock_urlopen) -> None:
+        mock_urlopen.side_effect = HTTPError(
+            url="https://serpapi.com/search.json",
+            code=503,
+            msg="service unavailable",
+            hdrs=None,
+            fp=None,
+        )
+        plan = build_research_query_plan(_TopicStub("AI automation", ["Zapier", "Make"]))
+        provider = SerpApiSearchProvider(api_key="test-key")
+
+        result = search_research_query_plan(plan, provider)
+
+        self.assertEqual(result.results, ())
+        self.assertEqual(result.provider_name, "serpapi")
+        self.assertEqual(result.diagnostics["provider_error_count"], len(plan.query_items))
+        self.assertTrue(result.diagnostics["provider_errors"])
+        self.assertNotIn("test-key", json.dumps(result.diagnostics))
+
 
 class SourceSearchProviderPersistenceTests(TestCase):
     def test_search_provider_boundary_does_not_create_topic_sources(self) -> None:
@@ -188,3 +267,8 @@ class SourceSearchProviderPersistenceTests(TestCase):
 
         self.assertEqual(result.results, ())
         self.assertEqual(TopicSource.objects.count(), before)
+
+
+def plan_query_intent():
+    plan = build_research_query_plan(_TopicStub("AI automation", ["Zapier"]))
+    return plan.query_items[0].intent

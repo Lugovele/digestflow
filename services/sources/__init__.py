@@ -42,6 +42,10 @@ from .search_provider import (
     SearchProviderResult,
     search_research_query_plan,
 )
+from .serpapi_provider import (
+    SearchProviderRuntimeError,
+    SerpApiSearchProvider,
+)
 from .search_config import (
     SearchProviderResolution,
     build_explicit_search_provider_diagnostics,
@@ -88,9 +92,11 @@ __all__ = [
     "get_persistable_research_candidates",
     "run_source_research",
     "SearchProviderResolution",
+    "SearchProviderRuntimeError",
     "save_articles_for_topic",
     "SearchProvider",
     "SearchProviderResult",
+    "SerpApiSearchProvider",
     "build_explicit_search_provider_diagnostics",
     "resolve_configured_search_provider",
     "search_provider_result_to_candidate_inputs",

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, Sequence
 
 from services.sources.research_queries import ResearchQueryIntent, ResearchQueryPlan
+from services.sources.serpapi_provider import SearchProviderRuntimeError
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
     per_query_counts: list[dict[str, Any]] = []
     duplicate_url_count = 0
     skipped_queries = 0
+    provider_errors: list[dict[str, Any]] = []
 
     for query_item in plan.query_items:
         query = str(query_item.query or "").strip()
@@ -65,7 +67,27 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
             )
             continue
 
-        provider_results = list(provider.search(query, intent=query_item.intent) or ())
+        try:
+            provider_results = list(provider.search(query, intent=query_item.intent) or ())
+        except SearchProviderRuntimeError as exc:
+            provider_errors.append(
+                {
+                    "query": query,
+                    "intent": query_item.intent.value,
+                    "message": str(exc),
+                    **dict(exc.diagnostics or {}),
+                }
+            )
+            per_query_counts.append(
+                {
+                    "query": query,
+                    "intent": query_item.intent.value,
+                    "result_count": 0,
+                    "skipped": False,
+                    "error": str(exc),
+                }
+            )
+            continue
         emitted_count = 0
         for index, item in enumerate(provider_results, start=1):
             url = str(item.get("url") or "").strip()
@@ -90,6 +112,7 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                         "source_type_hint": query_item.source_type_hint,
                         "query_diagnostics": dict(query_item.diagnostics or {}),
                         "provider_rank": int(item.get("rank") or index),
+                        "provider_source": str(item.get("source") or "").strip(),
                     },
                 )
             )
@@ -110,6 +133,8 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
         "skipped_query_count": skipped_queries,
         "duplicate_url_count": duplicate_url_count,
         "topic_domain": plan.topic_domain,
+        "provider_error_count": len(provider_errors),
+        "provider_errors": provider_errors,
     }
 
     return SearchProviderResult(
