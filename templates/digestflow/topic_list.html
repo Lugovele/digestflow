@@ -66,6 +66,34 @@
             margin: 4px 0 0;
             color: #5b6472;
         }
+        .section-notice {
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 8px;
+            border: 1px solid #d9e2f1;
+            background: #f7f9fc;
+        }
+        .section-notice__title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        .section-notice__body {
+            margin: 4px 0 0;
+            font-size: 14px;
+            color: #4b5563;
+        }
+        .section-notice__meta {
+            margin: 8px 0 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .action-hint {
+            font-size: 12px;
+            color: #6b7280;
+            white-space: nowrap;
+        }
         .discovery-row {
             display: flex;
             justify-content: space-between;
@@ -846,18 +874,32 @@
                         <div class="section-header section-header--stack">
                             <div class="subsection-heading-row">
                                 <h3 class="section-heading">Research sources</h3>
-                                <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
-                                    {% csrf_token %}
-                                    <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
-                                    <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
-                                    <input type="hidden" name="source_url" value="">
-                                    <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
-                                    <input type="hidden" name="run_research" value="1">
-                                    <button type="submit" class="secondary-button secondary-button--local" {% if not can_find_research_sources %}disabled{% endif %}>Find sources</button>
-                                </form>
+                                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                                    {% if find_sources_disabled_hint %}
+                                        <span class="action-hint">{{ find_sources_disabled_hint }}</span>
+                                    {% endif %}
+                                    <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
+                                        {% csrf_token %}
+                                        <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
+                                        <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
+                                        <input type="hidden" name="source_url" value="">
+                                        <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
+                                        <input type="hidden" name="run_research" value="1">
+                                        <button type="submit" class="secondary-button secondary-button--local" {% if not can_find_research_sources %}disabled aria-disabled="true"{% endif %}>Find sources</button>
+                                    </form>
+                                </div>
                             </div>
                             <p class="section-hint">Check sources to use in the next digest. Keep useful ones for future runs.</p>
                         </div>
+                        {% if research_provider_notice %}
+                            <div class="section-notice" role="status" aria-live="polite">
+                                <p class="section-notice__title">{{ research_provider_notice.title }}</p>
+                                <p class="section-notice__body">{{ research_provider_notice.body }}</p>
+                                {% if research_provider_notice.missing_settings %}
+                                    <p class="section-notice__meta">Missing settings: {{ research_provider_notice.missing_settings|join:", " }}</p>
+                                {% endif %}
+                            </div>
+                        {% endif %}
                         {% if source_selection_error %}
                             <p class="error">{{ source_selection_error }}</p>
                         {% endif %}

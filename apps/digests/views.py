@@ -26,6 +26,7 @@ from services.sources import (
     filter_new_source_candidates,
     get_demo_articles_for_topic,
     is_new_research_source,
+    resolve_configured_search_provider,
     split_topic_sources,
     resolve_source_candidates,
 )
@@ -1264,6 +1265,7 @@ def _build_topic_list_context(
     for run in recent_runs:
         run.display_time = _format_recent_run_time(run.created_at)
     run_eligibility = _build_run_eligibility(discovered_topic)
+    research_provider_state = _build_research_provider_state(discovered_topic)
     return {
         "topics": topics,
         "recent_runs": recent_runs,
@@ -1280,9 +1282,81 @@ def _build_topic_list_context(
         "active_selected_source_urls": _build_active_selected_source_urls(discovered_topic),
         "selected_source_count": _build_selected_source_count(discovered_topic),
         "run_eligibility": run_eligibility,
+        "research_provider_notice": research_provider_state["notice"],
+        "research_provider_blocked": research_provider_state["blocked"],
+        "find_sources_disabled_hint": research_provider_state["button_hint"],
         "legacy_topic_source": _build_legacy_source_display(discovered_topic),
         "source_add_feedback": None,
-        "can_find_research_sources": _can_find_research_sources(discovered_topic),
+        "can_find_research_sources": _can_find_research_sources(
+            discovered_topic,
+            provider_blocked=research_provider_state["blocked"],
+        ),
+    }
+
+
+def _build_research_provider_state(topic: Topic | None) -> dict:
+    empty_state = {
+        "notice": None,
+        "blocked": False,
+        "button_hint": "",
+    }
+    if topic is None or not topic.uses_source_discovery:
+        return empty_state
+
+    diagnostics = resolve_configured_search_provider(topic).diagnostics
+    status = str(diagnostics.get("search_provider_status") or "").strip().lower()
+    if not status or status == "ready":
+        return empty_state
+
+    button_hint = ""
+    if status == "disabled":
+        button_hint = "Research unavailable"
+    elif status == "missing_config":
+        button_hint = "Provider setup required"
+    elif status == "not_implemented":
+        button_hint = "Search adapter not connected"
+
+    return {
+        "notice": _build_research_provider_notice_from_diagnostics(diagnostics),
+        "blocked": True,
+        "button_hint": button_hint,
+    }
+
+
+def _build_research_provider_notice(topic: Topic | None) -> dict | None:
+    if topic is None or not topic.uses_source_discovery:
+        return None
+
+    diagnostics = resolve_configured_search_provider(topic).diagnostics
+    return _build_research_provider_notice_from_diagnostics(diagnostics)
+
+
+def _build_research_provider_notice_from_diagnostics(diagnostics: dict) -> dict | None:
+    status = str(diagnostics.get("search_provider_status") or "").strip().lower()
+    if not status or status == "ready":
+        return None
+
+    title = ""
+    body = ""
+    if status == "disabled":
+        title = "Research is currently disabled"
+        body = "DigestFlow can still use your sources, but automatic research is turned off."
+    elif status == "missing_config":
+        title = "Research provider needs configuration"
+        body = "Automatic research is enabled, but the selected provider is missing required settings."
+    elif status == "not_implemented":
+        title = "Research provider is not connected yet"
+        body = "The selected provider is configured, but the real search adapter has not been implemented yet."
+    else:
+        return None
+
+    missing_settings = tuple(str(value).strip() for value in diagnostics.get("search_provider_missing_settings", ()) if str(value).strip())
+    return {
+        "title": title,
+        "body": body,
+        "status": status,
+        "provider_name": str(diagnostics.get("search_provider_name") or "").strip(),
+        "missing_settings": missing_settings,
     }
 
 
@@ -1641,8 +1715,8 @@ def _build_pinned_research_source_inventory(topic: Topic | None) -> list[dict]:
     return inventory
 
 
-def _can_find_research_sources(topic: Topic | None) -> bool:
-    return bool(_build_topic_focus_terms(topic))
+def _can_find_research_sources(topic: Topic | None, *, provider_blocked: bool = False) -> bool:
+    return bool(_build_topic_focus_terms(topic)) and not provider_blocked
 
 
 def _build_legacy_source_display(topic: Topic | None) -> dict | None:

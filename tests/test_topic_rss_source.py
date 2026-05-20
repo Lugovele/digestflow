@@ -1575,6 +1575,159 @@ class TopicRssSourceTests(TestCase):
         self.assertIn('data-run-source-count-button', html)
         self.assertIn('disabled', html)
 
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=False,
+        SEARCH_PROVIDER="",
+        SEARCH_PROVIDER_API_KEY="",
+    )
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_workspace_shows_research_provider_disabled_notice_for_discovery_topics(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = []
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Disabled research topic",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research is currently disabled")
+        self.assertContains(
+            response,
+            "DigestFlow can still use your sources, but automatic research is turned off.",
+        )
+        self.assertContains(response, "Research unavailable")
+        self.assertContains(response, 'Find sources</button>', html=False)
+        self.assertContains(response, 'aria-disabled="true"', html=False)
+        self.assertNotContains(response, "Missing settings:")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="",
+    )
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_workspace_shows_research_provider_missing_config_notice(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = []
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Missing config topic",
+                "source_url": "",
+                "source_mode": TopicSourceMode.HYBRID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research provider needs configuration")
+        self.assertContains(
+            response,
+            "Automatic research is enabled, but the selected provider is missing required settings.",
+        )
+        self.assertContains(response, "Provider setup required")
+        self.assertContains(response, 'aria-disabled="true"', html=False)
+        self.assertContains(response, "Missing settings: SEARCH_PROVIDER_API_KEY")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_workspace_shows_research_provider_not_implemented_notice(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = []
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Not implemented research topic",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research provider is not connected yet")
+        self.assertContains(
+            response,
+            "The selected provider is configured, but the real search adapter has not been implemented yet.",
+        )
+        self.assertContains(response, "Search adapter not connected")
+        self.assertContains(response, 'aria-disabled="true"', html=False)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=False,
+        SEARCH_PROVIDER="",
+        SEARCH_PROVIDER_API_KEY="",
+    )
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_curated_only_workspace_does_not_show_research_provider_notice(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = []
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Manual workflow topic",
+                "source_url": "",
+                "source_mode": TopicSourceMode.CURATED_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Research is currently disabled")
+        self.assertNotContains(response, "Research provider needs configuration")
+        self.assertNotContains(response, "Research provider is not connected yet")
+        self.assertNotContains(response, "Research unavailable")
+        self.assertNotContains(response, "Provider setup required")
+        self.assertNotContains(response, "Search adapter not connected")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="fake",
+        SEARCH_PROVIDER_API_KEY="",
+    )
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_workspace_keeps_find_sources_active_when_provider_is_ready(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.return_value = []
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Ready provider topic",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Find sources")
+        self.assertNotContains(response, "Research is currently disabled")
+        self.assertNotContains(response, "Research provider needs configuration")
+        self.assertNotContains(response, "Research provider is not connected yet")
+        self.assertNotContains(response, "Research unavailable")
+        self.assertNotContains(response, "Provider setup required")
+        self.assertNotContains(response, "Search adapter not connected")
+        self.assertNotContains(response, 'aria-disabled="true"', html=False)
+
     @patch("apps.digests.views.resolve_source_candidates")
     def test_run_digest_card_uses_plural_selected_source_helper_text(self, mock_resolve_source_candidates) -> None:
         mock_resolve_source_candidates.return_value = [
