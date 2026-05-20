@@ -14,6 +14,18 @@ This currently runs:
 
 - `tests.test_source_pinning`
 
+## Source run eligibility changes
+
+For source mode validation, Run button state, and source eligibility rules, run:
+
+```powershell
+.\scripts\test_source_run_eligibility.ps1
+```
+
+This currently runs:
+
+- `tests.test_source_run_eligibility`
+
 ## Source candidate and research foundation work
 
 During development of candidate or research foundation code, run:
