@@ -166,6 +166,97 @@ class TopicRssSourceTests(TestCase):
 
     @patch("apps.digests.views.run_digest_pipeline")
     @patch("apps.digests.views.fetch_rss_articles")
+    def test_workspace_run_post_blocks_hybrid_topic_without_research_sources_and_preserves_state(
+        self,
+        mock_fetch_rss_articles,
+        mock_run_digest_pipeline,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Hybrid topic without research",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["automation"],
+            excluded_keywords=[],
+        )
+        manual_source = TopicSource.objects.create(
+            topic=topic,
+            name="Manual source",
+            url="https://example.com/manual",
+            normalized_url="https://example.com/manual",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.MANUAL,
+            is_active=True,
+        )
+
+        response = self.client.post(reverse("run-pipeline", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(response, reverse("topic-workspace", args=[topic.id]), fetch_redirect_response=False)
+        self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+        manual_source.refresh_from_db()
+        self.assertTrue(manual_source.is_active)
+        self.assertEqual(topic.source_mode, TopicSourceMode.HYBRID)
+        mock_fetch_rss_articles.assert_not_called()
+        mock_run_digest_pipeline.assert_not_called()
+
+        workspace_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+        self.assertContains(
+            workspace_response,
+            "Find or keep at least one research source before running this digest.",
+        )
+
+    @patch("apps.digests.views.run_digest_pipeline")
+    @patch("apps.digests.views.fetch_rss_articles")
+    def test_workspace_run_post_uses_manual_and_research_sources_in_hybrid_mode(
+        self,
+        mock_fetch_rss_articles,
+        mock_run_digest_pipeline,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Hybrid run topic",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["automation"],
+            excluded_keywords=[],
+        )
+        manual_source = TopicSource.objects.create(
+            topic=topic,
+            name="Manual source",
+            url="https://example.com/manual",
+            normalized_url="https://example.com/manual",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.MANUAL,
+            is_active=True,
+        )
+        kept_research_source = TopicSource.objects.create(
+            topic=topic,
+            name="Kept research source",
+            url="https://dev.to/t/ai",
+            normalized_url="https://dev.to/api/articles?tag=ai",
+            source_type="devto_tag",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        mock_fetch_rss_articles.side_effect = [
+            [{"title": "Manual article", "url": "https://example.com/articles/manual", "source_name": "Manual"}],
+            [{"title": "Research article", "url": "https://example.com/articles/research", "source_name": "Research"}],
+        ]
+
+        response = self.client.post(reverse("run-pipeline", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 302)
+        run = DigestRun.objects.get(topic=topic)
+        self.assertEqual(
+            run.input_snapshot.get("selected_source_urls"),
+            [manual_source.url, kept_research_source.url],
+        )
+        mock_fetch_rss_articles.assert_any_call(manual_source.normalized_url)
+        mock_fetch_rss_articles.assert_any_call(kept_research_source.normalized_url)
+        mock_run_digest_pipeline.assert_called_once()
+
+    @patch("apps.digests.views.run_digest_pipeline")
+    @patch("apps.digests.views.fetch_rss_articles")
     def test_empty_rss_marks_run_failed_with_clear_error(
         self,
         mock_fetch_rss_articles,
@@ -1326,7 +1417,10 @@ class TopicRssSourceTests(TestCase):
         self.assertLess(html.index('<h1 class="page-title">AI agents</h1>'), html.index("My sources"))
         self.assertLess(html.index("Research sources"), html.index("Find sources"))
         self.assertLess(html.index("Research sources"), html.index("Run digest"))
-        self.assertIn("1 selected source will be used in the next digest run.", html)
+        self.assertIn("Select at least one my source before running this digest.", html)
+        self.assertIn("0 my sources", html)
+        self.assertIn("1 research source", html)
+        self.assertIn("disabled", html)
         self.assertIn('name="topic_id" value="', html)
         self.assertIn('onchange="this.form.requestSubmit();"', html)
         self.assertEqual(html.count('class="primary-cta"'), 1)
@@ -1396,7 +1490,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "my sources only")
         self.assertContains(response, "My sources")
         self.assertContains(response, "Run digest")
-        self.assertContains(response, "Please select at least one source to run a new digest.")
+        self.assertContains(response, "Select at least one my source before running this digest.")
         self.assertNotContains(response, "Research sources")
         self.assertNotContains(response, "Find sources")
         self.assertNotContains(response, "No new suggestions yet.")
@@ -1472,7 +1566,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
         self.assertNotContains(response, "No new sources were found for this topic yet.")
         self.assertContains(response, "Ready to generate")
-        self.assertContains(response, "Please select at least one source to run a new digest.")
+        self.assertContains(response, "Find or keep at least one research source before running this digest.")
         self.assertContains(response, "Run digest")
 
         html = response.content.decode("utf-8")
@@ -1580,7 +1674,12 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "New source")
         self.assertNotContains(response, "Fresh discovery result.")
         self.assertNotContains(response, "Already saved on the topic.")
-        self.assertContains(response, 'type="hidden" name="selected_source_urls" value="https://dev.to/t/ai"', html=False)
+        self.assertContains(
+            response,
+            f'<form id="workspace-run-form" method="post" action="{reverse("run-pipeline", args=[topic.id])}"',
+            html=False,
+        )
+        self.assertNotContains(response, 'name="selected_source_urls"', html=False)
 
         html = response.content.decode("utf-8")
         self.assertIn("https://dev.to/t/ai", html)
@@ -2934,7 +3033,9 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn("Research sources", workspace_html)
         self.assertIn("New suggestions", workspace_html)
         self.assertIn("DEV Community / #ai", workspace_html)
-        self.assertIn("1 selected source will be used in the next digest run.", workspace_html)
+        self.assertIn("Select at least one my source before running this digest.", workspace_html)
+        self.assertIn("0 my sources", workspace_html)
+        self.assertIn("1 research source", workspace_html)
         saved_section = workspace_html.split("My sources", 1)[1].split("Research sources", 1)[0]
         new_section = workspace_html.rsplit("New suggestions", 1)[1]
         self.assertNotIn("DEV Community / #ai", saved_section)
@@ -2998,7 +3099,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         refreshed_html = refreshed_response.content.decode("utf-8")
         self.assertEqual(refreshed_response.status_code, 200)
         self.assertIn("DEV Community / #python", refreshed_html)
-        self.assertIn("Please select at least one source to run a new digest.", refreshed_html)
+        self.assertIn("Find or keep at least one research source before running this digest.", refreshed_html)
         self.assertNotIn("My sources", refreshed_html)
         self.assertIn("data-run-source-count-button", refreshed_html)
         self.assertIn("disabled", refreshed_html)
@@ -3056,7 +3157,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn("New suggestions", refreshed_html)
         self.assertNotIn("My sources", refreshed_html)
         self.assertIn("DEV Community / #python", refreshed_html)
-        self.assertIn("Please select at least one source to run a new digest.", refreshed_html)
+        self.assertIn("Find or keep at least one research source before running this digest.", refreshed_html)
         self.assertIn("data-run-source-count-button", refreshed_html)
         self.assertIn("disabled", refreshed_html)
         new_section = refreshed_html.rsplit("New suggestions", 1)[1]

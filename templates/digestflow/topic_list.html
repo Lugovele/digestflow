@@ -270,13 +270,28 @@
         }
         .topic-card-actions {
             display: flex;
-            gap: 8px;
+            gap: 12px;
             flex-wrap: nowrap;
             align-items: center;
             justify-content: flex-end;
             flex: 0 0 auto;
             margin-left: auto;
             align-self: center;
+            min-width: 320px;
+        }
+        .topic-run-hint {
+            min-width: 0;
+            flex: 1 1 180px;
+            text-align: right;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        .topic-run-form {
+            margin: 0;
+            flex: 0 0 auto;
+        }
+        .topic-run-button {
+            min-width: 76px;
         }
         .topic-title-row {
             display: flex;
@@ -301,7 +316,8 @@
             font-weight: 600;
         }
         .topic-card-actions .topic-delete-form {
-            margin: 0 0 0 48px;
+            margin: 0 0 0 12px;
+            flex: 0 0 auto;
         }
         .drag-handle {
             color: #94a3b8;
@@ -539,6 +555,7 @@
                 justify-content: flex-start;
                 flex-wrap: wrap;
                 margin-left: 0;
+                min-width: 0;
             }
             .topic-form-actions > * {
                 width: 100%;
@@ -945,28 +962,19 @@
                             <div>
                                 <h3 class="section-heading">Ready to generate</h3>
                                 <p class="section-hint" data-run-source-count-text>
-                                {% if selected_source_count == 0 %}
-                                    Please select at least one source to run a new digest.
-                                {% elif selected_source_count == 1 %}
-                                    1 selected source will be used in the next digest run.
-                                {% else %}
-                                    {{ selected_source_count }} selected sources will be used in the next digest run.
-                                {% endif %}
+                                {{ run_eligibility.message }}
                                 </p>
                             </div>
                             <div>
-                                <form id="workspace-run-form" method="post" action="{% url 'run-with-selected-sources' discovered_topic.id %}" style="margin: 0;">
+                                <form id="workspace-run-form" method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
                                     {% csrf_token %}
-                                    {% for selected_source_url in active_selected_source_urls %}
-                                        <input type="hidden" name="selected_source_urls" value="{{ selected_source_url }}">
-                                    {% endfor %}
                                 </form>
                                 <button
                                     type="submit"
                                     form="workspace-run-form"
                                     class="primary-cta"
                                     data-run-source-count-button
-                                    {% if selected_source_count == 0 %}disabled{% endif %}
+                                    {% if not run_eligibility.is_eligible %}disabled{% endif %}
                                 >Run digest</button>
                             </div>
                         </div>
@@ -979,19 +987,13 @@
                             <div>
                                 <h3 class="section-heading">Ready to generate</h3>
                                 <p class="section-hint">
-                                {% if selected_source_count == 0 %}
-                                    Please select at least one source to run a new digest.
-                                {% elif selected_source_count == 1 %}
-                                    1 selected source will be used in the next digest run.
-                                {% else %}
-                                    {{ selected_source_count }} selected sources will be used in the next digest run.
-                                {% endif %}
+                                {{ run_eligibility.message }}
                                 </p>
                             </div>
                             <div>
                                 <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
                                     {% csrf_token %}
-                                    <button type="submit" class="primary-cta" {% if selected_source_count == 0 %}disabled{% endif %}>Run digest</button>
+                                    <button type="submit" class="primary-cta" {% if not run_eligibility.is_eligible %}disabled{% endif %}>Run digest</button>
                                 </form>
                             </div>
                         </div>
@@ -1033,6 +1035,7 @@
         </div>
         <div class="topic-meta">
             <span class="pill">{{ topic.source_count }} my source{% if topic.source_count != 1 %}s{% endif %}</span>
+            <span class="pill">{{ topic.research_source_count }} research source{% if topic.research_source_count != 1 %}s{% endif %}</span>
             <span class="pill">
                 {% if topic.source_mode == "hybrid" %}
                     my sources & research
@@ -1050,9 +1053,18 @@
         {% endif %}
     </div>
     <div class="topic-card-actions">
-        <form method="post" action="{% url 'run-pipeline' topic.id %}" style="margin: 0;">
+        {% if not topic.run_eligibility.is_eligible and topic.run_eligibility.short_message %}
+            <span class="muted topic-run-hint">{{ topic.run_eligibility.short_message }}</span>
+        {% else %}
+            <span class="topic-run-hint" aria-hidden="true"></span>
+        {% endif %}
+        <form method="post" action="{% url 'run-pipeline' topic.id %}" class="topic-run-form">
             {% csrf_token %}
-            <button type="submit">Run</button>
+            <button
+                type="submit"
+                class="topic-run-button"
+                {% if not topic.run_eligibility.is_eligible %}disabled title="{{ topic.run_eligibility.short_message }}" aria-label="Run disabled: {{ topic.run_eligibility.short_message }}"{% endif %}
+            >Run</button>
         </form>
         <form
             method="post"

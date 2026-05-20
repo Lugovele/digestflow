@@ -179,3 +179,62 @@ class SourceRunEligibilityTests(TestCase):
         response = self.client.get(reverse("topic-workspace", args=[topic.id]))
 
         self._assert_run_disabled(response, "Select at least one my source before running this digest.")
+
+    def test_topic_list_hybrid_with_only_manual_sources_disables_run(self) -> None:
+        topic = self._create_topic(source_mode=TopicSourceMode.HYBRID)
+        self._add_manual_source(topic, is_active=True)
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "my sources & research")
+        self.assertContains(response, "1 my source")
+        self.assertContains(response, "0 research sources")
+        self.assertContains(response, "Needs a research source")
+        self.assertContains(
+            response,
+            f'aria-label="Run disabled: Needs a research source"',
+            html=False,
+        )
+        topic_row = response.content.decode("utf-8").split(topic.name, 1)[1].split("Delete topic", 1)[0]
+        self.assertLess(topic_row.index("Needs a research source"), topic_row.index(">Run</button>"))
+
+    def test_topic_list_hybrid_with_manual_and_research_sources_enables_run(self) -> None:
+        topic = self._create_topic(source_mode=TopicSourceMode.HYBRID)
+        self._add_manual_source(topic, is_active=True)
+        self._add_research_source(topic, is_active=True, is_pinned=True)
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "1 my source")
+        self.assertContains(response, "1 research source")
+        topic_row = response.content.decode("utf-8").split(topic.name, 1)[1].split("Delete topic", 1)[0]
+        self.assertIn(">Run</button>", topic_row)
+        self.assertNotIn("Needs a research source", topic_row)
+        self.assertNotIn("disabled", topic_row)
+        self.assertIn('class="topic-run-hint" aria-hidden="true"></span>', topic_row)
+
+    def test_topic_list_research_only_without_research_sources_disables_run(self) -> None:
+        topic = self._create_topic(source_mode=TopicSourceMode.DISCOVERY_ONLY)
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "research only")
+        self.assertContains(response, "0 research sources")
+        self.assertContains(response, "Needs a research source")
+
+    def test_topic_list_my_sources_only_with_manual_source_enables_run(self) -> None:
+        topic = self._create_topic(source_mode=TopicSourceMode.CURATED_ONLY)
+        self._add_manual_source(topic, is_active=True)
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "my sources only")
+        self.assertContains(response, "1 my source")
+        topic_row = response.content.decode("utf-8").split(topic.name, 1)[1].split("Delete topic", 1)[0]
+        self.assertIn(">Run</button>", topic_row)
+        self.assertNotIn("Needs a my source", topic_row)
+        self.assertNotIn("disabled", topic_row)

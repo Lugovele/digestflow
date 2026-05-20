@@ -193,6 +193,10 @@ def update_topic_focus_view(request: HttpRequest, topic_id: int) -> HttpResponse
 @require_POST
 def run_pipeline_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
+    if topic.sources.exists():
+        run_eligibility = _build_run_eligibility(topic)
+        if not run_eligibility["is_eligible"]:
+            return redirect("topic-workspace", topic_id=topic.id)
     run = _create_ui_digest_run(topic, source="web_ui")
 
     _start_topic_run(run, topic, default_source="web_ui")
@@ -1250,13 +1254,16 @@ def _build_topic_list_context(
     )
     for topic in topics:
         topic.source_count = sum(1 for source in topic.sources.all() if source.origin != TopicSourceOrigin.DISCOVERED)
+        topic.research_source_count = sum(1 for source in topic.sources.all() if source.origin == TopicSourceOrigin.DISCOVERED)
         topic.active_source_count = sum(
             1 for source in topic.sources.all() if source.is_active and source.origin != TopicSourceOrigin.DISCOVERED
         )
+        topic.run_eligibility = _build_run_eligibility(topic)
         topic.legacy_source_display = _build_legacy_source_display(topic)
     recent_runs = DigestRun.objects.filter(topic__user=user).select_related("topic").order_by("-created_at")[:10]
     for run in recent_runs:
         run.display_time = _format_recent_run_time(run.created_at)
+    run_eligibility = _build_run_eligibility(discovered_topic)
     return {
         "topics": topics,
         "recent_runs": recent_runs,
@@ -1272,6 +1279,7 @@ def _build_topic_list_context(
         "active_saved_source_urls": _build_active_saved_source_urls(discovered_topic),
         "active_selected_source_urls": _build_active_selected_source_urls(discovered_topic),
         "selected_source_count": _build_selected_source_count(discovered_topic),
+        "run_eligibility": run_eligibility,
         "legacy_topic_source": _build_legacy_source_display(discovered_topic),
         "source_add_feedback": None,
         "can_find_research_sources": _can_find_research_sources(discovered_topic),
@@ -1471,7 +1479,7 @@ def _build_active_selected_source_urls(topic: Topic | None) -> list[str]:
         return []
     return [
         str(source.url).strip()
-        for source in _get_mode_active_sources(topic)
+        for source in _build_run_eligibility(topic)["selected_sources"]
         if str(source.url).strip()
     ]
 
@@ -1479,7 +1487,7 @@ def _build_active_selected_source_urls(topic: Topic | None) -> list[str]:
 def _build_selected_source_count(topic: Topic | None) -> int:
     if topic is None:
         return 0
-    return len(_get_mode_active_sources(topic))
+    return _build_run_eligibility(topic)["selected_source_count"]
 
 
 def _get_mode_active_sources(topic: Topic) -> list[TopicSource]:
@@ -1490,6 +1498,80 @@ def _get_mode_active_sources(topic: Topic) -> list[TopicSource]:
     if mode == TopicSourceMode.DISCOVERY_ONLY:
         return [source for source in active_sources if source.origin == TopicSourceOrigin.DISCOVERED]
     return active_sources
+
+
+def _build_run_eligibility(topic: Topic | None) -> dict:
+    if topic is None:
+        return {
+            "is_eligible": False,
+            "message": "Please select at least one source to run a new digest.",
+            "short_message": "Needs sources",
+            "selected_source_count": 0,
+            "selected_sources": [],
+            "active_my_source_count": 0,
+            "active_research_source_count": 0,
+            "source_mode": TopicSourceMode.HYBRID,
+        }
+
+    active_sources = list(topic.sources.filter(is_active=True).order_by("id"))
+    active_my_sources = [source for source in active_sources if source.origin != TopicSourceOrigin.DISCOVERED]
+    active_research_sources = [source for source in active_sources if source.origin == TopicSourceOrigin.DISCOVERED]
+    mode = str(topic.source_mode or TopicSourceMode.HYBRID)
+
+    if mode == TopicSourceMode.CURATED_ONLY:
+        selected_sources = active_my_sources
+        is_eligible = bool(selected_sources)
+        message = (
+            _build_selected_source_count_message(len(selected_sources))
+            if is_eligible
+            else "Select at least one my source before running this digest."
+        )
+        short_message = "" if is_eligible else "Needs a my source"
+    elif mode == TopicSourceMode.DISCOVERY_ONLY:
+        selected_sources = active_research_sources
+        is_eligible = bool(selected_sources)
+        message = (
+            _build_selected_source_count_message(len(selected_sources))
+            if is_eligible
+            else "Find or keep at least one research source before running this digest."
+        )
+        short_message = "" if is_eligible else "Needs a research source"
+    else:
+        selected_sources = [*active_my_sources, *active_research_sources]
+        has_my_sources = bool(active_my_sources)
+        has_research_sources = bool(active_research_sources)
+        is_eligible = has_my_sources and has_research_sources
+        if is_eligible:
+            message = _build_selected_source_count_message(len(selected_sources))
+            short_message = ""
+        elif not has_my_sources and not has_research_sources:
+            message = "Please select at least one my source and one research source."
+            short_message = "Needs sources"
+        elif not has_my_sources:
+            message = "Select at least one my source before running this digest."
+            short_message = "Needs a my source"
+        else:
+            message = "Find or keep at least one research source before running this digest."
+            short_message = "Needs a research source"
+
+    return {
+        "is_eligible": is_eligible,
+        "message": message,
+        "short_message": short_message,
+        "selected_source_count": len(selected_sources),
+        "selected_sources": selected_sources,
+        "active_my_source_count": len(active_my_sources),
+        "active_research_source_count": len(active_research_sources),
+        "source_mode": mode,
+    }
+
+
+def _build_selected_source_count_message(selected_source_count: int) -> str:
+    if selected_source_count <= 0:
+        return "Please select at least one source to run a new digest."
+    if selected_source_count == 1:
+        return "1 selected source will be used in the next digest run."
+    return f"{selected_source_count} selected sources will be used in the next digest run."
 
 
 def _build_curated_source_seeds(topic: Topic) -> list[CuratedSourceSeed]:
@@ -2214,7 +2296,7 @@ def _create_ui_digest_run(topic: Topic, source: str, selected_source_urls: list[
 
 
 def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
-    active_sources = list(topic.sources.filter(is_active=True).order_by("id"))
+    active_sources = _get_mode_active_sources(topic)
     if active_sources:
         raw_items = []
         selected_source_urls: list[str] = []
