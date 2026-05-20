@@ -5,6 +5,8 @@ import re
 from urllib.parse import urlparse
 from typing import Iterable
 
+from services.sources.detector import classify_source_url
+
 
 RANKING_KEYWORDS = ("reduced", "increase", "improved", "cut", "growth")
 DEFAULT_MIN_QUALITY_SCORE = 0.4
@@ -284,6 +286,7 @@ def rank_source_items(
     *,
     keywords: Iterable[str] | None = None,
     excluded_keywords: Iterable[str] | None = None,
+    excluded_normalized_urls: Iterable[str] | None = None,
     top_n: int = 3,
     min_quality_score: float = DEFAULT_MIN_QUALITY_SCORE,
 ) -> tuple[list[dict], list[dict]]:
@@ -292,6 +295,11 @@ def rank_source_items(
     normalized_excluded = [
         term for term in (_normalize_term(k) for k in (excluded_keywords or [])) if term
     ]
+    normalized_used_urls = {
+        str(url or "").strip()
+        for url in (excluded_normalized_urls or [])
+        if str(url or "").strip()
+    }
 
     scored_items: list[tuple[float, float, int, dict, dict]] = []
     for index, item in enumerate(items):
@@ -312,17 +320,29 @@ def rank_source_items(
 
     scored_items.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
 
-    ranking_scores = [
-        {
+    ranking_scores: list[dict] = []
+    scored_entries: list[tuple[dict, dict, float]] = []
+    for raw_score, quality_score, _, item, scoring_details in scored_items:
+        item_url = str(item.get("url", "") or "").strip()
+        normalized_url = str(item.get("normalized_url") or "").strip()
+        if not normalized_url and item_url:
+            normalized_url = classify_source_url(item_url).normalized_url
+        excluded_as_used = bool(
+            normalized_url
+            and normalized_url in normalized_used_urls
+        )
+        score = {
             "article_id": item.get("id") or item.get("article_id"),
             "title": item.get("title", ""),
-            "url": item.get("url", ""),
+            "url": item_url,
+            "normalized_url": normalized_url,
             "source_name": item.get("source_name") or item.get("source") or "",
             "topic_domain": scoring_details["topic_domain"],
             "content_tier": scoring_details["content_tier"],
             "content_length": scoring_details["content_length"],
             "score": raw_score,
             "quality_score": quality_score,
+            "quality_threshold_used": min_quality_score,
             "final_quality_score": quality_score,
             "topic_relevance_score": scoring_details["topic_relevance_score"],
             "topic_relevance_reason": scoring_details["topic_relevance_reason"],
@@ -356,17 +376,18 @@ def rank_source_items(
             "similarity_reasons": [],
             "diversity_adjusted_score": raw_score,
             "scoring_mode": "rule_based",
+            "excluded_as_used": excluded_as_used,
         }
-        for raw_score, quality_score, _, item, scoring_details in scored_items
-    ]
+        ranking_scores.append(score)
+        scored_entries.append((item, score, quality_score))
 
     filtered_entries = [
         (
             item,
-            ranking_scores[index],
+            score,
         )
-        for index, (_raw_score, quality_score, _position, item, _scoring_details) in enumerate(scored_items)
-        if quality_score >= min_quality_score
+        for item, score, quality_score in scored_entries
+        if quality_score >= min_quality_score and not score.get("excluded_as_used")
     ]
     selected_items = _select_diverse_items(filtered_entries, top_n=top_n)
     return selected_items, ranking_scores

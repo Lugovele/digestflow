@@ -10,6 +10,11 @@ from apps.digests.models import DigestRun
 from apps.digests import result_messages
 from apps.topics.models import Topic
 from services.digests import generate_digest_for_run
+from services.digests.used_articles import (
+    build_used_article_filter_diagnostics,
+    get_used_article_urls_for_topic,
+    record_used_articles_for_run,
+)
 from services.config.author_profile import load_author_profile
 from services.json_utils import make_json_safe
 from services.packaging import generate_content_package_for_digest
@@ -99,6 +104,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
 
         top_n = _resolve_top_n(run)
         quality_threshold = _resolve_quality_threshold(run)
+        used_article_urls = get_used_article_urls_for_topic(run.topic)
         run.quality_threshold_used = quality_threshold
         run.save(update_fields=["quality_threshold_used", "updated_at"])
 
@@ -107,8 +113,13 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             deduped_items,
             keywords=run.topic.keywords,
             excluded_keywords=run.topic.excluded_keywords,
+            excluded_normalized_urls=used_article_urls,
             top_n=top_n,
             min_quality_score=quality_threshold,
+        )
+        used_article_filter_diagnostics = build_used_article_filter_diagnostics(
+            ranking_scores,
+            used_article_count_for_topic=len(used_article_urls),
         )
         qualified_scores = [
             score_entry
@@ -161,6 +172,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 "top_n": top_n,
                 "ranking_scores": ranking_scores,
                 "top_rejected_articles": rejected_scores[:5],
+                **used_article_filter_diagnostics,
             },
         })
         run.save(update_fields=["metrics", "updated_at"])
@@ -238,6 +250,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         run.finished_at = timezone.now()
         run.error_message = ""
         run.result_message = result_messages.COMPLETED
+        used_articles = record_used_articles_for_run(run, ranked_items)
         run.metrics = make_json_safe({
             **run.metrics,
             "packaging_stage": {
@@ -257,6 +270,11 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                     else None,
                 },
                 "estimated_cost_usd": packaging_debug.get("estimated_cost_usd"),
+            },
+            "used_articles_stage": {
+                "status": "completed",
+                "used_article_count": len(used_articles),
+                "used_article_ids": [article.id for article in used_articles],
             },
         })
         run.save(update_fields=["status", "finished_at", "error_message", "result_message", "metrics", "updated_at"])

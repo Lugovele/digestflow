@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from apps.digests.models import Digest, DigestRun
+from apps.digests.models import Digest, DigestRun, UsedArticle
 from apps.packaging.models import ContentPackage
 from apps.topics.models import Topic
 
@@ -327,6 +327,454 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, "Diversity penalty")
         self.assertContains(response, "Diversity-adjusted score")
         self.assertContains(response, "moderate supporting-tag overlap with an already selected article")
+
+    def test_run_detail_exposes_topic_level_used_article_history(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles")
+        topic = Topic.objects.create(
+            user=user,
+            name="Used article diagnostics",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        previous_run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Previous digest generated successfully.",
+            metrics={
+                "ranking_stage": {
+                    "selected_for_prompt": 1,
+                    "ranking_scores": [],
+                },
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        Digest.objects.create(
+            run=previous_run,
+            title="Previous digest",
+            payload={"title": "Previous digest", "articles": []},
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {
+                    "selected_for_prompt": 2,
+                    "ranking_scores": [],
+                },
+                "digest_stage": {"status": "completed", "articles_count": 2},
+            },
+        )
+        Digest.objects.create(
+            run=run,
+            title="Digest for Used article diagnostics",
+            payload={"title": "Digest for Used article diagnostics", "articles": []},
+        )
+        UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=previous_run,
+            normalized_url="https://example.com/previous-article",
+            article_url="https://example.com/previous-article",
+            title="Used article from previous run",
+            source_url="https://example.com/feed",
+        )
+        UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Used article one",
+            source_url="https://example.com/feed",
+        )
+        UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-2",
+            article_url="https://example.com/article-2",
+            title="Used article two",
+            source_url="https://example.com/feed",
+        )
+        other_topic = Topic.objects.create(
+            user=user,
+            name="Other topic",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        other_run = DigestRun.objects.create(
+            topic=other_topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Other digest generated successfully.",
+            metrics={
+                "ranking_stage": {
+                    "selected_for_prompt": 1,
+                    "ranking_scores": [],
+                },
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        UsedArticle.objects.create(
+            user=user,
+            topic=other_topic,
+            digest_run=other_run,
+            normalized_url="https://example.com/other-topic-article",
+            article_url="https://example.com/other-topic-article",
+            title="Other topic article",
+            source_url="https://example.com/other-feed",
+        )
+        topic.name = "Renamed topic diagnostics"
+        topic.save(update_fields=["name", "updated_at"])
+
+        response = self.client.get(reverse("run-detail", args=[run.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["used_article_count"], 3)
+        self.assertEqual(len(response.context["used_articles"]), 3)
+        self.assertContains(
+            response,
+            '<details id="used-article-history" class="detail-block used-article-history">',
+            html=False,
+        )
+        self.assertContains(response, "Used article history for this topic (3)")
+        self.assertContains(
+            response,
+            "Articles already used in successful digests for this topic. Future repeat filtering will use this topic-level history.",
+        )
+        self.assertContains(response, "Renamed topic diagnostics")
+        self.assertContains(response, "Used article from previous run")
+        self.assertContains(response, "Used article one")
+        self.assertContains(response, "Used article two")
+        self.assertContains(response, "example.com")
+        self.assertContains(
+            response,
+            'href="https://example.com/article-1"',
+            html=False,
+        )
+        self.assertContains(response, "Run {}".format(previous_run.id))
+        self.assertContains(response, "Run {}".format(run.id))
+        self.assertContains(response, "Used once")
+        self.assertNotContains(response, "Other topic article")
+        self.assertNotContains(response, "https://example.com/other-topic-article")
+        self.assertNotContains(response, "<th>Source</th>", html=False)
+        self.assertNotContains(response, "<th>Link</th>", html=False)
+        self.assertNotContains(response, "<th>Open</th>", html=False)
+        self.assertNotContains(response, "Open article")
+        self.assertTrue(all("normalized_url" not in article for article in response.context["used_articles"]))
+        self.assertTrue(all("source_url" not in article for article in response.context["used_articles"]))
+        self.assertTrue(all(article["use_count"] == 1 for article in response.context["used_articles"]))
+
+    def test_run_detail_exposes_repeat_usage_in_used_article_history(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles-repeat")
+        topic = Topic.objects.create(
+            user=user,
+            name="Used article repeat diagnostics",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        first_run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="First digest generated successfully.",
+            metrics={"ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []}, "digest_stage": {"status": "completed", "articles_count": 1}},
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Second digest generated successfully.",
+            metrics={"ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []}, "digest_stage": {"status": "completed", "articles_count": 1}},
+        )
+        UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            first_used_in_run=first_run,
+            last_used_in_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Repeated article",
+            source_url="https://example.com/feed",
+            use_count=2,
+            first_used_at=first_run.created_at,
+            last_used_at=run.created_at,
+        )
+
+        response = self.client.get(reverse("run-detail", args=[run.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Used article history for this topic (1)")
+        self.assertContains(response, "Repeated article")
+        self.assertContains(response, "Used 2 times")
+        self.assertContains(response, "First")
+        self.assertContains(response, "Last")
+        self.assertContains(response, "Run {}".format(first_run.id))
+        self.assertContains(response, "Run {}".format(run.id))
+
+    def test_run_detail_keeps_used_article_history_collapsed_and_read_only_by_default(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles-collapsed")
+        topic = Topic.objects.create(
+            user=user,
+            name="Collapsed used article diagnostics",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {
+                    "selected_for_prompt": 1,
+                    "ranking_scores": [],
+                },
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Used article one",
+            source_url="https://example.com/feed",
+        )
+
+        response = self.client.get(reverse("run-detail", args=[run.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<details id="used-article-history" class="detail-block used-article-history">',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            '<details id="used-article-history" class="detail-block used-article-history" open>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'href="https://example.com/article-1"',
+            html=False,
+        )
+        self.assertNotContains(response, "Edit used articles")
+        self.assertNotContains(response, "Delete used article")
+
+    def test_run_detail_used_article_history_renders_delete_action(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles-delete")
+        topic = Topic.objects.create(
+            user=user,
+            name="Delete used article diagnostics",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []},
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        used_article = UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Used article one",
+            source_url="https://example.com/feed",
+        )
+
+        response = self.client.get(reverse("run-detail", args=[run.id]))
+
+        self.assertContains(response, "Delete")
+        self.assertContains(response, 'id="used-article-history"', html=False)
+        self.assertContains(
+            response,
+            reverse("delete-used-article", args=[run.id, used_article.id]),
+        )
+
+    def test_delete_used_article_removes_only_targeted_row_and_redirects(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles-delete-post")
+        topic = Topic.objects.create(
+            user=user,
+            name="Delete post topic",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {"selected_for_prompt": 2, "ranking_scores": []},
+                "digest_stage": {"status": "completed", "articles_count": 2},
+            },
+        )
+        target_article = UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Used article one",
+            source_url="https://example.com/feed",
+        )
+        other_article = UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-2",
+            article_url="https://example.com/article-2",
+            title="Used article two",
+            source_url="https://example.com/feed",
+        )
+
+        response = self.client.post(
+            reverse("delete-used-article", args=[run.id, target_article.id]),
+        )
+
+        self.assertEqual(
+            response["Location"],
+            "{}#used-article-history".format(reverse("run-detail", args=[run.id])),
+        )
+        self.assertFalse(UsedArticle.objects.filter(pk=target_article.id).exists())
+        self.assertTrue(UsedArticle.objects.filter(pk=other_article.id).exists())
+
+        detail_response = self.client.get(reverse("run-detail", args=[run.id]))
+        self.assertEqual(detail_response.context["used_article_count"], 1)
+        self.assertContains(detail_response, "Used article history for this topic (1)")
+        self.assertNotContains(detail_response, "Used article one")
+        self.assertContains(detail_response, "Used article two")
+
+    def test_delete_used_article_last_row_shows_empty_state(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles-empty")
+        topic = Topic.objects.create(
+            user=user,
+            name="Delete last used article topic",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []},
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        used_article = UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Used article one",
+            source_url="https://example.com/feed",
+        )
+
+        self.client.post(reverse("delete-used-article", args=[run.id, used_article.id]))
+        detail_response = self.client.get(reverse("run-detail", args=[run.id]))
+
+        self.assertEqual(detail_response.context["used_article_count"], 0)
+        self.assertContains(detail_response, "Used article history for this topic (0)")
+        self.assertContains(detail_response, "No used article history yet for this topic.")
+
+    def test_delete_used_article_invalid_target_does_not_delete_unrelated_rows(self) -> None:
+        user = get_user_model().objects.create_user(username="detail-user-used-articles-invalid")
+        topic = Topic.objects.create(
+            user=user,
+            name="Delete invalid used article topic",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []},
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        kept_article = UsedArticle.objects.create(
+            user=user,
+            topic=topic,
+            digest_run=run,
+            normalized_url="https://example.com/article-1",
+            article_url="https://example.com/article-1",
+            title="Used article one",
+            source_url="https://example.com/feed",
+        )
+        other_topic = Topic.objects.create(
+            user=user,
+            name="Other delete topic",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        other_run = DigestRun.objects.create(
+            topic=other_topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []},
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        other_article = UsedArticle.objects.create(
+            user=user,
+            topic=other_topic,
+            digest_run=other_run,
+            normalized_url="https://example.com/article-2",
+            article_url="https://example.com/article-2",
+            title="Other topic article",
+            source_url="https://example.com/feed",
+        )
+        foreign_user = get_user_model().objects.create_user(username="foreign-used-article-user")
+        foreign_topic = Topic.objects.create(
+            user=foreign_user,
+            name="Foreign topic",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        foreign_run = DigestRun.objects.create(
+            topic=foreign_topic,
+            status=DigestRun.STATUS_COMPLETED,
+            result_message="Digest generated successfully.",
+            metrics={
+                "ranking_stage": {"selected_for_prompt": 1, "ranking_scores": []},
+                "digest_stage": {"status": "completed", "articles_count": 1},
+            },
+        )
+        foreign_article = UsedArticle.objects.create(
+            user=foreign_user,
+            topic=foreign_topic,
+            digest_run=foreign_run,
+            normalized_url="https://example.com/article-3",
+            article_url="https://example.com/article-3",
+            title="Foreign topic article",
+            source_url="https://example.com/feed",
+        )
+
+        response = self.client.post(
+            reverse("delete-used-article", args=[run.id, other_article.id]),
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(UsedArticle.objects.filter(pk=kept_article.id).exists())
+        self.assertTrue(UsedArticle.objects.filter(pk=other_article.id).exists())
+        self.assertTrue(UsedArticle.objects.filter(pk=foreign_article.id).exists())
+
+        foreign_response = self.client.post(
+            reverse("delete-used-article", args=[run.id, foreign_article.id]),
+        )
+        self.assertEqual(foreign_response.status_code, 404)
+        self.assertTrue(UsedArticle.objects.filter(pk=kept_article.id).exists())
+        self.assertTrue(UsedArticle.objects.filter(pk=foreign_article.id).exists())
 
     def test_run_detail_renders_only_per_article_digest_view(self) -> None:
         user = get_user_model().objects.create_user(username="detail-user")

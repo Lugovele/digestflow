@@ -10,11 +10,12 @@ from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.db.models import F
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.digests import result_messages
-from apps.digests.models import DigestRun
+from apps.digests.models import DigestRun, UsedArticle
 from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, clean_focus_terms, validate_new_focus_terms
 from apps.topics.focus_suggestions import generate_focus_suggestions, should_seed_focus_terms
 from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
@@ -199,6 +200,22 @@ def run_pipeline_view(request: HttpRequest, topic_id: int) -> HttpResponse:
 
 
 @require_POST
+def delete_used_article_view(request: HttpRequest, run_id: int, used_article_id: int) -> HttpResponse:
+    run = get_object_or_404(
+        DigestRun.objects.select_related("topic__user"),
+        pk=run_id,
+    )
+    used_article = get_object_or_404(
+        UsedArticle,
+        pk=used_article_id,
+        topic=run.topic,
+        user=run.topic.user,
+    )
+    used_article.delete()
+    return redirect(f"{reverse('run-detail', kwargs={'run_id': run.id})}#used-article-history")
+
+
+@require_POST
 def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     discovered_source_candidates = _discover_and_prepare_candidates(topic)
@@ -362,6 +379,7 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "articles": digest_articles,
     }
     selected_ranked_articles = [article for article in ranked_articles if article.get("is_selected_for_digest")]
+    used_articles = _build_used_article_history(run.topic)
     content_package_report = _build_content_package_report(content_package, validation_report)
     copy_diagnostics_text = _build_copy_diagnostics_text(
         run=run,
@@ -432,6 +450,8 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "validation_report": validation_report,
         "quality_checks": validation_report.get("quality_checks", {}),
         "content_package_report": content_package_report,
+        "used_article_count": len(used_articles),
+        "used_articles": used_articles,
         "copy_diagnostics_text": copy_diagnostics_text,
         "hook_variants": content_package.hook_variants if content_package else [],
         "cta_variants": content_package.cta_variants if content_package else [],
@@ -560,10 +580,23 @@ def _build_ranking_stage_report(
                 "Rejected low quality articles",
                 _display_metric_value(ranking_stage.get("rejected_low_quality_count")),
             ),
+            (
+                "Used article history for topic",
+                _display_metric_value(ranking_stage.get("used_article_count_for_topic")),
+            ),
+            (
+                "Excluded as already used",
+                _display_metric_value(ranking_stage.get("articles_excluded_as_used")),
+            ),
+            (
+                "Remaining after used filter",
+                _display_metric_value(ranking_stage.get("articles_remaining_after_used_filter")),
+            ),
             ("Selected for prompt", _display_metric_value(ranking_stage.get("selected_for_prompt"))),
         ],
         "decision_message": _build_ranking_decision_message(ranking_stage, run_status),
         "top_rejected_article": top_rejected_articles[0] if top_rejected_articles else None,
+        "excluded_used_articles": ranking_stage.get("excluded_used_articles", []),
     }
 
 
@@ -1808,6 +1841,36 @@ def _build_compact_source_url(url: str) -> str:
     if parsed.query:
         compact = f"{compact}?{parsed.query}"
     return compact or str(url or "").strip()
+
+
+def _build_compact_domain(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    domain = str(parsed.netloc or "").strip().lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain or _build_compact_source_url(url)
+
+
+def _build_used_article_history(topic: Topic) -> list[dict]:
+    history = (
+        UsedArticle.objects.filter(topic=topic)
+        .select_related("first_used_in_run", "last_used_in_run")
+        .order_by("-last_used_at", "-id")
+    )
+    return [
+        {
+            "id": article.id,
+            "title": article.title,
+            "article_url": article.article_url,
+            "source_display": _build_compact_domain(article.source_url or article.article_url),
+            "use_count": article.use_count,
+            "first_used_in_run_id": article.first_used_in_run_id,
+            "last_used_in_run_id": article.last_used_in_run_id or article.digest_run_id,
+            "first_used_at": article.first_used_at,
+            "last_used_at": article.last_used_at or article.used_at,
+        }
+        for article in history
+    ]
 
 
 def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[dict]) -> list[dict]:

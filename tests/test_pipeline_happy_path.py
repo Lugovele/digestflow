@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
-from apps.digests.models import DigestRun
+from apps.digests.models import Digest, DigestRun, UsedArticle
 from apps.digests import result_messages
 from apps.sources.models import Article
 from apps.topics.models import Topic
@@ -79,6 +79,7 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(run.input_snapshot.get("source"), "integration_test")
 
         self.assertEqual(Article.objects.filter(topic=topic).count(), 3)
+        self.assertEqual(UsedArticle.objects.filter(topic=topic).count(), 3)
         self.assertEqual(digest.run_id, run.id)
         self.assertTrue(digest.title)
         self.assertEqual(digest.get_payload_version(), 1)
@@ -112,6 +113,18 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(source_stage.get("saved_articles_count"), 3)
         self.assertEqual(len(source_stage.get("article_ids", [])), 3)
         self.assertEqual(source_stage.get("cleaning_rejections"), [])
+        used_stage = run.metrics.get("used_articles_stage", {})
+        self.assertEqual(used_stage.get("status"), "completed")
+        self.assertEqual(used_stage.get("used_article_count"), 3)
+        self.assertEqual(len(used_stage.get("used_article_ids", [])), 3)
+        used_articles = list(UsedArticle.objects.filter(topic=topic).order_by("id"))
+        self.assertTrue(all(article.digest_run_id == run.id for article in used_articles))
+        self.assertTrue(all(article.user_id == user.id for article in used_articles))
+        self.assertTrue(all(article.use_count == 1 for article in used_articles))
+        self.assertTrue(all(article.first_used_in_run_id == run.id for article in used_articles))
+        self.assertTrue(all(article.last_used_in_run_id == run.id for article in used_articles))
+        self.assertTrue(all(article.first_used_at is not None for article in used_articles))
+        self.assertTrue(all(article.last_used_at is not None for article in used_articles))
 
         self.assertEqual(ranking_stage.get("quality_threshold"), 0.4)
         self.assertGreaterEqual(ranking_stage.get("max_quality_score"), 0.8)
@@ -482,8 +495,10 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertIn("heading_diagnostics", ranking_stage.get("ranking_scores")[0])
         self.assertEqual(run.metrics.get("digest_stage", {}).get("status"), "skipped")
         self.assertEqual(run.metrics.get("packaging_stage", {}).get("status"), "skipped")
+        self.assertFalse(run.metrics.get("used_articles_stage"))
         self.assertIn("Недостаточно качественных статей", run.error_message)
         self.assertEqual(Article.objects.filter(topic=topic).count(), 1)
+        self.assertEqual(UsedArticle.objects.filter(topic=topic).count(), 0)
         stored_article = Article.objects.get(topic=topic)
         self.assertEqual(stored_article.url, "https://dev.to/alice/full-content-article")
         self.assertEqual(stored_article.raw_payload.get("source_url"), "https://dev.to/t/ai")
@@ -545,6 +560,7 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(run.result_message, result_messages.INSUFFICIENT_QUALITY)
         self.assertFalse(hasattr(run, "digest"))
         self.assertEqual(Article.objects.filter(topic=topic).count(), 3)
+        self.assertEqual(UsedArticle.objects.filter(topic=topic).count(), 0)
         ranking_stage = run.metrics.get("ranking_stage", {})
         self.assertEqual(ranking_stage.get("quality_threshold"), 0.4)
         self.assertLess(ranking_stage.get("max_quality_score"), 0.4)
@@ -685,3 +701,179 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(run.status, DigestRun.STATUS_FAILED)
         self.assertEqual(run.result_message, result_messages.SOURCE_NO_USABLE_ARTICLES)
         self.assertEqual(run.error_message, "Source stage returned no articles.")
+
+    @patch("services.pipeline.run_pipeline.generate_content_package_for_digest")
+    @patch("services.pipeline.run_pipeline.generate_digest_for_run")
+    @patch("services.pipeline.run_pipeline.save_articles_for_topic")
+    @patch("services.pipeline.run_pipeline.rank_source_items")
+    def test_successful_digest_records_only_selected_for_prompt_articles(
+        self,
+        mock_rank_source_items,
+        mock_save_articles_for_topic,
+        mock_generate_digest_for_run,
+        mock_generate_content_package_for_digest,
+    ):
+        user = get_user_model().objects.create_user(
+            username="used-article-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Used article selection",
+            keywords=["workflow"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "raw_items", "source": "integration_test"},
+        )
+        raw_items = [
+            {"title": "Selected one", "url": "https://example.com/selected-1", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_1},
+            {"title": "Selected two", "url": "https://example.com/selected-2", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_2},
+            {"title": "Selected one duplicate", "url": "https://example.com/selected-1", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_1},
+            {"title": "Rejected four", "url": "https://example.com/rejected-4", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_3},
+        ]
+        selected_items = [
+            {"title": "Selected one", "url": "https://example.com/selected-1", "source_name": "Example", "source_url": "https://example.com/feed"},
+            {"title": "Selected two", "url": "https://example.com/selected-2", "source_name": "Example", "source_url": "https://example.com/feed"},
+            {"title": "Selected one duplicate", "url": "https://example.com/selected-1", "source_name": "Example", "source_url": "https://example.com/feed"},
+        ]
+        ranking_scores = [
+            {"title": "Selected one", "url": "https://example.com/selected-1", "quality_score": 0.9, "quality_reasons": ["strong relevance"], "rejection_reasons": []},
+            {"title": "Selected two", "url": "https://example.com/selected-2", "quality_score": 0.8, "quality_reasons": ["strong relevance"], "rejection_reasons": []},
+            {"title": "Rejected four", "url": "https://example.com/rejected-4", "quality_score": 0.2, "quality_reasons": ["weak"], "rejection_reasons": ["low quality"]},
+        ]
+        mock_rank_source_items.return_value = (selected_items, ranking_scores)
+        mock_save_articles_for_topic.return_value = []
+
+        digest = Digest.objects.create(
+            run=run,
+            title="Digest for Used article selection",
+            payload={
+                "title": "Digest for Used article selection",
+                "articles": [
+                    {"url": "https://example.com/selected-1", "title": "Selected one", "summary": "Summary"},
+                    {"url": "https://example.com/selected-2", "title": "Selected two", "summary": "Summary"},
+                ],
+            },
+            quality_score=0.8,
+        )
+        mock_generate_digest_for_run.return_value = (
+            digest,
+            {"provider": "mock", "is_mock": True, "tokens": None, "estimated_cost_usd": None},
+        )
+        mock_generate_content_package_for_digest.return_value = (
+            SimpleNamespace(id=1),
+            {"provider": "mock", "is_mock": True, "tokens": None, "estimated_cost_usd": None},
+        )
+
+        result = run_digest_pipeline(run.id, raw_items)
+        run.refresh_from_db()
+
+        self.assertEqual(result.id, run.id)
+        self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
+        used_articles = list(UsedArticle.objects.filter(topic=topic).order_by("normalized_url"))
+        self.assertEqual(len(used_articles), 2)
+        self.assertEqual(
+            [article.normalized_url for article in used_articles],
+            ["https://example.com/selected-1", "https://example.com/selected-2"],
+        )
+        self.assertTrue(all(article.digest_run_id == run.id for article in used_articles))
+        self.assertTrue(all(article.user_id == user.id for article in used_articles))
+        self.assertTrue(all(article.source_url == "https://example.com/feed" for article in used_articles))
+        self.assertTrue(all(article.use_count == 1 for article in used_articles))
+        self.assertTrue(all(article.first_used_in_run_id == run.id for article in used_articles))
+        self.assertTrue(all(article.last_used_in_run_id == run.id for article in used_articles))
+        self.assertFalse(UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/rejected-4").exists())
+
+    @patch("services.pipeline.run_pipeline.generate_content_package_for_digest")
+    @patch("services.pipeline.run_pipeline.generate_digest_for_run")
+    @patch("services.pipeline.run_pipeline.save_articles_for_topic")
+    @patch("services.pipeline.run_pipeline.rank_source_items")
+    def test_successful_digest_repeat_use_updates_topic_history_without_duplicate_rows(
+        self,
+        mock_rank_source_items,
+        mock_save_articles_for_topic,
+        mock_generate_digest_for_run,
+        mock_generate_content_package_for_digest,
+    ):
+        user = get_user_model().objects.create_user(
+            username="used-article-repeat-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Used article repeat visibility",
+            keywords=["workflow"],
+            excluded_keywords=[],
+        )
+        first_run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "raw_items", "source": "integration_test"},
+        )
+        second_run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "raw_items", "source": "integration_test"},
+        )
+        raw_items = [
+            {"title": "Selected one", "url": "https://example.com/selected-1", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_1},
+            {"title": "Selected two", "url": "https://example.com/selected-2", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_2},
+            {"title": "Rejected four", "url": "https://example.com/rejected-4", "source_name": "Example", "snippet": LONG_RSS_SNIPPET_3},
+        ]
+        selected_items = [
+            {"title": "Selected one", "url": "https://example.com/selected-1", "source_name": "Example", "source_url": "https://example.com/feed"},
+            {"title": "Selected two", "url": "https://example.com/selected-2", "source_name": "Example", "source_url": "https://example.com/feed"},
+        ]
+        ranking_scores = [
+            {"title": "Selected one", "url": "https://example.com/selected-1", "quality_score": 0.9, "quality_reasons": ["strong relevance"], "rejection_reasons": []},
+            {"title": "Selected two", "url": "https://example.com/selected-2", "quality_score": 0.85, "quality_reasons": ["strong relevance"], "rejection_reasons": []},
+            {"title": "Rejected four", "url": "https://example.com/rejected-4", "quality_score": 0.2, "quality_reasons": ["weak"], "rejection_reasons": ["low quality"]},
+        ]
+        mock_rank_source_items.return_value = (selected_items, ranking_scores)
+        mock_save_articles_for_topic.return_value = []
+
+        first_digest = Digest.objects.create(
+            run=first_run,
+            title="First digest",
+            payload={"title": "First digest", "articles": [
+                {"url": "https://example.com/selected-1", "title": "Selected one", "summary": "Summary"},
+                {"url": "https://example.com/selected-2", "title": "Selected two", "summary": "Summary"},
+            ]},
+            quality_score=0.8,
+        )
+        second_digest = Digest.objects.create(
+            run=second_run,
+            title="Second digest",
+            payload={"title": "Second digest", "articles": [
+                {"url": "https://example.com/selected-1", "title": "Selected one", "summary": "Summary"},
+                {"url": "https://example.com/selected-2", "title": "Selected two", "summary": "Summary"},
+            ]},
+            quality_score=0.8,
+        )
+        mock_generate_digest_for_run.side_effect = [
+            (first_digest, {"provider": "mock", "is_mock": True, "tokens": None, "estimated_cost_usd": None}),
+            (second_digest, {"provider": "mock", "is_mock": True, "tokens": None, "estimated_cost_usd": None}),
+        ]
+        mock_generate_content_package_for_digest.return_value = (
+            SimpleNamespace(id=1),
+            {"provider": "mock", "is_mock": True, "tokens": None, "estimated_cost_usd": None},
+        )
+
+        first_result = run_digest_pipeline(first_run.id, raw_items)
+        history_after_first = UsedArticle.objects.get(topic=topic, normalized_url="https://example.com/selected-1")
+        first_used_at = history_after_first.first_used_at
+        last_used_at = history_after_first.last_used_at
+
+        second_result = run_digest_pipeline(second_run.id, raw_items)
+        topic_history = UsedArticle.objects.get(topic=topic, normalized_url="https://example.com/selected-1")
+
+        self.assertEqual(first_result.id, first_run.id)
+        self.assertEqual(second_result.id, second_run.id)
+        self.assertEqual(UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/selected-1").count(), 1)
+        self.assertEqual(topic_history.use_count, 2)
+        self.assertEqual(topic_history.first_used_in_run_id, first_run.id)
+        self.assertEqual(topic_history.last_used_in_run_id, second_run.id)
+        self.assertEqual(topic_history.digest_run_id, second_run.id)
+        self.assertEqual(topic_history.first_used_at, first_used_at)
+        self.assertGreaterEqual(topic_history.last_used_at, last_used_at)
+        self.assertFalse(UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/rejected-4").exists())

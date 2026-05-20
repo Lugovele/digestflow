@@ -562,6 +562,99 @@
             background: #f8f9fc;
         }
 
+        .used-article-history {
+            margin-top: 14px;
+        }
+
+        .used-article-history__helper {
+            margin: 10px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .used-article-history__table {
+            margin-top: 14px;
+        }
+
+        .used-article-history__title {
+            font-weight: 700;
+        }
+
+        .used-article-history__source,
+        .used-article-history__run {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .used-article-history__source {
+            margin-top: 2px;
+        }
+
+        .used-article-history__run {
+            line-height: 1.35;
+            white-space: nowrap;
+        }
+
+        .used-article-history__usage-text {
+            display: inline-flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .used-article-history__separator {
+            color: #8a95a8;
+        }
+
+        .used-article-history__title a,
+        .used-article-history__title a:visited {
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .used-article-history__title a:hover {
+            color: var(--accent);
+            text-decoration: underline;
+        }
+
+        .used-article-actions-cell {
+            width: 1%;
+            white-space: nowrap;
+            vertical-align: middle;
+            text-align: center;
+        }
+
+        .used-article-actions {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }
+
+        .used-article-history__delete-form {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+        }
+
+        .used-article-history__delete-button {
+            padding: 4px 8px;
+            border: 1px solid var(--table-border);
+            border-radius: 999px;
+            background: transparent;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .used-article-history__delete-button:hover {
+            border-color: #d5dbea;
+            background: #f6f8fc;
+            color: var(--text);
+        }
+
         .package-details-row {
             margin-top: 0;
         }
@@ -591,6 +684,12 @@
             text-align: left;
             vertical-align: top;
             word-break: break-word;
+        }
+
+        .used-article-history__table .diagnostics-table th,
+        .used-article-history__table .diagnostics-table td {
+            padding-top: 6px;
+            padding-bottom: 6px;
         }
 
         .diagnostics-table th {
@@ -954,6 +1053,105 @@
                     </div>
                 </details>
 
+                <details id="used-article-history" class="detail-block used-article-history">
+                    <summary>Used article history for this topic ({{ used_article_count }})</summary>
+                    {% if used_articles %}
+                        <p class="used-article-history__helper">
+                            Articles already used in successful digests for this topic. Future repeat filtering will use this topic-level history.
+                        </p>
+                        <div class="table-scroll used-article-history__table">
+                            <table class="diagnostics-table">
+                                <thead>
+                                    <tr>
+                                        <th>Article</th>
+                                        <th>Usage</th>
+                                        <th class="used-article-actions-cell"><span class="sr-only">Delete</span></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for article in used_articles %}
+                                        <tr>
+                                            <td>
+                                                <div class="used-article-history__title">
+                                                    {% if article.article_url %}
+                                                        <a href="{{ article.article_url }}" target="_blank" rel="noopener noreferrer">
+                                                            {{ article.title|default:"Used article" }}
+                                                        </a>
+                                                    {% else %}
+                                                        {{ article.title|default:"Used article" }}
+                                                    {% endif %}
+                                                </div>
+                                                <div class="used-article-history__source">{{ article.source_display|default:"-" }}</div>
+                                            </td>
+                                            <td class="used-article-history__run">
+                                                {% if article.use_count == 1 %}
+                                                    <div class="used-article-history__usage-text">
+                                                        <span>Used once</span>
+                                                        <span class="used-article-history__separator">·</span>
+                                                        {% if article.last_used_in_run_id %}
+                                                            <a href="{% url 'run-detail' run_id=article.last_used_in_run_id %}">Run {{ article.last_used_in_run_id }}</a>
+                                                        {% else %}
+                                                            <span>Run -</span>
+                                                        {% endif %}
+                                                        <span class="used-article-history__separator">·</span>
+                                                        <span>{{ article.last_used_at|date:"Y-m-d H:i" }}</span>
+                                                    </div>
+                                                {% else %}
+                                                    <div class="used-article-history__usage-text">
+                                                        <span>Used {{ article.use_count }} time{{ article.use_count|pluralize }}</span>
+                                                        <span class="used-article-history__separator">·</span>
+                                                        <span>
+                                                            First
+                                                            {% if article.first_used_in_run_id %}
+                                                                <a href="{% url 'run-detail' run_id=article.first_used_in_run_id %}">Run {{ article.first_used_in_run_id }}</a>
+                                                            {% else %}
+                                                                Run -
+                                                            {% endif %}
+                                                        </span>
+                                                        <span class="used-article-history__separator">·</span>
+                                                        <span>
+                                                            Last
+                                                            {% if article.last_used_in_run_id %}
+                                                                <a href="{% url 'run-detail' run_id=article.last_used_in_run_id %}">Run {{ article.last_used_in_run_id }}</a>
+                                                            {% else %}
+                                                                Run -
+                                                            {% endif %}
+                                                        </span>
+                                                    </div>
+                                                {% endif %}
+                                            </td>
+                                            <td class="used-article-actions-cell">
+                                                <div class="used-article-actions">
+                                                    <form
+                                                        method="post"
+                                                        action="{% url 'delete-used-article' run_id=run.id used_article_id=article.id %}"
+                                                        class="used-article-history__delete-form"
+                                                    >
+                                                        {% csrf_token %}
+                                                        <button
+                                                            type="submit"
+                                                            class="used-article-history__delete-button"
+                                                            title="Delete from topic history"
+                                                            aria-label="Delete {{ article.title|default:'used article' }} from topic history"
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="used-article-history__helper">
+                            Articles already used in successful digests for this topic. Future repeat filtering will use this topic-level history.
+                        </p>
+                        <p class="muted-block" style="margin-top: 14px;">No used article history yet for this topic.</p>
+                    {% endif %}
+                </details>
+
                 <details class="detail-block">
                     <summary>Source Stage</summary>
                     <div class="stage-grid" style="margin-top: 14px;">
@@ -1068,6 +1266,19 @@
                             </ul>
                         </div>
                     </div>
+                    {% if ranking_stage_report.excluded_used_articles %}
+                        <details class="detail-block detail-block--muted">
+                            <summary>Excluded already-used articles ({{ ranking_stage_report.excluded_used_articles|length }})</summary>
+                            <ul class="compact-list">
+                                {% for article in ranking_stage_report.excluded_used_articles %}
+                                    <li>
+                                        <strong>{{ article.title|default:"Used article" }}</strong>
+                                        {% if article.url %} - <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">{{ article.url }}</a>{% endif %}
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        </details>
+                    {% endif %}
                 </details>
 
                 {% if ranking_stage_report.top_rejected_article %}
@@ -1109,6 +1320,7 @@
             const payloadNode = document.getElementById('copy-diagnostics-payload');
             const toggleButton = document.getElementById('toggle-details-button');
             const allDetails = Array.from(document.querySelectorAll('details'));
+            const hashTarget = window.location.hash ? window.location.hash.slice(1) : '';
             const defaultLabel = button && button.dataset.defaultLabel
                 ? button.dataset.defaultLabel
                 : 'Copy full diagnostics';
@@ -1171,6 +1383,21 @@
                 toggleButton.textContent = areAllDetailsOpen() ? collapseLabel : expandLabel;
             }
 
+            function restoreHashTargetDetails() {
+                if (!hashTarget) {
+                    return;
+                }
+
+                const hashElement = document.getElementById(hashTarget);
+                if (!hashElement) {
+                    return;
+                }
+
+                if (hashElement.tagName && hashElement.tagName.toLowerCase() === 'details') {
+                    hashElement.open = true;
+                }
+            }
+
             if (button && payloadNode) {
                 button.addEventListener('click', async function () {
                     const payloadText = getPayloadText();
@@ -1202,9 +1429,10 @@
                 allDetails.forEach(function (detail) {
                     detail.addEventListener('toggle', updateToggleButtonLabel);
                 });
-
-                updateToggleButtonLabel();
             }
+
+            restoreHashTargetDetails();
+            updateToggleButtonLabel();
         })();
     </script>
 </body>

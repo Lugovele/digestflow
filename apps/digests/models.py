@@ -1,4 +1,6 @@
+from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class DigestRun(models.Model):
@@ -106,3 +108,58 @@ class Digest(models.Model):
             "title": payload.get("title") or self.title,
             "articles": payload.get("articles", []),
         }
+
+
+class UsedArticle(models.Model):
+    """Historical record of articles actually used in successful digest runs."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="used_articles",
+    )
+    topic = models.ForeignKey(
+        "topics.Topic",
+        on_delete=models.CASCADE,
+        related_name="used_articles",
+    )
+    digest_run = models.ForeignKey(
+        DigestRun,
+        on_delete=models.CASCADE,
+        related_name="used_articles",
+    )
+    first_used_in_run = models.ForeignKey(
+        DigestRun,
+        on_delete=models.CASCADE,
+        related_name="first_used_articles",
+        null=True,
+        blank=True,
+    )
+    last_used_in_run = models.ForeignKey(
+        DigestRun,
+        on_delete=models.CASCADE,
+        related_name="last_used_articles",
+        null=True,
+        blank=True,
+    )
+    normalized_url = models.URLField(max_length=500)
+    article_url = models.URLField(max_length=500)
+    title = models.CharField(max_length=300, blank=True)
+    source_url = models.URLField(max_length=500, blank=True)
+    use_count = models.PositiveIntegerField(default=1)
+    first_used_at = models.DateTimeField(default=timezone.now)
+    last_used_at = models.DateTimeField(default=timezone.now)
+    used_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-last_used_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["topic", "normalized_url"],
+                name="unique_used_article_per_topic_url",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.title or self.normalized_url or self.article_url

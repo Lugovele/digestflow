@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
-from apps.digests.models import DigestRun
+from apps.digests.models import DigestRun, UsedArticle
 from apps.topics.models import Topic
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import get_demo_articles_for_topic
@@ -48,6 +48,7 @@ class DigestPipelineFailureTests(TestCase):
         digest = run.digest
         self.assertIsNotNone(digest)
         self.assertFalse(hasattr(digest, "content_package"))
+        self.assertEqual(UsedArticle.objects.filter(topic=topic).count(), 0)
 
         self.assertIn("digest_stage", run.metrics)
         packaging_stage = run.metrics.get("packaging_stage", {})
@@ -84,6 +85,35 @@ class DigestPipelineFailureTests(TestCase):
         self.assertIn("Source stage returned no articles", run.error_message)
         self.assertIsNotNone(run.finished_at)
         self.assertFalse(hasattr(run, "digest"))
+        self.assertEqual(UsedArticle.objects.filter(topic=topic).count(), 0)
 
         self.assertFalse(run.metrics.get("digest_stage"))
         self.assertFalse(run.metrics.get("packaging_stage"))
+
+    @patch("services.pipeline.run_pipeline.generate_digest_for_run", side_effect=RuntimeError("Digest stage failed"))
+    def test_failed_digest_generation_records_no_used_articles(self, _mock_generate_digest_for_run):
+        user = get_user_model().objects.create_user(
+            username="pipeline-digest-failure-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Digest failure topic",
+            keywords=["workflow"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={
+                "mode": "demo",
+                "source": "integration_test_digest_failure",
+            },
+        )
+
+        result = run_digest_pipeline(run.id, get_demo_articles_for_topic(topic.name))
+
+        run.refresh_from_db()
+        self.assertEqual(result.id, run.id)
+        self.assertEqual(run.status, DigestRun.STATUS_FAILED)
+        self.assertIn("Digest stage failed", run.error_message)
+        self.assertEqual(UsedArticle.objects.filter(topic=topic).count(), 0)

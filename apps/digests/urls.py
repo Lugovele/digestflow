@@ -4,6 +4,7 @@ from .views import (
     add_topic_source_view,
     create_topic_and_run_view,
     delete_topic_view,
+    delete_used_article_view,
     discover_sources_view,
     pin_topic_source_view,
     reorder_topics_view,
@@ -29,6 +30,11 @@ urlpatterns = [
     path("topics/<int:topic_id>/sources/add/", add_topic_source_view, name="add-topic-source"),
     path("quick-start/", create_topic_and_run_view, name="create-topic-and-run"),
     path("runs/<int:run_id>/", run_detail_view, name="run-detail"),
+    path(
+        "runs/<int:run_id>/used-articles/<int:used_article_id>/delete/",
+        delete_used_article_view,
+        name="delete-used-article",
+    ),
     path("topics/<int:topic_id>/run/", run_pipeline_view, name="run-pipeline"),
     path(
         "topics/<int:topic_id>/sources/<int:source_id>/toggle/",
