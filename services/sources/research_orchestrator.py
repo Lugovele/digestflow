@@ -13,6 +13,10 @@ from services.sources.candidates import (
     evaluate_source_candidates,
 )
 from services.sources.research_queries import ResearchQueryPlan, build_research_query_plan
+from services.sources.search_config import (
+    build_explicit_search_provider_diagnostics,
+    resolve_configured_search_provider,
+)
 from services.sources.search_candidates import search_provider_result_to_candidate_inputs
 from services.sources.search_provider import SearchProvider, SearchProviderResult, search_research_query_plan
 
@@ -27,9 +31,41 @@ class SourceResearchResult:
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
-def run_source_research(topic, provider: SearchProvider) -> SourceResearchResult:
+def run_source_research(topic, provider: SearchProvider | None = None) -> SourceResearchResult:
     query_plan = build_research_query_plan(topic)
+    if provider is None:
+        provider_resolution = resolve_configured_search_provider(topic)
+        if provider_resolution.provider is None:
+            return _build_source_research_result(
+                query_plan=query_plan,
+                provider_result=SearchProviderResult(
+                    provider_name=str(provider_resolution.diagnostics.get("search_provider_name") or "unconfigured"),
+                    results=(),
+                    diagnostics=dict(provider_resolution.diagnostics),
+                ),
+            )
+        provider = provider_resolution.provider
+        provider_diagnostics = dict(provider_resolution.diagnostics)
+    else:
+        provider_diagnostics = build_explicit_search_provider_diagnostics(provider, topic)
+
     provider_result = search_research_query_plan(query_plan, provider)
+    provider_result = SearchProviderResult(
+        provider_name=provider_result.provider_name,
+        results=provider_result.results,
+        diagnostics={
+            **provider_result.diagnostics,
+            **provider_diagnostics,
+        },
+    )
+    return _build_source_research_result(query_plan=query_plan, provider_result=provider_result)
+
+
+def _build_source_research_result(
+    *,
+    query_plan: ResearchQueryPlan,
+    provider_result: SearchProviderResult,
+) -> SourceResearchResult:
     candidate_inputs = tuple(search_provider_result_to_candidate_inputs(provider_result))
     evaluated_candidates = tuple(
         evaluate_source_candidates(
@@ -69,6 +105,7 @@ def run_source_research(topic, provider: SearchProvider) -> SourceResearchResult
         "selectable_review_item_count": selectable_review_item_count,
         "provider_name": provider_result.provider_name,
         "topic_domain": query_plan.topic_domain,
+        **provider_result.diagnostics,
     }
 
     return SourceResearchResult(

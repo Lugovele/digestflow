@@ -85,6 +85,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_TIMEOUT_SECONDS = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
 AI_DAILY_TOKEN_BUDGET = int(os.getenv("AI_DAILY_TOKEN_BUDGET", "100000"))
+SEARCH_PROVIDER_ENABLED = os.getenv("SEARCH_PROVIDER_ENABLED", "False").lower() == "true"
+SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "").strip().lower()
+SEARCH_PROVIDER_API_KEY = os.getenv("SEARCH_PROVIDER_API_KEY", "")
 
 LOGGING = {
     "version": 1,

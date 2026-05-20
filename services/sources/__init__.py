@@ -42,6 +42,11 @@ from .search_provider import (
     SearchProviderResult,
     search_research_query_plan,
 )
+from .search_config import (
+    SearchProviderResolution,
+    build_explicit_search_provider_diagnostics,
+    resolve_configured_search_provider,
+)
 from .search_candidates import (
     search_provider_result_to_candidate_inputs,
     search_result_to_candidate_input,
@@ -82,9 +87,12 @@ __all__ = [
     "build_topic_source_payloads_from_review_items",
     "get_persistable_research_candidates",
     "run_source_research",
+    "SearchProviderResolution",
     "save_articles_for_topic",
     "SearchProvider",
     "SearchProviderResult",
+    "build_explicit_search_provider_diagnostics",
+    "resolve_configured_search_provider",
     "search_provider_result_to_candidate_inputs",
     "search_result_to_candidate_input",
     "search_results_to_candidate_inputs",
