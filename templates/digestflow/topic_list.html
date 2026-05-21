@@ -89,6 +89,9 @@
             font-size: 12px;
             color: #6b7280;
         }
+        .section-notice--summary {
+            background: #fbfcfe;
+        }
         .action-hint {
             font-size: 12px;
             color: #6b7280;
@@ -885,6 +888,12 @@
                                         <input type="hidden" name="source_url" value="">
                                         <input type="hidden" name="source_mode" value="{{ discovered_topic.source_mode }}">
                                         <input type="hidden" name="run_research" value="1">
+                                        {% if discovery_context_active %}
+                                            <input type="hidden" name="discovery_context" value="1">
+                                        {% endif %}
+                                        {% if show_all_new_suggestions %}
+                                            <input type="hidden" name="show_all_suggestions" value="1">
+                                        {% endif %}
                                         <button type="submit" class="secondary-button secondary-button--local" {% if not can_find_research_sources %}disabled aria-disabled="true"{% endif %}>Find sources</button>
                                     </form>
                                 </div>
@@ -898,6 +907,12 @@
                                 {% if research_provider_notice.missing_settings %}
                                     <p class="section-notice__meta">Missing settings: {{ research_provider_notice.missing_settings|join:", " }}</p>
                                 {% endif %}
+                            </div>
+                        {% endif %}
+                        {% if discovery_summary %}
+                            <div class="section-notice section-notice--summary" role="status" aria-live="polite">
+                                <p class="section-notice__title">{{ discovery_summary.title }}</p>
+                                <p class="section-notice__body">{{ discovery_summary.body }}</p>
                             </div>
                         {% endif %}
                         {% if source_selection_error %}
@@ -915,6 +930,12 @@
                                                 <div class="inventory-main">
                                                     <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
                                                         {% csrf_token %}
+                                                        {% if discovery_context_active %}
+                                                            <input type="hidden" name="discovery_context" value="1">
+                                                        {% endif %}
+                                                        {% if show_all_new_suggestions %}
+                                                            <input type="hidden" name="show_all_suggestions" value="1">
+                                                        {% endif %}
                                                         <label class="inventory-toggle">
                                                             <input
                                                                 type="checkbox"
@@ -936,6 +957,12 @@
                                                 <div class="inventory-actions">
                                                     <form method="post" action="{% url 'unpin-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
                                                         {% csrf_token %}
+                                                        {% if discovery_context_active %}
+                                                            <input type="hidden" name="discovery_context" value="1">
+                                                        {% endif %}
+                                                        {% if show_all_new_suggestions %}
+                                                            <input type="hidden" name="show_all_suggestions" value="1">
+                                                        {% endif %}
                                                         <button type="submit" class="secondary-button secondary-button--tertiary">Remove</button>
                                                     </form>
                                                 </div>
@@ -946,7 +973,7 @@
                             {% endif %}
                             <div class="stack" style="gap: 8px;">
                                 <div>
-                                    <h4 class="section-heading section-heading--subgroup">New suggestions · {{ discovered_source_candidates|length }}</h4>
+                                    <h4 class="section-heading section-heading--subgroup">New suggestions · {{ total_new_source_candidate_count }}</h4>
                                 </div>
                                 {% if discovered_source_candidates %}
                                     <div class="source-list">
@@ -955,6 +982,12 @@
                                                 <div class="inventory-main">
                                                     <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id candidate.persisted_source_id %}" data-preserve-scroll>
                                                         {% csrf_token %}
+                                                        {% if discovery_context_active %}
+                                                            <input type="hidden" name="discovery_context" value="1">
+                                                        {% endif %}
+                                                        {% if show_all_new_suggestions %}
+                                                            <input type="hidden" name="show_all_suggestions" value="1">
+                                                        {% endif %}
                                                         <label class="inventory-toggle">
                                                             <input
                                                                 type="checkbox"
@@ -976,12 +1009,24 @@
                                                 <div class="inventory-actions">
                                                     <form method="post" action="{% url 'pin-topic-source' discovered_topic.id candidate.persisted_source_id %}" data-preserve-scroll>
                                                         {% csrf_token %}
+                                                        {% if discovery_context_active %}
+                                                            <input type="hidden" name="discovery_context" value="1">
+                                                        {% endif %}
+                                                        {% if show_all_new_suggestions %}
+                                                            <input type="hidden" name="show_all_suggestions" value="1">
+                                                        {% endif %}
                                                         <button type="submit" class="secondary-button secondary-button--tertiary">Keep</button>
                                                     </form>
                                                 </div>
                                             </div>
                                         {% endfor %}
                                     </div>
+                                    {% if new_suggestions_is_truncated %}
+                                        <p class="section-hint" style="margin: 0;">
+                                            {{ discovery_summary.truncation_hint }}
+                                            <a class="inline-link" href="{{ show_all_new_suggestions_url }}">Show all suggestions</a>
+                                        </p>
+                                    {% endif %}
                                 {% else %}
                                     <div>
                                         <p class="section-hint" style="margin: 0;">No new suggestions yet.</p>
@@ -991,7 +1036,6 @@
                                     </div>
                                 {% endif %}
                             </div>
-                            <p class="section-hint" style="font-size: 13px; color: #7b8798;">Preview: real web search is not connected.</p>
                         </div>
                     </div>
                 </section>

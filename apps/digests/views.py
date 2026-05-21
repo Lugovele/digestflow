@@ -2,7 +2,7 @@ import json
 import logging
 from collections import Counter
 from datetime import timedelta
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -46,6 +46,9 @@ from .forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 logger = logging.getLogger(__name__)
 INSUFFICIENT_QUALITY_ERROR_FALLBACK = "Insufficient-quality diagnostics are available in metrics."
 INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were available for a full digest."
+VISIBLE_NEW_SOURCE_LIMIT = 12
+DISCOVERY_CONTEXT_PARAM = "discovery_context"
+SHOW_ALL_NEW_SUGGESTIONS_PARAM = "show_all_suggestions"
 
 
 def _get_user_facing_source_mode_label(mode: str) -> str:
@@ -96,7 +99,10 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
         return render(request, "digestflow/topic_list.html", context, status=400)
     topic.manual_source_inputs = [source_url] if source_url else []
     should_run_research = _should_run_research_discovery(request, topic_id=request.POST.get("topic_id"))
-    discovered_source_candidates = _discover_and_prepare_candidates(topic) if should_run_research else None
+    discovery_summary = None
+    discovered_source_candidates = None
+    if should_run_research:
+        discovered_source_candidates, discovery_summary = _discover_and_prepare_candidates_with_summary(topic)
     return render(
         request,
         "digestflow/topic_list.html",
@@ -104,6 +110,9 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
             form=form,
             discovered_topic=topic,
             discovered_source_candidates=discovered_source_candidates,
+            discovery_summary=discovery_summary,
+            discovery_context_active=should_run_research,
+            show_all_new_suggestions=_request_wants_all_new_suggestions(request),
         ),
     )
 
@@ -258,7 +267,13 @@ def toggle_topic_source_view(request: HttpRequest, topic_id: int, source_id: int
     if source.is_active != next_is_active:
         source.is_active = next_is_active
         source.save(update_fields=["is_active", "updated_at"])
-    return redirect("topic-workspace", topic_id=topic.id)
+    return redirect(
+        _build_topic_workspace_url(
+            topic.id,
+            discovery_context_active=_request_has_discovery_context(request),
+            show_all_new_suggestions=_request_wants_all_new_suggestions(request),
+        )
+    )
 
 
 @require_POST
@@ -268,7 +283,13 @@ def pin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -
     if source.origin == TopicSourceOrigin.DISCOVERED and not source.is_pinned:
         source.is_pinned = True
         source.save(update_fields=["is_pinned", "updated_at"])
-    return redirect("topic-workspace", topic_id=topic.id)
+    return redirect(
+        _build_topic_workspace_url(
+            topic.id,
+            discovery_context_active=_request_has_discovery_context(request),
+            show_all_new_suggestions=_request_wants_all_new_suggestions(request),
+        )
+    )
 
 
 @require_POST
@@ -278,7 +299,13 @@ def unpin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int)
     if source.origin == TopicSourceOrigin.DISCOVERED and source.is_pinned:
         source.is_pinned = False
         source.save(update_fields=["is_pinned", "updated_at"])
-    return redirect("topic-workspace", topic_id=topic.id)
+    return redirect(
+        _build_topic_workspace_url(
+            topic.id,
+            discovery_context_active=_request_has_discovery_context(request),
+            show_all_new_suggestions=_request_wants_all_new_suggestions(request),
+        )
+    )
 
 
 @require_POST
@@ -1243,6 +1270,9 @@ def _build_topic_list_context(
     *,
     discovered_topic: Topic | None = None,
     discovered_source_candidates: list[dict] | None = None,
+    discovery_summary: dict | None = None,
+    discovery_context_active: bool = False,
+    show_all_new_suggestions: bool = False,
     focus_feedback: dict | None = None,
     focus_input_value: str = "",
 ) -> dict:
@@ -1250,7 +1280,26 @@ def _build_topic_list_context(
     all_candidate_records = discovered_source_candidates
     if all_candidate_records is None:
         all_candidate_records = _build_persisted_new_source_candidates(discovered_topic)
-    visible_new_source_candidates = _build_visible_new_source_candidates(all_candidate_records)
+    total_new_source_candidates = _build_visible_new_source_candidates(all_candidate_records)
+    if show_all_new_suggestions:
+        visible_new_source_candidates = total_new_source_candidates
+    else:
+        visible_new_source_candidates = total_new_source_candidates[:VISIBLE_NEW_SOURCE_LIMIT]
+    rendered_discovery_summary = _finalize_discovery_summary(
+        discovery_summary,
+        total_visible_candidates=len(visible_new_source_candidates),
+        total_new_source_candidates=len(total_new_source_candidates),
+    )
+    if (
+        rendered_discovery_summary is None
+        and discovery_context_active
+        and discovered_topic is not None
+        and discovered_topic.uses_source_discovery
+    ):
+        rendered_discovery_summary = _build_discovery_results_summary(
+            total_visible_candidates=len(visible_new_source_candidates),
+            total_new_source_candidates=len(total_new_source_candidates),
+        )
     topics = list(
         Topic.objects.filter(user=user)
         .order_by("display_order", "name")
@@ -1269,6 +1318,7 @@ def _build_topic_list_context(
         run.display_time = _format_recent_run_time(run.created_at)
     run_eligibility = _build_run_eligibility(discovered_topic)
     research_provider_state = _build_research_provider_state(discovered_topic)
+    hidden_new_source_candidate_count = max(0, len(total_new_source_candidates) - len(visible_new_source_candidates))
     return {
         "topics": topics,
         "recent_runs": recent_runs,
@@ -1278,7 +1328,15 @@ def _build_topic_list_context(
         "focus_feedback": focus_feedback,
         "focus_input_value": focus_input_value,
         "discovered_source_candidates": visible_new_source_candidates,
-        "source_review_summary": _build_source_review_summary(discovered_topic, visible_new_source_candidates),
+        "new_suggestions_visible_limit": VISIBLE_NEW_SOURCE_LIMIT,
+        "total_new_source_candidate_count": len(total_new_source_candidates),
+        "new_suggestions_total_count": len(total_new_source_candidates),
+        "new_suggestions_hidden_count": hidden_new_source_candidate_count,
+        "new_suggestions_is_truncated": hidden_new_source_candidate_count > 0,
+        "show_all_new_suggestions": show_all_new_suggestions,
+        "discovery_context_active": discovery_context_active,
+        "source_review_summary": _build_source_review_summary(discovered_topic, all_candidate_records),
+        "discovery_summary": rendered_discovery_summary,
         "topic_source_inventory": _build_topic_source_inventory(discovered_topic),
         "pinned_research_source_inventory": _build_pinned_research_source_inventory(discovered_topic),
         "active_saved_source_urls": _build_active_saved_source_urls(discovered_topic),
@@ -1294,6 +1352,11 @@ def _build_topic_list_context(
             discovered_topic,
             provider_blocked=research_provider_state["blocked"],
         ),
+        "show_all_new_suggestions_url": _build_topic_workspace_url(
+            discovered_topic.id,
+            discovery_context_active=True,
+            show_all_new_suggestions=True,
+        ) if discovered_topic is not None else "",
     }
 
 
@@ -1403,6 +1466,8 @@ def _render_topic_source_review(
     context = _build_topic_list_context(
         form=form,
         discovered_topic=topic,
+        discovery_context_active=_request_has_discovery_context(request),
+        show_all_new_suggestions=_request_wants_all_new_suggestions(request),
         focus_feedback=focus_feedback,
         focus_input_value=focus_input_value,
     )
@@ -1434,6 +1499,11 @@ def _should_run_research_discovery(request: HttpRequest, *, topic_id: str | None
 
 
 def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
+    candidate_records, _ = _discover_and_prepare_candidates_with_summary(topic)
+    return candidate_records
+
+
+def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[dict], dict | None]:
     provider_resolution = resolve_configured_search_provider(topic)
     provider_diagnostics = provider_resolution.diagnostics
     provider_status = str(provider_diagnostics.get("search_provider_status") or "").strip().lower()
@@ -1443,13 +1513,30 @@ def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
     if provider_status == "ready" and provider_name == "serpapi":
         source_research_result = run_source_research(topic)
         if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
-            return _build_persisted_new_source_candidates(topic)
+            return _build_persisted_new_source_candidates(topic), _build_provider_discovery_summary(
+                source_research_result=source_research_result,
+                candidate_records=[],
+                execution_status="failed",
+            )
         candidate_records = _build_provider_backed_candidate_records(source_research_result)
         candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
-        return _upsert_and_build_source_candidates(topic, candidate_records)
+        candidate_records = _upsert_and_build_source_candidates(topic, candidate_records)
+        return candidate_records, _build_provider_discovery_summary(
+            source_research_result=source_research_result,
+            candidate_records=candidate_records,
+            execution_status="completed",
+        )
 
     if provider_status != "ready" and (provider_enabled or provider_name not in {"", "unconfigured"}):
-        return _build_persisted_new_source_candidates(topic)
+        return _build_persisted_new_source_candidates(topic), {
+            "title": "Source discovery did not run",
+            "body": "Research provider is currently unavailable.",
+            "provider_name": provider_name or str(provider_diagnostics.get("search_provider_name") or "").strip(),
+            "execution_status": "blocked",
+            "provider_result_count": 0,
+            "candidate_input_count": 0,
+            "query_count": 0,
+        }
 
     raw_candidate_records = resolve_source_candidates(
         TopicSourceDiscoveryRequest(
@@ -1461,7 +1548,8 @@ def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
         )
     )
     candidate_records = filter_new_source_candidates(raw_candidate_records, topic.sources.all())
-    return _upsert_and_build_source_candidates(topic, candidate_records)
+    candidate_records = _upsert_and_build_source_candidates(topic, candidate_records)
+    return candidate_records, None
 
 
 def _build_provider_backed_candidate_records(source_research_result) -> list[dict]:
@@ -1493,6 +1581,148 @@ def _build_provider_backed_candidate_records(source_research_result) -> list[dic
             }
         )
     return candidate_records
+
+
+def _build_provider_discovery_summary(
+    *,
+    source_research_result,
+    candidate_records: list[dict],
+    execution_status: str,
+) -> dict:
+    provider_name = str(source_research_result.diagnostics.get("provider_name") or "").strip() or "unknown"
+    query_count = int(source_research_result.diagnostics.get("query_count") or 0)
+    provider_result_count = int(source_research_result.diagnostics.get("raw_result_count") or 0)
+    candidate_input_count = int(source_research_result.diagnostics.get("candidate_input_count") or 0)
+    suggestion_count = len(candidate_records)
+    provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
+
+    if execution_status == "failed":
+        title = "Source discovery did not complete"
+        body = "Provider results could not be loaded for this research search."
+    elif suggestion_count == 0:
+        title = "No new research sources found"
+        body = "Provider results were checked, but no new suggestions passed filtering."
+    else:
+        title = "Source discovery completed"
+        body = (
+            f"Provider: {provider_name} · "
+            f"{query_count} search{'es' if query_count != 1 else ''} · "
+            f"{provider_result_count} result{'s' if provider_result_count != 1 else ''} checked · "
+            f"{suggestion_count} suggestion{'s' if suggestion_count != 1 else ''} shown"
+        )
+
+    return {
+        "title": title,
+        "body": body,
+        "provider_name": provider_name,
+        "execution_status": execution_status,
+        "provider_result_count": provider_result_count,
+        "candidate_input_count": candidate_input_count,
+        "query_count": query_count,
+        "provider_error_count": provider_error_count,
+    }
+
+
+def _build_discovery_results_summary(
+    *,
+    total_visible_candidates: int,
+    total_new_source_candidates: int,
+) -> dict:
+    summary = {
+        "title": "Source discovery results",
+        "provider_name": "",
+        "execution_status": "reviewing",
+        "provider_result_count": 0,
+        "candidate_input_count": 0,
+        "query_count": 0,
+        "provider_error_count": 0,
+        "visible_suggestion_count": total_visible_candidates,
+        "total_suggestion_count": total_new_source_candidates,
+        "is_truncated": total_new_source_candidates > total_visible_candidates,
+        "truncation_hint": "",
+    }
+    if total_new_source_candidates == 0:
+        summary["body"] = "No new research suggestions remain from the current discovery results."
+    elif total_new_source_candidates > total_visible_candidates:
+        summary["body"] = (
+            f"{total_visible_candidates} of {total_new_source_candidates} suggestions shown"
+        )
+        summary["truncation_hint"] = (
+            f"Showing the first {total_visible_candidates} suggestions. "
+            "Refine the research focus to narrow results."
+        )
+    else:
+        summary["body"] = (
+            f"{total_new_source_candidates} research suggestion"
+            f"{'s' if total_new_source_candidates != 1 else ''} available"
+        )
+    return summary
+
+
+def _finalize_discovery_summary(
+    discovery_summary: dict | None,
+    *,
+    total_visible_candidates: int,
+    total_new_source_candidates: int,
+) -> dict | None:
+    if discovery_summary is None:
+        return None
+
+    summary = dict(discovery_summary)
+    summary["visible_suggestion_count"] = total_visible_candidates
+    summary["total_suggestion_count"] = total_new_source_candidates
+    summary["is_truncated"] = total_new_source_candidates > total_visible_candidates
+    if summary.get("title") == "Source discovery completed":
+        provider_name = str(summary.get("provider_name") or "").strip() or "unknown"
+        query_count = int(summary.get("query_count") or 0)
+        provider_result_count = int(summary.get("provider_result_count") or 0)
+        summary["body"] = (
+            f"Provider: {provider_name} · "
+            f"{query_count} search{'es' if query_count != 1 else ''} · "
+            f"{provider_result_count} result{'s' if provider_result_count != 1 else ''} checked · "
+            f"{total_visible_candidates} suggestion{'s' if total_visible_candidates != 1 else ''} shown"
+        )
+    if summary["is_truncated"]:
+        summary["truncation_hint"] = (
+            f"Showing the first {total_visible_candidates} suggestions. "
+            "Refine the research focus to narrow results."
+        )
+    else:
+        summary["truncation_hint"] = ""
+    return summary
+
+
+def _request_has_discovery_context(request: HttpRequest) -> bool:
+    return bool(
+        str(request.GET.get(DISCOVERY_CONTEXT_PARAM) or request.POST.get(DISCOVERY_CONTEXT_PARAM) or "").strip()
+    )
+
+
+def _request_wants_all_new_suggestions(request: HttpRequest) -> bool:
+    return bool(
+        str(
+            request.GET.get(SHOW_ALL_NEW_SUGGESTIONS_PARAM)
+            or request.POST.get(SHOW_ALL_NEW_SUGGESTIONS_PARAM)
+            or ""
+        ).strip()
+    )
+
+
+def _build_topic_workspace_url(
+    topic_id: int,
+    *,
+    discovery_context_active: bool = False,
+    show_all_new_suggestions: bool = False,
+) -> str:
+    base_url = reverse("topic-workspace", kwargs={"topic_id": topic_id})
+    params: dict[str, str] = {}
+    if discovery_context_active:
+        params[DISCOVERY_CONTEXT_PARAM] = "1"
+    if show_all_new_suggestions:
+        params[SHOW_ALL_NEW_SUGGESTIONS_PARAM] = "1"
+    if not params:
+        return base_url
+    return f"{base_url}?{urlencode(params)}"
 
 
 def _build_source_review_summary(

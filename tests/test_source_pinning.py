@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
@@ -15,6 +15,11 @@ from services.sources.topic_source_groups import (
 )
 
 
+@override_settings(
+    SEARCH_PROVIDER_ENABLED=False,
+    SEARCH_PROVIDER="",
+    SEARCH_PROVIDER_API_KEY="",
+)
 class SourcePinningTests(TestCase):
     def _create_topic(self) -> Topic:
         user = get_user_model().objects.create_user(username="pinning-user", password="pw")
@@ -385,14 +390,12 @@ class SourcePinningTests(TestCase):
         self.assertContains(response, ">Keep<", html=False)
         self.assertContains(response, ">Remove<", html=False)
         self.assertEqual(response.content.decode("utf-8").count(">Research sources<"), 1)
-        self.assertContains(response, "Preview: real web search is not connected.")
         self.assertNotContains(response, "Previously discovered source saved on this topic.")
         self.assertNotContains(response, "Recent articles unknown")
 
         html = response.content.decode("utf-8")
         saved_section = html.split("My sources", 1)[1].split("Research sources", 1)[0]
         research_section = html.split("Research sources", 1)[1].split("Ready to generate", 1)[0]
-        self.assertLess(research_section.index("Find sources"), research_section.index("Preview: real web search is not connected."))
         self.assertLess(research_section.index("Kept sources · 1"), research_section.index("Pinned research source"))
         self.assertLess(research_section.index("New suggestions · 1"), research_section.index("New research source"))
 
@@ -518,7 +521,6 @@ class SourcePinningTests(TestCase):
         self.assertNotContains(response, "Fresh suggestions from research.")
         self.assertContains(response, "secondary-button--local", html=False)
         self.assertContains(response, "secondary-button--tertiary", html=False)
-        self.assertContains(response, "Preview: real web search is not connected.")
         self.assertNotContains(response, "Previously discovered source saved on this topic.")
         self.assertNotContains(response, "Recent articles unknown")
 

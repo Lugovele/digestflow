@@ -45,6 +45,11 @@ LONG_RSS_SNIPPET_3 = (
 )
 
 
+@override_settings(
+    SEARCH_PROVIDER_ENABLED=False,
+    SEARCH_PROVIDER="",
+    SEARCH_PROVIDER_API_KEY="",
+)
 class TopicRssSourceTests(TestCase):
     def _assert_any_term_contains(self, terms: list[str], *needles: str) -> None:
         self.assertTrue(
@@ -423,6 +428,11 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, 'data-focus-form', html=False)
         self.assertContains(response, 'data-focus-input', html=False)
         self.assertContains(response, 'data-focus-chip-list', html=False)
+        self.assertNotContains(response, "Source discovery completed")
+        self.assertNotContains(response, "No new research sources found")
+        self.assertNotContains(response, "Source discovery did not run")
+        self.assertNotContains(response, "Source discovery results")
+        self.assertNotContains(response, "Show all suggestions")
 
     def test_new_topic_gets_generated_focus_suggestions(self) -> None:
         response = self.client.post(
@@ -1378,7 +1388,6 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Recent digests")
         self.assertNotContains(response, "Topic settings")
         self.assertContains(response, "0 my sources")
-        self.assertContains(response, "1 research")
         self.assertContains(response, "Add a manual source link and press Enter")
         self.assertNotContains(response, "Add source")
         self.assertNotContains(response, "Р’РІРµРґРёС‚Рµ URL")
@@ -1427,7 +1436,6 @@ class TopicRssSourceTests(TestCase):
         self.assertLess(html.index("Research sources"), html.index("Run digest"))
         self.assertIn("Select at least one my source before running this digest.", html)
         self.assertIn("0 my sources", html)
-        self.assertIn("1 research source", html)
         self.assertIn("disabled", html)
         self.assertIn('name="topic_id" value="', html)
         self.assertIn('onchange="this.form.requestSubmit();"', html)
@@ -1502,6 +1510,10 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Research sources")
         self.assertNotContains(response, "Find sources")
         self.assertNotContains(response, "No new suggestions yet.")
+        self.assertNotContains(response, "Source discovery completed")
+        self.assertNotContains(response, "No new research sources found")
+        self.assertNotContains(response, "Source discovery results")
+        self.assertNotContains(response, "Show all suggestions")
         self.assertNotContains(response, "DEV Community / #ai")
 
         html = response.content.decode("utf-8")
@@ -1770,6 +1782,9 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "AI automation guide")
+        self.assertContains(response, "Source discovery completed")
+        self.assertContains(response, "Provider: serpapi")
+        self.assertContains(response, "1 suggestion shown")
         topic = Topic.objects.get(name="AI automation")
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
@@ -1834,6 +1849,100 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 1)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
         self.assertNotContains(response, "AI automation guide")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_caps_visible_new_suggestions_and_shows_truncation_summary(
+        self,
+        mock_urlopen,
+    ) -> None:
+        organic_results = []
+        for index in range(14):
+            organic_results.append(
+                {
+                    "position": index + 1,
+                    "title": f"Automation source {index + 1}",
+                    "link": f"https://example.com/automation-{index + 1}",
+                    "snippet": f"Automation workflow result {index + 1} for research discovery.",
+                    "source": "Example",
+                }
+            )
+        self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Automation discovery cap",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Source discovery completed")
+        self.assertContains(response, "Provider: serpapi")
+        self.assertContains(response, "12 suggestions shown")
+        self.assertContains(response, "Showing the first 12 suggestions. Refine the research focus to narrow results.")
+        self.assertContains(response, "Show all suggestions")
+        self.assertContains(response, "New suggestions · 14")
+        html = response.content.decode("utf-8")
+        new_section = html.split("New suggestions · 14", 1)[1].split("Ready to generate", 1)[0]
+        self.assertEqual(new_section.count(">Keep</button>"), 12)
+        topic = Topic.objects.get(name="Automation discovery cap")
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 14)
+        self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_can_expand_to_show_all_suggestions(
+        self,
+        mock_urlopen,
+    ) -> None:
+        organic_results = []
+        for index in range(14):
+            organic_results.append(
+                {
+                    "position": index + 1,
+                    "title": f"Automation source {index + 1}",
+                    "link": f"https://example.com/expand-{index + 1}",
+                    "snippet": f"Automation workflow result {index + 1} for research discovery.",
+                    "source": "Example",
+                }
+            )
+        self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+
+        self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Expanded discovery cap",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+        topic = Topic.objects.get(name="Expanded discovery cap")
+
+        response = self.client.get(
+            reverse("topic-workspace", args=[topic.id]),
+            data={"discovery_context": "1", "show_all_suggestions": "1"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Source discovery results")
+        self.assertContains(response, "14 research suggestions available")
+        self.assertNotContains(response, "Showing the first 12 suggestions. Refine the research focus to narrow results.")
+        self.assertNotContains(response, "Show all suggestions")
+        html = response.content.decode("utf-8")
+        new_section = html.split("New suggestions · 14", 1)[1].split("Ready to generate", 1)[0]
+        self.assertEqual(new_section.count(">Keep</button>"), 14)
+        self.assertEqual(new_section.count('name="is_active"'), 14)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -1969,6 +2078,70 @@ class TopicRssSourceTests(TestCase):
                 url="https://example.com/fresh",
             ).exists()
         )
+        self.assertContains(response, "Source discovery completed")
+        self.assertContains(response, "1 suggestion shown")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_keep_action_after_discovery_preserves_discovery_results_context(
+        self,
+        mock_urlopen,
+    ) -> None:
+        organic_results = []
+        for index in range(14):
+            organic_results.append(
+                {
+                    "position": index + 1,
+                    "title": f"Automation source {index + 1}",
+                    "link": f"https://example.com/keep-{index + 1}",
+                    "snippet": f"Automation workflow result {index + 1} for research discovery.",
+                    "source": "Example",
+                }
+            )
+        self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Keep after discovery",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        topic = Topic.objects.get(name="Keep after discovery")
+        source_to_keep = topic.sources.filter(
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+        ).order_by("id").first()
+        self.assertIsNotNone(source_to_keep)
+
+        response = self.client.post(
+            reverse("pin-topic-source", args=[topic.id, source_to_keep.id]),
+            data={"discovery_context": "1"},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        source_to_keep.refresh_from_db()
+        self.assertTrue(source_to_keep.is_pinned)
+        self.assertContains(response, "Source discovery results")
+        self.assertContains(response, "12 of 13 suggestions shown")
+        self.assertContains(response, "Show all suggestions")
+        self.assertContains(response, "Kept sources · 1")
+        self.assertContains(response, "New suggestions · 13")
+        html = response.content.decode("utf-8")
+        kept_section = html.split("Kept sources · 1", 1)[1].split("New suggestions · 13", 1)[0]
+        new_section = html.split("New suggestions · 13", 1)[1].split("Ready to generate", 1)[0]
+        self.assertIn(source_to_keep.name, kept_section)
+        self.assertNotIn(
+            reverse("pin-topic-source", args=[topic.id, source_to_keep.id]),
+            new_section,
+        )
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=False,
@@ -1990,6 +2163,8 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         topic = Topic.objects.get(name="AI agents")
         self.assertEqual(topic.sources.count(), 0)
+        self.assertContains(response, "Source discovery did not run")
+        self.assertContains(response, "Research provider is currently unavailable.")
         self.assertContains(response, "Research is currently disabled")
         self.assertNotContains(response, "DEV Community / #ai")
 
@@ -2044,6 +2219,36 @@ class TopicRssSourceTests(TestCase):
         self.assertTrue(TopicSource.objects.filter(pk=existing_source.id).exists())
         self.assertEqual(topic.sources.count(), 1)
         self.assertContains(response, "Existing discovered source")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_with_empty_results_shows_no_new_sources_summary(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(mock_urlopen, [])
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "Empty provider results",
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No new research sources found")
+        self.assertContains(response, "Provider results were checked, but no new suggestions passed filtering.")
+        self.assertNotContains(response, "Source discovery completed")
+        topic = Topic.objects.get(name="Empty provider results")
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
+        self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_run_digest_card_uses_plural_selected_source_helper_text(self, mock_resolve_source_candidates) -> None:
