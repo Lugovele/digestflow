@@ -21,12 +21,15 @@ from apps.topics.focus_suggestions import generate_focus_suggestions, should_see
 from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import (
+    build_research_review_context,
+    build_topic_source_payloads_from_review_items,
     CuratedSourceSeed,
     TopicSourceDiscoveryRequest,
     filter_new_source_candidates,
     get_demo_articles_for_topic,
     is_new_research_source,
     resolve_configured_search_provider,
+    run_source_research,
     split_topic_sources,
     resolve_source_candidates,
 )
@@ -1431,6 +1434,23 @@ def _should_run_research_discovery(request: HttpRequest, *, topic_id: str | None
 
 
 def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
+    provider_resolution = resolve_configured_search_provider(topic)
+    provider_diagnostics = provider_resolution.diagnostics
+    provider_status = str(provider_diagnostics.get("search_provider_status") or "").strip().lower()
+    provider_name = str(provider_diagnostics.get("search_provider_name") or "").strip().lower()
+    provider_enabled = bool(provider_diagnostics.get("search_provider_enabled"))
+
+    if provider_status == "ready" and provider_name == "serpapi":
+        source_research_result = run_source_research(topic)
+        if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
+            return _build_persisted_new_source_candidates(topic)
+        candidate_records = _build_provider_backed_candidate_records(source_research_result)
+        candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
+        return _upsert_and_build_source_candidates(topic, candidate_records)
+
+    if provider_status != "ready" and (provider_enabled or provider_name not in {"", "unconfigured"}):
+        return _build_persisted_new_source_candidates(topic)
+
     raw_candidate_records = resolve_source_candidates(
         TopicSourceDiscoveryRequest(
             topic=topic.name,
@@ -1442,6 +1462,37 @@ def _discover_and_prepare_candidates(topic: Topic) -> list[dict]:
     )
     candidate_records = filter_new_source_candidates(raw_candidate_records, topic.sources.all())
     return _upsert_and_build_source_candidates(topic, candidate_records)
+
+
+def _build_provider_backed_candidate_records(source_research_result) -> list[dict]:
+    review_context = build_research_review_context(source_research_result)
+    payloads = build_topic_source_payloads_from_review_items(review_context.persistable_items)
+    payloads_by_url = {
+        str(payload.get("url") or "").strip(): payload
+        for payload in payloads
+        if str(payload.get("url") or "").strip()
+    }
+
+    candidate_records: list[dict] = []
+    for item in review_context.persistable_items:
+        payload = payloads_by_url.get(str(item.url or "").strip())
+        if payload is None:
+            continue
+        candidate_records.append(
+            {
+                "url": payload["url"],
+                "title": payload["title"],
+                "normalized_url": item.normalized_url,
+                "source_type": payload.get("source_type") or item.source_type,
+                "candidate_origin": payload.get("origin") or TopicSourceOrigin.DISCOVERED,
+                "default_selected": item.default_selected,
+                "description": str(item.diagnostics.get("origin_reason") or "").strip(),
+                "provider_name": review_context.diagnostics.get("provider_name", ""),
+                "has_recent_article_count": False,
+                "recent_article_count": None,
+            }
+        )
+    return candidate_records
 
 
 def _build_source_review_summary(
