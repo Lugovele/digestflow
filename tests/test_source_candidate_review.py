@@ -75,8 +75,8 @@ class SourceCandidateReviewAdapterTests(SimpleTestCase):
         first = evaluate_source_candidate(
             SourceCandidateInput(
                 url="https://health.example.org/infant-safe-sleep",
-                title="Infant safe sleep guide",
-                snippet="Safe sleep guidance for infants and bedtime routines.",
+                title="2026 infant safe sleep guide: evidence, methodology, and bedtime routine recommendations",
+                snippet="Recent safe sleep guidance for infants with evidence, bedtime routine methodology, implementation examples, and limitations.",
                 readable_text_length=420,
             ),
             topic="Baby sleeping",
@@ -84,9 +84,9 @@ class SourceCandidateReviewAdapterTests(SimpleTestCase):
         )
         second = evaluate_source_candidate(
             SourceCandidateInput(
-                url="https://health.example.org/night-waking-help",
-                title="Night waking help for babies",
-                snippet="Night waking and bedtime routine support for parents.",
+                url="https://health.example.org/night-waking-methodology",
+                title="2026 infant night waking guide: evidence, bedtime routine methodology, and limitations",
+                snippet="Recent evidence-based infant sleep guide with bedtime routine methodology, night waking examples, and limitations for parents.",
                 readable_text_length=390,
             ),
             topic="Baby sleeping",
@@ -99,6 +99,7 @@ class SourceCandidateReviewAdapterTests(SimpleTestCase):
         self.assertEqual(item.status, SourceCandidateStatus.NEEDS_REVIEW)
         self.assertTrue(item.is_selectable)
         self.assertIn("duplicate hostname", item.rejection_reasons)
+        self.assertTrue(item.diagnostics["quality_accepted"])
 
     def test_rejection_reasons_are_preserved(self) -> None:
         candidate = evaluate_source_candidate(
@@ -169,8 +170,8 @@ class SourceCandidateReviewAdapterTests(SimpleTestCase):
         strong = evaluate_source_candidate(
             SourceCandidateInput(
                 url="https://example.net/travel-budget-guide",
-                title="Family travel budget guide",
-                snippet="Budget travel planning checklist for families.",
+                title="2026 family travel budget guide: checklist, tradeoffs, and implementation details",
+                snippet="Recent family travel planning checklist with budget tradeoffs, implementation details, and concrete examples.",
                 readable_text_length=520,
             ),
             topic="Travel planning",
@@ -188,8 +189,8 @@ class SourceCandidateReviewAdapterTests(SimpleTestCase):
         low_relevance = evaluate_source_candidate(
             SourceCandidateInput(
                 url="https://example.edu/biology-lab-notes",
-                title="Biology lab notes",
-                snippet="Classroom notes on cell structure.",
+                title="2026 biology lab case study: methodology, evidence, and limitations",
+                snippet="Recent classroom case study with methodology, evidence, comparison data, and limitations about cell structure experiments.",
                 readable_text_length=260,
             ),
             topic="Travel planning",

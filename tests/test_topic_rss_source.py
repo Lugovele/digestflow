@@ -406,6 +406,7 @@ class TopicRssSourceTests(TestCase):
             name="AI Education",
             source_mode=TopicSourceMode.HYBRID,
             keywords=["AI automation", "workflow automation"],
+            focus_initialized=True,
             excluded_keywords=[],
         )
 
@@ -647,6 +648,7 @@ class TopicRssSourceTests(TestCase):
                 "topic_name": "AI Education",
                 "source_url": "",
                 "source_mode": TopicSourceMode.HYBRID,
+                "run_research": "1",
             },
         )
 
@@ -1357,13 +1359,23 @@ class TopicRssSourceTests(TestCase):
                 "candidate_origin": "curated",
             },
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI agents",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["AI agents", "agent workflows"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "AI agents",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.HYBRID,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1535,13 +1547,23 @@ class TopicRssSourceTests(TestCase):
                 "candidate_origin": "discovered",
             }
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Discovery AI",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Discovery AI",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1567,13 +1589,23 @@ class TopicRssSourceTests(TestCase):
     @patch("apps.digests.views.resolve_source_candidates")
     def test_empty_discovery_workspace_still_renders_run_digest_card_disabled(self, mock_resolve_source_candidates) -> None:
         mock_resolve_source_candidates.return_value = []
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Empty discovery topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Empty discovery topic",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1606,13 +1638,23 @@ class TopicRssSourceTests(TestCase):
         mock_resolve_source_candidates,
     ) -> None:
         mock_resolve_source_candidates.return_value = []
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Disabled research topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Disabled research topic",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1638,13 +1680,23 @@ class TopicRssSourceTests(TestCase):
         mock_resolve_source_candidates,
     ) -> None:
         mock_resolve_source_candidates.return_value = []
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Missing config topic",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Missing config topic",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.HYBRID,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1669,13 +1721,23 @@ class TopicRssSourceTests(TestCase):
         mock_resolve_source_candidates,
     ) -> None:
         mock_resolve_source_candidates.return_value = []
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Not implemented research topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Not implemented research topic",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1728,13 +1790,23 @@ class TopicRssSourceTests(TestCase):
         mock_resolve_source_candidates,
     ) -> None:
         mock_resolve_source_candidates.return_value = []
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Ready provider topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Ready provider topic",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1770,13 +1842,23 @@ class TopicRssSourceTests(TestCase):
                 }
             ],
         )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "AI automation",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1785,7 +1867,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery completed")
         self.assertContains(response, "Provider: serpapi")
         self.assertContains(response, "1 suggestion shown")
-        topic = Topic.objects.get(name="AI automation")
+        topic.refresh_from_db()
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
@@ -1872,13 +1954,23 @@ class TopicRssSourceTests(TestCase):
                 }
             )
         self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Automation discovery cap",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Automation discovery cap",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -1892,7 +1984,7 @@ class TopicRssSourceTests(TestCase):
         html = response.content.decode("utf-8")
         new_section = html.split("New suggestions · 14", 1)[1].split("Ready to generate", 1)[0]
         self.assertEqual(new_section.count(">Keep</button>"), 12)
-        topic = Topic.objects.get(name="Automation discovery cap")
+        topic.refresh_from_db()
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 14)
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
 
@@ -1918,16 +2010,26 @@ class TopicRssSourceTests(TestCase):
                 }
             )
         self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Expanded discovery cap",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Expanded discovery cap",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
-        topic = Topic.objects.get(name="Expanded discovery cap")
+        topic.refresh_from_db()
 
         response = self.client.get(
             reverse("topic-workspace", args=[topic.id]),
@@ -2103,17 +2205,27 @@ class TopicRssSourceTests(TestCase):
                 }
             )
         self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Keep after discovery",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Keep after discovery",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
         self.assertEqual(response.status_code, 200)
-        topic = Topic.objects.get(name="Keep after discovery")
+        topic.refresh_from_db()
         source_to_keep = topic.sources.filter(
             origin=TopicSourceOrigin.DISCOVERED,
             is_pinned=False,
@@ -2151,17 +2263,28 @@ class TopicRssSourceTests(TestCase):
     def test_blocked_real_provider_find_sources_does_not_fallback_to_template_suggestions(
         self,
     ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI agents",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI agents", "agent workflows"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "AI agents",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
         self.assertEqual(response.status_code, 200)
-        topic = Topic.objects.get(name="AI agents")
+        topic.refresh_from_db()
         self.assertEqual(topic.sources.count(), 0)
         self.assertContains(response, "Source discovery did not run")
         self.assertContains(response, "Research provider is currently unavailable.")
@@ -2231,13 +2354,23 @@ class TopicRssSourceTests(TestCase):
         mock_urlopen,
     ) -> None:
         self._mock_serpapi_urlopen(mock_urlopen, [])
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Empty provider results",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Empty provider results",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -2248,6 +2381,175 @@ class TopicRssSourceTests(TestCase):
         topic = Topic.objects.get(name="Empty provider results")
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
+        self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_filters_low_quality_commercial_results(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "AI automation consulting services",
+                    "link": "https://example.com/services/ai-automation",
+                    "snippet": "Book a demo and contact sales to see how we help businesses automate.",
+                    "source": "Example",
+                },
+                {
+                    "position": 2,
+                    "title": "AI automation adoption survey: implementation risks and data",
+                    "link": "https://example.com/adoption-survey",
+                    "snippet": "Survey data, implementation risks, report findings, and limitations for adoption.",
+                    "source": "Example",
+                },
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation filtering",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "AI automation adoption survey: implementation risks and data")
+        self.assertNotContains(response, "AI automation consulting services")
+        topic = Topic.objects.get(name="AI automation filtering")
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
+        self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_filters_generic_benefits_pages_across_domains(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Top 10 benefits of sleep training for your baby",
+                    "link": "https://example.com/sleep-benefits",
+                    "snippet": "Transform your family nights and boost your baby's sleep with simple wins.",
+                    "source": "Example",
+                },
+                {
+                    "position": 2,
+                    "title": "Infant sleep intervention study: methodology and limitations",
+                    "link": "https://example.com/sleep-study",
+                    "snippet": "Study evidence, methodology, and limitations for infant sleep intervention.",
+                    "source": "Example",
+                },
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Child sleep filtering",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["infant sleep"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Infant sleep intervention study: methodology and limitations")
+        self.assertNotContains(response, "Top 10 benefits of sleep training for your baby")
+        topic.refresh_from_db()
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_filters_stale_2018_results(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "AI automation adoption report 2018",
+                    "link": "https://example.com/2018/adoption-report",
+                    "snippet": "2018 report with methodology, findings, and implementation details.",
+                    "source": "Example",
+                    "date": "2018-04-03",
+                },
+                {
+                    "position": 2,
+                    "title": "AI automation adoption survey: implementation risks and data",
+                    "link": "https://example.com/2026/adoption-survey",
+                    "snippet": "2026-05-12 survey data, implementation risks, report findings, and limitations for adoption.",
+                    "source": "Example",
+                    "date": "2026-05-12",
+                },
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation recency filtering",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "AI automation adoption survey: implementation risks and data")
+        self.assertNotContains(response, "AI automation adoption report 2018")
+        topic.refresh_from_db()
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
 
     @patch("apps.digests.views.resolve_source_candidates")
@@ -2276,13 +2578,23 @@ class TopicRssSourceTests(TestCase):
                 "candidate_origin": "discovered",
             },
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Plural source count",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["python automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Plural source count",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -2296,6 +2608,9 @@ class TopicRssSourceTests(TestCase):
             user=self._get_ui_user(),
             name="Separated sources",
             source_mode=TopicSourceMode.HYBRID,
+            keywords=["python community"],
+            focus_initialized=True,
+            excluded_keywords=[],
         )
         TopicSource.objects.create(
             topic=topic,
@@ -2335,9 +2650,11 @@ class TopicRssSourceTests(TestCase):
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Separated sources",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.HYBRID,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
@@ -3621,18 +3938,28 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
                 "candidate_origin": "discovered",
             }
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Preview only",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["AI agents"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Preview only",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.HYBRID,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
         self.assertEqual(response.status_code, 200)
-        topic = Topic.objects.get(name="Preview only")
+        topic.refresh_from_db()
         self.assertEqual(topic.sources.count(), 1)
         discovered_source = topic.sources.get()
         self.assertEqual(discovered_source.origin, TopicSourceOrigin.DISCOVERED)
@@ -3652,6 +3979,9 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
             user=self._get_ui_user(),
             name="Selected discovery",
             source_mode=TopicSourceMode.HYBRID,
+            keywords=["AI engineering"],
+            focus_initialized=True,
+            excluded_keywords=[],
         )
         mock_resolve_source_candidates.return_value = [
             {
@@ -3734,18 +4064,28 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
                 "candidate_origin": "discovered",
             }
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Python discovery",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["Python"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         discovery_response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Python discovery",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
         self.assertEqual(discovery_response.status_code, 200)
-        topic = Topic.objects.get(name="Python discovery")
+        topic.refresh_from_db()
         source = topic.sources.get()
         self.assertEqual(source.origin, TopicSourceOrigin.DISCOVERED)
         self.assertTrue(source.is_active)
@@ -3800,18 +4140,28 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
                 "candidate_origin": "discovered",
             }
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Python browser flow",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["Python"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         discovery_response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Python browser flow",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
         self.assertEqual(discovery_response.status_code, 200)
-        topic = Topic.objects.get(name="Python browser flow")
+        topic.refresh_from_db()
         source = topic.sources.get()
         self.assertTrue(source.is_active)
 
@@ -3868,18 +4218,28 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
                 "candidate_origin": "discovered",
             },
         ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Python rediscovery flow",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["Python"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
 
         discovery_response = self.client.post(
             reverse("discover-sources"),
             data={
-                "topic_name": "Python rediscovery flow",
+                "topic_id": topic.id,
+                "topic_name": topic.name,
                 "source_url": "",
-                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "source_mode": topic.source_mode,
+                "run_research": "1",
             },
         )
 
         self.assertEqual(discovery_response.status_code, 200)
-        topic = Topic.objects.get(name="Python rediscovery flow")
+        topic.refresh_from_db()
         discovered_sources = {source.url: source for source in topic.sources.order_by("id")}
         python_source = discovered_sources["https://dev.to/t/python"]
         django_source = discovered_sources["https://dev.to/t/django"]

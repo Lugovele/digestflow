@@ -83,6 +83,7 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
         context["topic_form_error"] = _get_topic_form_error(form)
         return render(request, "digestflow/topic_list.html", context, status=400)
 
+    topic_id = str(request.POST.get("topic_id") or "").strip() or None
     topic_name = form.cleaned_data["topic_name"]
     source_url = str(form.cleaned_data.get("source_url") or "").strip()
     source_mode = form.cleaned_data.get("source_mode") or TopicSourceMode.HYBRID
@@ -91,17 +92,17 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
             topic_name,
             source_urls=[source_url] if source_url else [],
             source_mode=source_mode,
-            topic_id=request.POST.get("topic_id"),
+            topic_id=topic_id,
         )
     except ValidationError as exc:
         context = _build_topic_list_context(form=form)
         context["topic_form_error"] = str(exc)
         return render(request, "digestflow/topic_list.html", context, status=400)
     topic.manual_source_inputs = [source_url] if source_url else []
-    should_run_research = _should_run_research_discovery(request, topic_id=request.POST.get("topic_id"))
     discovery_summary = None
     discovered_source_candidates = None
-    if should_run_research:
+    discovery_requested = _should_run_research_discovery(request, topic_id=topic_id)
+    if discovery_requested:
         discovered_source_candidates, discovery_summary = _discover_and_prepare_candidates_with_summary(topic)
     return render(
         request,
@@ -111,7 +112,7 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
             discovered_topic=topic,
             discovered_source_candidates=discovered_source_candidates,
             discovery_summary=discovery_summary,
-            discovery_context_active=should_run_research,
+            discovery_context_active=discovery_requested,
             show_all_new_suggestions=_request_wants_all_new_suggestions(request),
         ),
     )
@@ -1490,10 +1491,10 @@ def _build_topic_focus_terms(topic: Topic | None) -> list[str]:
 
 
 def _should_run_research_discovery(request: HttpRequest, *, topic_id: str | None) -> bool:
-    if not topic_id:
-        return True
     if not str(request.POST.get("run_research") or "").strip():
         return False
+    if not topic_id:
+        return True
     topic = Topic.objects.filter(pk=topic_id).first()
     return _can_find_research_sources(topic)
 
@@ -1998,7 +1999,6 @@ def _build_pinned_research_source_inventory(topic: Topic | None) -> list[dict]:
 
 def _can_find_research_sources(topic: Topic | None, *, provider_blocked: bool = False) -> bool:
     return bool(_build_topic_focus_terms(topic)) and not provider_blocked
-
 
 def _build_legacy_source_display(topic: Topic | None) -> dict | None:
     if topic is None or not topic.source_url:

@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import re
 
 from services.sources.detector import classify_source_url
+from services.sources.source_quality import assess_source_quality
 
 
 _STOP_WORDS = {
@@ -145,12 +146,40 @@ def evaluate_source_candidate(
     diagnostics["matched_terms"] = matched_terms
     diagnostics["match_count"] = len(matched_terms)
 
+    quality_assessment = assess_source_quality(
+        title=title,
+        url=normalized_url or candidate.url,
+        snippet=snippet,
+        provider_published_at=str(
+            (diagnostics.get("raw_result_diagnostics") or {}).get("provider_published_at") or ""
+        ).strip(),
+    )
+    diagnostics.update(
+        {
+            "source_content_type": quality_assessment.source_content_type,
+            "quality_score": quality_assessment.quality_score,
+            "commercial_intent_score": quality_assessment.commercial_intent_score,
+            "substance_score": quality_assessment.substance_score,
+            "freshness_status": quality_assessment.freshness_status,
+            "detected_publication_date": quality_assessment.detected_publication_date,
+            "detected_publication_year": quality_assessment.detected_publication_year,
+            "freshness_score": quality_assessment.freshness_score,
+            "freshness_rejection_reason": quality_assessment.freshness_rejection_reason,
+            "freshness_signals": list(quality_assessment.freshness_signals),
+            "quality_tags": list(quality_assessment.quality_tags),
+            "quality_rejection_reason": quality_assessment.rejection_reason,
+            "quality_accepted_reason": quality_assessment.accepted_reason,
+            "quality_accepted": quality_assessment.accepted,
+        }
+    )
+
     score_breakdown = {
         "relevance": len(matched_terms) * 22,
         "title_bonus": 8 if _contains_any(title, matched_terms) else 0,
         "snippet_bonus": 6 if _contains_any(snippet, matched_terms) else 0,
         "content_bonus": min(readable_text_length, 600) / 20 if readable_text_length else 0,
         "source_type_bonus": _source_type_bonus(candidate_type),
+        "source_quality_bonus": quality_assessment.quality_score * 3,
         "duplicate_hostname_penalty": -12 if duplicate_hostname and not duplicate_url else 0,
         "weak_content_penalty": -18 if weak_content else 0,
         "unreachable_penalty": -40 if is_unreachable else 0,
@@ -166,10 +195,14 @@ def evaluate_source_candidate(
         duplicate_hostname=duplicate_hostname,
         score=score,
         match_count=len(matched_terms),
+        quality_accepted=quality_assessment.accepted,
+        quality_rejection_reason=quality_assessment.rejection_reason,
     )
 
     if status == SourceCandidateStatus.LOW_RELEVANCE:
         rejection_reasons.append("low relevance")
+    elif status == SourceCandidateStatus.REJECTED and quality_assessment.rejection_reason:
+        rejection_reasons.append(quality_assessment.rejection_reason)
     elif status == SourceCandidateStatus.INVALID_URL and "invalid url" not in rejection_reasons:
         rejection_reasons.append("invalid url")
     elif status == SourceCandidateStatus.NEEDS_REVIEW and duplicate_hostname:
@@ -257,6 +290,8 @@ def _resolve_candidate_status(
     duplicate_hostname: bool,
     score: float,
     match_count: int,
+    quality_accepted: bool,
+    quality_rejection_reason: str,
 ) -> SourceCandidateStatus:
     if invalid_url:
         return SourceCandidateStatus.INVALID_URL
@@ -266,10 +301,14 @@ def _resolve_candidate_status(
         return SourceCandidateStatus.UNREACHABLE
     if weak_content:
         return SourceCandidateStatus.WEAK_CONTENT
+    if quality_rejection_reason:
+        return SourceCandidateStatus.REJECTED
     if match_count == 0 or score < 20:
         return SourceCandidateStatus.LOW_RELEVANCE
     if duplicate_hostname:
         return SourceCandidateStatus.NEEDS_REVIEW
+    if not quality_accepted:
+        return SourceCandidateStatus.LOW_RELEVANCE
     return SourceCandidateStatus.ACCEPTED
 
 

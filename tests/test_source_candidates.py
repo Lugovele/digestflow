@@ -15,8 +15,8 @@ class SourceCandidateEvaluationTests(SimpleTestCase):
         candidate = evaluate_source_candidate(
             SourceCandidateInput(
                 url="https://www.Example.com/blog/post/?utm_source=newsletter",
-                title="Example travel guide",
-                snippet="A practical family travel guide.",
+                title="2026 family travel guide: budget checklist and practical planning steps",
+                snippet="2026 practical family travel guide with budget planning, checklist, itinerary examples, tradeoffs, and implementation details.",
                 readable_text_length=420,
             ),
             topic="Travel planning",
@@ -27,6 +27,7 @@ class SourceCandidateEvaluationTests(SimpleTestCase):
         self.assertEqual(candidate.hostname, "example.com")
         self.assertEqual(candidate.candidate_type, "blog_index")
         self.assertEqual(candidate.status, SourceCandidateStatus.ACCEPTED)
+        self.assertTrue(candidate.diagnostics["quality_accepted"])
 
     def test_candidate_object_exposes_expected_fields(self) -> None:
         candidate = evaluate_source_candidate(
@@ -130,8 +131,8 @@ class SourceCandidateEvaluationTests(SimpleTestCase):
         candidate = evaluate_source_candidate(
             SourceCandidateInput(
                 url="https://example.com/prenatal-low-impact-exercises",
-                title="Low-impact prenatal exercises for the third trimester",
-                snippet="Safe low-impact prenatal exercise ideas for late pregnancy.",
+                title="2026 low-impact prenatal exercises for the third trimester: safety guidelines and methodology",
+                snippet="Recent evidence-based guidance with safety guidelines, methodology, limitations, and practical low-impact exercise examples for late pregnancy.",
                 readable_text_length=520,
             ),
             topic="Physical exercises for pregnant women",
@@ -141,20 +142,21 @@ class SourceCandidateEvaluationTests(SimpleTestCase):
         self.assertEqual(candidate.status, SourceCandidateStatus.ACCEPTED)
         self.assertGreater(candidate.score, 40)
         self.assertIn("low impact", candidate.diagnostics["matched_terms"])
+        self.assertTrue(candidate.diagnostics["quality_accepted"])
 
     def test_accepted_candidates_are_sorted_by_score(self) -> None:
         candidates = evaluate_source_candidates(
             [
                 SourceCandidateInput(
                     url="https://example.com/broad-overview",
-                    title="Travel overview",
-                    snippet="Travel ideas.",
-                    readable_text_length=180,
+                    title="2026 family travel planning guide with concrete budget steps",
+                    snippet="Recent practical guide with concrete budget steps, packing checklist, booking tradeoffs, and itinerary examples for family travel.",
+                    readable_text_length=360,
                 ),
                 SourceCandidateInput(
                     url="https://example.org/family-travel-checklist",
-                    title="Family travel checklist and budget planning",
-                    snippet="A practical family travel guide with budget tips.",
+                    title="2026 family travel budget planning report: checklist, methodology, case study, and tradeoffs",
+                    snippet="Recent family travel report with budget methodology, checklist steps, case study examples, limitations, and tradeoffs.",
                     readable_text_length=520,
                 ),
             ],

@@ -24,6 +24,8 @@ class SearchProviderRuntimeError(RuntimeError):
 class SerpApiSearchProvider:
     api_key: str
     timeout_seconds: float = 8.0
+    recency_months: int = 1
+    time_filter: str = "qdr:m"
 
     provider_name = "serpapi"
     base_url = "https://serpapi.com/search.json"
@@ -34,6 +36,7 @@ class SerpApiSearchProvider:
             "q": str(query or "").strip(),
             "api_key": self.api_key,
             "num": 5,
+            "tbs": self.time_filter,
         }
         request_url = f"{self.base_url}?{urlencode(params)}"
         request = Request(
@@ -104,6 +107,7 @@ class SerpApiSearchProvider:
                     "snippet": str(item.get("snippet") or item.get("snippet_highlighted_words") or "").strip(),
                     "rank": int(item.get("position") or index),
                     "source": str(item.get("source") or item.get("displayed_link") or "").strip(),
+                    "published_at": str(item.get("date") or "").strip(),
                 }
             )
 

@@ -88,6 +88,7 @@ AI_DAILY_TOKEN_BUDGET = int(os.getenv("AI_DAILY_TOKEN_BUDGET", "100000"))
 SEARCH_PROVIDER_ENABLED = os.getenv("SEARCH_PROVIDER_ENABLED", "False").lower() == "true"
 SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "").strip().lower()
 SEARCH_PROVIDER_API_KEY = os.getenv("SEARCH_PROVIDER_API_KEY", "")
+SEARCH_RECENCY_MONTHS = int(os.getenv("SEARCH_RECENCY_MONTHS", "1"))
 
 LOGGING = {
     "version": 1,

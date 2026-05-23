@@ -113,6 +113,7 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                         "query_diagnostics": dict(query_item.diagnostics or {}),
                         "provider_rank": int(item.get("rank") or index),
                         "provider_source": str(item.get("source") or "").strip(),
+                        "provider_published_at": str(item.get("published_at") or "").strip(),
                     },
                 )
             )

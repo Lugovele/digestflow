@@ -31,6 +31,8 @@ def resolve_configured_search_provider(topic=None) -> SearchProviderResolution:
     provider_enabled = bool(getattr(settings, "SEARCH_PROVIDER_ENABLED", False))
     provider_name = str(getattr(settings, "SEARCH_PROVIDER", "") or "").strip().lower()
     provider_api_key = str(getattr(settings, "SEARCH_PROVIDER_API_KEY", "") or "").strip()
+    search_recency_months = get_search_recency_months()
+    search_time_filter = build_search_time_filter(search_recency_months)
     research_required_for_topic = _topic_requires_research_sources(topic)
 
     missing_settings: list[str] = []
@@ -56,7 +58,11 @@ def resolve_configured_search_provider(topic=None) -> SearchProviderResolution:
         elif provider_name == "fake":
             provider = FakeSearchProvider({})
         elif provider_name == "serpapi":
-            provider = SerpApiSearchProvider(api_key=provider_api_key)
+            provider = SerpApiSearchProvider(
+                api_key=provider_api_key,
+                recency_months=search_recency_months,
+                time_filter=search_time_filter,
+            )
 
     research_execution_status = "completed"
     if status != READY_STATUS:
@@ -71,6 +77,9 @@ def resolve_configured_search_provider(topic=None) -> SearchProviderResolution:
         "search_provider_status": status,
         "search_provider_error": error,
         "search_provider_missing_settings": tuple(missing_settings),
+        "search_recency_months": search_recency_months,
+        "search_time_filter": search_time_filter,
+        "provider_tbs": search_time_filter,
     }
 
     return SearchProviderResolution(provider=provider, diagnostics=diagnostics)
@@ -86,7 +95,26 @@ def build_explicit_search_provider_diagnostics(provider: SearchProvider, topic=N
         "search_provider_status": READY_STATUS,
         "search_provider_error": "",
         "search_provider_missing_settings": (),
+        "search_recency_months": int(getattr(provider, "recency_months", get_search_recency_months()) or get_search_recency_months()),
+        "search_time_filter": str(getattr(provider, "time_filter", "") or build_search_time_filter(get_search_recency_months())),
+        "provider_tbs": str(getattr(provider, "time_filter", "") or build_search_time_filter(get_search_recency_months())),
     }
+
+
+def get_search_recency_months() -> int:
+    raw_value = getattr(settings, "SEARCH_RECENCY_MONTHS", 1)
+    try:
+        months = int(raw_value)
+    except (TypeError, ValueError):
+        months = 1
+    return max(1, months)
+
+
+def build_search_time_filter(recency_months: int) -> str:
+    months = max(1, int(recency_months or 1))
+    if months == 1:
+        return "qdr:m"
+    return f"qdr:m{months}"
 
 
 def _topic_requires_research_sources(topic) -> bool:

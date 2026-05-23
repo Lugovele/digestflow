@@ -1,9 +1,10 @@
 import json
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
 from django.contrib.auth import get_user_model
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.topics.models import Topic, TopicSource
 from services.sources.research_queries import build_research_query_plan
@@ -133,6 +134,36 @@ class SourceSearchProviderTests(SimpleTestCase):
         self.assertEqual(results[0]["snippet"], "Practical automation guide.")
         self.assertEqual(results[0]["rank"], 1)
         self.assertEqual(results[0]["source"], "Example")
+        self.assertEqual(results[0]["published_at"], "")
+
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_serpapi_provider_includes_default_recency_filter(self, mock_urlopen) -> None:
+        response = MagicMock()
+        response.read.return_value = json.dumps({"organic_results": []}).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        provider = SerpApiSearchProvider(api_key="test-key")
+
+        provider.search("AI automation", intent=plan_query_intent())
+
+        request = mock_urlopen.call_args.args[0]
+        parsed = urlparse(request.full_url)
+        params = parse_qs(parsed.query)
+        self.assertEqual(params.get("tbs"), ["qdr:m"])
+
+    @override_settings(SEARCH_RECENCY_MONTHS=3)
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_serpapi_provider_uses_configurable_recency_filter(self, mock_urlopen) -> None:
+        response = MagicMock()
+        response.read.return_value = json.dumps({"organic_results": []}).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        provider = SerpApiSearchProvider(api_key="test-key", recency_months=3, time_filter="qdr:m3")
+
+        provider.search("AI automation", intent=plan_query_intent())
+
+        request = mock_urlopen.call_args.args[0]
+        parsed = urlparse(request.full_url)
+        params = parse_qs(parsed.query)
+        self.assertEqual(params.get("tbs"), ["qdr:m3"])
 
     @patch("services.sources.serpapi_provider.urlopen")
     def test_serpapi_provider_handles_empty_organic_results_safely(self, mock_urlopen) -> None:
@@ -253,6 +284,32 @@ class SourceSearchProviderTests(SimpleTestCase):
         self.assertEqual(result.diagnostics["provider_error_count"], len(plan.query_items))
         self.assertTrue(result.diagnostics["provider_errors"])
         self.assertNotIn("test-key", json.dumps(result.diagnostics))
+
+    @override_settings(SEARCH_RECENCY_MONTHS=1)
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_search_provider_boundary_surfaces_recency_diagnostics(self, mock_urlopen) -> None:
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "organic_results": [
+                    {
+                        "position": 1,
+                        "title": "Recent report",
+                        "link": "https://example.com/recent-report",
+                        "snippet": "Snippet",
+                        "source": "Example",
+                        "date": "2026-05-02",
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        plan = build_research_query_plan(_TopicStub("AI automation", ["Zapier", "Make"]))
+        provider = SerpApiSearchProvider(api_key="test-key", recency_months=1, time_filter="qdr:m")
+
+        result = search_research_query_plan(plan, provider)
+
+        self.assertEqual(result.results[0].diagnostics["provider_published_at"], "2026-05-02")
 
 
 class SourceSearchProviderPersistenceTests(TestCase):
