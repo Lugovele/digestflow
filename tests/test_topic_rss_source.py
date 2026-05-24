@@ -1390,7 +1390,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "My sources")
         self.assertContains(response, "Research sources")
         self.assertContains(response, "New suggestions")
-        self.assertContains(response, "Find sources")
+        self.assertContains(response, "Find new sources")
         self.assertContains(response, "Use my sources & research")
         self.assertContains(response, "Use my sources only")
         self.assertContains(response, "Use research sources only")
@@ -1444,7 +1444,7 @@ class TopicRssSourceTests(TestCase):
         self.assertNotIn("<h1>DigestFlow</h1>", html)
         self.assertNotIn('<h2 class="workflow-title">AI agents</h2>', html)
         self.assertLess(html.index('<h1 class="page-title">AI agents</h1>'), html.index("My sources"))
-        self.assertLess(html.index("Research sources"), html.index("Find sources"))
+        self.assertLess(html.index("Research sources"), html.index("Find new sources"))
         self.assertLess(html.index("Research sources"), html.index("Run digest"))
         self.assertIn("Select at least one my source before running this digest.", html)
         self.assertIn("0 my sources", html)
@@ -1572,7 +1572,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "research only")
         self.assertContains(response, "Research sources")
         self.assertContains(response, "New suggestions")
-        self.assertContains(response, "Find sources")
+        self.assertContains(response, "Find new sources")
         self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
         self.assertContains(response, "DEV Community / #ai")
         self.assertContains(response, "Run digest")
@@ -1819,6 +1819,103 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Provider setup required")
         self.assertNotContains(response, "Search adapter not connected")
         self.assertNotContains(response, 'aria-disabled="true"', html=False)
+
+    def test_workspace_keeps_find_sources_label_before_any_discovered_research_sources(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Fresh research topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Find sources")
+        self.assertNotContains(response, "Find new sources")
+
+    def test_workspace_uses_find_new_sources_label_when_pinned_research_source_exists(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Pinned research topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Pinned research source",
+            url="https://example.org/research/pinned-source",
+            normalized_url="https://example.org/research/pinned-source",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Find new sources</button>', html=False)
+
+    def test_workspace_keeps_find_sources_label_when_only_manual_sources_exist(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Manual sources topic",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Manual source",
+            url="https://example.org/manual-source",
+            normalized_url="https://example.org/manual-source",
+            source_type="website",
+            origin=TopicSourceOrigin.MANUAL,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Find sources")
+        self.assertNotContains(response, "Find new sources")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=False,
+        SEARCH_PROVIDER="",
+        SEARCH_PROVIDER_API_KEY="",
+    )
+    def test_blocked_provider_with_existing_discovered_source_uses_find_new_sources_label(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Blocked provider existing research topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Existing research source",
+            url="https://example.org/research/existing-source",
+            normalized_url="https://example.org/research/existing-source",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research unavailable")
+        self.assertContains(response, 'Find new sources</button>', html=False)
+        self.assertContains(response, 'aria-disabled="true"', html=False)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,

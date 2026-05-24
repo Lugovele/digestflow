@@ -894,7 +894,7 @@
                                         {% if show_all_new_suggestions %}
                                             <input type="hidden" name="show_all_suggestions" value="1">
                                         {% endif %}
-                                        <button type="submit" class="secondary-button secondary-button--local" {% if not can_find_research_sources %}disabled aria-disabled="true"{% endif %}>Find sources</button>
+                                        <button type="submit" class="secondary-button secondary-button--local" {% if not can_find_research_sources %}disabled aria-disabled="true"{% endif %}>{{ source_discovery_button_label }}</button>
                                     </form>
                                 </div>
                             </div>

@@ -1320,6 +1320,7 @@ def _build_topic_list_context(
     run_eligibility = _build_run_eligibility(discovered_topic)
     research_provider_state = _build_research_provider_state(discovered_topic)
     hidden_new_source_candidate_count = max(0, len(total_new_source_candidates) - len(visible_new_source_candidates))
+    has_research_discovery_results = _topic_has_research_discovery_results(discovered_topic)
     return {
         "topics": topics,
         "recent_runs": recent_runs,
@@ -1347,6 +1348,10 @@ def _build_topic_list_context(
         "research_provider_notice": research_provider_state["notice"],
         "research_provider_blocked": research_provider_state["blocked"],
         "find_sources_disabled_hint": research_provider_state["button_hint"],
+        "has_research_discovery_results": has_research_discovery_results,
+        "source_discovery_button_label": (
+            "Find new sources" if has_research_discovery_results else "Find sources"
+        ),
         "legacy_topic_source": _build_legacy_source_display(discovered_topic),
         "source_add_feedback": None,
         "can_find_research_sources": _can_find_research_sources(
@@ -1995,6 +2000,12 @@ def _build_pinned_research_source_inventory(topic: Topic | None) -> list[dict]:
             }
         )
     return inventory
+
+
+def _topic_has_research_discovery_results(topic: Topic | None) -> bool:
+    if topic is None:
+        return False
+    return topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).exists()
 
 
 def _can_find_research_sources(topic: Topic | None, *, provider_blocked: bool = False) -> bool:
