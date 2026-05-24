@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
-from apps.digests.models import DigestRun
+from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
 from apps.digests.views import _build_curated_source_seeds
 from apps.sources.models import Article
 from apps.topics.focus import (
@@ -1966,12 +1966,130 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "1 suggestion shown")
         topic.refresh_from_db()
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+        self.assertEqual(SourceDiscoveryRun.objects.filter(topic=topic).count(), 1)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
         discovered_source = topic.sources.get(origin=TopicSourceOrigin.DISCOVERED)
         self.assertEqual(discovered_source.url, "https://example.com/ai-guide")
         self.assertTrue(discovered_source.is_active)
         self.assertFalse(discovered_source.is_pinned)
+        discovery_run = SourceDiscoveryRun.objects.get(topic=topic)
+        self.assertEqual(discovery_run.status, SourceDiscoveryRun.STATUS_COMPLETED)
+        self.assertEqual(discovery_run.provider_name, "serpapi")
+        self.assertEqual(discovery_run.new_suggestions_count, 1)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url="https://example.com/ai-guide")
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_NEW_SHOWN)
+        self.assertEqual(history_item.seen_count, 1)
+        self.assertTrue(history_item.created_topic_source)
+        self.assertEqual(history_item.topic_source_id, discovered_source.id)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_records_quality_rejected_history_row(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "AI automation consulting services",
+                    "link": "https://example.com/services/ai-automation",
+                    "snippet": "Book a demo with our platform and contact sales to get started.",
+                    "source": "Example",
+                }
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "AI automation consulting services")
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_COMMERCIAL_REJECTED)
+        self.assertTrue(
+            any(
+                phrase in history_item.quality_rejection_reason.lower()
+                for phrase in ("commercial", "product/demo/pricing")
+            )
+        )
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_records_stale_history_row(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "2018 automation adoption report with methodology and limitations",
+                    "link": "https://example.com/research/automation-report-2018",
+                    "snippet": "2018 report with survey data, methodology, findings, and limitations.",
+                    "source": "Example",
+                    "date": "2018-04-03",
+                }
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "2018 automation adoption report with methodology and limitations")
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_STALE_REJECTED)
+        self.assertEqual(history_item.freshness_status, "very_stale")
+        self.assertEqual(history_item.detected_publication_year, 2018)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2028,6 +2146,173 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 1)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
         self.assertNotContains(response, "AI automation guide")
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url="https://example.com/ai-guide")
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SEEN)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN)
+        self.assertFalse(history_item.created_topic_source)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_provider_backed_find_sources_increments_history_seen_count_for_repeat_url(
+        self,
+        mock_urlopen,
+    ) -> None:
+        organic_results = [
+            {
+                "position": 1,
+                "title": "Automation case study with implementation details",
+                "link": "https://example.com/research/automation-case-study",
+                "snippet": "Recent case study with lessons learned, implementation details, and tradeoffs.",
+                "source": "Example",
+            }
+        ]
+        self._mock_serpapi_urlopen(mock_urlopen, organic_results)
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        first_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+        self.assertEqual(first_response.status_code, 200)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        first_seen_at = history_item.last_seen_at
+
+        second_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(SourceDiscoveryHistory.objects.filter(topic=topic).count(), 1)
+        history_item.refresh_from_db()
+        self.assertEqual(history_item.seen_count, 2)
+        self.assertGreater(history_item.last_seen_at, first_seen_at)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_pinning_discovered_source_updates_history_status_to_kept(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Automation case study with implementation details",
+                    "link": "https://example.com/research/automation-case-study",
+                    "snippet": "Recent case study with lessons learned, implementation details, and tradeoffs.",
+                    "source": "Example",
+                }
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+        source = topic.sources.get(origin=TopicSourceOrigin.DISCOVERED)
+
+        response = self.client.post(reverse("pin-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 302)
+        source.refresh_from_db()
+        self.assertTrue(source.is_pinned)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+        self.assertEqual(history_item.topic_source_id, source.id)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_removing_discovered_source_updates_history_status_to_removed_by_user(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Automation case study with implementation details",
+                    "link": "https://example.com/research/automation-case-study",
+                    "snippet": "Recent case study with lessons learned, implementation details, and tradeoffs.",
+                    "source": "Example",
+                }
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI automation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+        source = topic.sources.get(origin=TopicSourceOrigin.DISCOVERED)
+
+        response = self.client.post(reverse("remove-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(topic.sources.filter(pk=source.id).exists())
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
+        self.assertIsNone(history_item.topic_source_id)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,

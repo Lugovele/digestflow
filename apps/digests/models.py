@@ -163,3 +163,162 @@ class UsedArticle(models.Model):
 
     def __str__(self) -> str:
         return self.title or self.normalized_url or self.article_url
+
+
+class SourceDiscoveryRun(models.Model):
+    """One provider-backed source discovery execution for a topic."""
+
+    STATUS_STARTED = "started"
+    STATUS_COMPLETED = "completed"
+    STATUS_BLOCKED = "blocked"
+    STATUS_FAILED = "failed"
+    STATUS_PARTIAL_FAILED = "partial_failed"
+
+    STATUS_CHOICES = [
+        (STATUS_STARTED, "Started"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_BLOCKED, "Blocked"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_PARTIAL_FAILED, "Partial failed"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="source_discovery_runs",
+    )
+    topic = models.ForeignKey(
+        "topics.Topic",
+        on_delete=models.CASCADE,
+        related_name="source_discovery_runs",
+    )
+    provider_name = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_STARTED)
+    started_at = models.DateTimeField(default=timezone.now)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    search_recency_months = models.PositiveSmallIntegerField(default=1)
+    search_time_filter = models.CharField(max_length=32, blank=True)
+    query_count = models.PositiveIntegerField(default=0)
+    provider_result_count = models.PositiveIntegerField(default=0)
+    known_url_count = models.PositiveIntegerField(default=0)
+    accepted_count = models.PositiveIntegerField(default=0)
+    rejected_count = models.PositiveIntegerField(default=0)
+    new_suggestions_count = models.PositiveIntegerField(default=0)
+    already_known_count = models.PositiveIntegerField(default=0)
+    diagnostics = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"SourceDiscoveryRun #{self.pk} [{self.status}]"
+
+
+class SourceDiscoveryHistory(models.Model):
+    """Topic-level memory of URLs seen through provider-backed source discovery."""
+
+    STATUS_SEEN = "seen"
+    STATUS_SHOWN = "shown"
+    STATUS_KEPT = "kept"
+    STATUS_REMOVED_BY_USER = "removed_by_user"
+    STATUS_REJECTED_BY_QUALITY = "rejected_by_quality"
+
+    STATUS_CHOICES = [
+        (STATUS_SEEN, "Seen"),
+        (STATUS_SHOWN, "Shown"),
+        (STATUS_KEPT, "Kept"),
+        (STATUS_REMOVED_BY_USER, "Removed by user"),
+        (STATUS_REJECTED_BY_QUALITY, "Rejected by quality"),
+    ]
+
+    OUTCOME_NONE = ""
+    OUTCOME_NEW_SHOWN = "new_shown"
+    OUTCOME_ALREADY_KNOWN = "already_known"
+    OUTCOME_DUPLICATE_URL = "duplicate_url"
+    OUTCOME_DUPLICATE_DOMAIN = "duplicate_domain"
+    OUTCOME_PREVIOUSLY_REMOVED = "previously_removed"
+    OUTCOME_PREVIOUSLY_REJECTED = "previously_rejected"
+    OUTCOME_QUALITY_REJECTED = "quality_rejected"
+    OUTCOME_STALE_REJECTED = "stale_rejected"
+    OUTCOME_COMMERCIAL_REJECTED = "commercial_rejected"
+
+    RUN_OUTCOME_CHOICES = [
+        (OUTCOME_NONE, "None"),
+        (OUTCOME_NEW_SHOWN, "New shown"),
+        (OUTCOME_ALREADY_KNOWN, "Already known"),
+        (OUTCOME_DUPLICATE_URL, "Duplicate URL"),
+        (OUTCOME_DUPLICATE_DOMAIN, "Duplicate domain"),
+        (OUTCOME_PREVIOUSLY_REMOVED, "Previously removed"),
+        (OUTCOME_PREVIOUSLY_REJECTED, "Previously rejected"),
+        (OUTCOME_QUALITY_REJECTED, "Quality rejected"),
+        (OUTCOME_STALE_REJECTED, "Stale rejected"),
+        (OUTCOME_COMMERCIAL_REJECTED, "Commercial rejected"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="source_discovery_history",
+    )
+    topic = models.ForeignKey(
+        "topics.Topic",
+        on_delete=models.CASCADE,
+        related_name="source_discovery_history",
+    )
+    discovery_run = models.ForeignKey(
+        SourceDiscoveryRun,
+        on_delete=models.SET_NULL,
+        related_name="history_items",
+        null=True,
+        blank=True,
+    )
+    topic_source = models.ForeignKey(
+        "topics.TopicSource",
+        on_delete=models.SET_NULL,
+        related_name="source_discovery_history",
+        null=True,
+        blank=True,
+    )
+    normalized_url = models.URLField(max_length=500)
+    url = models.URLField(max_length=500)
+    title = models.CharField(max_length=300, blank=True)
+    snippet = models.TextField(blank=True)
+    domain = models.CharField(max_length=255, blank=True)
+    provider_name = models.CharField(max_length=64, blank=True)
+    query_text = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_SEEN)
+    last_run_outcome = models.CharField(
+        max_length=32,
+        choices=RUN_OUTCOME_CHOICES,
+        default=OUTCOME_NONE,
+        blank=True,
+    )
+    source_content_type = models.CharField(max_length=64, blank=True)
+    quality_score = models.FloatField(default=0.0)
+    substance_score = models.FloatField(default=0.0)
+    commercial_intent_score = models.FloatField(default=0.0)
+    quality_rejection_reason = models.TextField(blank=True)
+    freshness_status = models.CharField(max_length=32, blank=True)
+    detected_publication_date = models.DateField(null=True, blank=True)
+    detected_publication_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    first_seen_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    seen_count = models.PositiveIntegerField(default=1)
+    created_topic_source = models.BooleanField(default=False)
+    diagnostics = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_seen_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["topic", "normalized_url"],
+                name="unique_source_discovery_history_per_topic_url",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.title or self.normalized_url or self.url

@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.digests import result_messages
-from apps.digests.models import DigestRun, UsedArticle
+from apps.digests.models import DigestRun, SourceDiscoveryRun, UsedArticle
 from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, clean_focus_terms, validate_new_focus_terms
 from apps.topics.focus_suggestions import generate_focus_suggestions, should_seed_focus_terms
 from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
@@ -32,6 +32,14 @@ from services.sources import (
     run_source_research,
     split_topic_sources,
     resolve_source_candidates,
+)
+from services.sources.discovery_history import (
+    build_topic_known_url_set,
+    finalize_source_discovery_run,
+    record_source_discovery_history,
+    record_source_discovery_run_started,
+    update_history_for_kept_source,
+    update_history_for_removed_source,
 )
 from services.sources.detector import classify_source_url
 from services.sources.rss_adapter import (
@@ -284,6 +292,7 @@ def pin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -
     if source.origin == TopicSourceOrigin.DISCOVERED and not source.is_pinned:
         source.is_pinned = True
         source.save(update_fields=["is_pinned", "updated_at"])
+        update_history_for_kept_source(source)
     return redirect(
         _build_topic_workspace_url(
             topic.id,
@@ -313,6 +322,7 @@ def unpin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int)
 def remove_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
+    update_history_for_removed_source(source)
     source.delete()
     return _render_topic_source_review(request, topic)
 
@@ -1517,8 +1527,44 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
     provider_enabled = bool(provider_diagnostics.get("search_provider_enabled"))
 
     if provider_status == "ready" and provider_name == "serpapi":
+        discovery_run = record_source_discovery_run_started(
+            topic=topic,
+            provider_name=provider_name,
+            diagnostics=dict(provider_diagnostics),
+        )
+        known_normalized_urls = build_topic_known_url_set(topic)
         source_research_result = run_source_research(topic)
+        provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
+        accepted_count = int(source_research_result.diagnostics.get("accepted_candidate_count") or 0)
+        rejected_count = int(source_research_result.diagnostics.get("rejected_candidate_count") or 0)
+
         if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
+            record_source_discovery_history(
+                topic=topic,
+                discovery_run=finalize_source_discovery_run(
+                    discovery_run,
+                    status=(
+                        SourceDiscoveryRun.STATUS_PARTIAL_FAILED
+                        if int(source_research_result.diagnostics.get("raw_result_count") or 0) > 0
+                        else SourceDiscoveryRun.STATUS_FAILED
+                    ),
+                    diagnostics=dict(source_research_result.diagnostics),
+                    known_url_count=_count_known_provider_results(
+                        source_research_result=source_research_result,
+                        known_normalized_urls=known_normalized_urls,
+                    ),
+                    accepted_count=accepted_count,
+                    rejected_count=rejected_count,
+                    new_suggestions_count=0,
+                    already_known_count=_count_known_provider_results(
+                        source_research_result=source_research_result,
+                        known_normalized_urls=known_normalized_urls,
+                    ),
+                ),
+                source_research_result=source_research_result,
+                shown_candidates=[],
+                known_normalized_urls=known_normalized_urls,
+            )
             return _build_persisted_new_source_candidates(topic), _build_provider_discovery_summary(
                 source_research_result=source_research_result,
                 candidate_records=[],
@@ -1527,6 +1573,28 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         candidate_records = _build_provider_backed_candidate_records(source_research_result)
         candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
         candidate_records = _upsert_and_build_source_candidates(topic, candidate_records)
+        record_source_discovery_history(
+            topic=topic,
+            discovery_run=finalize_source_discovery_run(
+                discovery_run,
+                status=SourceDiscoveryRun.STATUS_COMPLETED,
+                diagnostics=dict(source_research_result.diagnostics),
+                known_url_count=_count_known_provider_results(
+                    source_research_result=source_research_result,
+                    known_normalized_urls=known_normalized_urls,
+                ),
+                accepted_count=accepted_count,
+                rejected_count=rejected_count,
+                new_suggestions_count=len(candidate_records),
+                already_known_count=_count_known_provider_results(
+                    source_research_result=source_research_result,
+                    known_normalized_urls=known_normalized_urls,
+                ),
+            ),
+            source_research_result=source_research_result,
+            shown_candidates=candidate_records,
+            known_normalized_urls=known_normalized_urls,
+        )
         return candidate_records, _build_provider_discovery_summary(
             source_research_result=source_research_result,
             candidate_records=candidate_records,
@@ -1534,6 +1602,15 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         )
 
     if provider_status != "ready" and (provider_enabled or provider_name not in {"", "unconfigured"}):
+        finalize_source_discovery_run(
+            record_source_discovery_run_started(
+                topic=topic,
+                provider_name=provider_name,
+                diagnostics=dict(provider_diagnostics),
+            ),
+            status=SourceDiscoveryRun.STATUS_BLOCKED,
+            diagnostics=dict(provider_diagnostics),
+        )
         return _build_persisted_new_source_candidates(topic), {
             "title": "Source discovery did not run",
             "body": "Research provider is currently unavailable.",
@@ -1587,6 +1664,15 @@ def _build_provider_backed_candidate_records(source_research_result) -> list[dic
             }
         )
     return candidate_records
+
+
+def _count_known_provider_results(*, source_research_result, known_normalized_urls: set[str]) -> int:
+    known_count = 0
+    for candidate in source_research_result.evaluated_candidates:
+        normalized_url = str(candidate.normalized_url or "").strip()
+        if normalized_url and normalized_url in known_normalized_urls:
+            known_count += 1
+    return known_count
 
 
 def _build_provider_discovery_summary(
