@@ -2989,9 +2989,273 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(TopicSource.objects.filter(topic=topic, normalized_url="https://example.com/already-known").count(), 1)
         history_item.refresh_from_db()
         self.assertEqual(history_item.seen_count, 2)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN)
         self.assertContains(response, "No new sources found")
         self.assertContains(response, "Existing suggestions were kept.")
         self.assertContains(response, "Existing suggestion")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_previously_removed_url_does_not_resurface_as_new_suggestion(
+        self,
+        mock_urlopen,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Previously removed source topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        history_item = SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.com/previously-removed",
+            url="https://example.com/previously-removed",
+            title="Previously removed source",
+            status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+            first_seen_at=timezone.now(),
+            last_seen_at=timezone.now(),
+        )
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Previously removed source",
+                    "link": "https://example.com/previously-removed",
+                    "snippet": "Recent case study with implementation details and tradeoffs.",
+                    "source": "Example",
+                }
+            ],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.filter(normalized_url="https://example.com/previously-removed").count(), 0)
+        history_item.refresh_from_db()
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
+        self.assertEqual(history_item.seen_count, 2)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED)
+        self.assertContains(response, "New suggestions · 0")
+        self.assertContains(response, "No new suggestions yet.")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_previously_rejected_url_does_not_resurface_as_new_suggestion(
+        self,
+        mock_urlopen,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Previously rejected source topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        history_item = SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.com/previously-rejected",
+            url="https://example.com/previously-rejected",
+            title="Previously rejected source",
+            status=SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_QUALITY_REJECTED,
+            seen_count=1,
+            quality_rejection_reason="rejected because: generic benefits/listicle SEO pattern",
+            first_seen_at=timezone.now(),
+            last_seen_at=timezone.now(),
+        )
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Previously rejected source",
+                    "link": "https://example.com/previously-rejected",
+                    "snippet": "Recent case study with implementation details, methodology, and tradeoffs.",
+                    "source": "Example",
+                }
+            ],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.filter(normalized_url="https://example.com/previously-rejected").count(), 0)
+        history_item.refresh_from_db()
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY)
+        self.assertEqual(history_item.seen_count, 2)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REJECTED)
+        self.assertContains(response, "New suggestions · 0")
+        self.assertContains(response, "No new suggestions yet.")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_kept_url_does_not_resurface_as_new_suggestion(
+        self,
+        mock_urlopen,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Kept source topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        pinned_source = TopicSource.objects.create(
+            topic=topic,
+            name="Pinned source",
+            url="https://example.com/kept-source",
+            normalized_url="https://example.com/kept-source",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        history_item = SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=pinned_source,
+            normalized_url="https://example.com/kept-source",
+            url="https://example.com/kept-source",
+            title="Pinned source",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+            first_seen_at=timezone.now(),
+            last_seen_at=timezone.now(),
+        )
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Pinned source",
+                    "link": "https://example.com/kept-source",
+                    "snippet": "Recent case study with implementation details and tradeoffs.",
+                    "source": "Example",
+                }
+            ],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.filter(normalized_url="https://example.com/kept-source").count(), 1)
+        pinned_source.refresh_from_db()
+        self.assertTrue(pinned_source.is_pinned)
+        history_item.refresh_from_db()
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+        self.assertEqual(history_item.seen_count, 2)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN)
+        html = response.content.decode("utf-8")
+        new_section = html.split("New suggestions", 1)[1].split("Ready to generate", 1)[0]
+        self.assertNotIn("Pinned source", new_section)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_duplicate_url_inside_same_provider_result_set_creates_at_most_one_visible_suggestion(
+        self,
+        mock_urlopen,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Duplicate provider url topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Fresh automation source",
+                    "link": "https://example.com/duplicate-provider-url",
+                    "snippet": "Recent case study with implementation details and tradeoffs.",
+                    "source": "Example",
+                },
+                {
+                    "position": 2,
+                    "title": "Fresh automation source duplicate",
+                    "link": "https://example.com/duplicate-provider-url",
+                    "snippet": "Recent case study with implementation details and tradeoffs.",
+                    "source": "Example",
+                },
+            ],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(topic.sources.filter(normalized_url="https://example.com/duplicate-provider-url").count(), 1)
+        self.assertEqual(
+            SourceDiscoveryHistory.objects.filter(
+                topic=topic,
+                normalized_url="https://example.com/duplicate-provider-url",
+            ).count(),
+            1,
+        )
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,

@@ -41,6 +41,14 @@ def build_topic_known_url_set(topic: Topic) -> set[str]:
     return known_urls
 
 
+def build_topic_history_by_normalized_url(topic: Topic) -> dict[str, SourceDiscoveryHistory]:
+    return {
+        item.normalized_url: item
+        for item in topic.source_discovery_history.all()
+        if str(item.normalized_url or "").strip()
+    }
+
+
 def record_source_discovery_run_started(
     *,
     topic: Topic,

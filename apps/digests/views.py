@@ -34,6 +34,7 @@ from services.sources import (
     resolve_source_candidates,
 )
 from services.sources.discovery_history import (
+    build_topic_history_by_normalized_url,
     build_topic_known_url_set,
     finalize_source_discovery_run,
     record_source_discovery_history,
@@ -1574,6 +1575,7 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
             )
         candidate_records = _build_provider_backed_candidate_records(source_research_result)
         candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
+        candidate_records = _filter_previously_handled_provider_candidates(topic, candidate_records)
         has_new_visible_suggestions = _has_new_visible_suggestions(
             candidate_records=candidate_records,
             known_normalized_urls=known_normalized_urls,
@@ -1704,6 +1706,39 @@ def _has_new_visible_suggestions(*, candidate_records: list[dict], known_normali
         if normalized_url and normalized_url not in known_normalized_urls:
             return True
     return False
+
+
+def _filter_previously_handled_provider_candidates(topic: Topic, candidate_records: list[dict]) -> list[dict]:
+    history_by_normalized = build_topic_history_by_normalized_url(topic)
+    current_source_normalized_urls = {
+        str(value or "").strip()
+        for value in topic.sources.values_list("normalized_url", flat=True)
+        if str(value or "").strip()
+    }
+    filtered_candidates: list[dict] = []
+    seen_normalized_urls: set[str] = set()
+
+    for candidate in candidate_records:
+        normalized_url = str(candidate.get("normalized_url") or "").strip()
+        source_url = str(candidate.get("url") or "").strip()
+        if not normalized_url and source_url:
+            normalized_url = classify_source_url(source_url).normalized_url
+            candidate = {
+                **candidate,
+                "normalized_url": normalized_url,
+            }
+        if not normalized_url:
+            continue
+        if normalized_url in seen_normalized_urls:
+            continue
+        seen_normalized_urls.add(normalized_url)
+        if normalized_url in current_source_normalized_urls:
+            continue
+        if normalized_url in history_by_normalized:
+            continue
+        filtered_candidates.append(candidate)
+
+    return filtered_candidates
 
 
 def _build_provider_discovery_summary(
