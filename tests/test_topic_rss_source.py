@@ -2674,6 +2674,48 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "DEV Community / #ai")
 
     @override_settings(
+        SEARCH_PROVIDER_ENABLED=False,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="",
+    )
+    def test_blocked_provider_keeps_existing_new_suggestions(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Blocked provider keeps suggestions",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI agents", "agent workflows"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        existing_source = TopicSource.objects.create(
+            topic=topic,
+            name="Existing discovered source",
+            url="https://example.com/existing-blocked",
+            normalized_url="https://example.com/existing-blocked",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
+        self.assertContains(response, "Source discovery did not run")
+        self.assertContains(response, "Existing suggestions were kept.")
+        self.assertContains(response, "Existing discovered source")
+
+    @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
         SEARCH_PROVIDER="serpapi",
         SEARCH_PROVIDER_API_KEY="test-key",
@@ -2724,6 +2766,8 @@ class TopicRssSourceTests(TestCase):
         self.assertTrue(TopicSource.objects.filter(pk=existing_source.id).exists())
         self.assertEqual(topic.sources.count(), 1)
         self.assertContains(response, "Existing discovered source")
+        self.assertContains(response, "Source discovery did not complete")
+        self.assertContains(response, "Existing suggestions were kept.")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2757,13 +2801,197 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "No new research sources found")
-        self.assertContains(response, "Provider results were checked, but no new suggestions passed filtering.")
+        self.assertContains(response, "No new sources found")
+        self.assertContains(response, "No new sources found.")
         self.assertNotContains(response, "Source discovery completed")
         topic = Topic.objects.get(name="Empty provider results")
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_empty_refresh_keeps_existing_new_suggestions(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(mock_urlopen, [])
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Empty refresh keeps suggestions",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        existing_source = TopicSource.objects.create(
+            topic=topic,
+            name="Existing suggestion",
+            url="https://example.com/existing-empty",
+            normalized_url="https://example.com/existing-empty",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
+        self.assertContains(response, "No new sources found")
+        self.assertContains(response, "Existing suggestions were kept.")
+        self.assertContains(response, "Existing suggestion")
+        self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_all_rejected_refresh_keeps_existing_new_suggestions(
+        self,
+        mock_urlopen,
+    ) -> None:
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "AI automation consulting services",
+                    "link": "https://example.com/services/ai-automation-refresh",
+                    "snippet": "Book a demo and contact sales to see how we help businesses automate.",
+                    "source": "Example",
+                }
+            ],
+        )
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Rejected refresh keeps suggestions",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        existing_source = TopicSource.objects.create(
+            topic=topic,
+            name="Existing suggestion",
+            url="https://example.com/existing-rejected",
+            normalized_url="https://example.com/existing-rejected",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
+        self.assertContains(response, "No new sources found")
+        self.assertContains(response, "Existing suggestions were kept.")
+        history_item = SourceDiscoveryHistory.objects.get(
+            topic=topic,
+            normalized_url="https://example.com/services/ai-automation-refresh",
+        )
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY)
+        self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_all_already_known_refresh_keeps_existing_new_suggestions(
+        self,
+        mock_urlopen,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Already known refresh keeps suggestions",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        existing_source = TopicSource.objects.create(
+            topic=topic,
+            name="Existing suggestion",
+            url="https://example.com/already-known",
+            normalized_url="https://example.com/already-known",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        history_item = SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.com/already-known",
+            url="https://example.com/already-known",
+            title="Existing suggestion",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+            first_seen_at=timezone.now(),
+            last_seen_at=timezone.now(),
+        )
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Existing suggestion",
+                    "link": "https://example.com/already-known",
+                    "snippet": "Recent case study with implementation details and tradeoffs.",
+                    "source": "Example",
+                }
+            ],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
+        self.assertEqual(TopicSource.objects.filter(topic=topic, normalized_url="https://example.com/already-known").count(), 1)
+        history_item.refresh_from_db()
+        self.assertEqual(history_item.seen_count, 2)
+        self.assertContains(response, "No new sources found")
+        self.assertContains(response, "Existing suggestions were kept.")
+        self.assertContains(response, "Existing suggestion")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,

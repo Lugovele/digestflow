@@ -1525,6 +1525,7 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
     provider_status = str(provider_diagnostics.get("search_provider_status") or "").strip().lower()
     provider_name = str(provider_diagnostics.get("search_provider_name") or "").strip().lower()
     provider_enabled = bool(provider_diagnostics.get("search_provider_enabled"))
+    existing_new_suggestion_count = _count_existing_new_suggestions(topic)
 
     if provider_status == "ready" and provider_name == "serpapi":
         discovery_run = record_source_discovery_run_started(
@@ -1569,10 +1570,21 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
                 source_research_result=source_research_result,
                 candidate_records=[],
                 execution_status="failed",
+                existing_new_suggestion_count=existing_new_suggestion_count,
             )
         candidate_records = _build_provider_backed_candidate_records(source_research_result)
         candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
-        candidate_records = _upsert_and_build_source_candidates(topic, candidate_records)
+        has_new_visible_suggestions = _has_new_visible_suggestions(
+            candidate_records=candidate_records,
+            known_normalized_urls=known_normalized_urls,
+        )
+        candidate_records = _upsert_and_build_source_candidates(
+            topic,
+            candidate_records,
+            prune_missing_discovered=has_new_visible_suggestions,
+        )
+        if not has_new_visible_suggestions:
+            candidate_records = _build_persisted_new_source_candidates(topic)
         record_source_discovery_history(
             topic=topic,
             discovery_run=finalize_source_discovery_run(
@@ -1599,6 +1611,8 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
             source_research_result=source_research_result,
             candidate_records=candidate_records,
             execution_status="completed",
+            existing_new_suggestion_count=existing_new_suggestion_count,
+            had_new_visible_suggestions=has_new_visible_suggestions,
         )
 
     if provider_status != "ready" and (provider_enabled or provider_name not in {"", "unconfigured"}):
@@ -1613,12 +1627,17 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         )
         return _build_persisted_new_source_candidates(topic), {
             "title": "Source discovery did not run",
-            "body": "Research provider is currently unavailable.",
+            "body": (
+                "Research provider is currently unavailable. Existing suggestions were kept."
+                if existing_new_suggestion_count > 0
+                else "Research provider is currently unavailable."
+            ),
             "provider_name": provider_name or str(provider_diagnostics.get("search_provider_name") or "").strip(),
             "execution_status": "blocked",
             "provider_result_count": 0,
             "candidate_input_count": 0,
             "query_count": 0,
+            "existing_new_suggestion_count": existing_new_suggestion_count,
         }
 
     raw_candidate_records = resolve_source_candidates(
@@ -1675,11 +1694,25 @@ def _count_known_provider_results(*, source_research_result, known_normalized_ur
     return known_count
 
 
+def _count_existing_new_suggestions(topic: Topic) -> int:
+    return topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED, is_pinned=False).count()
+
+
+def _has_new_visible_suggestions(*, candidate_records: list[dict], known_normalized_urls: set[str]) -> bool:
+    for candidate in candidate_records:
+        normalized_url = str(candidate.get("normalized_url") or "").strip()
+        if normalized_url and normalized_url not in known_normalized_urls:
+            return True
+    return False
+
+
 def _build_provider_discovery_summary(
     *,
     source_research_result,
     candidate_records: list[dict],
     execution_status: str,
+    existing_new_suggestion_count: int = 0,
+    had_new_visible_suggestions: bool = False,
 ) -> dict:
     provider_name = str(source_research_result.diagnostics.get("provider_name") or "").strip() or "unknown"
     query_count = int(source_research_result.diagnostics.get("query_count") or 0)
@@ -1687,13 +1720,25 @@ def _build_provider_discovery_summary(
     candidate_input_count = int(source_research_result.diagnostics.get("candidate_input_count") or 0)
     suggestion_count = len(candidate_records)
     provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
+    preserved_existing_suggestions = (
+        existing_new_suggestion_count > 0
+        and suggestion_count == existing_new_suggestion_count
+        and not had_new_visible_suggestions
+    )
 
     if execution_status == "failed":
         title = "Source discovery did not complete"
-        body = "Provider results could not be loaded for this research search."
+        body = (
+            "Provider results could not be loaded for this research search. Existing suggestions were kept."
+            if existing_new_suggestion_count > 0
+            else "Provider results could not be loaded for this research search."
+        )
     elif suggestion_count == 0:
-        title = "No new research sources found"
-        body = "Provider results were checked, but no new suggestions passed filtering."
+        title = "No new sources found"
+        body = "No new sources found."
+    elif preserved_existing_suggestions:
+        title = "No new sources found"
+        body = "No new sources found. Existing suggestions were kept."
     else:
         title = "Source discovery completed"
         body = (
@@ -1712,6 +1757,7 @@ def _build_provider_discovery_summary(
         "candidate_input_count": candidate_input_count,
         "query_count": query_count,
         "provider_error_count": provider_error_count,
+        "existing_new_suggestion_count": existing_new_suggestion_count,
     }
 
 
@@ -2407,7 +2453,12 @@ def _build_used_article_history(topic: Topic) -> list[dict]:
     ]
 
 
-def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[dict]) -> list[dict]:
+def _upsert_and_build_source_candidates(
+    topic: Topic,
+    candidate_records: list[dict],
+    *,
+    prune_missing_discovered: bool = True,
+) -> list[dict]:
     existing_sources = list(topic.sources.all())
     existing_by_normalized = {source.normalized_url: source for source in existing_sources}
     prepared_candidates: list[dict] = []
@@ -2474,10 +2525,11 @@ def _upsert_and_build_source_candidates(topic: Topic, candidate_records: list[di
             }
         )
 
-    topic.sources.filter(
-        origin=TopicSourceOrigin.DISCOVERED,
-        is_pinned=False,
-    ).exclude(normalized_url__in=seen_discovered_normalized_urls).delete()
+    if prune_missing_discovered:
+        topic.sources.filter(
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+        ).exclude(normalized_url__in=seen_discovered_normalized_urls).delete()
 
     return prepared_candidates
 
