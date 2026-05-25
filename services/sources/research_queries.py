@@ -42,6 +42,18 @@ _TECHNICAL_MODIFIERS: dict[str, tuple[str, str]] = {
     "best_practices": ("best practices", "Look for durable practices and operational guidance."),
 }
 
+_QUERY_ANGLE_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("base", "", "Use the base topic angle."),
+    ("research_report", "research report", "Rotate toward research reports and evidence summaries."),
+    ("survey_data", "survey data", "Rotate toward data-driven and survey-oriented sources."),
+    ("case_study", "case study", "Rotate toward concrete case studies and examples."),
+    ("expert_analysis", "expert analysis", "Rotate toward expert analysis and practitioner perspective."),
+    ("implementation_examples", "implementation examples", "Rotate toward implementation examples."),
+    ("institutional_guidance", "institutional guidance", "Rotate toward institutional and guideline sources."),
+    ("recent_trends", "recent trends", "Rotate toward recent developments and trend coverage."),
+    ("debate_perspective", "debate perspective", "Rotate toward debate and perspective coverage."),
+)
+
 
 class ResearchQueryIntent(StrEnum):
     OFFICIAL_GUIDELINES = "official_guidelines"
@@ -76,12 +88,23 @@ def build_research_query_plan(topic) -> ResearchQueryPlan:
     topic_name = str(getattr(topic, "name", "") or "").strip()
     topic_keywords = _normalize_keywords(getattr(topic, "keywords", ()) or ())
     topic_domain, domain_diagnostics = _detect_topic_domain(topic_name, topic_keywords)
-    query_specs = _build_query_specs(topic_name, topic_keywords, topic_domain)
+    previous_run_count = _count_previous_source_discovery_runs(topic)
+    query_angle_key, query_angle_suffix, query_angle_reason = _choose_query_angle(previous_run_count)
+    query_specs = _build_query_specs(
+        topic_name,
+        topic_keywords,
+        topic_domain,
+        query_angle_suffix=query_angle_suffix,
+    )
     query_items = _build_query_items(
         topic_name=topic_name,
         topic_keywords=topic_keywords,
         topic_domain=topic_domain,
         query_specs=query_specs,
+        query_angle_key=query_angle_key,
+        query_angle_suffix=query_angle_suffix,
+        query_angle_reason=query_angle_reason,
+        previous_run_count=previous_run_count,
     )
 
     diagnostics = {
@@ -90,6 +113,10 @@ def build_research_query_plan(topic) -> ResearchQueryPlan:
         "query_count": len(query_items),
         "topic_keyword_count": len(topic_keywords),
         "used_topic_keywords": _collect_used_keywords(query_items, topic_keywords),
+        "selected_query_angle_key": query_angle_key,
+        "selected_query_angle_suffix": query_angle_suffix,
+        "selected_query_angle_reason": query_angle_reason,
+        "previous_discovery_run_count": previous_run_count,
     }
 
     return ResearchQueryPlan(
@@ -138,6 +165,8 @@ def _build_query_specs(
     topic_name: str,
     topic_keywords: Sequence[str],
     topic_domain: str,
+    *,
+    query_angle_suffix: str,
 ) -> list[tuple[ResearchQueryIntent, str, str, str]]:
     if topic_domain == "technical":
         modifier_map = _TECHNICAL_MODIFIERS
@@ -151,7 +180,14 @@ def _build_query_specs(
     for index, (intent_name, (modifier, reason)) in enumerate(modifier_map.items()):
         intent = ResearchQueryIntent(intent_name)
         keyword_group = keyword_groups[index] if index < len(keyword_groups) else ()
-        specs.append((intent, modifier, reason, _render_query(topic_name, keyword_group, modifier)))
+        specs.append(
+            (
+                intent,
+                modifier,
+                reason,
+                _render_query(topic_name, keyword_group, modifier, query_angle_suffix=query_angle_suffix),
+            )
+        )
 
     return specs
 
@@ -162,6 +198,10 @@ def _build_query_items(
     topic_keywords: Sequence[str],
     topic_domain: str,
     query_specs: Sequence[tuple[ResearchQueryIntent, str, str, str]],
+    query_angle_key: str,
+    query_angle_suffix: str,
+    query_angle_reason: str,
+    previous_run_count: int,
 ) -> list[ResearchQueryItem]:
     seen_queries: set[str] = set()
     items: list[ResearchQueryItem] = []
@@ -180,6 +220,10 @@ def _build_query_items(
                     "topic_name": topic_name,
                     "topic_keywords": list(topic_keywords),
                     "modifier": modifier,
+                    "query_angle_key": query_angle_key,
+                    "query_angle_suffix": query_angle_suffix,
+                    "query_angle_reason": query_angle_reason,
+                    "previous_discovery_run_count": previous_run_count,
                     "query_word_count": len(query.split()),
                 },
             )
@@ -203,12 +247,30 @@ def _build_keyword_groups(topic_keywords: Sequence[str], *, max_groups: int) -> 
     return groups
 
 
-def _render_query(topic_name: str, keyword_group: Sequence[str], modifier: str) -> str:
+def _render_query(topic_name: str, keyword_group: Sequence[str], modifier: str, *, query_angle_suffix: str) -> str:
     parts = [topic_name.strip()]
     parts.extend(keyword.strip() for keyword in keyword_group if str(keyword or "").strip())
+    if query_angle_suffix.strip():
+        parts.append(query_angle_suffix.strip())
     parts.append(modifier.strip())
     query = " ".join(part for part in parts if part).strip()
     return re.sub(r"\s+", " ", query)
+
+
+def _count_previous_source_discovery_runs(topic) -> int:
+    runs = getattr(topic, "source_discovery_runs", None)
+    if runs is None:
+        return 0
+    try:
+        return int(runs.exclude(status="started").count())
+    except Exception:
+        return 0
+
+
+def _choose_query_angle(previous_run_count: int) -> tuple[str, str, str]:
+    normalized_run_count = max(0, int(previous_run_count or 0))
+    angle_key, angle_suffix, angle_reason = _QUERY_ANGLE_SPECS[normalized_run_count % len(_QUERY_ANGLE_SPECS)]
+    return angle_key, angle_suffix, angle_reason
 
 
 def _collect_used_keywords(query_items: Sequence[ResearchQueryItem], topic_keywords: Sequence[str]) -> list[str]:

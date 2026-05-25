@@ -120,6 +120,8 @@ class SourceResearchOrchestratorTests(SimpleTestCase):
         self.assertIn("rejected_candidate_count", result.diagnostics)
         self.assertIn("non_accepted_candidate_count", result.diagnostics)
         self.assertIn("selectable_review_item_count", result.diagnostics)
+        self.assertIn("selected_query_angle_key", result.diagnostics)
+        self.assertIn("selected_query_angle_suffix", result.diagnostics)
 
     def test_accepted_and_selectable_candidates_are_represented_correctly(self) -> None:
         topic = _TopicStub("AI automation", ["Zapier", "Make"])

@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 
+from apps.digests.models import SourceDiscoveryRun
 from apps.topics.models import Topic, TopicSource
 from services.sources.research_queries import (
     ResearchQueryIntent,
@@ -165,6 +166,9 @@ class SourceResearchQueryPlanTests(SimpleTestCase):
         self.assertIn("domain_diagnostics", plan.diagnostics)
         self.assertIn("query_count", plan.diagnostics)
         self.assertIn("used_topic_keywords", plan.diagnostics)
+        self.assertIn("selected_query_angle_key", plan.diagnostics)
+        self.assertIn("selected_query_angle_suffix", plan.diagnostics)
+        self.assertIn("previous_discovery_run_count", plan.diagnostics)
 
     def test_query_planning_does_not_require_http_or_template_context(self) -> None:
         plan = build_research_query_plan(_TopicStub("Education for teenagers", ["study habits", "online learning"]))
@@ -189,3 +193,49 @@ class SourceResearchQueryPlanPersistenceTests(TestCase):
 
         self.assertTrue(plan.query_items)
         self.assertEqual(TopicSource.objects.count(), before)
+
+    def test_first_discovery_uses_base_query_angle(self) -> None:
+        user = get_user_model().objects.create_user(username="query-plan-angle-user-1", password="pw")
+        topic = Topic.objects.create(user=user, name="Infant sleep", keywords=["safe sleep", "SIDS"])
+
+        plan = build_research_query_plan(topic)
+
+        self.assertEqual(plan.diagnostics["selected_query_angle_key"], "base")
+        self.assertEqual(plan.diagnostics["selected_query_angle_suffix"], "")
+        self.assertEqual(plan.diagnostics["previous_discovery_run_count"], 0)
+        self.assertTrue(all(item.diagnostics["query_angle_key"] == "base" for item in plan.query_items))
+
+    def test_repeated_discovery_rotates_query_angle_deterministically(self) -> None:
+        user = get_user_model().objects.create_user(username="query-plan-angle-user-2", password="pw")
+        topic = Topic.objects.create(user=user, name="AI automation", keywords=["Zapier", "Make", "n8n"])
+
+        first_plan = build_research_query_plan(topic)
+        SourceDiscoveryRun.objects.create(
+            user=user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+        )
+
+        second_plan = build_research_query_plan(topic)
+        repeated_second_plan = build_research_query_plan(topic)
+
+        self.assertEqual(first_plan.diagnostics["selected_query_angle_key"], "base")
+        self.assertEqual(second_plan.diagnostics["selected_query_angle_key"], "research_report")
+        self.assertEqual(second_plan.diagnostics["selected_query_angle_key"], repeated_second_plan.diagnostics["selected_query_angle_key"])
+        self.assertEqual(second_plan.diagnostics["selected_query_angle_suffix"], "research report")
+        self.assertNotEqual(first_plan.query_items[0].query, second_plan.query_items[0].query)
+
+    def test_auto_seeded_keywords_still_produce_queries(self) -> None:
+        user = get_user_model().objects.create_user(username="query-plan-angle-user-3", password="pw")
+        topic = Topic.objects.create(
+            user=user,
+            name="Homeschooling",
+            keywords=["curriculum planning", "learning routines"],
+            focus_initialized=True,
+        )
+
+        plan = build_research_query_plan(topic)
+
+        self.assertTrue(plan.query_items)
+        self.assertIn("curriculum planning", " ".join(item.query for item in plan.query_items))

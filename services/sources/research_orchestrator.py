@@ -105,6 +105,7 @@ def _build_source_research_result(
         "selectable_review_item_count": selectable_review_item_count,
         "provider_name": provider_result.provider_name,
         "topic_domain": query_plan.topic_domain,
+        **query_plan.diagnostics,
         **provider_result.diagnostics,
     }
 

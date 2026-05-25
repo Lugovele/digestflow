@@ -1977,12 +1977,16 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(discovery_run.status, SourceDiscoveryRun.STATUS_COMPLETED)
         self.assertEqual(discovery_run.provider_name, "serpapi")
         self.assertEqual(discovery_run.new_suggestions_count, 1)
+        self.assertEqual(discovery_run.diagnostics.get("selected_query_angle_key"), "base")
+        self.assertIn("selected_query_angle_suffix", discovery_run.diagnostics)
         history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url="https://example.com/ai-guide")
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_NEW_SHOWN)
         self.assertEqual(history_item.seen_count, 1)
         self.assertTrue(history_item.created_topic_source)
         self.assertEqual(history_item.topic_source_id, discovered_source.id)
+        self.assertTrue(history_item.query_text)
+        self.assertIn("AI automation", history_item.query_text)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2856,6 +2860,97 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Existing suggestions were kept.")
         self.assertContains(response, "Existing suggestion")
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_repeated_discovery_rotates_query_angle_without_increasing_provider_calls(
+        self,
+        mock_urlopen,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Repeated discovery angle rotation",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["AI automation workflows"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        existing_source = TopicSource.objects.create(
+            topic=topic,
+            name="Existing suggestion",
+            url="https://example.com/existing-rotation",
+            normalized_url="https://example.com/existing-rotation",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=existing_source,
+            normalized_url="https://example.com/existing-rotation",
+            url="https://example.com/existing-rotation",
+            title="Existing suggestion",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+            first_seen_at=timezone.now(),
+            last_seen_at=timezone.now(),
+        )
+        self._mock_serpapi_urlopen(
+            mock_urlopen,
+            [
+                {
+                    "position": 1,
+                    "title": "Existing suggestion",
+                    "link": "https://example.com/existing-rotation",
+                    "snippet": "Recent survey data, methodology, findings, and implementation lessons.",
+                    "source": "Example",
+                    "date": "May 21, 2026",
+                }
+            ],
+        )
+
+        first_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+        second_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(mock_urlopen.call_count, 8)
+        runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(runs[0].query_count, runs[1].query_count)
+        self.assertEqual(runs[0].diagnostics.get("selected_query_angle_key"), "base")
+        self.assertEqual(runs[1].diagnostics.get("selected_query_angle_key"), "research_report")
+        first_queries = [item.get("query") for item in runs[0].diagnostics.get("per_query_result_counts", [])]
+        second_queries = [item.get("query") for item in runs[1].diagnostics.get("per_query_result_counts", [])]
+        self.assertNotEqual(first_queries, second_queries)
+        self.assertContains(second_response, "No new sources found")
+        self.assertContains(second_response, "Existing suggestions were kept.")
+        self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
