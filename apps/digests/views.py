@@ -6,16 +6,17 @@ from urllib.parse import urlencode, urlparse
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
 from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.db.models import F
+from django.db.models import F, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.digests import result_messages
-from apps.digests.models import DigestRun, SourceDiscoveryRun, UsedArticle
+from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun, UsedArticle
 from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, clean_focus_terms, validate_new_focus_terms
 from apps.topics.focus_suggestions import generate_focus_suggestions, should_seed_focus_terms
 from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
@@ -37,10 +38,13 @@ from services.sources.discovery_history import (
     build_topic_history_by_normalized_url,
     build_topic_known_url_set,
     finalize_source_discovery_run,
+    mark_removed_discovered_sources_as_seen,
     record_source_discovery_history,
     record_source_discovery_run_started,
+    sync_topic_discovered_sources_into_history,
     update_history_for_kept_source,
     update_history_for_removed_source,
+    update_history_for_unpinned_source,
 )
 from services.sources.detector import classify_source_url
 from services.sources.rss_adapter import (
@@ -82,6 +86,33 @@ def topic_list_view(request: HttpRequest) -> HttpResponse:
 def topic_workspace_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     return _render_topic_source_review(request, topic)
+
+
+@require_GET
+def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    sync_topic_discovered_sources_into_history(topic)
+    current_research_state = _build_current_research_state(topic)
+    seen_source_history = _build_seen_source_history_section(
+        topic,
+        status_filter=str(request.GET.get("status") or "").strip(),
+        search_query=str(request.GET.get("q") or "").strip(),
+        page_number=str(request.GET.get("page") or "").strip() or "1",
+    )
+    return render(
+        request,
+        "digestflow/topic_research_history.html",
+        {
+            "topic": topic,
+            "current_research_state": current_research_state,
+            "history_runs": _build_research_history_run_entries(topic),
+            "seen_source_history": seen_source_history["entries"],
+            "seen_source_history_filters": seen_source_history["filters"],
+            "seen_source_history_search_query": seen_source_history["search_query"],
+            "seen_source_history_active_filter": seen_source_history["active_filter"],
+            "seen_source_history_pagination": seen_source_history["pagination"],
+        },
+    )
 
 
 @require_POST
@@ -292,7 +323,8 @@ def pin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -
     source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
     if source.origin == TopicSourceOrigin.DISCOVERED and not source.is_pinned:
         source.is_pinned = True
-        source.save(update_fields=["is_pinned", "updated_at"])
+        source.is_active = True
+        source.save(update_fields=["is_pinned", "is_active", "updated_at"])
         update_history_for_kept_source(source)
     return redirect(
         _build_topic_workspace_url(
@@ -309,7 +341,9 @@ def unpin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int)
     source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
     if source.origin == TopicSourceOrigin.DISCOVERED and source.is_pinned:
         source.is_pinned = False
-        source.save(update_fields=["is_pinned", "updated_at"])
+        source.is_active = False
+        source.save(update_fields=["is_pinned", "is_active", "updated_at"])
+        update_history_for_unpinned_source(source)
     return redirect(
         _build_topic_workspace_url(
             topic.id,
@@ -323,8 +357,14 @@ def unpin_topic_source_view(request: HttpRequest, topic_id: int, source_id: int)
 def remove_topic_source_view(request: HttpRequest, topic_id: int, source_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     source = get_object_or_404(TopicSource, pk=source_id, topic=topic)
-    update_history_for_removed_source(source)
-    source.delete()
+    if source.origin == TopicSourceOrigin.DISCOVERED:
+        source.is_pinned = False
+        source.is_active = False
+        source.save(update_fields=["is_pinned", "is_active", "updated_at"])
+        update_history_for_unpinned_source(source)
+    else:
+        update_history_for_removed_source(source)
+        source.delete()
     return _render_topic_source_review(request, topic)
 
 
@@ -1374,6 +1414,11 @@ def _build_topic_list_context(
             discovery_context_active=True,
             show_all_new_suggestions=True,
         ) if discovered_topic is not None else "",
+        "research_history_url": (
+            reverse("topic-research-history", args=[discovered_topic.id])
+            if discovered_topic is not None and discovered_topic.uses_source_discovery
+            else ""
+        ),
     }
 
 
@@ -1749,12 +1794,13 @@ def _build_provider_discovery_summary(
     existing_new_suggestion_count: int = 0,
     had_new_visible_suggestions: bool = False,
 ) -> dict:
-    provider_name = str(source_research_result.diagnostics.get("provider_name") or "").strip() or "unknown"
-    query_count = int(source_research_result.diagnostics.get("query_count") or 0)
-    provider_result_count = int(source_research_result.diagnostics.get("raw_result_count") or 0)
-    candidate_input_count = int(source_research_result.diagnostics.get("candidate_input_count") or 0)
+    diagnostics = dict(source_research_result.diagnostics or {})
+    provider_name = str(diagnostics.get("provider_name") or "").strip() or "unknown"
+    query_count = int(diagnostics.get("query_count") or 0)
+    provider_result_count = int(diagnostics.get("raw_result_count") or 0)
+    candidate_input_count = int(diagnostics.get("candidate_input_count") or 0)
     suggestion_count = len(candidate_records)
-    provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
+    provider_error_count = int(diagnostics.get("provider_error_count") or 0)
     preserved_existing_suggestions = (
         existing_new_suggestion_count > 0
         and suggestion_count == existing_new_suggestion_count
@@ -1776,12 +1822,7 @@ def _build_provider_discovery_summary(
         body = "No new sources found. Existing suggestions were kept."
     else:
         title = "Source discovery completed"
-        body = (
-            f"Provider: {provider_name} · "
-            f"{query_count} search{'es' if query_count != 1 else ''} · "
-            f"{provider_result_count} result{'s' if provider_result_count != 1 else ''} checked · "
-            f"{suggestion_count} suggestion{'s' if suggestion_count != 1 else ''} shown"
-        )
+        body = f"Found {suggestion_count} new source suggestion{'s' if suggestion_count != 1 else ''}."
 
     return {
         "title": title,
@@ -1845,16 +1886,6 @@ def _finalize_discovery_summary(
     summary["visible_suggestion_count"] = total_visible_candidates
     summary["total_suggestion_count"] = total_new_source_candidates
     summary["is_truncated"] = total_new_source_candidates > total_visible_candidates
-    if summary.get("title") == "Source discovery completed":
-        provider_name = str(summary.get("provider_name") or "").strip() or "unknown"
-        query_count = int(summary.get("query_count") or 0)
-        provider_result_count = int(summary.get("provider_result_count") or 0)
-        summary["body"] = (
-            f"Provider: {provider_name} · "
-            f"{query_count} search{'es' if query_count != 1 else ''} · "
-            f"{provider_result_count} result{'s' if provider_result_count != 1 else ''} checked · "
-            f"{total_visible_candidates} suggestion{'s' if total_visible_candidates != 1 else ''} shown"
-        )
     if summary["is_truncated"]:
         summary["truncation_hint"] = (
             f"Showing the first {total_visible_candidates} suggestions. "
@@ -1863,6 +1894,401 @@ def _finalize_discovery_summary(
     else:
         summary["truncation_hint"] = ""
     return summary
+
+
+def _build_discovery_query_rows(diagnostics: dict) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in diagnostics.get("per_query_result_counts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        intent = _format_query_intent_label(str(item.get("intent") or "").strip())
+        result_count = int(item.get("result_count") or 0)
+        query = str(item.get("query") or "").strip()
+        if not intent and not query:
+            continue
+        rows.append(
+            {
+                "label": intent or "query",
+                "value": f"{result_count} result{'s' if result_count != 1 else ''}",
+                "query": query,
+            }
+        )
+    return rows
+
+
+def _build_research_history_run_entries(topic: Topic) -> list[dict]:
+    runs = list(topic.source_discovery_runs.order_by("-created_at", "-id"))
+    entries: list[dict] = []
+    for run in runs:
+        diagnostics = dict(run.diagnostics or {})
+        provider_errors = _build_research_history_provider_errors(diagnostics)
+        compact_metrics = _build_research_history_compact_metrics(run, diagnostics)
+        stage_diagnostics = _build_research_history_stage_diagnostics(run, diagnostics)
+        entries.append(
+            {
+                "run": run,
+                "title": _format_research_history_status_title(run.status, run=run),
+                "subtitle": _build_research_history_status_subtitle(run),
+                "completed_label": _format_research_history_timestamp(run),
+                "compact_metrics": compact_metrics,
+                "stage_diagnostics": stage_diagnostics,
+                "strategy_rows": _build_research_history_strategy_rows(run, diagnostics),
+                "technical_rows": _build_research_history_detail_rows(run, diagnostics, provider_errors),
+                "query_rows": _build_discovery_query_rows(diagnostics),
+                "provider_errors": provider_errors,
+                "warning_title": _build_research_history_warning_title(run, provider_errors),
+                "warning_body": _build_research_history_warning_body(run, provider_errors),
+            }
+        )
+    return entries
+
+
+def _build_seen_source_history_section(
+    topic: Topic,
+    *,
+    status_filter: str,
+    search_query: str,
+    page_number: str,
+) -> dict:
+    valid_filters = {
+        "": "",
+        "kept": SourceDiscoveryHistory.STATUS_KEPT,
+        "shown": SourceDiscoveryHistory.STATUS_SHOWN,
+        "removed": SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+        "rejected": SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+        "seen": SourceDiscoveryHistory.STATUS_SEEN,
+    }
+    applied_filter = status_filter if status_filter in valid_filters else ""
+
+    queryset = topic.source_discovery_history.order_by("-last_seen_at", "-id")
+    if valid_filters[applied_filter]:
+        queryset = queryset.filter(status=valid_filters[applied_filter])
+    if search_query:
+        queryset = queryset.filter(
+            Q(title__icontains=search_query)
+            | Q(domain__icontains=search_query)
+            | Q(url__icontains=search_query)
+            | Q(normalized_url__icontains=search_query)
+        )
+
+    paginator = Paginator(queryset, 25)
+    page_obj = paginator.get_page(page_number)
+    entries = _build_seen_source_history_entries(list(page_obj.object_list))
+    filters = _build_seen_source_history_filters(topic, applied_filter, search_query)
+    pagination = _build_seen_source_history_pagination(page_obj, applied_filter, search_query)
+    return {
+        "entries": entries,
+        "filters": filters,
+        "search_query": search_query,
+        "active_filter": applied_filter,
+        "pagination": pagination,
+    }
+
+
+def _build_seen_source_history_entries(history_rows: list[SourceDiscoveryHistory]) -> list[dict]:
+    entries: list[dict] = []
+    for row in history_rows:
+        display_url = row.url or row.normalized_url
+        details: list[dict[str, str]] = []
+        freshness_label = _format_source_history_freshness_label(row.freshness_status)
+        if freshness_label and freshness_label not in {"Unknown date", "Unknown"}:
+            details.append(
+                {"label": "Freshness", "value": freshness_label, "kind": "text"}
+            )
+        if row.detected_publication_year:
+            details.append({"label": "Publication year", "value": str(row.detected_publication_year), "kind": "text"})
+        if str(row.quality_rejection_reason or "").strip():
+            details.append({"label": "Quality note", "value": row.quality_rejection_reason.strip(), "kind": "text"})
+        if details:
+            details.insert(
+                0,
+                {"label": "First seen", "value": _format_history_timestamp(row.first_seen_at), "kind": "text"},
+            )
+        entries.append(
+            {
+                "title": row.title or row.normalized_url or row.url,
+                "url": display_url,
+                "domain": row.domain or "unknown",
+                "status_label": _format_source_history_status_label(row.status),
+                "outcome_label": _format_source_history_outcome_label(row.last_run_outcome),
+                "seen_count": str(row.seen_count or 0),
+                "last_seen": _format_history_timestamp(row.last_seen_at),
+                "details": details,
+                "has_details": bool(details),
+            }
+        )
+    return entries
+
+
+def _build_seen_source_history_filters(topic: Topic, active_filter: str, search_query: str) -> list[dict[str, str | bool]]:
+    filter_specs = [
+        {"key": "", "label": "All"},
+        {"key": "kept", "label": "Kept"},
+        {"key": "shown", "label": "Shown"},
+        {"key": "rejected", "label": "Rejected"},
+        {"key": "seen", "label": "Seen only"},
+    ]
+    filters: list[dict[str, str | bool]] = []
+    for spec in filter_specs:
+        params = {}
+        if spec["key"]:
+            params["status"] = spec["key"]
+        if search_query:
+            params["q"] = search_query
+        url = reverse("topic-research-history", args=[topic.id])
+        if params:
+            url = f"{url}?{urlencode(params)}"
+        url = f"{url}#seen-sources"
+        filters.append(
+            {
+                "label": spec["label"],
+                "url": url,
+                "is_active": spec["key"] == active_filter,
+            }
+        )
+    return filters
+
+
+def _build_seen_source_history_pagination(page_obj, active_filter: str, search_query: str) -> dict:
+    def build_url(page_number: int) -> str:
+        params = {"page": page_number}
+        if active_filter:
+            params["status"] = active_filter
+        if search_query:
+            params["q"] = search_query
+        return f"?{urlencode(params)}#seen-sources"
+
+    return {
+        "has_previous": page_obj.has_previous(),
+        "has_next": page_obj.has_next(),
+        "previous_url": build_url(page_obj.previous_page_number()) if page_obj.has_previous() else "",
+        "next_url": build_url(page_obj.next_page_number()) if page_obj.has_next() else "",
+        "page_number": page_obj.number,
+        "total_pages": page_obj.paginator.num_pages,
+        "showing_count": len(page_obj.object_list),
+        "total_count": page_obj.paginator.count,
+    }
+
+
+def _build_research_history_compact_metrics(run: SourceDiscoveryRun, diagnostics: dict) -> str:
+    status = str(run.status or "").strip().lower()
+    status_label = "partial run" if status == SourceDiscoveryRun.STATUS_PARTIAL_FAILED else (
+        "failed run" if status == SourceDiscoveryRun.STATUS_FAILED else (
+            "blocked run" if status == SourceDiscoveryRun.STATUS_BLOCKED else "completed run"
+        )
+    )
+    return " · ".join(
+        [
+            f"{int(run.provider_result_count or 0)} URLs returned",
+            f"{int(run.new_suggestions_count or 0)} visible new suggestions",
+            status_label,
+        ]
+    )
+
+
+def _build_research_history_stage_diagnostics(run: SourceDiscoveryRun, diagnostics: dict) -> dict:
+    duplicate_count = int(diagnostics.get("duplicate_url_count") or 0) + int(run.already_known_count or 0)
+    return {
+        "intro": "These counts describe different pipeline checks and may overlap; they are not an additive breakdown.",
+        "rows": [
+            {"label": "Passed filtering", "value": str(int(run.accepted_count or 0))},
+            {"label": "Rejected by filters", "value": str(int(run.rejected_count or 0))},
+            {"label": "Already known or duplicate", "value": str(duplicate_count)},
+        ],
+    }
+
+
+def _build_research_history_strategy_rows(run: SourceDiscoveryRun, diagnostics: dict) -> list[dict[str, str]]:
+    query_angle_key = str(diagnostics.get("selected_query_angle_key") or "").strip()
+    query_angle_suffix = str(diagnostics.get("selected_query_angle_suffix") or "").strip()
+    rows = [
+        {"label": "Recency", "value": _format_recency_label(int(run.search_recency_months or 1))},
+        {"label": "Queries used", "value": str(run.query_count)},
+    ]
+    if query_angle_key:
+        rows.insert(
+            0,
+            {"label": "Search angle", "value": _format_query_angle_label(query_angle_key, query_angle_suffix)},
+        )
+    return rows
+
+
+def _build_research_history_detail_rows(
+    run: SourceDiscoveryRun,
+    diagnostics: dict,
+    provider_errors: list[str],
+) -> list[dict[str, str]]:
+    query_angle_key = str(diagnostics.get("selected_query_angle_key") or "").strip()
+    query_angle_suffix = str(diagnostics.get("selected_query_angle_suffix") or "").strip()
+    query_angle_reason = str(diagnostics.get("selected_query_angle_reason") or "").strip()
+    previous_run_count = int(diagnostics.get("previous_discovery_run_count") or 0)
+
+    rows = [
+        {"label": "Raw status", "value": str(run.status or "unknown")},
+        {"label": "Provider", "value": run.provider_name or "unknown"},
+    ]
+    if query_angle_reason:
+        rows.append({"label": "Angle reason", "value": query_angle_reason})
+    rows.extend(
+        [
+            {"label": "Previous discovery runs", "value": str(previous_run_count)},
+            {"label": "Recency", "value": _format_recency_label(int(run.search_recency_months or 1))},
+            {"label": "Provider filter", "value": run.search_time_filter or str(diagnostics.get("provider_tbs") or "").strip() or "none"},
+        ]
+    )
+    if provider_errors:
+        rows.append({"label": "Technical reason", "value": provider_errors[0]})
+    return rows
+
+
+def _build_current_research_state(topic: Topic) -> dict:
+    history_qs = topic.source_discovery_history.all()
+    status_counts = Counter(history_qs.values_list("status", flat=True))
+    current_discovered_sources = topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED)
+    last_run = topic.source_discovery_runs.order_by("-created_at", "-id").first()
+    return {
+        "cards": [
+            {"label": "Kept", "value": str(current_discovered_sources.filter(is_pinned=True).count())},
+            {"label": "Shown now", "value": str(current_discovered_sources.filter(is_pinned=False).count())},
+            {"label": "Rejected", "value": str(int(status_counts.get(SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY, 0)))},
+            {"label": "Seen only", "value": str(int(status_counts.get(SourceDiscoveryHistory.STATUS_SEEN, 0)))},
+        ],
+        "last_run_status": _format_research_history_status_title(last_run.status, run=last_run) if last_run else "No discovery runs yet",
+        "last_run_subtitle": _build_research_history_status_subtitle(last_run) if last_run else "Run Find sources to start source discovery for this topic.",
+    }
+
+
+def _format_research_history_timestamp(run: SourceDiscoveryRun) -> str:
+    timestamp = run.completed_at or run.started_at
+    return _format_history_timestamp(timestamp)
+
+
+def _format_history_timestamp(timestamp) -> str:
+    if timestamp is None:
+        return ""
+    return timezone.localtime(timestamp).strftime("%Y-%m-%d %H:%M")
+
+
+def _build_research_history_provider_errors(diagnostics: dict) -> list[str]:
+    errors: list[str] = []
+    for item in diagnostics.get("provider_errors", []) or []:
+        if not isinstance(item, dict):
+            continue
+        message = str(item.get("message") or "").strip()
+        if message:
+            errors.append(message)
+    return errors
+
+
+def _format_query_angle_label(query_angle_key: str, query_angle_suffix: str) -> str:
+    if query_angle_key == "base":
+        return "base"
+    if query_angle_suffix:
+        return query_angle_suffix
+    return query_angle_key.replace("_", " ")
+
+
+def _format_query_intent_label(intent: str) -> str:
+    if not intent:
+        return ""
+    return intent.replace("_", " ")
+
+
+def _format_recency_label(recency_months: int) -> str:
+    if recency_months == 1:
+        return "last 1 month"
+    return f"last {recency_months} months"
+
+
+def _format_source_history_status_label(status: str) -> str:
+    mapping = {
+        SourceDiscoveryHistory.STATUS_SEEN: "Seen only",
+        SourceDiscoveryHistory.STATUS_SHOWN: "Shown as suggestion",
+        SourceDiscoveryHistory.STATUS_KEPT: "Kept",
+        SourceDiscoveryHistory.STATUS_REMOVED_BY_USER: "Removed by user",
+        SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY: "Rejected by quality",
+    }
+    return mapping.get(str(status or "").strip(), str(status or "").strip() or "Unknown")
+
+
+def _format_source_history_outcome_label(outcome: str) -> str:
+    mapping = {
+        SourceDiscoveryHistory.OUTCOME_NEW_SHOWN: "New suggestion",
+        SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN: "Already known",
+        SourceDiscoveryHistory.OUTCOME_DUPLICATE_URL: "Duplicate URL",
+        SourceDiscoveryHistory.OUTCOME_DUPLICATE_DOMAIN: "Duplicate domain",
+        SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED: "Previously removed",
+        SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REJECTED: "Previously rejected",
+        SourceDiscoveryHistory.OUTCOME_QUALITY_REJECTED: "Quality rejected",
+        SourceDiscoveryHistory.OUTCOME_STALE_REJECTED: "Stale rejected",
+        SourceDiscoveryHistory.OUTCOME_COMMERCIAL_REJECTED: "Commercial rejected",
+        SourceDiscoveryHistory.OUTCOME_NONE: "None recorded",
+    }
+    return mapping.get(str(outcome or "").strip(), str(outcome or "").strip() or "None recorded")
+
+
+def _format_source_history_freshness_label(freshness_status: str) -> str:
+    mapping = {
+        "fresh": "Fresh",
+        "acceptable": "Acceptable",
+        "unknown": "Unknown date",
+        "stale": "Stale",
+        "very_stale": "Very stale",
+    }
+    return mapping.get(str(freshness_status or "").strip().lower(), str(freshness_status or "").strip() or "Unknown")
+
+
+def _format_research_history_status_title(status: str, *, run: SourceDiscoveryRun) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized == SourceDiscoveryRun.STATUS_COMPLETED:
+        if int(run.new_suggestions_count or 0) == 0:
+            return "No new suggestions found"
+        return "Discovery completed"
+    if normalized == SourceDiscoveryRun.STATUS_PARTIAL_FAILED:
+        return "Discovery partially completed"
+    if normalized == SourceDiscoveryRun.STATUS_FAILED:
+        return "Discovery failed"
+    if normalized == SourceDiscoveryRun.STATUS_BLOCKED:
+        return "Discovery did not run"
+    if normalized == SourceDiscoveryRun.STATUS_STARTED:
+        return "Discovery started"
+    return "Discovery update"
+
+
+def _build_research_history_status_subtitle(run: SourceDiscoveryRun) -> str:
+    status = str(run.status or "").strip().lower()
+    if status == SourceDiscoveryRun.STATUS_COMPLETED:
+        if int(run.new_suggestions_count or 0) > 0:
+            count = int(run.new_suggestions_count or 0)
+            return f"{count} new source suggestion{'s' if count != 1 else ''} were added." if count != 1 else "1 new source suggestion was added."
+        if int(run.provider_result_count or 0) == 0:
+            return "No new suggestions were found."
+        return "The search ran, but all usable results were already known, rejected, or duplicates."
+    if status == SourceDiscoveryRun.STATUS_PARTIAL_FAILED:
+        return "Some provider queries returned results, but at least one query failed."
+    if status == SourceDiscoveryRun.STATUS_FAILED:
+        return "Provider results could not be loaded."
+    if status == SourceDiscoveryRun.STATUS_BLOCKED:
+        return "Research provider was unavailable, so discovery did not run."
+    if status == SourceDiscoveryRun.STATUS_STARTED:
+        return "Source discovery started for this topic."
+    return ""
+
+
+def _build_research_history_warning_title(run: SourceDiscoveryRun, provider_errors: list[str]) -> str:
+    if not provider_errors:
+        return ""
+    if str(run.status or "").strip().lower() == SourceDiscoveryRun.STATUS_PARTIAL_FAILED:
+        return "Some provider queries failed."
+    return "Provider results could not be fully loaded."
+
+
+def _build_research_history_warning_body(run: SourceDiscoveryRun, provider_errors: list[str]) -> str:
+    if not provider_errors:
+        return ""
+    if str(run.status or "").strip().lower() == SourceDiscoveryRun.STATUS_PARTIAL_FAILED:
+        return "Some searches could not be completed. Other searches still returned results."
+    return "Some searches could not be completed."
 
 
 def _request_has_discovery_context(request: HttpRequest) -> bool:
@@ -2496,6 +2922,13 @@ def _upsert_and_build_source_candidates(
 ) -> list[dict]:
     existing_sources = list(topic.sources.all())
     existing_by_normalized = {source.normalized_url: source for source in existing_sources}
+    existing_unpinned_discovered_normalized_urls = {
+        str(source.normalized_url or "").strip()
+        for source in existing_sources
+        if source.origin == TopicSourceOrigin.DISCOVERED
+        and not source.is_pinned
+        and str(source.normalized_url or "").strip()
+    }
     prepared_candidates: list[dict] = []
     seen_discovered_normalized_urls: set[str] = set()
 
@@ -2561,6 +2994,8 @@ def _upsert_and_build_source_candidates(
         )
 
     if prune_missing_discovered:
+        pruned_normalized_urls = existing_unpinned_discovered_normalized_urls.difference(seen_discovered_normalized_urls)
+        mark_removed_discovered_sources_as_seen(topic, pruned_normalized_urls)
         topic.sources.filter(
             origin=TopicSourceOrigin.DISCOVERED,
             is_pinned=False,

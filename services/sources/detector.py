@@ -28,6 +28,7 @@ TRACKING_QUERY_NAMES = {
     "gclid",
     "mc_cid",
     "mc_eid",
+    "srsltid",
     "ref",
     "ref_src",
     "source",

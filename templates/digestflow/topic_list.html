@@ -899,6 +899,9 @@
                                 </div>
                             </div>
                             <p class="section-hint">Check sources to use in the next digest. Keep useful ones for future runs.</p>
+                            {% if research_history_url %}
+                                <p class="section-hint"><a class="inline-link" href="{{ research_history_url }}">Research history</a></p>
+                            {% endif %}
                         </div>
                         {% if research_provider_notice %}
                             <div class="section-notice" role="status" aria-live="polite">
@@ -955,7 +958,7 @@
                                                     </form>
                                                 </div>
                                                 <div class="inventory-actions">
-                                                    <form method="post" action="{% url 'unpin-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
+                                                    <form method="post" action="{% url 'remove-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
                                                         {% csrf_token %}
                                                         {% if discovery_context_active %}
                                                             <input type="hidden" name="discovery_context" value="1">

@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Research history</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            line-height: 1.45;
+            color: #1f2937;
+            background: #f6f8fb;
+        }
+        .page {
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 24px 16px 48px;
+        }
+        .card {
+            background: #fff;
+            border: 1px solid #d9e2f1;
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+        .page-title {
+            margin: 0 0 4px;
+            font-size: 30px;
+            line-height: 1.15;
+        }
+        .muted {
+            color: #5b6472;
+        }
+        .inline-link,
+        a {
+            color: #2251cc;
+            overflow-wrap: anywhere;
+        }
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .history-run {
+            border: 1px solid #d9e2f1;
+            border-radius: 10px;
+            background: #fbfcfe;
+            padding: 14px;
+        }
+        .history-run__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .history-run__title {
+            margin: 0;
+            font-size: 18px;
+        }
+        .history-run__summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
+            cursor: pointer;
+            list-style: none;
+        }
+        .history-run__summary::-webkit-details-marker {
+            display: none;
+        }
+        .history-run__subtitle {
+            margin: 4px 0 0;
+            color: #4b5563;
+            font-size: 14px;
+        }
+        .history-run__timestamp {
+            font-size: 13px;
+            color: #5b6472;
+            white-space: nowrap;
+        }
+        .history-warning {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #f2d3a3;
+            background: #fff7e8;
+            color: #7b4f11;
+        }
+        .history-warning__title {
+            margin: 0;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .history-warning__body {
+            margin: 4px 0 0;
+            font-size: 14px;
+        }
+        .history-run__indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 12px;
+            color: #7c5a1a;
+        }
+        .history-run__indicator::before {
+            content: "!";
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 999px;
+            background: #f3e3b5;
+            color: #7c5a1a;
+            font-weight: 700;
+            font-size: 11px;
+        }
+        .history-run__summary-metrics {
+            margin: 8px 0 0;
+            font-size: 13px;
+            color: #4b5563;
+        }
+        .history-run__content {
+            margin-top: 10px;
+        }
+        .section-title {
+            margin: 12px 0 6px;
+            font-size: 13px;
+            color: #5b6472;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .diagnostic-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .diagnostic-pill {
+            border: 1px solid #d9e2f1;
+            border-radius: 999px;
+            background: #fff;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: #374151;
+        }
+        .diagnostic-pill strong {
+            color: #1f2937;
+        }
+        .metric-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+        }
+        .metric-card {
+            border: 1px solid #d9e2f1;
+            border-radius: 8px;
+            background: #fff;
+            padding: 10px 12px;
+        }
+        .metric-card__label {
+            margin: 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .metric-card__value {
+            margin: 4px 0 0;
+            font-size: 18px;
+            font-weight: 700;
+            color: #1f2937;
+        }
+        .strategy-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .strategy-chip {
+            border-radius: 999px;
+            border: 1px solid #d9e2f1;
+            background: #fff;
+            padding: 7px 10px;
+            font-size: 13px;
+            color: #374151;
+        }
+        .strategy-chip strong {
+            color: #1f2937;
+        }
+        details {
+            margin-top: 14px;
+            border: 1px solid #d9e2f1;
+            border-radius: 8px;
+            background: #fff;
+            padding: 10px 12px;
+        }
+        summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        .query-list {
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .query-row {
+            padding-top: 10px;
+            border-top: 1px solid #e6ebf5;
+        }
+        .query-row:first-child {
+            border-top: 0;
+            padding-top: 0;
+        }
+        .query-row__top {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 14px;
+        }
+        .query-row__text {
+            margin: 4px 0 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .technical-list {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 8px 14px;
+        }
+        .technical-item dt {
+            margin: 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .technical-item dd {
+            margin: 2px 0 0;
+            font-size: 14px;
+            color: #374151;
+        }
+        .empty-state {
+            margin: 0;
+        }
+        .filter-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .filter-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 7px 10px;
+            border-radius: 999px;
+            border: 1px solid #d9e2f1;
+            background: #fff;
+            color: #35508f;
+            font-size: 13px;
+            text-decoration: none;
+        }
+        .filter-chip--active {
+            background: #eef3ff;
+            border-color: #c9d7ff;
+            color: #2240a1;
+            font-weight: 600;
+        }
+        .search-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .search-row input[type="text"] {
+            flex: 1 1 260px;
+            min-width: 220px;
+            padding: 9px 11px;
+            border: 1px solid #c7d2e5;
+            border-radius: 8px;
+        }
+        .search-row button {
+            border: 0;
+            border-radius: 8px;
+            padding: 9px 12px;
+            background: #2251cc;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .search-row a {
+            font-size: 13px;
+        }
+        .history-table-wrap {
+            overflow-x: auto;
+        }
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .history-table th,
+        .history-table td {
+            padding: 10px 8px;
+            border-top: 1px solid #e6ebf5;
+            vertical-align: top;
+            text-align: left;
+        }
+        .history-table thead th {
+            border-top: 0;
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .history-table__title {
+            min-width: 260px;
+        }
+        .history-table__title strong {
+            display: block;
+            color: #1f2937;
+        }
+        .history-table__details {
+            min-width: 180px;
+        }
+        .row-details {
+            margin: 0;
+            border: 0;
+            background: transparent;
+            padding: 0;
+        }
+        .row-details summary {
+            font-size: 13px;
+            color: #2251cc;
+            font-weight: 600;
+        }
+        .row-details-grid {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 8px 14px;
+        }
+        .row-details-grid dt {
+            margin: 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .row-details-grid dd {
+            margin: 2px 0 0;
+            font-size: 13px;
+            color: #374151;
+        }
+        .row-details-grid dd a {
+            font-size: 13px;
+        }
+        .pagination-row {
+            margin-top: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 13px;
+            color: #5b6472;
+        }
+        .pagination-links {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        @media (max-width: 720px) {
+            .history-run__header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <p style="margin: 0 0 14px;">
+            <a href="{% url 'topic-workspace' topic.id %}" class="inline-link">&larr; Back to topic</a>
+        </p>
+
+        <h1 class="page-title">Research history</h1>
+        <p class="muted" style="margin: 0 0 18px;">Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.</p>
+
+        <section class="card">
+            <p style="margin: 0;"><strong>{{ topic.name }}</strong></p>
+        </section>
+
+        <section class="card">
+            <h2 style="margin: 0 0 14px; font-size: 20px;">Current research state</h2>
+            <div class="metric-row">
+                {% for metric in current_research_state.cards %}
+                    <div class="metric-card">
+                        <p class="metric-card__label">{{ metric.label }}</p>
+                        <p class="metric-card__value">{{ metric.value }}</p>
+                    </div>
+                {% endfor %}
+                <div class="metric-card">
+                    <p class="metric-card__label">Last discovery run status</p>
+                    <p class="metric-card__value" style="font-size: 16px;">{{ current_research_state.last_run_status }}</p>
+                </div>
+            </div>
+            <p class="muted" style="margin: 12px 0 0;">{{ current_research_state.last_run_subtitle }}</p>
+        </section>
+
+        <section class="card" id="seen-sources">
+            <h2 style="margin: 0 0 14px; font-size: 20px;">Seen sources</h2>
+            <p class="muted" style="margin: 0 0 14px;">All sources this topic has seen through discovery, with their current history state.</p>
+            <div class="filter-row">
+                {% for item in seen_source_history_filters %}
+                    <a href="{{ item.url }}" class="filter-chip{% if item.is_active %} filter-chip--active{% endif %}">{{ item.label }}</a>
+                {% endfor %}
+            </div>
+            <form method="get" action="{% url 'topic-research-history' topic.id %}#seen-sources" class="search-row">
+                {% if seen_source_history_active_filter %}
+                    <input type="hidden" name="status" value="{{ seen_source_history_active_filter }}">
+                {% endif %}
+                <input type="text" name="q" value="{{ seen_source_history_search_query }}" placeholder="Search by title or domain">
+                <button type="submit">Search</button>
+                {% if seen_source_history_search_query or seen_source_history_active_filter %}
+                    <a href="{% url 'topic-research-history' topic.id %}" class="inline-link">Clear</a>
+                {% endif %}
+            </form>
+            {% if seen_source_history %}
+                <div class="history-table-wrap">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Domain</th>
+                                <th>Status</th>
+                                <th>Last outcome</th>
+                                <th>Seen count</th>
+                                <th>Last seen</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in seen_source_history %}
+                            <tr>
+                                <td class="history-table__title">
+                                    {% if item.url %}
+                                        <strong><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a></strong>
+                                    {% else %}
+                                        <strong>{{ item.title }}</strong>
+                                    {% endif %}
+                                </td>
+                                    <td>{{ item.domain }}</td>
+                                    <td>{{ item.status_label }}</td>
+                                    <td>{{ item.outcome_label }}</td>
+                                    <td>{{ item.seen_count }}</td>
+                                    <td>{{ item.last_seen }}</td>
+                                    <td class="history-table__details">
+                                        {% if item.has_details %}
+                                            <details class="row-details">
+                                                <summary>View details</summary>
+                                                <dl class="row-details-grid">
+                                                    {% for detail in item.details %}
+                                                        <div>
+                                                            <dt>{{ detail.label }}</dt>
+                                                            <dd>{{ detail.value }}</dd>
+                                                        </div>
+                                                    {% endfor %}
+                                                </dl>
+                                            </details>
+                                        {% else %}
+                                            <span class="muted">—</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination-row">
+                    <span>Showing {{ seen_source_history_pagination.showing_count }} of {{ seen_source_history_pagination.total_count }} seen sources.</span>
+                    <div class="pagination-links">
+                        {% if seen_source_history_pagination.has_previous %}
+                            <a href="{{ seen_source_history_pagination.previous_url }}" class="inline-link">Previous</a>
+                        {% endif %}
+                        <span>Page {{ seen_source_history_pagination.page_number }} of {{ seen_source_history_pagination.total_pages }}</span>
+                        {% if seen_source_history_pagination.has_next %}
+                            <a href="{{ seen_source_history_pagination.next_url }}" class="inline-link">Next</a>
+                        {% endif %}
+                    </div>
+                </div>
+            {% else %}
+                <p class="empty-state">No seen sources yet. Run Find sources to start source discovery for this topic.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <h2 style="margin: 0 0 6px; font-size: 20px;">Discovery runs</h2>
+            <p class="muted" style="margin: 0 0 14px;">Audit trail of past source-finding runs. You usually only need this when checking why discovery behaved a certain way.</p>
+            {% if history_runs %}
+                <div class="history-list">
+                    {% for item in history_runs %}
+                        <details class="history-run">
+                            <summary class="history-run__summary">
+                                <div>
+                                    <h2 class="history-run__title">{{ item.title }}</h2>
+                                    <p class="history-run__summary-metrics">{{ item.compact_metrics }}</p>
+                                    {% if item.warning_title %}
+                                        <div class="history-run__indicator">Provider warning</div>
+                                    {% endif %}
+                                </div>
+                                {% if item.completed_label %}
+                                    <div class="history-run__timestamp">{{ item.completed_label }}</div>
+                                {% endif %}
+                            </summary>
+
+                            <div class="history-run__content">
+                                {% if item.subtitle %}
+                                    <p class="history-run__subtitle">{{ item.subtitle }}</p>
+                                {% endif %}
+
+                                {% if item.warning_title %}
+                                    <div class="history-warning">
+                                        <p class="history-warning__body" style="margin: 0;">{{ item.warning_body }}</p>
+                                    </div>
+                                {% endif %}
+
+                                <h3 class="section-title">Stage diagnostics</h3>
+                                <p class="muted" style="margin: 0 0 10px;">{{ item.stage_diagnostics.intro }}</p>
+                                <div class="diagnostic-row">
+                                    {% for metric in item.stage_diagnostics.rows %}
+                                        <div class="diagnostic-pill"><strong>{{ metric.label }}:</strong> {{ metric.value }}</div>
+                                    {% endfor %}
+                                </div>
+
+                                <h3 class="section-title">Search strategy</h3>
+                                <div class="strategy-row">
+                                    {% for detail in item.strategy_rows %}
+                                        <div class="strategy-chip"><strong>{{ detail.label }}:</strong> {{ detail.value }}</div>
+                                    {% endfor %}
+                                </div>
+
+                                {% if item.query_rows %}
+                                    <details>
+                                        <summary>Query details</summary>
+                                        <div class="query-list">
+                                            {% for query in item.query_rows %}
+                                                <div class="query-row">
+                                                    <div class="query-row__top">
+                                                        <span>{{ query.label }}</span>
+                                                        <span>{{ query.value }}</span>
+                                                    </div>
+                                                    {% if query.query %}
+                                                        <p class="query-row__text">{{ query.query }}</p>
+                                                    {% endif %}
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    </details>
+                                {% endif %}
+
+                                <details>
+                                    <summary>Technical details</summary>
+                                    <dl class="technical-list">
+                                        {% for detail in item.technical_rows %}
+                                            <div class="technical-item">
+                                                <dt>{{ detail.label }}</dt>
+                                                <dd>{{ detail.value }}</dd>
+                                            </div>
+                                        {% endfor %}
+                                    </dl>
+                                </details>
+                            </div>
+                        </details>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="empty-state">No research history yet. Run Find sources to start source discovery for this topic.</p>
+            {% endif %}
+        </section>
+    </div>
+</body>
+</html>

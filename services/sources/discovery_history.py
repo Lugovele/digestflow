@@ -26,6 +26,14 @@ _STATUS_STRENGTH = {
     SourceDiscoveryHistory.STATUS_KEPT: 4,
 }
 
+_PASSIVE_STATUS_STRENGTH = {
+    SourceDiscoveryHistory.STATUS_SEEN: 0,
+    SourceDiscoveryHistory.STATUS_SHOWN: 1,
+    SourceDiscoveryHistory.STATUS_KEPT: 2,
+    SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY: 3,
+    SourceDiscoveryHistory.STATUS_REMOVED_BY_USER: 4,
+}
+
 
 def build_topic_known_url_set(topic: Topic) -> set[str]:
     known_urls = {
@@ -271,9 +279,11 @@ def record_source_discovery_history(
 def update_history_for_kept_source(source: TopicSource) -> None:
     if source.origin != TopicSourceOrigin.DISCOVERED:
         return
-    history_item = _get_history_for_source(source)
-    if history_item is None:
-        return
+    history_item = _get_or_create_history_for_source(
+        source,
+        default_status=SourceDiscoveryHistory.STATUS_KEPT,
+        default_last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+    )
     history_item.status = SourceDiscoveryHistory.STATUS_KEPT
     history_item.topic_source = source
     history_item.created_topic_source = True
@@ -283,19 +293,134 @@ def update_history_for_kept_source(source: TopicSource) -> None:
 def update_history_for_removed_source(source: TopicSource) -> None:
     if source.origin != TopicSourceOrigin.DISCOVERED:
         return
-    history_item = _get_history_for_source(source)
-    if history_item is None:
-        return
+    history_item = _get_or_create_history_for_source(
+        source,
+        default_status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+        default_last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED,
+    )
     history_item.status = SourceDiscoveryHistory.STATUS_REMOVED_BY_USER
+    history_item.last_run_outcome = SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED
     history_item.topic_source = None
-    history_item.save(update_fields=["status", "topic_source", "updated_at"])
+    history_item.save(update_fields=["status", "last_run_outcome", "topic_source", "updated_at"])
+
+
+def update_history_for_unpinned_source(source: TopicSource) -> None:
+    if source.origin != TopicSourceOrigin.DISCOVERED:
+        return
+    history_item = _get_or_create_history_for_source(
+        source,
+        default_status=SourceDiscoveryHistory.STATUS_SHOWN,
+        default_last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+    )
+    if history_item.status in {
+        SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+        SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+    }:
+        return
+    history_item.status = SourceDiscoveryHistory.STATUS_SHOWN
+    history_item.topic_source = source
+    history_item.created_topic_source = True
+    history_item.save(update_fields=["status", "topic_source", "created_topic_source", "updated_at"])
+
+
+def mark_removed_discovered_sources_as_seen(topic: Topic, normalized_urls: set[str]) -> None:
+    normalized_values = {str(value or "").strip() for value in normalized_urls if str(value or "").strip()}
+    if not normalized_values:
+        return
+    history_rows = list(
+        topic.source_discovery_history.filter(normalized_url__in=list(normalized_values))
+    )
+    for history_item in history_rows:
+        update_fields: list[str] = []
+        if history_item.status == SourceDiscoveryHistory.STATUS_SHOWN:
+            history_item.status = SourceDiscoveryHistory.STATUS_SEEN
+            update_fields.append("status")
+        if history_item.topic_source_id is not None:
+            history_item.topic_source = None
+            update_fields.append("topic_source")
+        if update_fields:
+            update_fields.append("updated_at")
+            history_item.save(update_fields=update_fields)
+
+
+def sync_topic_discovered_sources_into_history(topic: Topic) -> None:
+    for source in topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED):
+        default_status = (
+            SourceDiscoveryHistory.STATUS_KEPT if source.is_pinned else SourceDiscoveryHistory.STATUS_SHOWN
+        )
+        history_item = _get_or_create_history_for_source(
+            source,
+            default_status=default_status,
+            default_last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+        )
+        next_status = _merge_history_status_for_sync(history_item.status, default_status)
+        update_fields: list[str] = []
+        if history_item.status != next_status:
+            history_item.status = next_status
+            update_fields.append("status")
+        if history_item.topic_source_id != source.id:
+            history_item.topic_source = source
+            update_fields.append("topic_source")
+        if not history_item.created_topic_source:
+            history_item.created_topic_source = True
+            update_fields.append("created_topic_source")
+        if update_fields:
+            update_fields.append("updated_at")
+            history_item.save(update_fields=update_fields)
 
 
 def _get_history_for_source(source: TopicSource) -> SourceDiscoveryHistory | None:
-    normalized_url = str(source.normalized_url or "").strip()
-    if not normalized_url:
-        normalized_url = classify_source_url(str(source.url or "").strip()).normalized_url
-    return SourceDiscoveryHistory.objects.filter(topic=source.topic, normalized_url=normalized_url).first()
+    canonical_normalized_url = _get_canonical_normalized_url_for_source(source)
+    matching_rows = _find_matching_history_rows_for_source(source)
+    if not matching_rows:
+        return None
+
+    primary_row = _select_primary_history_row(matching_rows)
+    duplicate_rows = [row for row in matching_rows if row.pk != primary_row.pk]
+    if duplicate_rows:
+        primary_row = _merge_duplicate_history_rows(
+            primary_row,
+            duplicate_rows,
+            canonical_normalized_url=canonical_normalized_url,
+            topic_source=source,
+        )
+    elif canonical_normalized_url and primary_row.normalized_url != canonical_normalized_url:
+        primary_row.normalized_url = canonical_normalized_url
+        primary_row.save(update_fields=["normalized_url", "updated_at"])
+    return primary_row
+
+
+def _get_or_create_history_for_source(
+    source: TopicSource,
+    *,
+    default_status: str,
+    default_last_run_outcome: str,
+) -> SourceDiscoveryHistory:
+    history_item = _get_history_for_source(source)
+    if history_item is not None:
+        return history_item
+    normalized_url = _get_canonical_normalized_url_for_source(source)
+    source_domain = _extract_domain(normalized_url or str(source.url or "").strip())
+    now = timezone.now()
+    return SourceDiscoveryHistory.objects.create(
+        user=source.topic.user,
+        topic=source.topic,
+        topic_source=source if source.is_active else None,
+        normalized_url=normalized_url,
+        url=str(source.url or "").strip(),
+        title=str(source.name or "").strip(),
+        snippet="",
+        domain=source_domain,
+        provider_name="",
+        query_text="",
+        status=default_status,
+        last_run_outcome=default_last_run_outcome,
+        first_seen_at=now,
+        last_seen_at=now,
+        seen_count=1,
+        created_topic_source=True,
+        diagnostics={},
+    )
 
 
 def _proposed_history_status(candidate, *, shown: bool) -> str:
@@ -313,6 +438,171 @@ def _merge_history_status(existing_status: str, proposed_status: str) -> str:
     if _STATUS_STRENGTH.get(existing_value, -1) >= _STATUS_STRENGTH.get(proposed_status, -1):
         return existing_value
     return proposed_status
+
+
+def _merge_history_status_for_sync(existing_status: str, proposed_status: str) -> str:
+    existing_value = str(existing_status or "").strip()
+    if existing_value in {
+        SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+        SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+    }:
+        return existing_value
+    return _merge_history_status(existing_value, proposed_status)
+
+
+def _find_matching_history_rows_for_source(source: TopicSource) -> list[SourceDiscoveryHistory]:
+    source_keys = _build_source_identity_keys(source.url, source.normalized_url)
+    if not source_keys:
+        return []
+    return [
+        item
+        for item in source.topic.source_discovery_history.all().order_by("-last_seen_at", "-id")
+        if _build_source_identity_keys(item.url, item.normalized_url).intersection(source_keys)
+    ]
+
+
+def _select_primary_history_row(
+    history_rows: list[SourceDiscoveryHistory],
+) -> SourceDiscoveryHistory:
+    def sort_key(item: SourceDiscoveryHistory) -> tuple[int, int, str, int]:
+        return (
+            _PASSIVE_STATUS_STRENGTH.get(str(item.status or "").strip(), -1),
+            1 if item.topic_source_id else 0,
+            item.last_seen_at.isoformat() if item.last_seen_at else "",
+            item.pk or 0,
+        )
+
+    return max(history_rows, key=sort_key)
+
+
+def _merge_duplicate_history_rows(
+    primary_row: SourceDiscoveryHistory,
+    duplicate_rows: list[SourceDiscoveryHistory],
+    *,
+    canonical_normalized_url: str,
+    topic_source: TopicSource,
+) -> SourceDiscoveryHistory:
+    merged_rows = [primary_row, *duplicate_rows]
+    latest_row = max(
+        merged_rows,
+        key=lambda item: (item.last_seen_at.isoformat() if item.last_seen_at else "", item.pk or 0),
+    )
+
+    primary_row.normalized_url = canonical_normalized_url or primary_row.normalized_url
+    primary_row.url = str(primary_row.url or latest_row.url or topic_source.url or "").strip()
+    primary_row.title = str(primary_row.title or latest_row.title or topic_source.name or "").strip()
+    primary_row.snippet = str(primary_row.snippet or latest_row.snippet or "").strip()
+    primary_row.domain = str(primary_row.domain or latest_row.domain or _extract_domain(primary_row.url)).strip()
+    primary_row.provider_name = str(latest_row.provider_name or primary_row.provider_name or "").strip()
+    primary_row.query_text = str(latest_row.query_text or primary_row.query_text or "").strip()
+    primary_row.status = _select_primary_history_status(merged_rows)
+    primary_row.last_run_outcome = str(latest_row.last_run_outcome or primary_row.last_run_outcome or "").strip()
+    primary_row.source_content_type = str(
+        latest_row.source_content_type or primary_row.source_content_type or ""
+    ).strip()
+    primary_row.quality_score = max(float(primary_row.quality_score or 0.0), float(latest_row.quality_score or 0.0))
+    primary_row.substance_score = max(
+        float(primary_row.substance_score or 0.0),
+        float(latest_row.substance_score or 0.0),
+    )
+    primary_row.commercial_intent_score = max(
+        float(primary_row.commercial_intent_score or 0.0),
+        float(latest_row.commercial_intent_score or 0.0),
+    )
+    primary_row.quality_rejection_reason = str(
+        latest_row.quality_rejection_reason or primary_row.quality_rejection_reason or ""
+    ).strip()
+    primary_row.freshness_status = str(latest_row.freshness_status or primary_row.freshness_status or "").strip()
+    primary_row.detected_publication_date = (
+        latest_row.detected_publication_date or primary_row.detected_publication_date
+    )
+    primary_row.detected_publication_year = latest_row.detected_publication_year or primary_row.detected_publication_year
+    primary_row.first_seen_at = min(
+        [item.first_seen_at for item in merged_rows if item.first_seen_at],
+        default=primary_row.first_seen_at,
+    )
+    primary_row.last_seen_at = max(
+        [item.last_seen_at for item in merged_rows if item.last_seen_at],
+        default=primary_row.last_seen_at,
+    )
+    primary_row.seen_count = sum(max(int(item.seen_count or 0), 0) for item in merged_rows) or 1
+    if primary_row.topic_source_id != topic_source.id:
+        primary_row.topic_source = topic_source
+    primary_row.created_topic_source = any(item.created_topic_source for item in merged_rows) or bool(topic_source.id)
+    primary_row.discovery_run = latest_row.discovery_run or primary_row.discovery_run
+    primary_row.diagnostics = dict(latest_row.diagnostics or primary_row.diagnostics or {})
+    primary_row.save(
+        update_fields=[
+            "normalized_url",
+            "url",
+            "title",
+            "snippet",
+            "domain",
+            "provider_name",
+            "query_text",
+            "status",
+            "last_run_outcome",
+            "source_content_type",
+            "quality_score",
+            "substance_score",
+            "commercial_intent_score",
+            "quality_rejection_reason",
+            "freshness_status",
+            "detected_publication_date",
+            "detected_publication_year",
+            "first_seen_at",
+            "last_seen_at",
+            "seen_count",
+            "topic_source",
+            "created_topic_source",
+            "discovery_run",
+            "diagnostics",
+            "updated_at",
+        ]
+    )
+    if duplicate_rows:
+        SourceDiscoveryHistory.objects.filter(pk__in=[item.pk for item in duplicate_rows]).delete()
+    return primary_row
+
+
+def _select_primary_history_status(history_rows: list[SourceDiscoveryHistory]) -> str:
+    strongest_status = SourceDiscoveryHistory.STATUS_SEEN
+    for item in history_rows:
+        candidate_status = str(item.status or "").strip()
+        if _PASSIVE_STATUS_STRENGTH.get(candidate_status, -1) > _PASSIVE_STATUS_STRENGTH.get(strongest_status, -1):
+            strongest_status = candidate_status
+    return strongest_status
+
+
+def _get_canonical_normalized_url_for_source(source: TopicSource) -> str:
+    for value in (source.normalized_url, source.url):
+        normalized_value = _canonicalize_source_identity_value(value)
+        if normalized_value:
+            return normalized_value
+    return ""
+
+
+def _build_source_identity_keys(*values: str) -> set[str]:
+    identity_keys: set[str] = set()
+    for value in values:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            continue
+        identity_keys.add(raw_value)
+        canonical_value = _canonicalize_source_identity_value(raw_value)
+        if canonical_value:
+            identity_keys.add(canonical_value)
+    return identity_keys
+
+
+def _canonicalize_source_identity_value(value: str) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        return str(classify_source_url(raw_value).normalized_url or "").strip()
+    except Exception:
+        return raw_value
 
 
 def _build_last_run_outcome(*, candidate, shown: bool, was_known: bool, existing_status: str) -> str:

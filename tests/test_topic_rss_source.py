@@ -13,8 +13,9 @@ from django.utils import timezone
 from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
-from apps.digests.views import _build_curated_source_seeds
+from apps.digests.views import _build_curated_source_seeds, _upsert_and_build_source_candidates
 from apps.sources.models import Article
+from services.sources.discovery_history import sync_topic_discovered_sources_into_history
 from apps.topics.focus import (
     FOCUS_DUPLICATE_MESSAGE,
     FOCUS_NUMBER_ONLY_MESSAGE,
@@ -1835,6 +1836,13 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Find sources")
         self.assertNotContains(response, "Find new sources")
+        self.assertContains(
+            response,
+            f'href="{reverse("topic-research-history", args=[topic.id])}"',
+            html=False,
+        )
+        self.assertNotContains(response, "Source discovery details")
+        self.assertNotContains(response, "Provider filter")
 
     def test_workspace_uses_find_new_sources_label_when_pinned_research_source_exists(self) -> None:
         topic = Topic.objects.create(
@@ -1860,6 +1868,12 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Find new sources</button>', html=False)
+        self.assertContains(
+            response,
+            f'href="{reverse("topic-research-history", args=[topic.id])}"',
+            html=False,
+        )
+        self.assertNotContains(response, "Source discovery details")
 
     def test_workspace_keeps_find_sources_label_when_only_manual_sources_exist(self) -> None:
         topic = Topic.objects.create(
@@ -1885,6 +1899,11 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Find sources")
         self.assertNotContains(response, "Find new sources")
+        self.assertContains(
+            response,
+            f'href="{reverse("topic-research-history", args=[topic.id])}"',
+            html=False,
+        )
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=False,
@@ -1962,8 +1981,13 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "AI automation guide")
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Provider: serpapi")
-        self.assertContains(response, "1 suggestion shown")
+        self.assertContains(response, "Found 1 new source suggestion.")
+        self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
+        self.assertNotContains(response, "Source discovery details")
+        self.assertNotContains(response, "Provider filter")
+        self.assertNotContains(response, "Angle reason")
+        self.assertNotContains(response, "Previous discovery runs")
+        self.assertNotContains(response, "implementation guide")
         topic.refresh_from_db()
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
         self.assertEqual(SourceDiscoveryRun.objects.filter(topic=topic).count(), 1)
@@ -2263,9 +2287,57 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 302)
         source.refresh_from_db()
         self.assertTrue(source.is_pinned)
+        self.assertTrue(source.is_active)
         history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
         self.assertEqual(history_item.topic_source_id, source.id)
+
+    def test_keep_after_remove_restores_kept_source_and_checked_state(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Keep after remove topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Recoverable suggestion",
+            url="https://example.org/recoverable-suggestion",
+            normalized_url="https://example.org/recoverable-suggestion",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=False,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+
+        response = self.client.post(reverse("pin-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 302)
+        source.refresh_from_db()
+        self.assertTrue(source.is_pinned)
+        self.assertTrue(source.is_active)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+        workspace_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+        html = workspace_response.content.decode("utf-8")
+        kept_section = html.split("Kept sources", 1)[1].split("New suggestions", 1)[0]
+        new_section = html.rsplit("New suggestions", 1)[1]
+        self.assertIn("Recoverable suggestion", kept_section)
+        self.assertNotIn("Recoverable suggestion", new_section)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2273,7 +2345,7 @@ class TopicRssSourceTests(TestCase):
         SEARCH_PROVIDER_API_KEY="test-key",
     )
     @patch("services.sources.serpapi_provider.urlopen")
-    def test_removing_discovered_source_updates_history_status_to_removed_by_user(
+    def test_removing_discovered_source_returns_it_to_new_suggestions_unchecked(
         self,
         mock_urlopen,
     ) -> None:
@@ -2309,14 +2381,109 @@ class TopicRssSourceTests(TestCase):
             },
         )
         source = topic.sources.get(origin=TopicSourceOrigin.DISCOVERED)
+        self.client.post(reverse("pin-topic-source", args=[topic.id, source.id]))
 
         response = self.client.post(reverse("remove-topic-source", args=[topic.id, source.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(topic.sources.filter(pk=source.id).exists())
+        source.refresh_from_db()
+        self.assertFalse(source.is_pinned)
+        self.assertFalse(source.is_active)
         history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
-        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
-        self.assertIsNone(history_item.topic_source_id)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+        self.assertEqual(history_item.topic_source_id, source.id)
+        self.assertContains(response, "New suggestions")
+        self.assertNotContains(response, "Kept sources · 1")
+        html = response.content.decode("utf-8")
+        new_section = html.rsplit("New suggestions", 1)[1]
+        self.assertIn("Automation case study with implementation details", new_section)
+        self.assertNotIn('checked', new_section.split('value="1"', 1)[1].split('>', 1)[0])
+
+    def test_remove_from_kept_does_not_create_removed_history_state(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Remove keeps shown history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Kept source",
+            url="https://example.org/kept-source",
+            normalized_url="https://example.org/kept-source",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+
+        response = self.client.post(reverse("remove-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 200)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+        self.assertNotEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
+        removed_response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "removed"})
+        self.assertNotContains(removed_response, "Kept source")
+
+    def test_remove_from_shown_suggestion_keeps_source_in_new_suggestions_unchecked(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Remove shown suggestion topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Shown suggestion",
+            url="https://example.org/shown-suggestion",
+            normalized_url="https://example.org/shown-suggestion",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+
+        response = self.client.post(reverse("remove-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 200)
+        source.refresh_from_db()
+        self.assertFalse(source.is_pinned)
+        self.assertFalse(source.is_active)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+        html = response.content.decode("utf-8")
+        new_section = html.rsplit("New suggestions", 1)[1]
+        self.assertIn("Shown suggestion", new_section)
+        self.assertNotIn('checked', new_section.split('value="1"', 1)[1].split('>', 1)[0])
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2362,8 +2529,8 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Provider: serpapi")
-        self.assertContains(response, "12 suggestions shown")
+        self.assertContains(response, "Found 14 new source suggestions.")
+        self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertContains(response, "Showing the first 12 suggestions. Refine the research focus to narrow results.")
         self.assertContains(response, "Show all suggestions")
         self.assertContains(response, "New suggestions · 14")
@@ -2567,7 +2734,7 @@ class TopicRssSourceTests(TestCase):
             ).exists()
         )
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "1 suggestion shown")
+        self.assertContains(response, "Found 1 new source suggestion.")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2772,6 +2939,9 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Existing discovered source")
         self.assertContains(response, "Source discovery did not complete")
         self.assertContains(response, "Existing suggestions were kept.")
+        self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
+        self.assertNotContains(response, "Source discovery details")
+        self.assertNotContains(response, "Provider filter")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2807,6 +2977,9 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "No new sources found")
         self.assertContains(response, "No new sources found.")
+        self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
+        self.assertNotContains(response, "Source discovery details")
+        self.assertNotContains(response, "Provider filter")
         self.assertNotContains(response, "Source discovery completed")
         topic = Topic.objects.get(name="Empty provider results")
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
@@ -2859,6 +3032,9 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "No new sources found")
         self.assertContains(response, "Existing suggestions were kept.")
         self.assertContains(response, "Existing suggestion")
+        self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
+        self.assertNotContains(response, "Source discovery details")
+        self.assertNotContains(response, "Provider filter")
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
 
     @override_settings(
@@ -2950,7 +3126,1145 @@ class TopicRssSourceTests(TestCase):
         self.assertNotEqual(first_queries, second_queries)
         self.assertContains(second_response, "No new sources found")
         self.assertContains(second_response, "Existing suggestions were kept.")
+        self.assertContains(second_response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
+        self.assertNotContains(second_response, "Source discovery details")
+        self.assertNotContains(second_response, "research report")
+        self.assertNotContains(second_response, "Previous discovery runs")
         self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
+
+    def test_research_history_page_renders_human_readable_run_summary_and_query_details(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Research history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=4,
+            provider_result_count=3,
+            accepted_count=1,
+            rejected_count=2,
+            new_suggestions_count=1,
+            already_known_count=1,
+            diagnostics={
+                "selected_query_angle_key": "research_report",
+                "selected_query_angle_suffix": "research report",
+                "selected_query_angle_reason": "Rotate toward research reports and evidence summaries.",
+                "previous_discovery_run_count": 1,
+                "duplicate_url_count": 2,
+                "per_query_result_counts": [
+                    {
+                        "intent": "implementation_guide",
+                        "query": "Automation research report implementation guide",
+                        "result_count": 1,
+                    },
+                    {
+                        "intent": "case_study",
+                        "query": "Automation research report case study",
+                        "result_count": 0,
+                    },
+                ],
+            },
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research history")
+        self.assertContains(
+            response,
+            "Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.",
+        )
+        self.assertContains(response, "Current research state")
+        self.assertContains(response, "Discovery completed")
+        self.assertNotContains(response, '<h2 class="history-run__title">completed</h2>', html=False)
+        self.assertContains(response, "Discovery runs")
+        self.assertContains(response, "Seen sources")
+        self.assertContains(
+            response,
+            "Audit trail of past source-finding runs. You usually only need this when checking why discovery behaved a certain way.",
+        )
+        self.assertContains(response, "serpapi")
+        self.assertContains(response, "research report")
+        self.assertContains(response, "3 URLs returned")
+        self.assertContains(response, "1 visible new suggestions")
+        self.assertContains(response, "completed run")
+        self.assertNotContains(response, "1 passed, 2 rejected")
+        self.assertNotContains(response, "3 known/duplicate")
+        self.assertContains(response, "1 new source suggestion was added.")
+        self.assertContains(response, "last 1 month")
+        self.assertContains(response, "Last discovery run status")
+        self.assertContains(response, "Stage diagnostics")
+        self.assertContains(
+            response,
+            "These counts describe different pipeline checks and may overlap; they are not an additive breakdown.",
+        )
+        self.assertContains(response, "Passed filtering")
+        self.assertContains(response, "Rejected by filters")
+        self.assertContains(response, "Already known or duplicate")
+        self.assertNotContains(response, "Visible new suggestions from this run")
+        self.assertNotContains(response, "URLs returned by provider")
+        self.assertContains(response, "<details class=\"history-run\">", html=False)
+        self.assertContains(response, "<summary class=\"history-run__summary\">", html=False)
+        self.assertContains(response, "Query details")
+        self.assertContains(response, "implementation guide")
+        self.assertContains(response, "Automation research report implementation guide")
+        self.assertContains(response, "case study")
+        self.assertContains(response, "Technical details")
+        self.assertContains(response, "qdr:m")
+        self.assertContains(response, "Rotate toward research reports and evidence summaries.")
+        html = response.content.decode("utf-8")
+        self.assertLess(html.index("Current research state"), html.index("Seen sources"))
+        self.assertLess(html.index("Seen sources"), html.index("Discovery runs"))
+
+    def test_research_history_page_renders_partial_failure_warning(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Research history partial failure topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_PARTIAL_FAILED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=4,
+            provider_result_count=2,
+            accepted_count=1,
+            rejected_count=1,
+            new_suggestions_count=0,
+            already_known_count=1,
+            diagnostics={
+                "selected_query_angle_key": "research_report",
+                "selected_query_angle_suffix": "research report",
+                "selected_query_angle_reason": "Rotate toward research reports and evidence summaries.",
+                "previous_discovery_run_count": 2,
+                "duplicate_url_count": 0,
+                "provider_errors": [
+                    {
+                        "query": "Automation research report case study",
+                        "message": "SerpAPI returned an API error.",
+                    }
+                ],
+                "per_query_result_counts": [
+                    {
+                        "intent": "implementation_guide",
+                        "query": "Automation research report implementation guide",
+                        "result_count": 2,
+                    }
+                ],
+            },
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Discovery partially completed")
+        self.assertNotContains(response, '<h2 class="history-run__title">partial_failed</h2>', html=False)
+        self.assertContains(response, "Provider warning")
+        self.assertContains(
+            response,
+            "2 URLs returned",
+        )
+        self.assertContains(response, "0 visible new suggestions")
+        self.assertContains(response, "partial run")
+        self.assertNotContains(response, "1 passed, 1 rejected")
+        self.assertNotContains(response, "1 known/duplicate")
+        self.assertContains(response, "Some provider queries returned results, but at least one query failed.")
+        self.assertContains(response, "Some searches could not be completed. Other searches still returned results.")
+        self.assertContains(response, "Technical reason")
+        self.assertContains(response, "SerpAPI returned an API error.")
+        self.assertContains(
+            response,
+            "These counts describe different pipeline checks and may overlap; they are not an additive breakdown.",
+        )
+        self.assertContains(response, "Passed filtering")
+        self.assertContains(response, "Rejected by filters")
+        self.assertContains(response, "Already known or duplicate")
+        self.assertContains(response, "Query details")
+        self.assertContains(response, "Technical details")
+        self.assertNotContains(response, "Source discovery details")
+
+    def test_research_history_page_renders_seen_source_history_with_user_facing_labels(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Seen source history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/kept-source",
+            url="https://example.org/kept-source",
+            title="Kept source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=3,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/removed-source",
+            url="https://example.org/removed-source",
+            title="Removed source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED,
+            seen_count=2,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/rejected-source",
+            url="https://example.org/rejected-source",
+            title="Rejected source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_COMMERCIAL_REJECTED,
+            seen_count=1,
+            freshness_status="very_stale",
+            detected_publication_year=2018,
+            quality_rejection_reason="rejected because: product/demo/pricing intent",
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/shown-source",
+            url="https://example.org/shown-source",
+            title="Shown source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/seen-source",
+            url="https://example.org/seen-source",
+            title="Seen source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REJECTED,
+            seen_count=4,
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Seen sources")
+        self.assertContains(response, "<table", html=False)
+        self.assertContains(response, "View details")
+        self.assertContains(response, '<span class="muted">—</span>', html=False)
+        self.assertContains(response, "Kept source")
+        self.assertContains(
+            response,
+            '<a href="https://example.org/kept-source" target="_blank" rel="noopener noreferrer">Kept source</a>',
+            html=False,
+        )
+        self.assertContains(response, "example.org")
+        self.assertContains(response, "Seen count")
+        self.assertContains(response, "Kept")
+        self.assertContains(response, "Removed by user")
+        self.assertContains(response, "Rejected by quality")
+        self.assertContains(response, "Shown as suggestion")
+        self.assertContains(response, "Seen only")
+        self.assertContains(response, "Already known")
+        self.assertContains(response, "Previously removed")
+        self.assertContains(response, "Previously rejected")
+        self.assertContains(response, "Commercial rejected")
+        self.assertContains(response, "2018")
+        self.assertContains(response, "rejected because: product/demo/pricing intent")
+        self.assertContains(response, "Removed source")
+        self.assertContains(response, "Shown source")
+        self.assertContains(response, "Seen source")
+        self.assertNotContains(response, ">removed_by_user<", html=False)
+        self.assertNotContains(response, ">rejected_by_quality<", html=False)
+        self.assertNotContains(response, ">already_known<", html=False)
+
+    def test_research_history_page_backfills_kept_topic_source_without_history_row(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Backfilled kept source history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Backfilled kept source",
+            url="https://example.org/backfilled-kept",
+            normalized_url="https://example.org/backfilled-kept",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "kept"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Backfilled kept source")
+        self.assertNotContains(response, "No seen sources yet.")
+        history_item = SourceDiscoveryHistory.objects.get(
+            topic=topic,
+            normalized_url="https://example.org/backfilled-kept",
+        )
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+
+    def test_sync_does_not_overwrite_removed_by_user_with_kept(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync preserves removed over kept topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Pinned discovered source",
+            url="https://example.org/preserved-removed-kept",
+            normalized_url="https://example.org/preserved-removed-kept",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED,
+            seen_count=2,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
+
+    def test_sync_does_not_overwrite_removed_by_user_with_shown(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync preserves removed over shown topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Shown discovered source",
+            url="https://example.org/preserved-removed-shown",
+            normalized_url="https://example.org/preserved-removed-shown",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED,
+            seen_count=2,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
+
+    def test_sync_does_not_overwrite_rejected_by_quality_with_shown(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync preserves rejected over shown topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Shown discovered source",
+            url="https://example.org/preserved-rejected-shown",
+            normalized_url="https://example.org/preserved-rejected-shown",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_QUALITY_REJECTED,
+            seen_count=2,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY)
+
+    def test_sync_allows_shown_to_upgrade_to_kept(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync upgrades shown to kept topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Pinned discovered source",
+            url="https://example.org/shown-to-kept",
+            normalized_url="https://example.org/shown-to-kept",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+
+    def test_sync_allows_seen_to_upgrade_to_shown(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync upgrades seen to shown topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Shown discovered source",
+            url="https://example.org/seen-to-shown",
+            normalized_url="https://example.org/seen-to-shown",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+
+    def test_sync_does_not_create_history_for_manual_topic_source(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync ignores manual source topic",
+            source_mode=TopicSourceMode.HYBRID,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="Manual source",
+            url="https://example.org/manual-only",
+            normalized_url="https://example.org/manual-only",
+            source_type="website",
+            origin=TopicSourceOrigin.MANUAL,
+            is_active=True,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        self.assertFalse(
+            SourceDiscoveryHistory.objects.filter(
+                topic=topic,
+                normalized_url="https://example.org/manual-only",
+            ).exists()
+        )
+
+    def test_sync_updates_existing_seen_history_row_to_single_kept_row(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync merges seen and kept history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        TopicSource.objects.create(
+            topic=topic,
+            name="AI Tools Every Teen Should Know",
+            url="https://example.org/ai-tools-every-teen-should-know",
+            normalized_url="https://example.org/ai-tools-every-teen-should-know",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/ai-tools-every-teen-should-know/",
+            url="https://example.org/ai-tools-every-teen-should-know/",
+            title="AI Tools Every Teen Should Know",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "kept"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "AI Tools Every Teen Should Know", count=1)
+        self.assertNotContains(response, "No seen sources yet.")
+        self.assertEqual(SourceDiscoveryHistory.objects.filter(topic=topic).count(), 1)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        self.assertEqual(history_item.normalized_url, "https://example.org/ai-tools-every-teen-should-know")
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+
+    def test_unpin_route_matches_remove_semantics_for_discovered_source(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Legacy unpin route topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Pinned discovered source",
+            url="https://example.org/pinned-discovered",
+            normalized_url="https://example.org/pinned-discovered",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=2,
+        )
+
+        response = self.client.post(reverse("unpin-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 302)
+        source.refresh_from_db()
+        self.assertFalse(source.is_pinned)
+        self.assertFalse(source.is_active)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+
+    def test_kept_sources_remove_button_posts_to_remove_topic_source(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Kept remove button topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Kept source",
+            url="https://example.org/kept-remove-button",
+            normalized_url="https://example.org/kept-remove-button",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'action="{reverse("remove-topic-source", args=[topic.id, source.id])}"',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            f'action="{reverse("unpin-topic-source", args=[topic.id, source.id])}"',
+            html=False,
+        )
+
+    def test_refresh_replacement_marks_pruned_shown_history_as_seen(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Refresh replacement history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        old_source = TopicSource.objects.create(
+            topic=topic,
+            name="Old shown source",
+            url="https://example.org/old-shown",
+            normalized_url="https://example.org/old-shown",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=old_source,
+            normalized_url=old_source.normalized_url,
+            url=old_source.url,
+            title=old_source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+
+        _upsert_and_build_source_candidates(
+            topic,
+            [
+                {
+                    "url": "https://example.org/new-shown",
+                    "title": "New shown source",
+                    "default_selected": True,
+                }
+            ],
+            prune_missing_discovered=True,
+        )
+
+        self.assertFalse(TopicSource.objects.filter(pk=old_source.pk).exists())
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url=old_source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SEEN)
+        shown_response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "shown"})
+        self.assertNotContains(shown_response, "Old shown source")
+
+    def test_research_history_current_state_cards_use_current_discovered_topic_sources(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Current research state counts topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        kept_source = TopicSource.objects.create(
+            topic=topic,
+            name="Current kept source",
+            url="https://example.org/current-kept",
+            normalized_url="https://example.org/current-kept",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        shown_source = TopicSource.objects.create(
+            topic=topic,
+            name="Current shown source",
+            url="https://example.org/current-shown",
+            normalized_url="https://example.org/current-shown",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=kept_source,
+            normalized_url=kept_source.normalized_url,
+            url=kept_source.url,
+            title=kept_source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=shown_source,
+            normalized_url=shown_source.normalized_url,
+            url=shown_source.url,
+            title=shown_source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/stale-shown",
+            url="https://example.org/stale-shown",
+            title="Stale shown source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SHOWN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_NEW_SHOWN,
+            seen_count=1,
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Current research state")
+        cards = {item["label"]: item["value"] for item in response.context["current_research_state"]["cards"]}
+        self.assertEqual(cards["Kept"], "1")
+        self.assertEqual(cards["Shown now"], "1")
+        self.assertNotIn("Removed", cards)
+
+    def test_remove_from_kept_updates_current_research_state_counts(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Remove updates current research state topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Current kept source",
+            url="https://example.org/current-kept-remove",
+            normalized_url="https://example.org/current-kept-remove",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            topic_source=source,
+            normalized_url=source.normalized_url,
+            url=source.url,
+            title=source.name,
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+
+        self.client.post(reverse("remove-topic-source", args=[topic.id, source.id]))
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        cards = {item["label"]: item["value"] for item in response.context["current_research_state"]["cards"]}
+        self.assertEqual(cards["Kept"], "0")
+        self.assertEqual(cards["Shown now"], "1")
+        self.assertNotIn("Removed", cards)
+
+    def test_sync_merges_trailing_slash_history_without_creating_duplicate_row(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync trailing slash merge topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Trailing slash source",
+            url="https://example.org/trailing-slash-source",
+            normalized_url="https://example.org/trailing-slash-source",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/trailing-slash-source/",
+            url="https://example.org/trailing-slash-source/",
+            title="Trailing slash source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        self.assertEqual(SourceDiscoveryHistory.objects.filter(topic=topic).count(), 1)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        self.assertEqual(history_item.normalized_url, source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+
+    def test_sync_merges_query_noise_history_without_creating_duplicate_row(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync query noise merge topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Query noise source",
+            url="https://example.org/query-noise-source",
+            normalized_url="https://example.org/query-noise-source",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/query-noise-source?utm_source=newsletter&ref=feed",
+            url="https://example.org/query-noise-source?utm_source=newsletter&ref=feed",
+            title="Query noise source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        self.assertEqual(SourceDiscoveryHistory.objects.filter(topic=topic).count(), 1)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        self.assertEqual(history_item.normalized_url, source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+
+    def test_sync_merges_srsltid_history_without_creating_duplicate_rows(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Sync srsltid merge topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="AI Tools Every Teen Should Know",
+            url="https://example.org/ai-tools-every-teen-should-know",
+            normalized_url="https://example.org/ai-tools-every-teen-should-know",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/ai-tools-every-teen-should-know?srsltid=abc123",
+            url="https://example.org/ai-tools-every-teen-should-know?srsltid=abc123",
+            title="AI Tools Every Teen Should Know",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/ai-tools-every-teen-should-know?srsltid=def456",
+            url="https://example.org/ai-tools-every-teen-should-know?srsltid=def456",
+            title="AI Tools Every Teen Should Know",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_DUPLICATE_DOMAIN,
+            seen_count=1,
+        )
+
+        sync_topic_discovered_sources_into_history(topic)
+
+        self.assertEqual(SourceDiscoveryHistory.objects.filter(topic=topic).count(), 1)
+        history_item = SourceDiscoveryHistory.objects.get(topic=topic)
+        self.assertEqual(history_item.normalized_url, source.normalized_url)
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
+
+    def test_research_history_page_filters_seen_source_history_by_status(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Filtered seen source history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/kept-only",
+            url="https://example.org/kept-only",
+            title="Kept only source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_KEPT,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=2,
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/removed-only",
+            url="https://example.org/removed-only",
+            title="Removed only source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED,
+            seen_count=2,
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "kept"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "All")
+        self.assertContains(response, "Kept")
+        self.assertNotContains(response, '>Removed<', html=False)
+        self.assertContains(response, '#seen-sources', html=False)
+        self.assertContains(response, '?status=kept#seen-sources', html=False)
+        self.assertContains(response, "Kept only source")
+        self.assertNotContains(response, "Removed only source")
+
+        removed_response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "removed"})
+
+        self.assertEqual(removed_response.status_code, 200)
+        self.assertContains(removed_response, 'name="status" value="removed"', html=False)
+        self.assertNotContains(removed_response, '>Removed<', html=False)
+        self.assertContains(removed_response, "Removed only source")
+        self.assertNotContains(removed_response, "Kept only source")
+
+    def test_research_history_page_seen_source_details_show_secondary_fields(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Seen source history details topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/detail-source",
+            url="https://example.org/detail-source",
+            title="Detail source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_STALE_REJECTED,
+            seen_count=5,
+            freshness_status="very_stale",
+            detected_publication_year=2018,
+            quality_rejection_reason="rejected because: stale source outside recency window",
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/unknown-date-source",
+            url="https://example.org/unknown-date-source",
+            title="Unknown date source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_SEEN,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+            seen_count=1,
+            freshness_status="unknown",
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "View details", count=1)
+        self.assertNotContains(response, "Source URL")
+        self.assertNotContains(response, "Open source")
+        self.assertContains(
+            response,
+            '<a href="https://example.org/detail-source" target="_blank" rel="noopener noreferrer">Detail source</a>',
+            html=False,
+        )
+        self.assertNotContains(response, ">https://example.org/detail-source<", html=False)
+        self.assertContains(response, '<span class="muted">—</span>', html=False)
+        self.assertContains(response, "First seen")
+        self.assertContains(response, "Freshness")
+        self.assertContains(response, "Publication year")
+        self.assertContains(response, "Quality note")
+        self.assertContains(response, "rejected because: stale source outside recency window")
+        self.assertNotContains(response, ">Unknown date<", html=False)
+
+    def test_research_history_page_pagination_links_keep_seen_sources_anchor(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Seen source history pagination topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        for index in range(30):
+            SourceDiscoveryHistory.objects.create(
+                user=topic.user,
+                topic=topic,
+                normalized_url=f"https://example.org/paginated-{index}",
+                url=f"https://example.org/paginated-{index}",
+                title=f"Paginated source {index}",
+                domain="example.org",
+                status=SourceDiscoveryHistory.STATUS_SEEN,
+                last_run_outcome=SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN,
+                seen_count=1,
+            )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Next")
+        self.assertContains(response, '?page=2#seen-sources', html=False)
+
+    def test_remove_kept_source_without_history_creates_shown_history_and_keeps_source(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Shown history fallback topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        source = TopicSource.objects.create(
+            topic=topic,
+            name="Kept without history",
+            url="https://example.org/kept-without-history",
+            normalized_url="https://example.org/kept-without-history",
+            source_type="website",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=True,
+            is_active=True,
+        )
+
+        response = self.client.post(reverse("remove-topic-source", args=[topic.id, source.id]))
+
+        self.assertEqual(response.status_code, 200)
+        source.refresh_from_db()
+        self.assertFalse(source.is_pinned)
+        self.assertFalse(source.is_active)
+        history_item = SourceDiscoveryHistory.objects.get(
+            topic=topic,
+            normalized_url="https://example.org/kept-without-history",
+        )
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+        shown_response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "shown"})
+        self.assertContains(shown_response, "Kept without history")
+
+    def test_research_history_page_shows_empty_state_when_no_runs_or_seen_sources_exist(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Empty research history topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research history")
+        self.assertContains(response, "No research history yet.")
+        self.assertContains(response, "Run Find sources to start source discovery for this topic.")
+        self.assertContains(response, "No seen sources yet.")
+
+    def test_main_topic_page_does_not_render_seen_source_history(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Main page stays clean topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryHistory.objects.create(
+            user=topic.user,
+            topic=topic,
+            normalized_url="https://example.org/clean-history",
+            url="https://example.org/clean-history",
+            title="Clean history source",
+            domain="example.org",
+            status=SourceDiscoveryHistory.STATUS_REMOVED_BY_USER,
+            last_run_outcome=SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED,
+            seen_count=2,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Research history")
+        self.assertNotContains(response, "Seen sources")
+        self.assertNotContains(response, "Removed by user")
+        self.assertNotContains(response, "Previously removed")
+        self.assertNotContains(response, "Current research state")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -3290,7 +4604,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(history_item.seen_count, 2)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN)
         html = response.content.decode("utf-8")
-        new_section = html.split("New suggestions", 1)[1].split("Ready to generate", 1)[0]
+        new_section = html.split("New suggestions · 0", 1)[1].split("Ready to generate", 1)[0]
         self.assertNotIn("Pinned source", new_section)
 
     @override_settings(

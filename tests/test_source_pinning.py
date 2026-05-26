@@ -643,7 +643,7 @@ class SourcePinningTests(TestCase):
         self.assertTrue(source.is_pinned)
         self.assertEqual(source.origin, TopicSourceOrigin.DISCOVERED)
 
-    def test_pin_inactive_source_keeps_is_active_false_and_sets_is_pinned_true(self) -> None:
+    def test_pin_inactive_source_sets_is_active_true_and_sets_is_pinned_true(self) -> None:
         topic = self._create_topic()
         source = TopicSource.objects.create(
             topic=topic,
@@ -661,7 +661,7 @@ class SourcePinningTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], reverse("topic-workspace", args=[topic.id]))
         source.refresh_from_db()
-        self.assertFalse(source.is_active)
+        self.assertTrue(source.is_active)
         self.assertTrue(source.is_pinned)
         self.assertEqual(source.origin, TopicSourceOrigin.DISCOVERED)
 
@@ -698,7 +698,7 @@ class SourcePinningTests(TestCase):
         self.assertGreaterEqual(research_section.count(">Remove<"), 2)
         self.assertIn("Kept sources · 2", research_section)
 
-    def test_unpin_active_source_keeps_is_active_true_and_sets_is_pinned_false(self) -> None:
+    def test_unpin_active_source_sets_is_active_false_and_sets_is_pinned_false(self) -> None:
         topic = self._create_topic()
         source = TopicSource.objects.create(
             topic=topic,
@@ -716,7 +716,7 @@ class SourcePinningTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], reverse("topic-workspace", args=[topic.id]))
         source.refresh_from_db()
-        self.assertTrue(source.is_active)
+        self.assertFalse(source.is_active)
         self.assertFalse(source.is_pinned)
         self.assertEqual(source.origin, TopicSourceOrigin.DISCOVERED)
 
