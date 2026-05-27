@@ -6,6 +6,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.topics.models import Topic, TopicSource
 from services.sources.candidates import SourceCandidateStatus
+from services.sources.content_research_planner import ContentResearchPlannerResult
 from services.sources.research_orchestrator import SourceResearchResult, run_source_research
 from services.sources.research_queries import build_research_query_plan
 from services.sources.search_provider import FakeSearchProvider, SearchProviderResult
@@ -31,6 +32,75 @@ class SourceResearchOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(result.query_plan.topic_name, "Infant sleep")
         self.assertTrue(result.query_plan.query_items)
+
+    @patch("services.sources.research_queries.create_content_research_plan")
+    def test_orchestrator_propagates_ai_planner_diagnostics_into_research_result(
+        self,
+        mock_create_content_research_plan,
+    ) -> None:
+        topic = _TopicStub("AI Education Teens", ["AI literacy", "classroom practice"])
+        planner_queries = (
+            "layer 6a unique planner query alpha",
+            "layer 6a unique planner query beta",
+        )
+        mock_create_content_research_plan.return_value = ContentResearchPlannerResult(
+            planner_status="ai_planned",
+            fallback_used=False,
+            final_queries=planner_queries,
+            topic_interpretation="AI education for teens in current classroom practice.",
+            content_research_goal="Find fresh, practical, post-worthy materials for a digest and post.",
+            source_selection_criteria={
+                "must_be_relevant_to": ["teen learning and classroom practice"],
+                "preferred_material_types": ["case study", "expert opinion"],
+                "freshness_signals": ["recent examples"],
+                "post_value_signals": ["trade-offs"],
+                "relevance_boundary": "Stay close to AI use in teen education.",
+            },
+            content_tension_opportunities=(
+                {
+                    "tension": "AI help vs overreliance",
+                    "why_it_matters": "That trade-off makes the post stronger.",
+                },
+            ),
+            search_angles=(
+                {
+                    "angle": "classroom implementation",
+                    "purpose": "Find concrete practice examples.",
+                },
+            ),
+            prompt="prompt",
+            raw_response_text="{}",
+        )
+        provider = FakeSearchProvider(
+            {
+                planner_queries[0]: [
+                    {
+                        "title": "Classroom example",
+                        "url": "https://example.com/classroom-example",
+                        "snippet": "Recent classroom example with practical trade-offs.",
+                    }
+                ]
+            }
+        )
+
+        result = run_source_research(topic, provider)
+
+        self.assertEqual(
+            tuple(item.query for item in result.query_plan.query_items),
+            planner_queries,
+        )
+        self.assertEqual(result.diagnostics["planner_status"], "ai_planned")
+        self.assertFalse(result.diagnostics["fallback_used"])
+        self.assertEqual(result.diagnostics["final_queries"], list(planner_queries))
+        self.assertEqual(
+            result.diagnostics["topic_interpretation"],
+            "AI education for teens in current classroom practice.",
+        )
+        self.assertEqual(
+            result.diagnostics["content_research_goal"],
+            "Find fresh, practical, post-worthy materials for a digest and post.",
+        )
+        self.assertEqual(result.diagnostics["raw_result_count"], 1)
 
     def test_orchestrator_calls_provider_boundary(self) -> None:
         topic = _TopicStub("Travel planning", ["family travel"])

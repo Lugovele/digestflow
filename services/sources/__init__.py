@@ -12,6 +12,11 @@ from .candidate_review import (
     build_candidate_review_item,
     build_candidate_review_items,
 )
+from .content_research_planner import (
+    ContentResearchPlannerResult,
+    build_content_research_planner_prompt,
+    create_content_research_plan,
+)
 from .detector import classify_source_url, detect_source_type
 from .discovery import (
     CuratedSourceSeed,
@@ -67,9 +72,12 @@ from .topic_source_groups import (
 from .storage import save_articles_for_topic
 
 __all__ = [
+    "build_content_research_planner_prompt",
     "classify_source_url",
     "CandidateReviewItem",
+    "ContentResearchPlannerResult",
     "CuratedSourceSeed",
+    "create_content_research_plan",
     "detect_source_type",
     "discover_sources",
     "EvaluatedSourceCandidate",

@@ -7,6 +7,8 @@ from enum import StrEnum
 from typing import Any, Iterable, Sequence
 import re
 
+from services.sources.content_research_planner import create_content_research_plan
+
 
 _TECHNICAL_INDICATORS = {
     "agent",
@@ -85,6 +87,24 @@ class ResearchQueryPlan:
 
 
 def build_research_query_plan(topic) -> ResearchQueryPlan:
+    planning_result = create_content_research_plan(topic)
+    if planning_result.planner_status == "ai_planned":
+        return _build_ai_research_query_plan(topic, planning_result)
+
+    fallback_plan = _build_deterministic_research_query_plan(topic)
+    return ResearchQueryPlan(
+        topic_name=fallback_plan.topic_name,
+        topic_keywords=fallback_plan.topic_keywords,
+        topic_domain=fallback_plan.topic_domain,
+        query_items=fallback_plan.query_items,
+        diagnostics={
+            **fallback_plan.diagnostics,
+            **planning_result.diagnostics,
+        },
+    )
+
+
+def _build_deterministic_research_query_plan(topic) -> ResearchQueryPlan:
     topic_name = str(getattr(topic, "name", "") or "").strip()
     topic_keywords = _normalize_keywords(getattr(topic, "keywords", ()) or ())
     topic_domain, domain_diagnostics = _detect_topic_domain(topic_name, topic_keywords)
@@ -124,6 +144,45 @@ def build_research_query_plan(topic) -> ResearchQueryPlan:
         topic_keywords=tuple(topic_keywords),
         topic_domain=topic_domain,
         query_items=tuple(query_items),
+        diagnostics=diagnostics,
+    )
+
+
+def _build_ai_research_query_plan(topic, planning_result) -> ResearchQueryPlan:
+    topic_name = str(getattr(topic, "name", "") or "").strip()
+    topic_keywords = _normalize_keywords(getattr(topic, "keywords", ()) or ())
+    topic_domain, domain_diagnostics = _detect_topic_domain(topic_name, topic_keywords)
+    previous_run_count = _count_previous_source_discovery_runs(topic)
+    query_items = tuple(
+        ResearchQueryItem(
+            intent=_infer_ai_query_intent(query),
+            query=query,
+            reason="AI-planned content research query focused on fresh, post-worthy materials.",
+            source_type_hint="technical_web" if topic_domain == "technical" else "general_web",
+            diagnostics={
+                "topic_name": topic_name,
+                "topic_keywords": list(topic_keywords),
+                "previous_discovery_run_count": previous_run_count,
+                "planner_status": planning_result.planner_status,
+                "query_word_count": len(query.split()),
+            },
+        )
+        for query in planning_result.final_queries
+    )
+    diagnostics = {
+        "topic_domain": topic_domain,
+        "domain_diagnostics": domain_diagnostics,
+        "query_count": len(query_items),
+        "topic_keyword_count": len(topic_keywords),
+        "used_topic_keywords": _collect_used_keywords(query_items, topic_keywords),
+        "previous_discovery_run_count": previous_run_count,
+        **planning_result.diagnostics,
+    }
+    return ResearchQueryPlan(
+        topic_name=topic_name,
+        topic_keywords=tuple(topic_keywords),
+        topic_domain=topic_domain,
+        query_items=query_items,
         diagnostics=diagnostics,
     )
 
@@ -280,3 +339,18 @@ def _collect_used_keywords(query_items: Sequence[ResearchQueryItem], topic_keywo
         if any(lowered_keyword in item.query.casefold() for item in query_items):
             used.append(keyword)
     return used
+
+
+def _infer_ai_query_intent(query: str) -> ResearchQueryIntent:
+    lowered_query = str(query or "").casefold()
+    if "case study" in lowered_query or "what worked" in lowered_query:
+        return ResearchQueryIntent.CASE_STUDY
+    if "guide" in lowered_query or "implementation" in lowered_query:
+        return ResearchQueryIntent.IMPLEMENTATION_GUIDE
+    if "expert" in lowered_query or "opinion" in lowered_query or "analysis" in lowered_query:
+        return ResearchQueryIntent.EXPERT_ADVICE
+    if "report" in lowered_query or "survey" in lowered_query or "research" in lowered_query:
+        return ResearchQueryIntent.EVIDENCE_BASED
+    if "comparison" in lowered_query or "trade-off" in lowered_query or "best practices" in lowered_query:
+        return ResearchQueryIntent.BEST_PRACTICES
+    return ResearchQueryIntent.EXPERT_ADVICE
