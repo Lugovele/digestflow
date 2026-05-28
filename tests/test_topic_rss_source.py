@@ -549,6 +549,43 @@ class TopicRssSourceTests(TestCase):
         self.assertNotIn("implementation patterns", suggestions)
         self.assertNotIn("practical workflows", suggestions)
 
+    def test_n8n_existing_topic_echo_still_gets_contextual_focus_suggestions(self) -> None:
+        suggestions = generate_focus_suggestions("n8n", existing_terms=["n8n"])
+        lowered_suggestions = [term.casefold() for term in suggestions]
+        signal_needles = (
+            "automation",
+            "integration",
+            "integrations",
+            "workflow",
+            "workflows",
+            "api",
+            "custom node",
+            "error handling",
+            "use case",
+            "use cases",
+        )
+        matched_signals = {
+            needle
+            for needle in signal_needles
+            if any(needle in suggestion for suggestion in lowered_suggestions)
+        }
+
+        self.assertTrue(suggestions)
+        self.assertGreaterEqual(len(set(lowered_suggestions)), 3)
+        self.assertNotEqual(lowered_suggestions, ["n8n"])
+        self.assertTrue(all("n8n" in suggestion for suggestion in lowered_suggestions), suggestions)
+        self.assertGreaterEqual(len(matched_signals), 3, suggestions)
+
+    @patch("apps.topics.focus_suggestions._generate_ai_focus_candidates", return_value=[])
+    def test_n8n_deterministic_fallback_still_produces_product_specific_angles(self, _mock_ai_focus_candidates) -> None:
+        suggestions = generate_focus_suggestions("n8n", existing_terms=["n8n"])
+
+        self.assertIn("n8n integrations", suggestions)
+        self.assertIn("n8n workflow templates", suggestions)
+        self.assertIn("n8n self-hosting", suggestions)
+        self.assertIn("n8n automation examples", suggestions)
+        self.assertIn("n8n vs Zapier", suggestions)
+
     def test_baby_sleeping_workspace_does_not_render_technical_focus_defaults(self) -> None:
         response = self.client.post(
             reverse("discover-sources"),

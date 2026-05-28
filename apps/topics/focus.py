@@ -11,7 +11,7 @@ MAX_FOCUS_TERM_LENGTH = 80
 
 _FOCUS_ABBREVIATIONS = {
     "ai", "api", "llm", "ml", "nlp", "rag", "mcp", "etl", "seo", "crm", "erp",
-    "saas", "b2b", "b2c", "ui", "ux", "qa", "devops",
+    "saas", "b2b", "b2c", "ui", "ux", "qa", "devops", "n8n",
 }
 _KNOWN_NOISE_TERMS = {
     "asdfasdf",

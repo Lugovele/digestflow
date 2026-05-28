@@ -10,6 +10,17 @@ from apps.topics.focus import clean_focus_terms, is_meaningful_focus_term
 
 MAX_FOCUS_SUGGESTIONS = 6
 
+_EXACT_TOPIC_SUGGESTIONS: dict[str, tuple[str, ...]] = {
+    "n8n": (
+        "n8n AI workflows",
+        "n8n integrations",
+        "n8n workflow templates",
+        "n8n self-hosting",
+        "n8n automation examples",
+        "n8n vs Zapier",
+    ),
+}
+
 _FOCUS_TEMPLATE_GROUPS: list[tuple[set[str], tuple[str, ...]]] = [
     (
         {"agent", "agents", "agentic", "mcp"},
@@ -166,20 +177,9 @@ def generate_focus_suggestions(topic_name: str, existing_terms: Iterable[str] | 
     topic_lower = normalized_topic.casefold()
     topic_tokens = _tokenize(topic_lower)
 
-    candidates = _generate_ai_focus_candidates(normalized_topic)
-    if not candidates:
-        candidates = []
-
-        for required_a, required_b, suggestions in _COMBINATION_PATTERNS:
-            if topic_tokens & required_a and topic_tokens & required_b:
-                candidates.extend(suggestions)
-
-        for keywords, suggestions in _FOCUS_TEMPLATE_GROUPS:
-            if topic_tokens & keywords:
-                candidates.extend(suggestions)
-
-        if not candidates:
-            candidates.extend(_build_generic_focus(topic_lower))
+    candidates: list[str] = []
+    candidates.extend(_generate_ai_focus_candidates(normalized_topic))
+    candidates.extend(_build_rule_based_focus_candidates(topic_lower, topic_tokens))
 
     cleaned_candidates = clean_focus_terms(candidates)
     suggestions: list[str] = []
@@ -220,6 +220,29 @@ def _tokenize(value: str) -> set[str]:
     token_set = set(parts)
     token_set.add(value)
     return token_set
+
+
+def _build_rule_based_focus_candidates(topic_lower: str, topic_tokens: set[str]) -> list[str]:
+    candidates: list[str] = []
+
+    # Exact-topic mappings are deterministic research angles for short product/tool topics
+    # that otherwise collapse into weak or overly generic focus suggestions.
+    exact_match_suggestions = _EXACT_TOPIC_SUGGESTIONS.get(topic_lower)
+    if exact_match_suggestions:
+        candidates.extend(exact_match_suggestions)
+
+    for required_a, required_b, suggestions in _COMBINATION_PATTERNS:
+        if topic_tokens & required_a and topic_tokens & required_b:
+            candidates.extend(suggestions)
+
+    for keywords, suggestions in _FOCUS_TEMPLATE_GROUPS:
+        if topic_tokens & keywords:
+            candidates.extend(suggestions)
+
+    if not candidates:
+        candidates.extend(_build_generic_focus(topic_lower))
+
+    return candidates
 
 
 def _build_generic_focus(topic_lower: str) -> tuple[str, ...]:
