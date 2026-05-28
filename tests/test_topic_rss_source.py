@@ -15,6 +15,7 @@ from apps.digests import result_messages
 from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
 from apps.digests.views import _build_curated_source_seeds, _upsert_and_build_source_candidates
 from apps.sources.models import Article
+from services.sources.content_research_planner import ContentResearchPlannerResult
 from services.sources.discovery_history import sync_topic_discovered_sources_into_history
 from apps.topics.focus import (
     FOCUS_DUPLICATE_MESSAGE,
@@ -52,6 +53,14 @@ LONG_RSS_SNIPPET_3 = (
     SEARCH_PROVIDER_API_KEY="",
 )
 class TopicRssSourceTests(TestCase):
+    def _forced_fallback_planner_result(self) -> ContentResearchPlannerResult:
+        return ContentResearchPlannerResult(
+            planner_status="fallback_used",
+            fallback_used=True,
+            final_queries=(),
+            error_message="Forced deterministic planner fallback for topic RSS source tests.",
+        )
+
     def _assert_any_term_contains(self, terms: list[str], *needles: str) -> None:
         self.assertTrue(
             any(any(needle in term.casefold() for needle in needles) for term in terms),
@@ -1941,11 +1950,28 @@ class TopicRssSourceTests(TestCase):
         SEARCH_PROVIDER="serpapi",
         SEARCH_PROVIDER_API_KEY="test-key",
     )
+    @patch("services.sources.research_queries.create_content_research_plan")
     @patch("services.sources.serpapi_provider.urlopen")
     def test_provider_backed_find_sources_creates_discovered_new_suggestions(
         self,
         mock_urlopen,
+        mock_create_content_research_plan,
     ) -> None:
+        mock_create_content_research_plan.return_value = MagicMock(
+            planner_status="ai_planned",
+            fallback_used=False,
+            final_queries=("topic rss unique planner query",),
+            diagnostics={
+                "planner_status": "ai_planned",
+                "fallback_used": False,
+                "final_queries": ["topic rss unique planner query"],
+                "topic_interpretation": "AI automation topic interpretation",
+                "content_research_goal": "Find fresh, practical materials.",
+                "source_selection_criteria": {},
+                "content_tension_opportunities": [],
+                "search_angles": [],
+            },
+        )
         self._mock_serpapi_urlopen(
             mock_urlopen,
             [
@@ -2001,8 +2027,11 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(discovery_run.status, SourceDiscoveryRun.STATUS_COMPLETED)
         self.assertEqual(discovery_run.provider_name, "serpapi")
         self.assertEqual(discovery_run.new_suggestions_count, 1)
-        self.assertEqual(discovery_run.diagnostics.get("selected_query_angle_key"), "base")
-        self.assertIn("selected_query_angle_suffix", discovery_run.diagnostics)
+        self.assertEqual(discovery_run.diagnostics.get("planner_status"), "ai_planned")
+        self.assertEqual(
+            [item.get("query") for item in discovery_run.diagnostics.get("query_performance", [])],
+            ["topic rss unique planner query"],
+        )
         history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url="https://example.com/ai-guide")
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_NEW_SHOWN)
@@ -2010,7 +2039,7 @@ class TopicRssSourceTests(TestCase):
         self.assertTrue(history_item.created_topic_source)
         self.assertEqual(history_item.topic_source_id, discovered_source.id)
         self.assertTrue(history_item.query_text)
-        self.assertIn("AI automation", history_item.query_text)
+        self.assertEqual(history_item.query_text, "topic rss unique planner query")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -3043,10 +3072,13 @@ class TopicRssSourceTests(TestCase):
         SEARCH_PROVIDER_API_KEY="test-key",
     )
     @patch("services.sources.serpapi_provider.urlopen")
+    @patch("services.sources.research_queries.create_content_research_plan")
     def test_repeated_discovery_rotates_query_angle_without_increasing_provider_calls(
         self,
+        mock_create_content_research_plan,
         mock_urlopen,
     ) -> None:
+        mock_create_content_research_plan.return_value = self._forced_fallback_planner_result()
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Repeated discovery angle rotation",
@@ -3160,6 +3192,32 @@ class TopicRssSourceTests(TestCase):
                 "selected_query_angle_reason": "Rotate toward research reports and evidence summaries.",
                 "previous_discovery_run_count": 1,
                 "duplicate_url_count": 2,
+                "query_performance": [
+                    {
+                        "query": "Automation research report implementation guide",
+                        "provider": "serpapi",
+                        "angle": "research report",
+                        "purpose": "Look for hands-on implementation guidance.",
+                        "returned_count": 1,
+                        "accepted_count": 1,
+                        "rejected_count": 0,
+                        "duplicate_count": 0,
+                        "visible_new_suggestions_count": 1,
+                        "status": "useful",
+                    },
+                    {
+                        "query": "Automation research report case study",
+                        "provider": "serpapi",
+                        "angle": "research report",
+                        "purpose": "Look for concrete examples and outcome-focused writeups.",
+                        "returned_count": 0,
+                        "accepted_count": 0,
+                        "rejected_count": 0,
+                        "duplicate_count": 0,
+                        "visible_new_suggestions_count": 0,
+                        "status": "no_visible_results",
+                    },
+                ],
                 "per_query_result_counts": [
                     {
                         "intent": "implementation_guide",
@@ -3184,15 +3242,20 @@ class TopicRssSourceTests(TestCase):
             "Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.",
         )
         self.assertContains(response, "Current research state")
+        self.assertContains(response, "Query performance")
         self.assertContains(response, "Discovery completed")
         self.assertNotContains(response, '<h2 class="history-run__title">completed</h2>', html=False)
         self.assertContains(response, "Discovery runs")
         self.assertContains(response, "Seen sources")
+        self.assertContains(response, "See which queries were used, what they returned, and which search directions looked useful or weak.")
+        self.assertContains(response, "Purpose / angle")
         self.assertContains(
             response,
             "Audit trail of past source-finding runs. You usually only need this when checking why discovery behaved a certain way.",
         )
         self.assertContains(response, "serpapi")
+        self.assertContains(response, "Useful")
+        self.assertContains(response, "No visible results")
         self.assertContains(response, "research report")
         self.assertContains(response, "3 URLs returned")
         self.assertContains(response, "1 visible new suggestions")
@@ -3222,7 +3285,8 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "qdr:m")
         self.assertContains(response, "Rotate toward research reports and evidence summaries.")
         html = response.content.decode("utf-8")
-        self.assertLess(html.index("Current research state"), html.index("Seen sources"))
+        self.assertLess(html.index("Current research state"), html.index("Query performance"))
+        self.assertLess(html.index("Query performance"), html.index("Seen sources"))
         self.assertLess(html.index("Seen sources"), html.index("Discovery runs"))
 
     def test_research_history_page_renders_partial_failure_warning(self) -> None:
@@ -4232,9 +4296,30 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Research history")
+        self.assertContains(response, "No query performance data yet.")
+        self.assertContains(
+            response,
+            "Run source discovery to see which queries were used and what results they produced.",
+        )
         self.assertContains(response, "No research history yet.")
         self.assertContains(response, "Run Find sources to start source discovery for this topic.")
         self.assertContains(response, "No seen sources yet.")
+
+    @patch("apps.digests.views.run_source_research")
+    def test_opening_research_history_does_not_trigger_provider_search(self, mock_run_source_research) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Research history read-only topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        mock_run_source_research.assert_not_called()
 
     def test_main_topic_page_does_not_render_seen_source_history(self) -> None:
         topic = Topic.objects.create(

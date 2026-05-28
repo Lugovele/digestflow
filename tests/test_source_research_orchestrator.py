@@ -19,7 +19,23 @@ class _TopicStub:
         self.keywords = keywords
 
 
+def _forced_fallback_planner_result() -> ContentResearchPlannerResult:
+    return ContentResearchPlannerResult(
+        planner_status="fallback_used",
+        fallback_used=True,
+        final_queries=(),
+        error_message="Forced deterministic planner fallback for orchestrator tests.",
+    )
+
+
 class SourceResearchOrchestratorTests(SimpleTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._planner_patch = patch("services.sources.research_queries.create_content_research_plan")
+        self.mock_create_content_research_plan = self._planner_patch.start()
+        self.mock_create_content_research_plan.return_value = _forced_fallback_planner_result()
+        self.addCleanup(self._planner_patch.stop)
+
     def _provider_for_first_query(self, topic_name: str, keywords, results: list[dict]) -> FakeSearchProvider:
         topic = _TopicStub(topic_name, keywords)
         plan = build_research_query_plan(topic)
@@ -101,6 +117,10 @@ class SourceResearchOrchestratorTests(SimpleTestCase):
             "Find fresh, practical, post-worthy materials for a digest and post.",
         )
         self.assertEqual(result.diagnostics["raw_result_count"], 1)
+        self.assertEqual(
+            [item["query"] for item in result.diagnostics["query_performance"]],
+            list(planner_queries),
+        )
 
     def test_orchestrator_calls_provider_boundary(self) -> None:
         topic = _TopicStub("Travel planning", ["family travel"])
@@ -736,6 +756,13 @@ class SourceResearchOrchestratorTests(SimpleTestCase):
 
 
 class SourceResearchOrchestratorPersistenceTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._planner_patch = patch("services.sources.research_queries.create_content_research_plan")
+        self.mock_create_content_research_plan = self._planner_patch.start()
+        self.mock_create_content_research_plan.return_value = _forced_fallback_planner_result()
+        self.addCleanup(self._planner_patch.stop)
+
     def test_no_topic_source_rows_are_created(self) -> None:
         user = get_user_model().objects.create_user(username="orchestrator-user", password="pw")
         topic = Topic.objects.create(user=user, name="Infant sleep", keywords=["safe sleep", "SIDS"])

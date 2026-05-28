@@ -411,6 +411,51 @@
             <p class="muted" style="margin: 12px 0 0;">{{ current_research_state.last_run_subtitle }}</p>
         </section>
 
+        <section class="card">
+            <h2 style="margin: 0 0 14px; font-size: 20px;">Query performance</h2>
+            <p class="muted" style="margin: 0 0 14px;">See which queries were used, what they returned, and which search directions looked useful or weak.</p>
+            {% if query_performance_entries %}
+                <div class="history-table-wrap">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Query</th>
+                                <th>Purpose / angle</th>
+                                <th>Returned</th>
+                                <th>Accepted</th>
+                                <th>Visible</th>
+                                <th>Rejected</th>
+                                <th>Known / duplicates</th>
+                                <th>Status</th>
+                                <th>Last used</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in query_performance_entries %}
+                            <tr>
+                                <td class="history-table__title">
+                                    <strong>{{ item.query }}</strong>
+                                    <span class="muted">{{ item.provider }}</span>
+                                </td>
+                                <td>{{ item.purpose }}</td>
+                                <td>{{ item.returned_count }}</td>
+                                <td>{{ item.accepted_count }}</td>
+                                <td>{{ item.visible_count }}</td>
+                                <td>{{ item.rejected_count }}</td>
+                                <td>{{ item.duplicate_count }}</td>
+                                <td>{{ item.status_label }}</td>
+                                <td>{{ item.last_used }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="empty-state">No query performance data yet.</p>
+                <p class="muted" style="margin: 8px 0 0;">Run source discovery to see which queries were used and what results they produced.</p>
+            {% endif %}
+        </section>
+
         <section class="card" id="seen-sources">
             <h2 style="margin: 0 0 14px; font-size: 20px;">Seen sources</h2>
             <p class="muted" style="margin: 0 0 14px;">All sources this topic has seen through discovery, with their current history state.</p>

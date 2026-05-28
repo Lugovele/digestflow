@@ -55,6 +55,9 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
 
     for query_item in plan.query_items:
         query = str(query_item.query or "").strip()
+        query_angle = str((query_item.diagnostics or {}).get("query_angle_suffix") or "").strip()
+        query_purpose = str(query_item.reason or "").strip()
+        query_duplicate_url_count = 0
         if not query:
             skipped_queries += 1
             per_query_counts.append(
@@ -62,6 +65,12 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                     "query": query,
                     "intent": query_item.intent.value,
                     "result_count": 0,
+                    "provider_name": str(getattr(provider, "provider_name", "") or "unknown"),
+                    "angle": query_angle,
+                    "purpose": query_purpose,
+                    "query_reason": query_purpose,
+                    "source_type_hint": str(query_item.source_type_hint or "").strip(),
+                    "duplicate_url_count": 0,
                     "skipped": True,
                 }
             )
@@ -83,6 +92,12 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                     "query": query,
                     "intent": query_item.intent.value,
                     "result_count": 0,
+                    "provider_name": str(getattr(provider, "provider_name", "") or "unknown"),
+                    "angle": query_angle,
+                    "purpose": query_purpose,
+                    "query_reason": query_purpose,
+                    "source_type_hint": str(query_item.source_type_hint or "").strip(),
+                    "duplicate_url_count": 0,
                     "skipped": False,
                     "error": str(exc),
                 }
@@ -95,6 +110,7 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                 continue
             if url in seen_urls:
                 duplicate_url_count += 1
+                query_duplicate_url_count += 1
                 continue
             seen_urls.add(url)
             emitted_count += 1
@@ -123,6 +139,12 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                 "query": query,
                 "intent": query_item.intent.value,
                 "result_count": emitted_count,
+                "provider_name": str(getattr(provider, "provider_name", "") or "unknown"),
+                "angle": query_angle,
+                "purpose": query_purpose,
+                "query_reason": query_purpose,
+                "source_type_hint": str(query_item.source_type_hint or "").strip(),
+                "duplicate_url_count": query_duplicate_url_count,
                 "skipped": False,
             }
         )

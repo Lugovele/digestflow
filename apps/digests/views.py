@@ -93,6 +93,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
     topic = get_object_or_404(Topic, pk=topic_id)
     sync_topic_discovered_sources_into_history(topic)
     current_research_state = _build_current_research_state(topic)
+    query_performance = _build_query_performance_section(topic)
     seen_source_history = _build_seen_source_history_section(
         topic,
         status_filter=str(request.GET.get("status") or "").strip(),
@@ -105,6 +106,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
         {
             "topic": topic,
             "current_research_state": current_research_state,
+            "query_performance_entries": query_performance["entries"],
             "history_runs": _build_research_history_run_entries(topic),
             "seen_source_history": seen_source_history["entries"],
             "seen_source_history_filters": seen_source_history["filters"],
@@ -1584,8 +1586,17 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
         accepted_count = int(source_research_result.diagnostics.get("accepted_candidate_count") or 0)
         rejected_count = int(source_research_result.diagnostics.get("rejected_candidate_count") or 0)
+        already_known_count = _count_known_provider_results(
+            source_research_result=source_research_result,
+            known_normalized_urls=known_normalized_urls,
+        )
 
         if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
+            discovery_diagnostics = _build_source_discovery_run_diagnostics(
+                source_research_result=source_research_result,
+                known_normalized_urls=known_normalized_urls,
+                shown_candidates=[],
+            )
             record_source_discovery_history(
                 topic=topic,
                 discovery_run=finalize_source_discovery_run(
@@ -1595,18 +1606,12 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
                         if int(source_research_result.diagnostics.get("raw_result_count") or 0) > 0
                         else SourceDiscoveryRun.STATUS_FAILED
                     ),
-                    diagnostics=dict(source_research_result.diagnostics),
-                    known_url_count=_count_known_provider_results(
-                        source_research_result=source_research_result,
-                        known_normalized_urls=known_normalized_urls,
-                    ),
+                    diagnostics=discovery_diagnostics,
+                    known_url_count=already_known_count,
                     accepted_count=accepted_count,
                     rejected_count=rejected_count,
                     new_suggestions_count=0,
-                    already_known_count=_count_known_provider_results(
-                        source_research_result=source_research_result,
-                        known_normalized_urls=known_normalized_urls,
-                    ),
+                    already_known_count=already_known_count,
                 ),
                 source_research_result=source_research_result,
                 shown_candidates=[],
@@ -1632,23 +1637,22 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         )
         if not has_new_visible_suggestions:
             candidate_records = _build_persisted_new_source_candidates(topic)
+        discovery_diagnostics = _build_source_discovery_run_diagnostics(
+            source_research_result=source_research_result,
+            known_normalized_urls=known_normalized_urls,
+            shown_candidates=candidate_records,
+        )
         record_source_discovery_history(
             topic=topic,
             discovery_run=finalize_source_discovery_run(
                 discovery_run,
                 status=SourceDiscoveryRun.STATUS_COMPLETED,
-                diagnostics=dict(source_research_result.diagnostics),
-                known_url_count=_count_known_provider_results(
-                    source_research_result=source_research_result,
-                    known_normalized_urls=known_normalized_urls,
-                ),
+                diagnostics=discovery_diagnostics,
+                known_url_count=already_known_count,
                 accepted_count=accepted_count,
                 rejected_count=rejected_count,
                 new_suggestions_count=len(candidate_records),
-                already_known_count=_count_known_provider_results(
-                    source_research_result=source_research_result,
-                    known_normalized_urls=known_normalized_urls,
-                ),
+                already_known_count=already_known_count,
             ),
             source_research_result=source_research_result,
             shown_candidates=candidate_records,
@@ -1739,6 +1743,92 @@ def _count_known_provider_results(*, source_research_result, known_normalized_ur
         if normalized_url and normalized_url in known_normalized_urls:
             known_count += 1
     return known_count
+
+
+def _build_source_discovery_run_diagnostics(
+    *,
+    source_research_result,
+    known_normalized_urls: set[str],
+    shown_candidates: list[dict],
+) -> dict:
+    diagnostics = dict(source_research_result.diagnostics)
+    diagnostics["query_performance"] = _build_query_performance_entries_for_run(
+        source_research_result=source_research_result,
+        known_normalized_urls=known_normalized_urls,
+        shown_candidates=shown_candidates,
+    )
+    return diagnostics
+
+
+def _build_query_performance_entries_for_run(
+    *,
+    source_research_result,
+    known_normalized_urls: set[str],
+    shown_candidates: list[dict],
+) -> list[dict]:
+    base_entries = source_research_result.diagnostics.get("query_performance") or []
+    query_rows: list[dict] = []
+    query_index: dict[str, dict] = {}
+
+    for item in base_entries:
+        if not isinstance(item, dict):
+            continue
+        query = str(item.get("query") or "").strip()
+        if not query:
+            continue
+        row = {
+            "query": query,
+            "provider": str(item.get("provider") or source_research_result.provider_result.provider_name or "").strip(),
+            "angle": str(item.get("angle") or "").strip(),
+            "purpose": str(item.get("purpose") or "").strip(),
+            "returned_count": int(item.get("returned_count") or 0),
+            "accepted_count": int(item.get("accepted_count") or 0),
+            "rejected_count": int(item.get("rejected_count") or 0),
+            "duplicate_count": int(item.get("duplicate_count") or 0),
+            "visible_new_suggestions_count": 0,
+            "status": str(item.get("status") or "").strip(),
+        }
+        if str(item.get("error_message") or "").strip():
+            row["error_message"] = str(item.get("error_message") or "").strip()
+        query_rows.append(row)
+        query_index[query] = row
+
+    for candidate in source_research_result.evaluated_candidates:
+        query = str(candidate.diagnostics.get("query") or "").strip()
+        normalized_url = str(candidate.normalized_url or "").strip()
+        if not query or not normalized_url or normalized_url not in known_normalized_urls:
+            continue
+        row = query_index.get(query)
+        if row is None:
+            continue
+        row["duplicate_count"] = int(row.get("duplicate_count") or 0) + 1
+
+    for candidate in shown_candidates:
+        query = str(candidate.get("query") or "").strip()
+        if not query:
+            continue
+        row = query_index.get(query)
+        if row is None:
+            continue
+        row["visible_new_suggestions_count"] = int(row.get("visible_new_suggestions_count") or 0) + 1
+
+    for row in query_rows:
+        row["status"] = _derive_saved_query_performance_status(row)
+    return query_rows
+
+
+def _derive_saved_query_performance_status(item: dict) -> str:
+    if str(item.get("error_message") or "").strip() or str(item.get("status") or "").strip() == "partial_error":
+        return "partial_error"
+    if int(item.get("visible_new_suggestions_count") or 0) > 0 or int(item.get("accepted_count") or 0) > 0:
+        return "useful"
+    if int(item.get("duplicate_count") or 0) > 0:
+        return "duplicate_heavy"
+    if int(item.get("returned_count") or 0) == 0:
+        return "no_visible_results"
+    if int(item.get("rejected_count") or 0) > 0:
+        return "weak"
+    return "no_visible_results"
 
 
 def _count_existing_new_suggestions(topic: Topic) -> int:
@@ -2018,6 +2108,88 @@ def _build_seen_source_history_entries(history_rows: list[SourceDiscoveryHistory
             }
         )
     return entries
+
+
+def _build_query_performance_section(topic: Topic) -> dict:
+    entries: list[dict] = []
+    for run in topic.source_discovery_runs.order_by("-completed_at", "-created_at", "-id"):
+        diagnostics = run.diagnostics if isinstance(run.diagnostics, dict) else {}
+        query_rows = diagnostics.get("query_performance") or _build_legacy_query_performance_rows(run, diagnostics)
+        for item in query_rows:
+            if not isinstance(item, dict):
+                continue
+            query = str(item.get("query") or "").strip()
+            if not query:
+                continue
+            entries.append(
+                {
+                    "query": query,
+                    "provider": str(item.get("provider") or run.provider_name or "").strip() or "unknown",
+                    "purpose": _build_query_performance_purpose(item),
+                    "returned_count": _format_query_metric_value(item.get("returned_count")),
+                    "accepted_count": _format_query_metric_value(item.get("accepted_count")),
+                    "visible_count": _format_query_metric_value(item.get("visible_new_suggestions_count")),
+                    "rejected_count": _format_query_metric_value(item.get("rejected_count")),
+                    "duplicate_count": _format_query_metric_value(item.get("duplicate_count")),
+                    "status_label": _format_query_performance_status_label(str(item.get("status") or "").strip()),
+                    "last_used": _format_research_history_timestamp(run),
+                }
+            )
+    return {"entries": entries}
+
+
+def _build_legacy_query_performance_rows(run: SourceDiscoveryRun, diagnostics: dict) -> list[dict]:
+    rows: list[dict] = []
+    for item in diagnostics.get("per_query_result_counts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        query = str(item.get("query") or "").strip()
+        if not query:
+            continue
+        rows.append(
+            {
+                "query": query,
+                "provider": str(item.get("provider_name") or run.provider_name or "").strip(),
+                "angle": str(item.get("angle") or "").strip(),
+                "purpose": str(item.get("purpose") or item.get("query_reason") or "").strip(),
+                "returned_count": int(item.get("result_count") or 0),
+                "accepted_count": None,
+                "visible_new_suggestions_count": None,
+                "rejected_count": None,
+                "duplicate_count": int(item.get("duplicate_url_count") or 0),
+                "status": "partial_error" if str(item.get("error") or "").strip() else "no_visible_results",
+            }
+        )
+    return rows
+
+
+def _build_query_performance_purpose(item: dict) -> str:
+    angle = str(item.get("angle") or "").strip()
+    purpose = str(item.get("purpose") or "").strip()
+    if angle and purpose:
+        return f"{angle} — {purpose}"
+    if angle:
+        return angle
+    if purpose:
+        return purpose
+    return "—"
+
+
+def _format_query_metric_value(value) -> str:
+    if value is None:
+        return "—"
+    return str(int(value))
+
+
+def _format_query_performance_status_label(status: str) -> str:
+    mapping = {
+        "useful": "Useful",
+        "weak": "Weak",
+        "duplicate_heavy": "Duplicate-heavy",
+        "no_visible_results": "No visible results",
+        "partial_error": "Partial/error",
+    }
+    return mapping.get(str(status or "").strip(), "No visible results")
 
 
 def _build_seen_source_history_filters(topic: Topic, active_filter: str, search_query: str) -> list[dict[str, str | bool]]:
