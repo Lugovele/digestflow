@@ -6,6 +6,7 @@ from django.test import SimpleTestCase, override_settings
 
 from services.sources.content_research_planner import (
     MAX_FINAL_QUERY_COUNT,
+    PROMPT_TEMPLATE_PATH,
     build_content_research_planner_prompt,
     create_content_research_plan,
 )
@@ -19,6 +20,17 @@ class _TopicStub:
 
 
 class ContentResearchPlannerTests(SimpleTestCase):
+    def test_prompt_template_is_loaded_and_rendered(self) -> None:
+        prompt = build_content_research_planner_prompt(
+            "AI Education Teens",
+            ["AI literacy", "classroom practice"],
+        )
+
+        self.assertTrue(PROMPT_TEMPLATE_PATH.exists())
+        self.assertIn("Topic title: AI Education Teens", prompt)
+        self.assertIn("Topic keywords: AI literacy, classroom practice", prompt)
+        self.assertIn(f"Generate no more than {MAX_FINAL_QUERY_COUNT} final search queries.", prompt)
+
     @override_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test")
     @patch("services.sources.content_research_planner.OpenAIClient.generate_text")
     def test_ai_planner_returns_valid_json_and_extracts_queries(self, mock_generate_text) -> None:
@@ -233,3 +245,4 @@ class ContentResearchPlannerTests(SimpleTestCase):
         self.assertIn("digest and a LinkedIn-style post", prompt)
         self.assertIn("conflicting opinions, opposite practices, trade-offs, and different outcomes", prompt)
         self.assertIn('"content_tension_opportunities"', prompt)
+        self.assertIn("Return valid JSON only.", prompt)

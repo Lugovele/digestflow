@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+from pathlib import Path
 import re
 from typing import Any, Iterable, Sequence
 
-from django.conf import settings
-
 from apps.ai.client import OpenAIClient
+from django.conf import settings
 
 MAX_FINAL_QUERY_COUNT = 6
 MIN_QUERY_WORD_COUNT = 3
 PLACEHOLDER_API_KEYS = {"", "sk-your-key"}
+PROMPT_TEMPLATE_PATH = Path(__file__).resolve().parent / "prompts" / "content_research_planner.md"
 
 
 @dataclass(frozen=True)
@@ -85,35 +86,12 @@ def build_content_research_planner_prompt(topic_title: str, topic_keywords: Sequ
     normalized_title = str(topic_title or "").strip()
     normalized_keywords = [keyword for keyword in _normalize_keywords(topic_keywords) if keyword]
     keywords_text = ", ".join(normalized_keywords) if normalized_keywords else "(none)"
-    return (
-        "You are planning content research for a topic-based digest and a LinkedIn-style post.\n"
-        "This is content research for a digest/post, not academic research only.\n"
-        "Prioritize fresh, practical, discussion-worthy materials.\n"
-        "Look for useful tensions, conflicting opinions, opposite practices, trade-offs, "
-        "and different outcomes when relevant.\n"
-        "Do not generate generic keyword-only queries.\n"
-        "Do not drift away from the topic title and keywords.\n"
-        "Return valid JSON only.\n"
-        "Do not include markdown.\n"
-        "Do not include comments outside JSON.\n"
-        f"Generate no more than {MAX_FINAL_QUERY_COUNT} final search queries.\n\n"
-        f"Topic title: {normalized_title}\n"
-        f"Topic keywords: {keywords_text}\n\n"
-        "Return JSON with exactly this structure:\n"
-        "{\n"
-        '  "topic_interpretation": "...",\n'
-        '  "content_research_goal": "...",\n'
-        '  "source_selection_criteria": {\n'
-        '    "must_be_relevant_to": [],\n'
-        '    "preferred_material_types": [],\n'
-        '    "freshness_signals": [],\n'
-        '    "post_value_signals": [],\n'
-        '    "relevance_boundary": "..."\n'
-        "  },\n"
-        '  "content_tension_opportunities": [{"tension": "...", "why_it_matters": "..."}],\n'
-        '  "search_angles": [{"angle": "...", "purpose": "..."}],\n'
-        '  "queries": []\n'
-        "}\n"
+    template = _load_prompt_template()
+    return _render_prompt_template(
+        template,
+        topic_title=normalized_title,
+        topic_keywords=keywords_text,
+        max_final_query_count=str(MAX_FINAL_QUERY_COUNT),
     )
 
 
@@ -396,3 +374,14 @@ def _get_topic_title(topic) -> str:
 def _should_use_fallback() -> bool:
     api_key = str(getattr(settings, "OPENAI_API_KEY", "") or "").strip()
     return api_key in PLACEHOLDER_API_KEYS
+
+
+def _load_prompt_template() -> str:
+    return PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
+
+
+def _render_prompt_template(template: str, **context: str) -> str:
+    rendered = str(template)
+    for key, value in context.items():
+        rendered = rendered.replace(f"{{{{ {key} }}}}", str(value))
+    return rendered
