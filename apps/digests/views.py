@@ -1591,7 +1591,14 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
             known_normalized_urls=known_normalized_urls,
         )
 
-        if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
+        candidate_records = _build_provider_backed_candidate_records(source_research_result)
+        candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
+        candidate_records = _filter_previously_handled_provider_candidates(topic, candidate_records)
+        has_new_visible_suggestions = _has_new_visible_suggestions(
+            candidate_records=candidate_records,
+            known_normalized_urls=known_normalized_urls,
+        )
+        if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0 and not has_new_visible_suggestions:
             discovery_diagnostics = _build_source_discovery_run_diagnostics(
                 source_research_result=source_research_result,
                 known_normalized_urls=known_normalized_urls,
@@ -1623,13 +1630,6 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
                 execution_status="failed",
                 existing_new_suggestion_count=existing_new_suggestion_count,
             )
-        candidate_records = _build_provider_backed_candidate_records(source_research_result)
-        candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
-        candidate_records = _filter_previously_handled_provider_candidates(topic, candidate_records)
-        has_new_visible_suggestions = _has_new_visible_suggestions(
-            candidate_records=candidate_records,
-            known_normalized_urls=known_normalized_urls,
-        )
         candidate_records = _upsert_and_build_source_candidates(
             topic,
             candidate_records,
@@ -1637,6 +1637,15 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         )
         if not has_new_visible_suggestions:
             candidate_records = _build_persisted_new_source_candidates(topic)
+        run_status = SourceDiscoveryRun.STATUS_COMPLETED
+        execution_status = "completed"
+        if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
+            run_status = (
+                SourceDiscoveryRun.STATUS_PARTIAL_FAILED
+                if int(source_research_result.diagnostics.get("raw_result_count") or 0) > 0
+                else SourceDiscoveryRun.STATUS_FAILED
+            )
+            execution_status = "failed"
         discovery_diagnostics = _build_source_discovery_run_diagnostics(
             source_research_result=source_research_result,
             known_normalized_urls=known_normalized_urls,
@@ -1646,7 +1655,7 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
             topic=topic,
             discovery_run=finalize_source_discovery_run(
                 discovery_run,
-                status=SourceDiscoveryRun.STATUS_COMPLETED,
+                status=run_status,
                 diagnostics=discovery_diagnostics,
                 known_url_count=already_known_count,
                 accepted_count=accepted_count,
@@ -1661,7 +1670,7 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         return candidate_records, _build_provider_discovery_summary(
             source_research_result=source_research_result,
             candidate_records=candidate_records,
-            execution_status="completed",
+            execution_status=execution_status,
             existing_new_suggestion_count=existing_new_suggestion_count,
             had_new_visible_suggestions=has_new_visible_suggestions,
         )
@@ -1724,6 +1733,7 @@ def _build_provider_backed_candidate_records(source_research_result) -> list[dic
                 "url": payload["url"],
                 "title": payload["title"],
                 "normalized_url": item.normalized_url,
+                "query": str(item.diagnostics.get("query") or "").strip(),
                 "source_type": payload.get("source_type") or item.source_type,
                 "candidate_origin": payload.get("origin") or TopicSourceOrigin.DISCOVERED,
                 "default_selected": item.default_selected,
@@ -1899,11 +1909,18 @@ def _build_provider_discovery_summary(
 
     if execution_status == "failed":
         title = "Source discovery did not complete"
-        body = (
-            "Provider results could not be loaded for this research search. Existing suggestions were kept."
-            if existing_new_suggestion_count > 0
-            else "Provider results could not be loaded for this research search."
-        )
+        if suggestion_count > 0:
+            body = (
+                f"Some searches could not be completed. "
+                f"{suggestion_count} new source suggestion{'s' if suggestion_count != 1 else ''} "
+                f"{'are' if suggestion_count != 1 else 'is'} still available."
+            )
+        else:
+            body = (
+                "Provider results could not be loaded for this research search. Existing suggestions were kept."
+                if existing_new_suggestion_count > 0
+                else "Provider results could not be loaded for this research search."
+            )
     elif suggestion_count == 0:
         title = "No new sources found"
         body = "No new sources found."

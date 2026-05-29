@@ -5,6 +5,7 @@ from html import unescape
 import json
 import re
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlparse
 
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -2077,6 +2078,127 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(history_item.topic_source_id, discovered_source.id)
         self.assertTrue(history_item.query_text)
         self.assertEqual(history_item.query_text, "topic rss unique planner query")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("services.sources.research_queries.create_content_research_plan")
+    @patch("services.sources.serpapi_provider.urlopen")
+    def test_partial_provider_failure_still_surfaces_successful_new_suggestions(
+        self,
+        mock_urlopen,
+        mock_create_content_research_plan,
+    ) -> None:
+        successful_query = "bitcoin infrastructure case study"
+        failed_query = "bitcoin impossible angle"
+        mock_create_content_research_plan.return_value = MagicMock(
+            planner_status="ai_planned",
+            fallback_used=False,
+            final_queries=(successful_query, failed_query),
+            diagnostics={
+                "planner_status": "ai_planned",
+                "fallback_used": False,
+                "final_queries": [successful_query, failed_query],
+                "topic_interpretation": "Bitcoin infrastructure and operating practices.",
+                "content_research_goal": "Find useful post-worthy bitcoin materials.",
+                "source_selection_criteria": {},
+                "content_tension_opportunities": [],
+                "search_angles": [],
+            },
+        )
+
+        def _mixed_urlopen(request, timeout=None):
+            query = parse_qs(urlparse(request.full_url).query).get("q", [""])[0]
+            if query == successful_query:
+                response = MagicMock()
+                response.read.return_value = json.dumps(
+                    {
+                        "organic_results": [
+                            {
+                                "position": 1,
+                                "title": "Bitcoin infrastructure case study",
+                                "link": "https://example.com/bitcoin-infrastructure-case-study",
+                                "snippet": (
+                                    "A detailed case study covering tradeoffs, operating constraints, "
+                                    "energy strategy, and implementation lessons from a bitcoin operator."
+                                ),
+                                "source": "Example",
+                                "date": "2026-05-20",
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+                context_manager = MagicMock()
+                context_manager.__enter__.return_value = response
+                return context_manager
+            if query == failed_query:
+                response = MagicMock()
+                response.read.return_value = json.dumps(
+                    {"error": "Google hasn't returned any results for this query."}
+                ).encode("utf-8")
+                context_manager = MagicMock()
+                context_manager.__enter__.return_value = response
+                return context_manager
+            raise AssertionError(f"Unexpected query: {query!r}")
+
+        mock_urlopen.side_effect = _mixed_urlopen
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="bitcoin",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Bitcoin infrastructure case study")
+        self.assertContains(response, "Source discovery did not complete")
+        self.assertContains(response, "Some searches could not be completed.")
+        self.assertContains(response, "1 new source suggestion is still available.")
+
+        discovered_source = TopicSource.objects.get(topic=topic, origin=TopicSourceOrigin.DISCOVERED)
+        self.assertEqual(discovered_source.url, "https://example.com/bitcoin-infrastructure-case-study")
+        self.assertTrue(discovered_source.is_active)
+        self.assertFalse(discovered_source.is_pinned)
+
+        discovery_run = SourceDiscoveryRun.objects.get(topic=topic)
+        self.assertEqual(discovery_run.status, SourceDiscoveryRun.STATUS_PARTIAL_FAILED)
+        self.assertEqual(discovery_run.new_suggestions_count, 1)
+        self.assertEqual(discovery_run.provider_result_count, 1)
+
+        query_performance = discovery_run.diagnostics.get("query_performance", [])
+        successful_row = next(item for item in query_performance if item.get("query") == successful_query)
+        failed_row = next(item for item in query_performance if item.get("query") == failed_query)
+        self.assertEqual(successful_row.get("status"), "useful")
+        self.assertEqual(successful_row.get("visible_new_suggestions_count"), 1)
+        self.assertEqual(successful_row.get("accepted_count"), 1)
+        self.assertEqual(failed_row.get("status"), "partial_error")
+        self.assertEqual(failed_row.get("returned_count"), 0)
+        self.assertTrue(str(failed_row.get("error_message") or "").strip())
+
+        history_item = SourceDiscoveryHistory.objects.get(
+            topic=topic,
+            normalized_url="https://example.com/bitcoin-infrastructure-case-study",
+        )
+        self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
+        self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_NEW_SHOWN)
+        self.assertTrue(history_item.created_topic_source)
+        self.assertEqual(history_item.topic_source_id, discovered_source.id)
+        self.assertEqual(history_item.query_text, successful_query)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
