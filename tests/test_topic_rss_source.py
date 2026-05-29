@@ -3413,6 +3413,17 @@ class TopicRssSourceTests(TestCase):
         )
         self.assertContains(response, "Current research state")
         self.assertContains(response, "Query performance")
+        self.assertContains(response, "Copy full history")
+        self.assertContains(response, 'id="copy-full-history-button"', html=False)
+        self.assertContains(response, 'id="full-history-copy-payload"', html=False)
+        copy_report = response.context["full_history_copy_report"]
+        self.assertIn("Topic", copy_report)
+        self.assertIn("Current research state", copy_report)
+        self.assertIn("Query performance", copy_report)
+        self.assertIn("Discovery runs", copy_report)
+        self.assertIn("Seen sources", copy_report)
+        self.assertIn("Planner history guidance", copy_report)
+        self.assertNotContains(response, copy_report)
         self.assertContains(response, "Discovery completed")
         self.assertNotContains(response, '<h2 class="history-run__title">completed</h2>', html=False)
         self.assertContains(response, "Discovery runs")
@@ -3455,9 +3466,13 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "qdr:m")
         self.assertContains(response, "Rotate toward research reports and evidence summaries.")
         html = response.content.decode("utf-8")
-        self.assertLess(html.index("Current research state"), html.index("Query performance"))
-        self.assertLess(html.index("Query performance"), html.index("Seen sources"))
-        self.assertLess(html.index("Seen sources"), html.index("Discovery runs"))
+        current_state_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Current research state</h2>'
+        query_performance_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Query performance</h2>'
+        seen_sources_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Seen sources</h2>'
+        discovery_runs_header = '<h2 style="margin: 0 0 6px; font-size: 20px;">Discovery runs</h2>'
+        self.assertLess(html.index(current_state_header), html.index(query_performance_header))
+        self.assertLess(html.index(query_performance_header), html.index(seen_sources_header))
+        self.assertLess(html.index(seen_sources_header), html.index(discovery_runs_header))
 
     def test_research_history_page_renders_partial_failure_warning(self) -> None:
         topic = Topic.objects.create(

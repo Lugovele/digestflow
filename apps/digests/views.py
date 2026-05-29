@@ -1,4 +1,5 @@
 import json
+import base64
 import logging
 from collections import Counter
 from datetime import timedelta
@@ -94,11 +95,19 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
     sync_topic_discovered_sources_into_history(topic)
     current_research_state = _build_current_research_state(topic)
     query_performance = _build_query_performance_section(topic)
+    history_runs = _build_research_history_run_entries(topic)
     seen_source_history = _build_seen_source_history_section(
         topic,
         status_filter=str(request.GET.get("status") or "").strip(),
         search_query=str(request.GET.get("q") or "").strip(),
         page_number=str(request.GET.get("page") or "").strip() or "1",
+    )
+    full_history_copy_report = _build_full_research_history_copy_report(
+        topic=topic,
+        current_research_state=current_research_state,
+        query_performance_entries=query_performance["entries"],
+        history_runs=history_runs,
+        seen_source_history=seen_source_history["entries"],
     )
     return render(
         request,
@@ -107,12 +116,14 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
             "topic": topic,
             "current_research_state": current_research_state,
             "query_performance_entries": query_performance["entries"],
-            "history_runs": _build_research_history_run_entries(topic),
+            "history_runs": history_runs,
             "seen_source_history": seen_source_history["entries"],
             "seen_source_history_filters": seen_source_history["filters"],
             "seen_source_history_search_query": seen_source_history["search_query"],
             "seen_source_history_active_filter": seen_source_history["active_filter"],
             "seen_source_history_pagination": seen_source_history["pagination"],
+            "full_history_copy_report": full_history_copy_report,
+            "full_history_copy_report_b64": base64.b64encode(full_history_copy_report.encode("utf-8")).decode("ascii"),
         },
     )
 
@@ -2345,6 +2356,138 @@ def _build_current_research_state(topic: Topic) -> dict:
         "last_run_status": _format_research_history_status_title(last_run.status, run=last_run) if last_run else "No discovery runs yet",
         "last_run_subtitle": _build_research_history_status_subtitle(last_run) if last_run else "Run Find sources to start source discovery for this topic.",
     }
+
+
+def _build_full_research_history_copy_report(
+    *,
+    topic: Topic,
+    current_research_state: dict,
+    query_performance_entries: list[dict],
+    history_runs: list[dict],
+    seen_source_history: list[dict],
+) -> str:
+    lines: list[str] = []
+    active_source_count = topic.sources.filter(is_active=True).count()
+    active_discovered_count = topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED, is_active=True).count()
+    active_manual_count = topic.sources.filter(is_active=True).exclude(origin=TopicSourceOrigin.DISCOVERED).count()
+    current_discovered_sources = topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED)
+    latest_run = topic.source_discovery_runs.order_by("-created_at", "-id").first()
+    latest_history_summary = {}
+    if latest_run is not None and isinstance(latest_run.diagnostics, dict):
+        latest_history_summary = latest_run.diagnostics.get("query_history_summary") or {}
+
+    def add_section(title: str) -> None:
+        if lines:
+            lines.append("")
+        lines.append(title)
+
+    add_section("Topic")
+    lines.append(f"- id: {topic.id}")
+    lines.append(f"- name: {topic.name}")
+
+    add_section("Current research state")
+    lines.append(f"- source mode: {topic.source_mode}")
+    for metric in current_research_state.get("cards", []):
+        lines.append(f"- {metric.get('label')}: {metric.get('value')}")
+    lines.append(f"- active selected sources: {active_source_count}")
+    lines.append(f"- active selected research sources: {active_discovered_count}")
+    lines.append(f"- active selected my sources: {active_manual_count}")
+    lines.append(f"- current kept discovered sources: {current_discovered_sources.filter(is_pinned=True).count()}")
+    lines.append(f"- current shown discovered sources: {current_discovered_sources.filter(is_pinned=False).count()}")
+    lines.append(f"- last discovery run status: {current_research_state.get('last_run_status')}")
+    lines.append(f"- last discovery run note: {current_research_state.get('last_run_subtitle')}")
+
+    add_section("Query performance")
+    if query_performance_entries:
+        for item in query_performance_entries:
+            lines.append(f"- query: {item.get('query')}")
+            lines.append(f"  provider: {item.get('provider')}")
+            lines.append(f"  purpose / angle: {item.get('purpose')}")
+            lines.append(f"  returned: {item.get('returned_count')}")
+            lines.append(f"  accepted: {item.get('accepted_count')}")
+            lines.append(f"  visible: {item.get('visible_count')}")
+            lines.append(f"  rejected: {item.get('rejected_count')}")
+            lines.append(f"  known / duplicates: {item.get('duplicate_count')}")
+            lines.append(f"  status: {item.get('status_label')}")
+            lines.append(f"  last used: {item.get('last_used')}")
+    else:
+        lines.append("- No query performance data yet.")
+
+    add_section("Discovery runs")
+    if history_runs:
+        for item in history_runs:
+            run = item.get("run")
+            lines.append(f"- run id: {getattr(run, 'id', '')}")
+            lines.append(f"  timestamp: {item.get('completed_label') or '—'}")
+            lines.append(f"  status: {item.get('title')}")
+            if item.get("subtitle"):
+                lines.append(f"  note: {item.get('subtitle')}")
+            if item.get("compact_metrics"):
+                lines.append(f"  compact metrics: {item.get('compact_metrics')}")
+            if item.get("warning_title") or item.get("warning_body"):
+                lines.append(f"  provider warning: {item.get('warning_body') or item.get('warning_title')}")
+            stage_diagnostics = item.get("stage_diagnostics") or {}
+            if stage_diagnostics.get("rows"):
+                lines.append("  stage diagnostics:")
+                for metric in stage_diagnostics.get("rows", []):
+                    lines.append(f"    - {metric.get('label')}: {metric.get('value')}")
+            if item.get("strategy_rows"):
+                lines.append("  search strategy:")
+                for detail in item.get("strategy_rows", []):
+                    lines.append(f"    - {detail.get('label')}: {detail.get('value')}")
+            if item.get("query_rows"):
+                lines.append("  query rows:")
+                for query in item.get("query_rows", []):
+                    lines.append(f"    - {query.get('label')}: {query.get('value')}")
+                    if query.get("query"):
+                        lines.append(f"      query: {query.get('query')}")
+            if item.get("technical_rows"):
+                lines.append("  technical details:")
+                for detail in item.get("technical_rows", []):
+                    lines.append(f"    - {detail.get('label')}: {detail.get('value')}")
+    else:
+        lines.append("- No discovery runs yet.")
+
+    add_section("Seen sources")
+    if seen_source_history:
+        for item in seen_source_history:
+            lines.append(f"- title: {item.get('title')}")
+            lines.append(f"  url: {item.get('url') or '—'}")
+            lines.append(f"  domain: {item.get('domain')}")
+            lines.append(f"  status: {item.get('status_label')}")
+            lines.append(f"  last outcome: {item.get('outcome_label')}")
+            lines.append(f"  seen count: {item.get('seen_count')}")
+            lines.append(f"  last seen: {item.get('last_seen')}")
+            for detail in item.get("details", []):
+                lines.append(f"  {str(detail.get('label') or '').lower()}: {detail.get('value')}")
+    else:
+        lines.append("- No seen sources yet.")
+
+    add_section("Planner history guidance")
+    if latest_history_summary:
+        lines.append(f"- history available: {latest_history_summary.get('history_available')}")
+        lines.append(f"- recent run count: {latest_history_summary.get('recent_run_count')}")
+        lines.append(f"- malformed run count: {latest_history_summary.get('malformed_run_count')}")
+        lines.append(f"- total query rows: {latest_history_summary.get('total_query_rows')}")
+        useful_angles = latest_history_summary.get("useful_angles") or []
+        weak_angles = latest_history_summary.get("weak_angles") or []
+        planning_guidance = latest_history_summary.get("planning_guidance") or []
+        if useful_angles:
+            lines.append("- useful angles:")
+            for item in useful_angles:
+                lines.append(f"  - {item.get('angle')}: {item.get('count')}")
+        if weak_angles:
+            lines.append("- weak angles:")
+            for item in weak_angles:
+                lines.append(f"  - {item.get('angle')}: {item.get('count')}")
+        if planning_guidance:
+            lines.append("- planning guidance:")
+            for item in planning_guidance:
+                lines.append(f"  - {item}")
+    else:
+        lines.append("- No compact planner history guidance available.")
+
+    return "\n".join(str(line) for line in lines if line is not None)
 
 
 def _format_research_history_timestamp(run: SourceDiscoveryRun) -> str:

@@ -29,6 +29,27 @@
             font-size: 30px;
             line-height: 1.15;
         }
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+        .page-header__copy {
+            border: 1px solid #c9d7ff;
+            border-radius: 8px;
+            padding: 9px 12px;
+            background: #eef3ff;
+            color: #2240a1;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .page-header__copy:disabled {
+            cursor: default;
+            opacity: 0.85;
+        }
         .muted {
             color: #5b6472;
         }
@@ -387,8 +408,23 @@
             <a href="{% url 'topic-workspace' topic.id %}" class="inline-link">&larr; Back to topic</a>
         </p>
 
-        <h1 class="page-title">Research history</h1>
-        <p class="muted" style="margin: 0 0 18px;">Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.</p>
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Research history</h1>
+                <p class="muted" style="margin: 0;">Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.</p>
+            </div>
+            <button
+                id="copy-full-history-button"
+                type="button"
+                class="page-header__copy"
+                data-copy-full-history
+                data-default-label="Copy full history"
+                data-copied-label="Copied"
+                data-failed-label="Copy failed"
+            >Copy full history</button>
+        </div>
+
+        <script id="full-history-copy-payload" type="text/plain">{{ full_history_copy_report_b64 }}</script>
 
         <section class="card">
             <p style="margin: 0;"><strong>{{ topic.name }}</strong></p>
@@ -627,5 +663,111 @@
             {% endif %}
         </section>
     </div>
+    <script>
+(() => {
+    const button = document.getElementById("copy-full-history-button");
+    const payload = document.getElementById("full-history-copy-payload");
+    if (!button || !payload) {
+        return;
+    }
+
+    const defaultLabel = button.dataset.defaultLabel || "Copy full history";
+    const copiedLabel = button.dataset.copiedLabel || "Copied";
+    const failedLabel = button.dataset.failedLabel || "Copy failed";
+
+    function decodeBase64Utf8(base64Text) {
+        const normalized = String(base64Text || "").trim();
+        if (!normalized) {
+            return "";
+        }
+        const binary = window.atob(normalized);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+        if (typeof TextDecoder === "function") {
+            return new TextDecoder("utf-8").decode(bytes);
+        }
+        let text = "";
+        for (let index = 0; index < bytes.length; index += 1) {
+            text += String.fromCharCode(bytes[index]);
+        }
+        return decodeURIComponent(escape(text));
+    }
+
+    async function copyWithClipboardApi(text) {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+            return false;
+        }
+        await navigator.clipboard.writeText(text);
+        return true;
+    }
+
+    function copyWithTextareaFallback(text) {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "readonly");
+        textarea.style.position = "fixed";
+        textarea.style.top = "8px";
+        textarea.style.left = "8px";
+        textarea.style.width = "1px";
+        textarea.style.height = "1px";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        const didCopy = document.execCommand("copy");
+        textarea.remove();
+        return didCopy;
+    }
+
+    function flashButtonState(label) {
+        button.textContent = label;
+        button.disabled = true;
+        window.setTimeout(() => {
+            button.textContent = defaultLabel;
+            button.disabled = false;
+        }, 1400);
+    }
+
+    button.addEventListener("click", async () => {
+        let text = "";
+        let clipboardError = null;
+        let copied = false;
+        try {
+            text = decodeBase64Utf8(payload.textContent || "");
+        } catch (error) {
+            window.__fullHistoryCopyError = error;
+            console.error("Copy full history decode failed.", error);
+            flashButtonState(failedLabel);
+            return;
+        }
+        try {
+            copied = await copyWithClipboardApi(text);
+        } catch (error) {
+            clipboardError = error;
+            copied = false;
+        }
+        if (!copied) {
+            try {
+                copied = copyWithTextareaFallback(text);
+            } catch (error) {
+                window.__fullHistoryCopyError = error;
+                console.error("Copy full history fallback failed.", error);
+                copied = false;
+            }
+        }
+        if (copied) {
+            flashButtonState(copiedLabel);
+            return;
+        }
+        window.__fullHistoryCopyError = clipboardError || new Error("Copy full history failed.");
+        console.error("Copy full history failed.", clipboardError || "Clipboard API denied and fallback returned false.");
+        flashButtonState(failedLabel);
+    });
+})();
+    </script>
 </body>
 </html>
