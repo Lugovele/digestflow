@@ -3116,8 +3116,14 @@ def _upsert_and_build_source_candidates(
         for source in existing_sources
         if source.origin == TopicSourceOrigin.DISCOVERED
         and not source.is_pinned
+        and not source.is_active
         and str(source.normalized_url or "").strip()
     }
+    existing_active_unpinned_discovered_sources = [
+        source
+        for source in existing_sources
+        if source.origin == TopicSourceOrigin.DISCOVERED and not source.is_pinned and source.is_active
+    ]
     prepared_candidates: list[dict] = []
     seen_discovered_normalized_urls: set[str] = set()
 
@@ -3188,9 +3194,32 @@ def _upsert_and_build_source_candidates(
         topic.sources.filter(
             origin=TopicSourceOrigin.DISCOVERED,
             is_pinned=False,
+            is_active=False,
         ).exclude(normalized_url__in=seen_discovered_normalized_urls).delete()
 
-    return prepared_candidates
+    preserved_active_candidates: list[dict] = []
+    for source in existing_active_unpinned_discovered_sources:
+        normalized_url = str(source.normalized_url or "").strip()
+        if not normalized_url or normalized_url in seen_discovered_normalized_urls:
+            continue
+        preserved_active_candidates.append(
+            {
+                "title": _build_safe_saved_source_display_title(source.name, source.url),
+                "url": source.url,
+                "display_url": _build_compact_source_url(source.url),
+                "normalized_url": normalized_url,
+                "source_type": source.source_type or "unknown",
+                "candidate_origin": TopicSourceOrigin.DISCOVERED,
+                "persisted_source_id": source.id,
+                "is_pinned": False,
+                "selected": True,
+                "description": _build_topic_source_description(source),
+                "has_recent_article_count": False,
+                "recent_article_count": None,
+            }
+        )
+
+    return [*preserved_active_candidates, *prepared_candidates]
 
 
 def _resolve_selected_source_candidates(

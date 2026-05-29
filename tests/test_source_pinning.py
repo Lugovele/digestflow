@@ -206,7 +206,7 @@ class SourcePinningTests(TestCase):
         self.assertIs(filtered[0], fresh_candidate)
 
     @patch("apps.digests.views.resolve_source_candidates")
-    def test_research_refresh_pruning_removes_only_unpinned_discovered_sources(
+    def test_research_refresh_pruning_preserves_pinned_and_active_discovered_sources(
         self,
         mock_resolve_source_candidates,
     ) -> None:
@@ -231,15 +231,25 @@ class SourcePinningTests(TestCase):
             is_pinned=True,
             is_active=True,
         )
-        stale_unpinned = TopicSource.objects.create(
+        active_unpinned = TopicSource.objects.create(
             topic=topic,
-            name="Stale new source",
+            name="Active new source",
             url="https://dev.to/t/old",
             normalized_url="https://dev.to/api/articles?tag=old",
             source_type="devto_tag",
             origin=TopicSourceOrigin.DISCOVERED,
             is_pinned=False,
             is_active=True,
+        )
+        stale_unchecked = TopicSource.objects.create(
+            topic=topic,
+            name="Unchecked stale source",
+            url="https://dev.to/t/stale",
+            normalized_url="https://dev.to/api/articles?tag=stale",
+            source_type="devto_tag",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=False,
         )
 
         mock_resolve_source_candidates.return_value = [
@@ -276,7 +286,8 @@ class SourcePinningTests(TestCase):
         topic.refresh_from_db()
         self.assertTrue(topic.sources.filter(pk=manual.pk).exists())
         self.assertTrue(topic.sources.filter(pk=pinned.pk, is_pinned=True).exists())
-        self.assertFalse(topic.sources.filter(pk=stale_unpinned.pk).exists())
+        self.assertTrue(topic.sources.filter(pk=active_unpinned.pk, is_active=True, is_pinned=False).exists())
+        self.assertFalse(topic.sources.filter(pk=stale_unchecked.pk).exists())
         self.assertTrue(
             topic.sources.filter(
                 url="https://dev.to/t/fresh",

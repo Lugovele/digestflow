@@ -2855,7 +2855,7 @@ class TopicRssSourceTests(TestCase):
         SEARCH_PROVIDER_API_KEY="test-key",
     )
     @patch("services.sources.serpapi_provider.urlopen")
-    def test_provider_backed_refresh_prunes_stale_unpinned_discovered_sources_and_preserves_pinned_sources(
+    def test_provider_backed_refresh_prunes_only_inactive_unpinned_discovered_sources(
         self,
         mock_urlopen,
     ) -> None:
@@ -2867,15 +2867,25 @@ class TopicRssSourceTests(TestCase):
             focus_initialized=True,
             excluded_keywords=[],
         )
-        stale_source = TopicSource.objects.create(
+        active_unpinned_source = TopicSource.objects.create(
             topic=topic,
-            name="Stale source",
+            name="Active source",
             url="https://example.com/stale",
             normalized_url="https://example.com/stale",
             source_type="generic_html",
             origin=TopicSourceOrigin.DISCOVERED,
             is_pinned=False,
             is_active=True,
+        )
+        inactive_unpinned_source = TopicSource.objects.create(
+            topic=topic,
+            name="Inactive source",
+            url="https://example.com/inactive",
+            normalized_url="https://example.com/inactive",
+            source_type="generic_html",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_pinned=False,
+            is_active=False,
         )
         pinned_source = TopicSource.objects.create(
             topic=topic,
@@ -2912,7 +2922,8 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(TopicSource.objects.filter(pk=stale_source.id).exists())
+        self.assertTrue(TopicSource.objects.filter(pk=active_unpinned_source.id, is_active=True).exists())
+        self.assertFalse(TopicSource.objects.filter(pk=inactive_unpinned_source.id).exists())
         self.assertTrue(TopicSource.objects.filter(pk=pinned_source.id).exists())
         self.assertTrue(
             TopicSource.objects.filter(
@@ -2922,7 +2933,7 @@ class TopicRssSourceTests(TestCase):
             ).exists()
         )
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Found 1 new source suggestion.")
+        self.assertContains(response, "Found 2 new source suggestions.")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -3999,7 +4010,7 @@ class TopicRssSourceTests(TestCase):
             source_type="website",
             origin=TopicSourceOrigin.DISCOVERED,
             is_pinned=False,
-            is_active=True,
+            is_active=False,
         )
         SourceDiscoveryHistory.objects.create(
             user=topic.user,
@@ -4031,6 +4042,115 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SEEN)
         shown_response = self.client.get(reverse("topic-research-history", args=[topic.id]), {"status": "shown"})
         self.assertNotContains(shown_response, "Old shown source")
+
+    @patch("apps.digests.views.resolve_source_candidates")
+    def test_rediscovery_preserves_checked_discovered_suggestion_while_pruning_unchecked_stale_suggestion(
+        self,
+        mock_resolve_source_candidates,
+    ) -> None:
+        mock_resolve_source_candidates.side_effect = [
+            [
+                {
+                    "url": "https://dev.to/t/python",
+                    "title": "DEV Community / #python",
+                    "description": "Broad Python engineering stream.",
+                    "source_type": "devto_tag",
+                    "platform": "dev.to",
+                    "recent_article_count": 8,
+                    "has_recent_article_count": True,
+                    "default_selected": False,
+                    "candidate_origin": "discovered",
+                },
+                {
+                    "url": "https://dev.to/t/django",
+                    "title": "DEV Community / #django",
+                    "description": "Broad Django engineering stream.",
+                    "source_type": "devto_tag",
+                    "platform": "dev.to",
+                    "recent_article_count": 6,
+                    "has_recent_article_count": True,
+                    "default_selected": False,
+                    "candidate_origin": "discovered",
+                },
+            ],
+            [
+                {
+                    "url": "https://dev.to/t/golang",
+                    "title": "DEV Community / #golang",
+                    "description": "Broad Go engineering stream.",
+                    "source_type": "devto_tag",
+                    "platform": "dev.to",
+                    "recent_article_count": 5,
+                    "has_recent_article_count": True,
+                    "default_selected": False,
+                    "candidate_origin": "discovered",
+                }
+            ],
+        ]
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Rediscovery preserves checked suggestions",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["engineering"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+
+        first_discovery_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(first_discovery_response.status_code, 200)
+        discovered_sources = {source.url: source for source in topic.sources.order_by("id")}
+        python_source = discovered_sources["https://dev.to/t/python"]
+        django_source = discovered_sources["https://dev.to/t/django"]
+        self.assertTrue(python_source.is_active)
+        self.assertTrue(django_source.is_active)
+
+        unchecked_post_response = self.client.post(
+            reverse("toggle-topic-source", args=[topic.id, python_source.id]),
+            data={},
+        )
+
+        self.assertEqual(unchecked_post_response.status_code, 302)
+        python_source.refresh_from_db()
+        django_source.refresh_from_db()
+        self.assertFalse(python_source.is_active)
+        self.assertTrue(django_source.is_active)
+
+        rediscovery_response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": TopicSourceMode.DISCOVERY_ONLY,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(rediscovery_response.status_code, 200)
+        self.assertFalse(TopicSource.objects.filter(pk=python_source.pk).exists())
+        django_source.refresh_from_db()
+        self.assertTrue(django_source.is_active)
+        self.assertTrue(TopicSource.objects.filter(topic=topic, url="https://dev.to/t/golang").exists())
+
+        html = rediscovery_response.content.decode("utf-8")
+        new_section = html.rsplit("New suggestions", 1)[1]
+        self.assertNotIn("DEV Community / #python", new_section)
+        self.assertIn("DEV Community / #django", new_section)
+        self.assertIn("DEV Community / #golang", new_section)
+        django_checkbox = new_section.split("DEV Community / #django", 1)[0].rsplit('value="1"', 1)[1].split(">", 1)[0]
+        golang_checkbox = new_section.split("DEV Community / #golang", 1)[0].rsplit('value="1"', 1)[1].split(">", 1)[0]
+        self.assertIn("checked", django_checkbox)
+        self.assertIn("checked", golang_checkbox)
 
     def test_research_history_current_state_cards_use_current_discovered_topic_sources(self) -> None:
         topic = Topic.objects.create(
