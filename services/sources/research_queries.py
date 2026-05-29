@@ -153,22 +153,27 @@ def _build_ai_research_query_plan(topic, planning_result) -> ResearchQueryPlan:
     topic_keywords = _normalize_keywords(getattr(topic, "keywords", ()) or ())
     topic_domain, domain_diagnostics = _detect_topic_domain(topic_name, topic_keywords)
     previous_run_count = _count_previous_source_discovery_runs(topic)
-    query_items = tuple(
-        ResearchQueryItem(
-            intent=_infer_ai_query_intent(query),
-            query=query,
-            reason="AI-planned content research query focused on fresh, post-worthy materials.",
-            source_type_hint="technical_web" if topic_domain == "technical" else "general_web",
-            diagnostics={
-                "topic_name": topic_name,
-                "topic_keywords": list(topic_keywords),
-                "previous_discovery_run_count": previous_run_count,
-                "planner_status": planning_result.planner_status,
-                "query_word_count": len(query.split()),
-            },
+    query_items = []
+    for index, query in enumerate(planning_result.final_queries):
+        angle_metadata = _resolve_ai_query_angle_metadata(query, planning_result.search_angles, index)
+        query_items.append(
+            ResearchQueryItem(
+                intent=_infer_ai_query_intent(query),
+                query=query,
+                reason=angle_metadata["purpose"],
+                source_type_hint="technical_web" if topic_domain == "technical" else "general_web",
+                diagnostics={
+                    "topic_name": topic_name,
+                    "topic_keywords": list(topic_keywords),
+                    "previous_discovery_run_count": previous_run_count,
+                    "planner_status": planning_result.planner_status,
+                    "query_word_count": len(query.split()),
+                    "query_angle_key": "ai_planned",
+                    "query_angle_suffix": angle_metadata["angle"],
+                    "query_angle_reason": angle_metadata["purpose"],
+                },
+            )
         )
-        for query in planning_result.final_queries
-    )
     diagnostics = {
         "topic_domain": topic_domain,
         "domain_diagnostics": domain_diagnostics,
@@ -354,3 +359,53 @@ def _infer_ai_query_intent(query: str) -> ResearchQueryIntent:
     if "comparison" in lowered_query or "trade-off" in lowered_query or "best practices" in lowered_query:
         return ResearchQueryIntent.BEST_PRACTICES
     return ResearchQueryIntent.EXPERT_ADVICE
+
+
+def _resolve_ai_query_angle_metadata(
+    query: str,
+    search_angles: Sequence[dict[str, str]],
+    index: int,
+) -> dict[str, str]:
+    if index < len(search_angles):
+        candidate = search_angles[index]
+        angle = str(candidate.get("angle") or "").strip()
+        purpose = str(candidate.get("purpose") or "").strip()
+        if angle and purpose and not _is_generic_ai_angle(angle, purpose):
+            return {"angle": angle, "purpose": purpose}
+    return _infer_ai_query_angle_metadata(query)
+
+
+def _is_generic_ai_angle(angle: str, purpose: str) -> bool:
+    generic_angle = str(angle or "").casefold().strip()
+    generic_purpose = str(purpose or "").casefold().strip()
+    if generic_angle in {"fresh materials", "post-worthy materials", "content research"}:
+        return True
+    return generic_purpose in {
+        "find fresh, post-worthy materials.",
+        "find fresh, practical, post-worthy materials.",
+        "ai-planned content research query focused on fresh, post-worthy materials.",
+    }
+
+
+def _infer_ai_query_angle_metadata(query: str) -> dict[str, str]:
+    lowered_query = str(query or "").casefold()
+    pattern_specs = (
+        (("institutional", "treasury", "corporate"), "institutional flows", "Track institutional positioning, treasury activity, or fund-flow signals."),
+        (("etf", "fund inflow", "inflows", "outflows"), "ETF demand", "Look for current ETF demand, flows, and market impact evidence."),
+        (("macro", "liquidity", "rates", "fed", "yield"), "macro liquidity", "Connect the topic to macro liquidity, rates, and broader risk sentiment."),
+        (("retail", "new investors", "sentiment"), "retail behavior", "Surface current retail participation, behavior, or sentiment patterns."),
+        (("volatility", "risk", "drawdown"), "volatility and risk", "Focus on current volatility, downside risk, and risk-management framing."),
+        (("market structure", "derivatives", "open interest", "order book"), "market structure", "Look for market-structure signals, derivatives activity, and positioning."),
+        (("analyst", "outlook", "forecast", "prediction"), "analyst outlook", "Collect current analyst viewpoints, scenario framing, and debated outlooks."),
+        (("on-chain", "wallet", "hashrate", "exchange reserves", "addresses"), "on-chain data", "Use on-chain or network data that can support a grounded market narrative."),
+        (("regulation", "policy", "sec", "compliance"), "regulation shifts", "Track regulation or policy shifts that could change sentiment or adoption."),
+        (("case study", "examples", "what worked"), "case study outcomes", "Find concrete examples, case studies, and outcome-focused writeups."),
+        (("implementation", "guide", "playbook", "templates"), "implementation lessons", "Find practical implementation lessons, guides, and operator takeaways."),
+    )
+    for needles, angle, purpose in pattern_specs:
+        if any(needle in lowered_query for needle in needles):
+            return {"angle": angle, "purpose": purpose}
+    return {
+        "angle": "fresh evidence",
+        "purpose": "Find fresh, practical, post-worthy materials with specific evidence or examples.",
+    }

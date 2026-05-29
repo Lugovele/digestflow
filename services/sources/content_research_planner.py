@@ -10,6 +10,11 @@ from typing import Any, Iterable, Sequence
 
 from apps.ai.client import OpenAIClient
 from django.conf import settings
+from django.utils import timezone
+from services.sources.query_history_summary import (
+    build_query_history_summary,
+    render_query_history_summary_for_prompt,
+)
 
 MAX_FINAL_QUERY_COUNT = 6
 MIN_QUERY_WORD_COUNT = 3
@@ -28,6 +33,7 @@ class ContentResearchPlannerResult:
     source_selection_criteria: dict[str, Any] = field(default_factory=dict)
     content_tension_opportunities: tuple[dict[str, str], ...] = ()
     search_angles: tuple[dict[str, str], ...] = ()
+    query_history_summary: dict[str, Any] = field(default_factory=dict)
     prompt: str = ""
     raw_response_text: str = ""
 
@@ -42,6 +48,7 @@ class ContentResearchPlannerResult:
             "source_selection_criteria": dict(self.source_selection_criteria),
             "content_tension_opportunities": [dict(item) for item in self.content_tension_opportunities],
             "search_angles": [dict(item) for item in self.search_angles],
+            "query_history_summary": dict(self.query_history_summary),
             "final_queries": list(self.final_queries),
             "prompt": self.prompt,
             "raw_response_text": self.raw_response_text,
@@ -51,12 +58,18 @@ class ContentResearchPlannerResult:
 def create_content_research_plan(topic) -> ContentResearchPlannerResult:
     topic_title = _get_topic_title(topic)
     topic_keywords = _normalize_keywords(getattr(topic, "keywords", ()) or ())
-    prompt = build_content_research_planner_prompt(topic_title, topic_keywords)
+    query_history_summary = build_query_history_summary(topic)
+    prompt = build_content_research_planner_prompt(
+        topic_title,
+        topic_keywords,
+        query_history_summary=query_history_summary,
+    )
 
     if _should_use_fallback():
         return _build_fallback_result(
             topic_title,
             topic_keywords,
+            query_history_summary=query_history_summary,
             prompt=prompt,
             error_message="OPENAI_API_KEY is missing or uses the local placeholder.",
         )
@@ -70,6 +83,7 @@ def create_content_research_plan(topic) -> ContentResearchPlannerResult:
         return _build_result_from_ai_response(
             topic_title=topic_title,
             topic_keywords=topic_keywords,
+            query_history_summary=query_history_summary,
             prompt=prompt,
             response_text=response.text,
         )
@@ -77,12 +91,19 @@ def create_content_research_plan(topic) -> ContentResearchPlannerResult:
         return _build_fallback_result(
             topic_title,
             topic_keywords,
+            query_history_summary=query_history_summary,
             prompt=prompt,
             error_message=f"AI content research planning failed: {exc}",
         )
 
 
-def build_content_research_planner_prompt(topic_title: str, topic_keywords: Sequence[str]) -> str:
+def build_content_research_planner_prompt(
+    topic_title: str,
+    topic_keywords: Sequence[str],
+    *,
+    query_history_summary: dict[str, Any] | None = None,
+) -> str:
+    current_date = timezone.localdate()
     normalized_title = str(topic_title or "").strip()
     normalized_keywords = [keyword for keyword in _normalize_keywords(topic_keywords) if keyword]
     keywords_text = ", ".join(normalized_keywords) if normalized_keywords else "(none)"
@@ -91,7 +112,10 @@ def build_content_research_planner_prompt(topic_title: str, topic_keywords: Sequ
         template,
         topic_title=normalized_title,
         topic_keywords=keywords_text,
+        query_history_summary=render_query_history_summary_for_prompt(query_history_summary),
         max_final_query_count=str(MAX_FINAL_QUERY_COUNT),
+        current_date=current_date.isoformat(),
+        current_year=str(current_date.year),
     )
 
 
@@ -99,6 +123,7 @@ def _build_result_from_ai_response(
     *,
     topic_title: str,
     topic_keywords: Sequence[str],
+    query_history_summary: dict[str, Any],
     prompt: str,
     response_text: str,
 ) -> ContentResearchPlannerResult:
@@ -108,6 +133,7 @@ def _build_result_from_ai_response(
         return _build_fallback_result(
             topic_title,
             topic_keywords,
+            query_history_summary=query_history_summary,
             prompt=prompt,
             raw_response_text=response_text,
             error_message=str(exc),
@@ -118,6 +144,7 @@ def _build_result_from_ai_response(
         return _build_fallback_result(
             topic_title,
             topic_keywords,
+            query_history_summary=query_history_summary,
             prompt=prompt,
             raw_response_text=response_text,
             error_message="AI planner returned no usable queries.",
@@ -132,6 +159,7 @@ def _build_result_from_ai_response(
         source_selection_criteria=_clean_selection_criteria(payload.get("source_selection_criteria")),
         content_tension_opportunities=tuple(_clean_named_pairs(payload.get("content_tension_opportunities"), "tension", "why_it_matters")),
         search_angles=tuple(_clean_named_pairs(payload.get("search_angles"), "angle", "purpose")),
+        query_history_summary=dict(query_history_summary),
         prompt=prompt,
         raw_response_text=response_text,
     )
@@ -141,6 +169,7 @@ def _build_fallback_result(
     topic_title: str,
     topic_keywords: Sequence[str],
     *,
+    query_history_summary: dict[str, Any],
     prompt: str,
     error_message: str,
     raw_response_text: str = "",
@@ -179,6 +208,7 @@ def _build_fallback_result(
             {"angle": "recent examples", "purpose": "Surface current practice and fresh evidence."},
             {"angle": "expert opinion", "purpose": "Find opinionated sources that support a stronger post."},
         ),
+        query_history_summary=dict(query_history_summary),
         prompt=prompt,
         raw_response_text=raw_response_text,
     )
@@ -239,6 +269,9 @@ def _clean_queries(raw_queries: Any, *, topic_title: str, topic_keywords: Sequen
         query = re.sub(r"\s+", " ", str(raw_query or "").strip())
         if not query:
             continue
+        query = _rewrite_stale_year_query(query)
+        if not query:
+            continue
         normalized_key = query.casefold()
         if normalized_key in seen:
             continue
@@ -262,6 +295,42 @@ def _is_query_too_short_or_generic(query: str, context_tokens: set[str]) -> bool
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9]+", str(text or "").casefold())
+
+
+def _rewrite_stale_year_query(query: str) -> str:
+    current_year = timezone.localdate().year
+    stale_years = [int(match.group(0)) for match in re.finditer(r"\b20\d{2}\b", query) if int(match.group(0)) < current_year]
+    if not stale_years:
+        return re.sub(r"\s+", " ", query).strip()
+
+    rewritten = re.sub(
+        r"\b(?:in|during|for|from)\s+(20\d{2})\b",
+        lambda match: "" if int(match.group(1)) < current_year else match.group(0),
+        query,
+        flags=re.IGNORECASE,
+    )
+    rewritten = re.sub(
+        r"\b(20\d{2})\b",
+        lambda match: "" if int(match.group(1)) < current_year else match.group(0),
+        rewritten,
+    )
+    rewritten = re.sub(r"\s+", " ", rewritten).strip(" ,:-")
+    if rewritten and not _contains_freshness_signal(rewritten):
+        rewritten = f"{rewritten} latest"
+    return re.sub(r"\s+", " ", rewritten).strip()
+
+
+def _contains_freshness_signal(query: str) -> bool:
+    lowered = str(query or "").casefold()
+    freshness_needles = (
+        "latest",
+        "current",
+        "recent",
+        "this month",
+        "now",
+        str(timezone.localdate().year),
+    )
+    return any(needle in lowered for needle in freshness_needles)
 
 
 def _build_fallback_queries(topic_title: str, topic_keywords: Sequence[str]) -> list[str]:
