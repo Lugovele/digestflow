@@ -210,6 +210,47 @@
         .strategy-chip strong {
             color: #1f2937;
         }
+        .quality-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .quality-summary__card {
+            border: 1px solid #d9e2f1;
+            border-radius: 8px;
+            background: #fff;
+            padding: 10px 12px;
+        }
+        .quality-summary__label {
+            margin: 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .quality-summary__value {
+            margin: 4px 0 0;
+            font-size: 17px;
+            font-weight: 700;
+            color: #1f2937;
+        }
+        .quality-columns {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-top: 12px;
+        }
+        .quality-list {
+            margin: 8px 0 0;
+            padding-left: 18px;
+            color: #374151;
+            font-size: 14px;
+        }
+        .quality-list li + li {
+            margin-top: 6px;
+        }
+        .quality-list strong {
+            color: #1f2937;
+        }
         details {
             margin-top: 14px;
             border: 1px solid #d9e2f1;
@@ -492,6 +533,89 @@
             {% endif %}
         </section>
 
+        <section class="card">
+            <h2 style="margin: 0 0 14px; font-size: 20px;">Source quality feedback</h2>
+            <p class="muted" style="margin: 0 0 14px;">Compact patterns from recent discovery runs. Use this to see which kinds of results keep wasting queries and which material types look more promising.</p>
+            {% if source_quality_feedback.has_feedback %}
+                <p style="margin: 0 0 12px;"><strong>Main issue:</strong> {{ source_quality_feedback.main_quality_issue }}</p>
+                <div class="quality-summary">
+                    <div class="quality-summary__card">
+                        <p class="quality-summary__label">Quality rejected</p>
+                        <p class="quality-summary__value">{{ source_quality_feedback.quality_rejected_count }}</p>
+                    </div>
+                    <div class="quality-summary__card">
+                        <p class="quality-summary__label">Known / duplicate</p>
+                        <p class="quality-summary__value">{{ source_quality_feedback.known_or_duplicate_count }}</p>
+                    </div>
+                    <div class="quality-summary__card">
+                        <p class="quality-summary__label">Shown</p>
+                        <p class="quality-summary__value">{{ source_quality_feedback.shown_count }}</p>
+                    </div>
+                </div>
+                <div class="quality-columns">
+                    <div>
+                        <h3 class="section-title">Dominant rejection reasons</h3>
+                        {% if source_quality_feedback.dominant_rejection_reasons %}
+                            <ul class="quality-list">
+                                {% for item in source_quality_feedback.dominant_rejection_reasons %}
+                                    <li><strong>{{ item.reason }}</strong>: {{ item.count }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No dominant rejection reason pattern yet.</p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <h3 class="section-title">Weak material types</h3>
+                        {% if source_quality_feedback.weak_material_types %}
+                            <ul class="quality-list">
+                                {% for item in source_quality_feedback.weak_material_types %}
+                                    <li><strong>{{ item.label }}</strong>: {{ item.count }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No weak material pattern yet.</p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <h3 class="section-title">Preferred material types found</h3>
+                        {% if source_quality_feedback.preferred_material_types_found %}
+                            <ul class="quality-list">
+                                {% for item in source_quality_feedback.preferred_material_types_found %}
+                                    <li><strong>{{ item.label }}</strong>: {{ item.count }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No strong preferred material pattern yet.</p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <h3 class="section-title">Planner guidance</h3>
+                        {% if source_quality_feedback.planner_quality_guidance %}
+                            <ul class="quality-list">
+                                {% for item in source_quality_feedback.planner_quality_guidance %}
+                                    <li>{{ item }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No quality-specific planning guidance yet.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if source_quality_feedback.weak_domains %}
+                    <h3 class="section-title">Weak domains</h3>
+                    <ul class="quality-list">
+                        {% for item in source_quality_feedback.weak_domains %}
+                            <li><strong>{{ item.domain }}</strong>: {{ item.count }}{% if item.reason %} ({{ item.reason }}){% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            {% else %}
+                <p class="empty-state">No source quality feedback yet.</p>
+                <p class="muted" style="margin: 8px 0 0;">Run source discovery to see which domains, material types, and rejection patterns are dominating recent results.</p>
+            {% endif %}
+        </section>
+
         <section class="card" id="seen-sources">
             <h2 style="margin: 0 0 14px; font-size: 20px;">Seen sources</h2>
             <p class="muted" style="margin: 0 0 14px;">All sources this topic has seen through discovery, with their current history state.</p>
@@ -623,6 +747,39 @@
                                         <div class="strategy-chip"><strong>{{ detail.label }}:</strong> {{ detail.value }}</div>
                                     {% endfor %}
                                 </div>
+
+                                {% if item.quality_feedback.has_feedback %}
+                                    <h3 class="section-title">Quality diagnostics</h3>
+                                    <div class="diagnostic-row">
+                                        {% for metric in item.quality_feedback.rows %}
+                                            <div class="diagnostic-pill"><strong>{{ metric.label }}:</strong> {{ metric.value }}</div>
+                                        {% endfor %}
+                                    </div>
+                                    {% if item.quality_feedback.main_quality_issue %}
+                                        <p class="muted" style="margin: 10px 0 0;">Main quality issue: {{ item.quality_feedback.main_quality_issue }}</p>
+                                    {% endif %}
+                                    {% if item.quality_feedback.weak_material_types %}
+                                        <ul class="quality-list">
+                                            {% for weak_item in item.quality_feedback.weak_material_types %}
+                                                <li><strong>{{ weak_item.label }}</strong>: {{ weak_item.count }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% endif %}
+                                    {% if item.quality_feedback.preferred_material_types_found %}
+                                        <ul class="quality-list">
+                                            {% for preferred_item in item.quality_feedback.preferred_material_types_found %}
+                                                <li><strong>{{ preferred_item.label }}</strong>: {{ preferred_item.count }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% endif %}
+                                    {% if item.quality_feedback.planner_quality_guidance %}
+                                        <ul class="quality-list">
+                                            {% for guidance_item in item.quality_feedback.planner_quality_guidance %}
+                                                <li>{{ guidance_item }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% endif %}
+                                {% endif %}
 
                                 {% if item.query_rows %}
                                     <details>

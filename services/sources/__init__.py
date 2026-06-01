@@ -38,6 +38,10 @@ from .query_history_summary import (
     build_query_history_summary,
     render_query_history_summary_for_prompt,
 )
+from .source_quality_feedback import (
+    build_source_quality_feedback,
+    classify_source_quality_pattern,
+)
 from .research_review import (
     ResearchReviewContext,
     build_research_review_context,
@@ -101,7 +105,9 @@ __all__ = [
     "resolve_source_candidates",
     "build_query_history_summary",
     "build_research_review_context",
+    "build_source_quality_feedback",
     "build_topic_source_payloads_from_review_items",
+    "classify_source_quality_pattern",
     "get_persistable_research_candidates",
     "render_query_history_summary_for_prompt",
     "run_source_research",

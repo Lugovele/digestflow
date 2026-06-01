@@ -1,6 +1,7 @@
 import json
 import base64
 import logging
+import re
 from collections import Counter
 from datetime import timedelta
 from urllib.parse import urlencode, urlparse
@@ -24,6 +25,7 @@ from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceO
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import (
     build_research_review_context,
+    build_source_quality_feedback,
     build_topic_source_payloads_from_review_items,
     CuratedSourceSeed,
     TopicSourceDiscoveryRequest,
@@ -95,6 +97,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
     sync_topic_discovered_sources_into_history(topic)
     current_research_state = _build_current_research_state(topic)
     query_performance = _build_query_performance_section(topic)
+    source_quality_feedback = _build_source_quality_feedback_section(topic)
     history_runs = _build_research_history_run_entries(topic)
     seen_source_history = _build_seen_source_history_section(
         topic,
@@ -106,6 +109,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
         topic=topic,
         current_research_state=current_research_state,
         query_performance_entries=query_performance["entries"],
+        source_quality_feedback=source_quality_feedback,
         history_runs=history_runs,
         seen_source_history=seen_source_history["entries"],
     )
@@ -116,6 +120,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
             "topic": topic,
             "current_research_state": current_research_state,
             "query_performance_entries": query_performance["entries"],
+            "source_quality_feedback": source_quality_feedback,
             "history_runs": history_runs,
             "seen_source_history": seen_source_history["entries"],
             "seen_source_history_filters": seen_source_history["filters"],
@@ -1778,6 +1783,11 @@ def _build_source_discovery_run_diagnostics(
         known_normalized_urls=known_normalized_urls,
         shown_candidates=shown_candidates,
     )
+    diagnostics["source_quality_feedback"] = build_source_quality_feedback(
+        source_research_result=source_research_result,
+        known_normalized_urls=known_normalized_urls,
+        shown_candidates=shown_candidates,
+    )
     return diagnostics
 
 
@@ -1919,14 +1929,15 @@ def _build_provider_discovery_summary(
     )
 
     if execution_status == "failed":
-        title = "Source discovery did not complete"
         if suggestion_count > 0:
+            title = "Source discovery partially completed"
             body = (
                 f"Some searches could not be completed. "
                 f"{suggestion_count} new source suggestion{'s' if suggestion_count != 1 else ''} "
                 f"{'are' if suggestion_count != 1 else 'is'} still available."
             )
         else:
+            title = "Source discovery did not complete"
             body = (
                 "Provider results could not be loaded for this research search. Existing suggestions were kept."
                 if existing_new_suggestion_count > 0
@@ -2053,6 +2064,7 @@ def _build_research_history_run_entries(topic: Topic) -> list[dict]:
                 "strategy_rows": _build_research_history_strategy_rows(run, diagnostics),
                 "technical_rows": _build_research_history_detail_rows(run, diagnostics, provider_errors),
                 "query_rows": _build_discovery_query_rows(diagnostics),
+                "quality_feedback": _build_research_history_quality_feedback(diagnostics),
                 "provider_errors": provider_errors,
                 "warning_title": _build_research_history_warning_title(run, provider_errors),
                 "warning_body": _build_research_history_warning_body(run, provider_errors),
@@ -2164,6 +2176,93 @@ def _build_query_performance_section(topic: Topic) -> dict:
                 }
             )
     return {"entries": entries}
+
+
+def _build_source_quality_feedback_section(topic: Topic) -> dict:
+    aggregate = {
+        "quality_rejected_count": 0,
+        "known_or_duplicate_count": 0,
+        "shown_count": 0,
+        "dominant_rejection_reasons": Counter(),
+        "weak_domains": Counter(),
+        "weak_material_types": Counter(),
+        "preferred_material_types_found": Counter(),
+        "planner_quality_guidance": [],
+    }
+    latest_main_quality_issue = ""
+
+    for run in topic.source_discovery_runs.order_by("-completed_at", "-created_at", "-id")[:5]:
+        diagnostics = run.diagnostics if isinstance(run.diagnostics, dict) else {}
+        feedback = diagnostics.get("source_quality_feedback")
+        if not isinstance(feedback, dict):
+            continue
+        aggregate["quality_rejected_count"] += int(feedback.get("quality_rejected_count") or 0)
+        aggregate["known_or_duplicate_count"] += int(feedback.get("known_or_duplicate_count") or 0)
+        aggregate["shown_count"] += int(feedback.get("shown_count") or 0)
+        if not latest_main_quality_issue:
+            latest_main_quality_issue = str(feedback.get("main_quality_issue") or "").strip()
+        for item in feedback.get("dominant_rejection_reasons") or []:
+            if isinstance(item, dict):
+                reason = str(item.get("reason") or "").strip()
+                if reason:
+                    aggregate["dominant_rejection_reasons"][reason] += int(item.get("count") or 0)
+        for item in feedback.get("weak_domains") or []:
+            if isinstance(item, dict):
+                domain = str(item.get("domain") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                if domain:
+                    aggregate["weak_domains"][(domain, reason)] += int(item.get("count") or 0)
+        for item in feedback.get("weak_material_types") or []:
+            if isinstance(item, dict):
+                material_type = str(item.get("material_type") or "").strip()
+                label = str(item.get("label") or item.get("material_type") or "").strip()
+                if material_type:
+                    aggregate["weak_material_types"][(material_type, label)] += int(item.get("count") or 0)
+        for item in feedback.get("preferred_material_types_found") or []:
+            if isinstance(item, dict):
+                material_type = str(item.get("material_type") or "").strip()
+                label = str(item.get("label") or item.get("material_type") or "").strip()
+                if material_type:
+                    aggregate["preferred_material_types_found"][(material_type, label)] += int(item.get("count") or 0)
+        for item in feedback.get("planner_quality_guidance") or []:
+            cleaned = str(item or "").strip()
+            if cleaned and cleaned not in aggregate["planner_quality_guidance"]:
+                aggregate["planner_quality_guidance"].append(cleaned)
+
+    has_feedback = bool(
+        aggregate["quality_rejected_count"]
+        or aggregate["known_or_duplicate_count"]
+        or aggregate["shown_count"]
+        or aggregate["dominant_rejection_reasons"]
+        or aggregate["weak_domains"]
+        or aggregate["weak_material_types"]
+        or aggregate["preferred_material_types_found"]
+        or aggregate["planner_quality_guidance"]
+    )
+    return {
+        "has_feedback": has_feedback,
+        "main_quality_issue": latest_main_quality_issue or "No strong quality pattern detected yet.",
+        "quality_rejected_count": str(aggregate["quality_rejected_count"]),
+        "known_or_duplicate_count": str(aggregate["known_or_duplicate_count"]),
+        "shown_count": str(aggregate["shown_count"]),
+        "dominant_rejection_reasons": [
+            {"reason": reason, "count": str(count)}
+            for reason, count in aggregate["dominant_rejection_reasons"].most_common(3)
+        ],
+        "weak_domains": [
+            {"domain": domain, "reason": reason, "count": str(count)}
+            for (domain, reason), count in aggregate["weak_domains"].most_common(3)
+        ],
+        "weak_material_types": [
+            {"material_type": material_type, "label": label, "count": str(count)}
+            for (material_type, label), count in aggregate["weak_material_types"].most_common(4)
+        ],
+        "preferred_material_types_found": [
+            {"material_type": material_type, "label": label, "count": str(count)}
+            for (material_type, label), count in aggregate["preferred_material_types_found"].most_common(4)
+        ],
+        "planner_quality_guidance": aggregate["planner_quality_guidance"][:4],
+    }
 
 
 def _build_legacy_query_performance_rows(run: SourceDiscoveryRun, diagnostics: dict) -> list[dict]:
@@ -2341,6 +2440,42 @@ def _build_research_history_detail_rows(
     return rows
 
 
+def _build_research_history_quality_feedback(diagnostics: dict) -> dict:
+    feedback = diagnostics.get("source_quality_feedback")
+    if not isinstance(feedback, dict):
+        return {"has_feedback": False}
+    return {
+        "has_feedback": True,
+        "main_quality_issue": str(feedback.get("main_quality_issue") or "").strip(),
+        "rows": [
+            {"label": "Quality rejected", "value": str(int(feedback.get("quality_rejected_count") or 0))},
+            {"label": "Known / duplicate", "value": str(int(feedback.get("known_or_duplicate_count") or 0))},
+            {"label": "Shown", "value": str(int(feedback.get("shown_count") or 0))},
+        ],
+        "weak_material_types": [
+            {
+                "label": str(item.get("label") or item.get("material_type") or "").strip(),
+                "count": str(int(item.get("count") or 0)),
+            }
+            for item in feedback.get("weak_material_types") or []
+            if isinstance(item, dict)
+        ],
+        "preferred_material_types_found": [
+            {
+                "label": str(item.get("label") or item.get("material_type") or "").strip(),
+                "count": str(int(item.get("count") or 0)),
+            }
+            for item in feedback.get("preferred_material_types_found") or []
+            if isinstance(item, dict)
+        ],
+        "planner_quality_guidance": [
+            str(item).strip()
+            for item in feedback.get("planner_quality_guidance") or []
+            if str(item).strip()
+        ][:4],
+    }
+
+
 def _build_current_research_state(topic: Topic) -> dict:
     history_qs = topic.source_discovery_history.all()
     status_counts = Counter(history_qs.values_list("status", flat=True))
@@ -2363,6 +2498,7 @@ def _build_full_research_history_copy_report(
     topic: Topic,
     current_research_state: dict,
     query_performance_entries: list[dict],
+    source_quality_feedback: dict,
     history_runs: list[dict],
     seen_source_history: list[dict],
 ) -> str:
@@ -2413,6 +2549,35 @@ def _build_full_research_history_copy_report(
     else:
         lines.append("- No query performance data yet.")
 
+    add_section("Source quality feedback")
+    if source_quality_feedback.get("has_feedback"):
+        lines.append(f"- quality rejected count: {source_quality_feedback.get('quality_rejected_count')}")
+        lines.append(f"- known or duplicate count: {source_quality_feedback.get('known_or_duplicate_count')}")
+        lines.append(f"- shown count: {source_quality_feedback.get('shown_count')}")
+        lines.append(f"- main quality issue: {source_quality_feedback.get('main_quality_issue')}")
+        if source_quality_feedback.get("dominant_rejection_reasons"):
+            lines.append("- dominant rejection reasons:")
+            for item in source_quality_feedback.get("dominant_rejection_reasons", []):
+                lines.append(f"  - {item.get('reason')}: {item.get('count')}")
+        if source_quality_feedback.get("weak_domains"):
+            lines.append("- weak domains:")
+            for item in source_quality_feedback.get("weak_domains", []):
+                lines.append(f"  - {item.get('domain')}: {item.get('count')} ({item.get('reason')})")
+        if source_quality_feedback.get("weak_material_types"):
+            lines.append("- weak material types:")
+            for item in source_quality_feedback.get("weak_material_types", []):
+                lines.append(f"  - {item.get('label')}: {item.get('count')}")
+        if source_quality_feedback.get("preferred_material_types_found"):
+            lines.append("- preferred material types found:")
+            for item in source_quality_feedback.get("preferred_material_types_found", []):
+                lines.append(f"  - {item.get('label')}: {item.get('count')}")
+        if source_quality_feedback.get("planner_quality_guidance"):
+            lines.append("- planner quality guidance:")
+            for item in source_quality_feedback.get("planner_quality_guidance", []):
+                lines.append(f"  - {item}")
+    else:
+        lines.append("- No source quality feedback yet.")
+
     add_section("Discovery runs")
     if history_runs:
         for item in history_runs:
@@ -2445,6 +2610,17 @@ def _build_full_research_history_copy_report(
                 lines.append("  technical details:")
                 for detail in item.get("technical_rows", []):
                     lines.append(f"    - {detail.get('label')}: {detail.get('value')}")
+            quality_feedback = item.get("quality_feedback") or {}
+            if quality_feedback.get("has_feedback"):
+                lines.append("  quality diagnostics:")
+                for detail in quality_feedback.get("rows", []):
+                    lines.append(f"    - {detail.get('label')}: {detail.get('value')}")
+                if quality_feedback.get("main_quality_issue"):
+                    lines.append(f"    - Main issue: {quality_feedback.get('main_quality_issue')}")
+                for weak_item in quality_feedback.get("weak_material_types", []):
+                    lines.append(f"    - Weak material type: {weak_item.get('label')} ({weak_item.get('count')})")
+                for preferred_item in quality_feedback.get("preferred_material_types_found", []):
+                    lines.append(f"    - Preferred material type: {preferred_item.get('label')} ({preferred_item.get('count')})")
     else:
         lines.append("- No discovery runs yet.")
 
@@ -2471,7 +2647,11 @@ def _build_full_research_history_copy_report(
         lines.append(f"- total query rows: {latest_history_summary.get('total_query_rows')}")
         useful_angles = latest_history_summary.get("useful_angles") or []
         weak_angles = latest_history_summary.get("weak_angles") or []
-        planning_guidance = latest_history_summary.get("planning_guidance") or []
+        quality_guidance = _dedupe_guidance_strings(latest_history_summary.get("quality_guidance") or [])
+        planning_guidance = _dedupe_guidance_strings(
+            latest_history_summary.get("planning_guidance") or [],
+            skip_existing=quality_guidance,
+        )
         if useful_angles:
             lines.append("- useful angles:")
             for item in useful_angles:
@@ -2480,6 +2660,10 @@ def _build_full_research_history_copy_report(
             lines.append("- weak angles:")
             for item in weak_angles:
                 lines.append(f"  - {item.get('angle')}: {item.get('count')}")
+        if quality_guidance:
+            lines.append("- quality guidance used for next run:")
+            for item in quality_guidance:
+                lines.append(f"  - {item}")
         if planning_guidance:
             lines.append("- planning guidance:")
             for item in planning_guidance:
@@ -2488,6 +2672,26 @@ def _build_full_research_history_copy_report(
         lines.append("- No compact planner history guidance available.")
 
     return "\n".join(str(line) for line in lines if line is not None)
+
+
+def _dedupe_guidance_strings(items, *, skip_existing=None) -> list[str]:
+    normalized_items = items if isinstance(items, (list, tuple)) else []
+    deduped: list[str] = []
+    seen: set[str] = {
+        re.sub(r"\s+", " ", str(item or "").strip()).casefold()
+        for item in (skip_existing or [])
+        if re.sub(r"\s+", " ", str(item or "").strip())
+    }
+    for item in normalized_items:
+        cleaned = re.sub(r"\s+", " ", str(item or "").strip())
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+    return deduped
 
 
 def _format_research_history_timestamp(run: SourceDiscoveryRun) -> str:

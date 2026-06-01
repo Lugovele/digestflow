@@ -14,6 +14,10 @@ from services.sources.content_research_planner import (
     create_content_research_plan,
 )
 from services.sources.query_history_summary import build_query_history_summary
+from services.sources.source_quality_feedback import (
+    build_source_quality_feedback,
+    classify_source_quality_pattern,
+)
 
 
 class _TopicStub:
@@ -274,14 +278,26 @@ class ContentResearchPlannerTests(SimpleTestCase):
                 ],
                 "weak_queries": [],
                 "duplicate_heavy_queries": [],
+                "provider_error_queries": [],
+                "quality_rejected_queries": [],
                 "useful_angles": [{"angle": "recent examples", "count": 1}],
                 "weak_angles": [],
+                "provider_error_angles": [],
+                "stale_year_patterns": [],
+                "weak_material_types": [{"material_type": "social/profile/forum", "count": 2}],
+                "preferred_material_types_found": [{"material_type": "institutional / analyst report", "count": 1}],
+                "weak_domains": [{"domain": "quora.com", "count": 2}],
+                "dominant_rejection_reasons": [{"reason": "not enough substantive signals", "count": 2}],
+                "quality_guidance": ["Broad beginner or SEO-style guide phrasing is producing weak pages."],
                 "planning_guidance": ["Useful directions so far: recent examples. Create fresh variants around those angles instead of reusing the same wording."],
             },
         )
 
         self.assertIn("Recent query history summary:", prompt)
         self.assertIn("AI education teens classroom examples", prompt)
+        self.assertIn("Weak material types", prompt)
+        self.assertIn("quora.com", prompt)
+        self.assertIn("Broad beginner or SEO-style guide phrasing is producing weak pages.", prompt)
         self.assertIn("Useful directions so far: recent examples. Create fresh variants around those angles instead of reusing the same wording.", prompt)
         self.assertNotIn('"query_performance"', prompt)
 
@@ -315,6 +331,108 @@ class ContentResearchPlannerTests(SimpleTestCase):
         self.assertTrue(result.final_queries)
         self.assertTrue(all("2023" not in query for query in result.final_queries))
         self.assertTrue(any("current" in query.casefold() or "latest" in query.casefold() for query in result.final_queries))
+
+    @override_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test")
+    @patch("services.sources.content_research_planner.OpenAIClient.generate_text")
+    def test_quality_guidance_pushes_material_oriented_terms_into_ai_queries(self, mock_generate_text) -> None:
+        mock_generate_text.return_value = SimpleNamespace(
+            text=json.dumps(
+                {
+                    "topic_interpretation": "Bitcoin market research in current practice.",
+                    "content_research_goal": "Find current, post-worthy market material.",
+                    "source_selection_criteria": {
+                        "must_be_relevant_to": ["Bitcoin market"],
+                        "preferred_material_types": ["analysis"],
+                        "freshness_signals": ["recent"],
+                        "post_value_signals": ["trade-offs"],
+                        "relevance_boundary": "Stay close to the topic.",
+                    },
+                    "content_tension_opportunities": [],
+                    "search_angles": [
+                        {
+                            "angle": "Recent shifts in institutional investment strategies in Bitcoin",
+                            "purpose": "To explore how these strategies are shaping market trends and impacting retail investors.",
+                        },
+                        {
+                            "angle": "Bitcoin volatility and retail trading outcomes",
+                            "purpose": "To explore how volatility is affecting new investors.",
+                        },
+                    ],
+                    "queries": [
+                        "current trends in retail investor strategies for Bitcoin",
+                        "recent adaptations in Bitcoin trading approaches for new investors",
+                        "market responses to Bitcoin volatility and investment sentiment this month",
+                    ],
+                }
+            )
+        )
+
+        topic = _TopicStub("Bitcoin market", ["market structure"])
+        with patch(
+            "services.sources.content_research_planner.build_query_history_summary",
+            return_value={
+                "history_available": True,
+                "recent_run_count": 2,
+                "total_query_rows": 8,
+                "quality_guidance": [
+                    "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest."
+                ],
+                "preferred_material_types_found": [{"material_type": "market data / flow analysis", "count": 2}],
+                "planning_guidance": [],
+            },
+        ):
+            result = create_content_research_plan(topic)
+
+        joined = " || ".join(result.final_queries).casefold()
+        material_terms = ("etf flows", "institutional flows", "funding rates", "open interest")
+        self.assertGreaterEqual(sum(1 for query in result.final_queries if any(term in query.casefold() for term in material_terms)), 3)
+        self.assertTrue(any(term in joined for term in material_terms))
+        generic_retail_needles = ("retail investor", "new investors", "trading strategies", "trading approaches")
+        self.assertLessEqual(
+            sum(1 for query in result.final_queries if any(needle in query.casefold() for needle in generic_retail_needles)),
+            1,
+        )
+        query_to_angle = {
+            query.casefold(): angle
+            for query, angle in zip(result.final_queries, result.search_angles, strict=False)
+        }
+        self.assertIn("ETF flows / fund flows", query_to_angle["bitcoin market analysis etf flows latest"]["angle"])
+        self.assertIn("institutional flows", query_to_angle["bitcoin market analysis institutional flows latest"]["angle"])
+        self.assertIn("derivatives / market structure", query_to_angle["bitcoin market analysis funding rates latest"]["angle"])
+        self.assertNotIn("retail investors", query_to_angle["bitcoin market analysis etf flows latest"]["purpose"].casefold())
+
+    @override_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test")
+    @patch("services.sources.content_research_planner.OpenAIClient.generate_text")
+    def test_noisy_topic_prefix_is_removed_when_canonical_bitcoin_term_is_present(self, mock_generate_text) -> None:
+        mock_generate_text.return_value = SimpleNamespace(
+            text=json.dumps(
+                {
+                    "topic_interpretation": "Bitcoin market research in current practice.",
+                    "content_research_goal": "Find current, post-worthy market material.",
+                    "source_selection_criteria": {
+                        "must_be_relevant_to": ["Bitcoin market"],
+                        "preferred_material_types": ["analysis"],
+                        "freshness_signals": ["recent"],
+                        "post_value_signals": ["trade-offs"],
+                        "relevance_boundary": "Stay close to the topic.",
+                    },
+                    "content_tension_opportunities": [],
+                    "search_angles": [],
+                    "queries": [
+                        "bitcion market Bitcoin market analysis ETF flows latest",
+                        "bitcion market Bitcoin market analysis institutional flows latest",
+                    ],
+                }
+            )
+        )
+
+        topic = _TopicStub("bitcion market", ["market analysis"])
+        result = create_content_research_plan(topic)
+
+        self.assertTrue(result.final_queries)
+        self.assertTrue(all("bitcion" not in query.casefold() for query in result.final_queries))
+        self.assertTrue(all("bitcion market bitcoin market analysis" not in query.casefold() for query in result.final_queries))
+        self.assertTrue(any(query.startswith("Bitcoin market analysis") for query in result.final_queries))
 
 
 class ContentResearchPlannerHistorySummaryTests(TestCase):
@@ -389,6 +507,83 @@ class ContentResearchPlannerHistorySummaryTests(TestCase):
         self.assertEqual(summary["useful_angles"][0]["angle"], "recent examples")
         self.assertTrue(summary["planning_guidance"])
 
+    def test_source_quality_patterns_are_classified_deterministically(self) -> None:
+        social = classify_source_quality_pattern(
+            url="https://www.facebook.com/some-post",
+            title="Bitcoin market chat",
+            snippet="Community post",
+        )
+        self.assertEqual(social["weak_material_type"], "social_profile_forum")
+
+        prediction = classify_source_quality_pattern(
+            url="https://example.com/bitcoin-price-prediction",
+            title="Bitcoin price prediction for new investors",
+            snippet="Will BTC hit a new high?",
+        )
+        self.assertEqual(prediction["weak_material_type"], "price_prediction_live_price")
+
+        beginner = classify_source_quality_pattern(
+            url="https://example.com/ultimate-guide",
+            title="Ultimate guide to crypto trading for beginners",
+            snippet="A broad walkthrough.",
+        )
+        self.assertEqual(beginner["weak_material_type"], "beginner_seo_guide")
+
+        preferred = classify_source_quality_pattern(
+            url="https://glassnode.com/reports/bitcoin-market-structure",
+            title="Bitcoin market structure and ETF flows weekly commentary",
+            snippet="On-chain and liquidity signals.",
+        )
+        self.assertEqual(preferred["preferred_material_type"], "on_chain_analysis")
+
+    def test_build_source_quality_feedback_summarizes_weak_and_preferred_patterns(self) -> None:
+        evaluated_candidates = (
+            SimpleNamespace(
+                url="https://facebook.com/some-thread",
+                title="Bitcoin discussion",
+                snippet="Community thread",
+                candidate_type="article",
+                normalized_url="https://facebook.com/some-thread",
+                status=SimpleNamespace(value="rejected"),
+                diagnostics={"quality_rejection_reason": "not enough substantive signals"},
+                rejection_reasons=("not enough substantive signals",),
+            ),
+            SimpleNamespace(
+                url="https://example.com/bitcoin-price-prediction",
+                title="Bitcoin price prediction 2026",
+                snippet="Will BTC hit a new high?",
+                candidate_type="article",
+                normalized_url="https://example.com/bitcoin-price-prediction",
+                status=SimpleNamespace(value="rejected"),
+                diagnostics={"quality_rejection_reason": "not enough substantive signals"},
+                rejection_reasons=("not enough substantive signals",),
+            ),
+            SimpleNamespace(
+                url="https://glassnode.com/reports/bitcoin-market-structure",
+                title="Bitcoin market structure weekly commentary",
+                snippet="ETF flows and liquidity signals",
+                candidate_type="article",
+                normalized_url="https://glassnode.com/reports/bitcoin-market-structure",
+                status=SimpleNamespace(value="accepted"),
+                diagnostics={},
+                rejection_reasons=(),
+            ),
+        )
+        result = SimpleNamespace(evaluated_candidates=evaluated_candidates)
+
+        feedback = build_source_quality_feedback(
+            source_research_result=result,
+            shown_candidates=[{"url": "https://glassnode.com/reports/bitcoin-market-structure"}],
+            known_normalized_urls=set(),
+        )
+
+        self.assertEqual(feedback["quality_rejected_count"], 2)
+        self.assertEqual(feedback["shown_count"], 1)
+        self.assertEqual(feedback["weak_domains"][0]["domain"], "facebook.com")
+        self.assertTrue(any(item["material_type"] == "price_prediction_live_price" for item in feedback["weak_material_types"]))
+        self.assertTrue(any(item["material_type"] == "on_chain_analysis" for item in feedback["preferred_material_types_found"]))
+        self.assertTrue(feedback["planner_quality_guidance"])
+
     def test_provider_errors_are_not_classified_as_weak_query_directions(self) -> None:
         topic = self._create_topic("Provider error summary topic")
         SourceDiscoveryRun.objects.create(
@@ -431,6 +626,52 @@ class ContentResearchPlannerHistorySummaryTests(TestCase):
         self.assertEqual([item["query"] for item in summary["weak_queries"]], ["real weak query"])
         self.assertEqual(summary["provider_error_angles"][0]["angle"], "expert analysis")
         self.assertTrue(any("Do not treat those rows as proof that the angle is weak" in item for item in summary["planning_guidance"]))
+
+    def test_history_summary_includes_quality_feedback_guidance_from_previous_runs(self) -> None:
+        topic = self._create_topic("Quality guidance topic")
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+            diagnostics={
+                "query_performance": [
+                    {
+                        "query": "bitcoin market structure research report",
+                        "angle": "market structure",
+                        "purpose": "Find higher-substance analysis.",
+                        "returned_count": 4,
+                        "accepted_count": 1,
+                        "rejected_count": 1,
+                        "duplicate_count": 0,
+                        "visible_new_suggestions_count": 1,
+                        "status": "useful",
+                    }
+                ],
+                "source_quality_feedback": {
+                    "quality_rejected_count": 3,
+                    "known_or_duplicate_count": 1,
+                    "shown_count": 1,
+                    "dominant_rejection_reasons": [{"reason": "not enough substantive signals", "count": 3}],
+                    "weak_domains": [{"domain": "quora.com", "count": 2, "reason": "social/profile/forum"}],
+                    "weak_material_types": [{"material_type": "beginner_seo_guide", "label": "beginner / SEO guide", "count": 2}],
+                    "preferred_material_types_found": [{"material_type": "market_data_flow_analysis", "label": "market data / flow analysis", "count": 1}],
+                    "main_quality_issue": "beginner / SEO guide results dominate recent rejected candidates",
+                    "planner_quality_guidance": [
+                        "Broad beginner or SEO-style guide phrasing is producing weak pages. Avoid 'for beginners', 'ultimate guide', or generic strategy phrasing.",
+                        "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest.",
+                    ],
+                },
+            },
+        )
+
+        summary = build_query_history_summary(topic)
+
+        self.assertTrue(any(item["domain"] == "quora.com" for item in summary["weak_domains"]))
+        self.assertTrue(any(item["reason"] == "not enough substantive signals" for item in summary["dominant_rejection_reasons"]))
+        self.assertTrue(any(item["material_type"] == "beginner / SEO guide" for item in summary["weak_material_types"]))
+        self.assertTrue(any("ETF flows" in item for item in summary["planning_guidance"]))
+        self.assertTrue(any("quora.com" in item for item in summary["planning_guidance"]))
 
     def test_stale_year_and_duplicate_heavy_patterns_influence_guidance(self) -> None:
         topic = self._create_topic("Pattern guidance topic")

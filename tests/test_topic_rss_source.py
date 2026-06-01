@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 from html import unescape
 import json
 import re
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
@@ -14,7 +15,11 @@ from django.utils import timezone
 from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
-from apps.digests.views import _build_curated_source_seeds, _upsert_and_build_source_candidates
+from apps.digests.views import (
+    _build_curated_source_seeds,
+    _build_source_discovery_run_diagnostics,
+    _upsert_and_build_source_candidates,
+)
 from apps.sources.models import Article
 from services.sources.content_research_planner import ContentResearchPlannerResult
 from services.sources.discovery_history import sync_topic_discovered_sources_into_history
@@ -2166,7 +2171,7 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Bitcoin infrastructure case study")
-        self.assertContains(response, "Source discovery did not complete")
+        self.assertContains(response, "Source discovery partially completed")
         self.assertContains(response, "Some searches could not be completed.")
         self.assertContains(response, "1 new source suggestion is still available.")
 
@@ -3388,6 +3393,45 @@ class TopicRssSourceTests(TestCase):
                         "status": "no_visible_results",
                     },
                 ],
+                "source_quality_feedback": {
+                    "quality_rejected_count": 4,
+                    "known_or_duplicate_count": 2,
+                    "shown_count": 1,
+                    "dominant_rejection_reasons": [
+                        {"reason": "not enough substantive signals", "count": 3},
+                    ],
+                    "weak_domains": [
+                        {"domain": "quora.com", "count": 2, "reason": "social/profile/forum"},
+                    ],
+                    "weak_material_types": [
+                        {"material_type": "beginner_seo_guide", "label": "beginner / SEO guide", "count": 3},
+                        {"material_type": "price_prediction_live_price", "label": "price prediction / live price", "count": 1},
+                    ],
+                    "preferred_material_types_found": [
+                        {"material_type": "market_data_flow_analysis", "label": "market data / flow analysis", "count": 1},
+                    ],
+                    "main_quality_issue": "beginner / SEO guide results dominate recent rejected candidates",
+                    "planner_quality_guidance": [
+                        "Broad beginner or SEO-style guide phrasing is producing weak pages. Avoid 'for beginners', 'ultimate guide', or generic strategy phrasing.",
+                        "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest.",
+                    ],
+                },
+                "query_history_summary": {
+                    "history_available": True,
+                    "recent_run_count": 2,
+                    "malformed_run_count": 0,
+                    "total_query_rows": 6,
+                    "quality_guidance": [
+                        "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest.",
+                        "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest.",
+                    ],
+                    "planning_guidance": [
+                        "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest.",
+                        "Preferred material types already found include: market data / flow analysis. Lean harder into those patterns in the next run."
+                    ],
+                    "useful_angles": [{"angle": "market structure", "count": 1}],
+                    "weak_angles": [{"angle": "retail behavior", "count": 1}],
+                },
                 "per_query_result_counts": [
                     {
                         "intent": "implementation_guide",
@@ -3413,6 +3457,7 @@ class TopicRssSourceTests(TestCase):
         )
         self.assertContains(response, "Current research state")
         self.assertContains(response, "Query performance")
+        self.assertContains(response, "Source quality feedback")
         self.assertContains(response, "Copy full history")
         self.assertContains(response, 'id="copy-full-history-button"', html=False)
         self.assertContains(response, 'id="full-history-copy-payload"', html=False)
@@ -3420,9 +3465,20 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("Topic", copy_report)
         self.assertIn("Current research state", copy_report)
         self.assertIn("Query performance", copy_report)
+        self.assertIn("Source quality feedback", copy_report)
         self.assertIn("Discovery runs", copy_report)
         self.assertIn("Seen sources", copy_report)
         self.assertIn("Planner history guidance", copy_report)
+        self.assertIn("weak material types", copy_report.casefold())
+        self.assertIn("planner quality guidance", copy_report.casefold())
+        self.assertIn("quality guidance used for next run", copy_report.casefold())
+        self.assertIn("ETF flows", copy_report)
+        self.assertEqual(
+            copy_report.count(
+                "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest."
+            ),
+            2,
+        )
         self.assertNotContains(response, copy_report)
         self.assertContains(response, "Discovery completed")
         self.assertNotContains(response, '<h2 class="history-run__title">completed</h2>', html=False)
@@ -3454,6 +3510,12 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Passed filtering")
         self.assertContains(response, "Rejected by filters")
         self.assertContains(response, "Already known or duplicate")
+        self.assertContains(response, "Main issue:")
+        self.assertContains(response, "beginner / SEO guide results dominate recent rejected candidates")
+        self.assertContains(response, "Weak material types")
+        self.assertContains(response, "Preferred material types found")
+        self.assertContains(response, "Quality diagnostics")
+        self.assertNotContains(response, "https://quora.com/answer")
         self.assertNotContains(response, "Visible new suggestions from this run")
         self.assertNotContains(response, "URLs returned by provider")
         self.assertContains(response, "<details class=\"history-run\">", html=False)
@@ -3468,11 +3530,84 @@ class TopicRssSourceTests(TestCase):
         html = response.content.decode("utf-8")
         current_state_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Current research state</h2>'
         query_performance_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Query performance</h2>'
+        source_quality_feedback_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Source quality feedback</h2>'
         seen_sources_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Seen sources</h2>'
         discovery_runs_header = '<h2 style="margin: 0 0 6px; font-size: 20px;">Discovery runs</h2>'
         self.assertLess(html.index(current_state_header), html.index(query_performance_header))
-        self.assertLess(html.index(query_performance_header), html.index(seen_sources_header))
+        self.assertLess(html.index(query_performance_header), html.index(source_quality_feedback_header))
+        self.assertLess(html.index(source_quality_feedback_header), html.index(seen_sources_header))
         self.assertLess(html.index(seen_sources_header), html.index(discovery_runs_header))
+
+    def test_source_discovery_run_diagnostics_include_source_quality_feedback(self) -> None:
+        source_research_result = MagicMock()
+        source_research_result.diagnostics = {
+            "query_performance": [
+                {
+                    "query": "bitcoin market structure report",
+                    "provider": "serpapi",
+                    "returned_count": 1,
+                    "accepted_count": 1,
+                    "rejected_count": 0,
+                    "duplicate_count": 0,
+                    "visible_new_suggestions_count": 0,
+                    "status": "useful",
+                },
+                {
+                    "query": "bitcoin price prediction",
+                    "provider": "serpapi",
+                    "returned_count": 1,
+                    "accepted_count": 0,
+                    "rejected_count": 1,
+                    "duplicate_count": 0,
+                    "visible_new_suggestions_count": 0,
+                    "status": "weak",
+                },
+            ]
+        }
+        source_research_result.provider_result.provider_name = "serpapi"
+        source_research_result.evaluated_candidates = (
+            MagicMock(
+                url="https://glassnode.com/reports/bitcoin-market-structure",
+                title="Bitcoin market structure weekly commentary",
+                snippet="ETF flows and liquidity signals",
+                candidate_type="article",
+                normalized_url="https://glassnode.com/reports/bitcoin-market-structure",
+                status=SimpleNamespace(value="accepted"),
+                diagnostics={"query": "bitcoin market structure report"},
+                rejection_reasons=(),
+            ),
+            MagicMock(
+                url="https://example.com/bitcoin-price-prediction",
+                title="Bitcoin price prediction for beginners",
+                snippet="Will BTC hit a new high?",
+                candidate_type="article",
+                normalized_url="https://example.com/bitcoin-price-prediction",
+                status=SimpleNamespace(value="rejected"),
+                diagnostics={
+                    "query": "bitcoin price prediction",
+                    "quality_rejection_reason": "not enough substantive signals",
+                },
+                rejection_reasons=("not enough substantive signals",),
+            ),
+        )
+
+        diagnostics = _build_source_discovery_run_diagnostics(
+            source_research_result=source_research_result,
+            known_normalized_urls=set(),
+            shown_candidates=[
+                {
+                    "url": "https://glassnode.com/reports/bitcoin-market-structure",
+                    "query": "bitcoin market structure report",
+                }
+            ],
+        )
+
+        feedback = diagnostics["source_quality_feedback"]
+        self.assertEqual(feedback["quality_rejected_count"], 1)
+        self.assertEqual(feedback["shown_count"], 1)
+        self.assertTrue(any(item["material_type"] == "price_prediction_live_price" for item in feedback["weak_material_types"]))
+        self.assertTrue(any(item["material_type"] == "on_chain_analysis" for item in feedback["preferred_material_types_found"]))
+        self.assertTrue(feedback["planner_quality_guidance"])
 
     def test_research_history_page_renders_partial_failure_warning(self) -> None:
         topic = Topic.objects.create(
@@ -4594,6 +4729,11 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(
             response,
             "Run source discovery to see which queries were used and what results they produced.",
+        )
+        self.assertContains(response, "No source quality feedback yet.")
+        self.assertContains(
+            response,
+            "Run source discovery to see which domains, material types, and rejection patterns are dominating recent results.",
         )
         self.assertContains(response, "No research history yet.")
         self.assertContains(response, "Run Find sources to start source discovery for this topic.")

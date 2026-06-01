@@ -12,7 +12,7 @@ from django.utils import timezone
 MAX_SUMMARY_RUNS = 5
 MAX_SUMMARY_QUERIES_PER_BUCKET = 3
 MAX_SUMMARY_ANGLES_PER_BUCKET = 3
-MAX_SUMMARY_GUIDANCE_ITEMS = 4
+MAX_SUMMARY_GUIDANCE_ITEMS = 8
 
 
 def build_query_history_summary(topic) -> dict[str, Any]:
@@ -31,12 +31,25 @@ def build_query_history_summary(topic) -> dict[str, Any]:
     malformed_run_count = 0
     total_query_rows = 0
     stale_year_counter: Counter[str] = Counter()
+    weak_material_types: Counter[str] = Counter()
+    preferred_material_types: Counter[str] = Counter()
+    weak_domains: Counter[str] = Counter()
+    dominant_rejection_reasons: Counter[str] = Counter()
+    quality_guidance: list[str] = []
 
     for run in runs:
         diagnostics = getattr(run, "diagnostics", {}) or {}
         if not isinstance(diagnostics, dict):
             malformed_run_count += 1
             continue
+        _merge_quality_feedback_summary(
+            diagnostics.get("source_quality_feedback"),
+            weak_material_types=weak_material_types,
+            preferred_material_types=preferred_material_types,
+            weak_domains=weak_domains,
+            dominant_rejection_reasons=dominant_rejection_reasons,
+            quality_guidance=quality_guidance,
+        )
         query_rows = diagnostics.get("query_performance")
         if not isinstance(query_rows, list):
             continue
@@ -85,6 +98,11 @@ def build_query_history_summary(topic) -> dict[str, Any]:
         "weak_angles": _limit_counter(weak_angles),
         "provider_error_angles": _limit_counter(provider_error_angles),
         "stale_year_patterns": _limit_counter(stale_year_counter, label_key="pattern"),
+        "weak_material_types": _limit_counter(weak_material_types, label_key="material_type"),
+        "preferred_material_types_found": _limit_counter(preferred_material_types, label_key="material_type"),
+        "weak_domains": _limit_counter(weak_domains, label_key="domain"),
+        "dominant_rejection_reasons": _limit_counter(dominant_rejection_reasons, label_key="reason"),
+        "quality_guidance": quality_guidance[:MAX_SUMMARY_GUIDANCE_ITEMS],
         "planning_guidance": [],
     }
     summary["planning_guidance"] = _build_planning_guidance(summary)
@@ -110,6 +128,15 @@ def render_query_history_summary_for_prompt(summary: dict[str, Any] | None) -> s
     lines.extend(_render_angle_bucket("Weak or exhausted angles", normalized.get("weak_angles")))
     lines.extend(_render_angle_bucket("Provider-error angles", normalized.get("provider_error_angles")))
     lines.extend(_render_pattern_bucket("Stale year patterns", normalized.get("stale_year_patterns")))
+    lines.extend(_render_pattern_bucket("Weak material types", normalized.get("weak_material_types"), label_key="material_type"))
+    lines.extend(_render_pattern_bucket("Preferred material types found", normalized.get("preferred_material_types_found"), label_key="material_type"))
+    lines.extend(_render_pattern_bucket("Weak domains", normalized.get("weak_domains"), label_key="domain"))
+    lines.extend(_render_pattern_bucket("Dominant rejection reasons", normalized.get("dominant_rejection_reasons"), label_key="reason"))
+    quality_guidance = normalized.get("quality_guidance") or []
+    if quality_guidance:
+        lines.append("- Quality guidance:")
+        for item in quality_guidance[:MAX_SUMMARY_GUIDANCE_ITEMS]:
+            lines.append(f"  - {str(item).strip()}")
     guidance = normalized.get("planning_guidance") or []
     if guidance:
         lines.append("- Planning guidance:")
@@ -143,6 +170,11 @@ def _empty_summary() -> dict[str, Any]:
         "weak_angles": [],
         "provider_error_angles": [],
         "stale_year_patterns": [],
+        "weak_material_types": [],
+        "preferred_material_types_found": [],
+        "weak_domains": [],
+        "dominant_rejection_reasons": [],
+        "quality_guidance": [],
         "planning_guidance": [],
     }
 
@@ -218,6 +250,11 @@ def _build_planning_guidance(summary: dict[str, Any]) -> list[str]:
     useful_angles = summary.get("useful_angles") or []
     weak_angles = summary.get("weak_angles") or []
     stale_year_patterns = summary.get("stale_year_patterns") or []
+    weak_material_type_rows = summary.get("weak_material_types") or []
+    preferred_material_type_rows = summary.get("preferred_material_types_found") or []
+    weak_domain_rows = summary.get("weak_domains") or []
+    rejection_reason_rows = summary.get("dominant_rejection_reasons") or []
+    quality_guidance = summary.get("quality_guidance") or []
 
     if useful_queries:
         useful_angle_names = ", ".join(str(item.get("angle") or "").strip() for item in useful_angles if str(item.get("angle") or "").strip())
@@ -238,8 +275,26 @@ def _build_planning_guidance(summary: dict[str, Any]) -> list[str]:
     if stale_year_patterns:
         stale_year_labels = ", ".join(str(item.get("pattern") or "").strip() for item in stale_year_patterns if str(item.get("pattern") or "").strip())
         guidance.append(f"Avoid stale explicit years in fresh searches ({stale_year_labels}). Prefer latest, current, recent, or this month phrasing.")
-    if quality_rejected_queries:
+    for item in quality_guidance:
+        cleaned = str(item or "").strip()
+        if cleaned and cleaned not in guidance:
+            guidance.append(cleaned)
+        if len(guidance) >= MAX_SUMMARY_GUIDANCE_ITEMS:
+            break
+    if weak_material_type_rows and len(guidance) < MAX_SUMMARY_GUIDANCE_ITEMS:
+        labels = ", ".join(str(item.get("material_type") or "").strip() for item in weak_material_type_rows if str(item.get("material_type") or "").strip())
+        guidance.append(f"Recent low-quality material types include: {labels}. Adjust queries to avoid attracting those patterns.")
+    if preferred_material_type_rows and len(guidance) < MAX_SUMMARY_GUIDANCE_ITEMS:
+        labels = ", ".join(str(item.get("material_type") or "").strip() for item in preferred_material_type_rows if str(item.get("material_type") or "").strip())
+        guidance.append(f"Preferred material types already found include: {labels}. Lean harder into those patterns in the next run.")
+    if weak_domain_rows and len(guidance) < MAX_SUMMARY_GUIDANCE_ITEMS:
+        labels = ", ".join(str(item.get("domain") or "").strip() for item in weak_domain_rows if str(item.get("domain") or "").strip())
+        guidance.append(f"Low-quality domains keep appearing: {labels}. Avoid broad phrasing that attracts forum, social, or profile pages.")
+    if quality_rejected_queries and len(guidance) < MAX_SUMMARY_GUIDANCE_ITEMS:
         guidance.append("Some queries returned results but mostly low-quality or off-topic candidates. Tighten source intent and specificity before retrying those directions.")
+    if rejection_reason_rows and len(guidance) < MAX_SUMMARY_GUIDANCE_ITEMS:
+        labels = ", ".join(str(item.get("reason") or "").strip() for item in rejection_reason_rows if str(item.get("reason") or "").strip())
+        guidance.append(f"Dominant rejection reasons include: {labels}. Use that feedback to steer toward higher-substance source types.")
 
     return guidance[:MAX_SUMMARY_GUIDANCE_ITEMS]
 
@@ -280,13 +335,13 @@ def _render_angle_bucket(label: str, rows: Any) -> list[str]:
     return lines
 
 
-def _render_pattern_bucket(label: str, rows: Any) -> list[str]:
+def _render_pattern_bucket(label: str, rows: Any, *, label_key: str = "pattern") -> list[str]:
     normalized_rows = rows if isinstance(rows, list) else []
     if not normalized_rows:
         return [f"- {label}: none"]
     lines = [f"- {label}:"]
     for row in normalized_rows[:MAX_SUMMARY_ANGLES_PER_BUCKET]:
-        pattern = str(row.get("pattern") or "").strip()
+        pattern = str(row.get(label_key) or "").strip()
         count = int(row.get("count") or 0)
         if not pattern:
             continue
@@ -301,3 +356,40 @@ def _extract_stale_years(query: str) -> list[str]:
         if int(match.group(0)) < current_year:
             years.append(match.group(0))
     return years
+
+
+def _merge_quality_feedback_summary(
+    feedback: Any,
+    *,
+    weak_material_types: Counter[str],
+    preferred_material_types: Counter[str],
+    weak_domains: Counter[str],
+    dominant_rejection_reasons: Counter[str],
+    quality_guidance: list[str],
+) -> None:
+    if not isinstance(feedback, dict):
+        return
+    for item in feedback.get("dominant_rejection_reasons") or []:
+        if isinstance(item, dict):
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                dominant_rejection_reasons[reason] += int(item.get("count") or 0)
+    for item in feedback.get("weak_domains") or []:
+        if isinstance(item, dict):
+            domain = str(item.get("domain") or "").strip()
+            if domain:
+                weak_domains[domain] += int(item.get("count") or 0)
+    for item in feedback.get("weak_material_types") or []:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("material_type") or "").strip()
+            if label:
+                weak_material_types[label] += int(item.get("count") or 0)
+    for item in feedback.get("preferred_material_types_found") or []:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("material_type") or "").strip()
+            if label:
+                preferred_material_types[label] += int(item.get("count") or 0)
+    for item in feedback.get("planner_quality_guidance") or []:
+        cleaned = str(item or "").strip()
+        if cleaned and cleaned not in quality_guidance:
+            quality_guidance.append(cleaned)

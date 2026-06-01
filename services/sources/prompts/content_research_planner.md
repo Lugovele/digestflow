@@ -24,6 +24,7 @@ This is a fresh discovery search. Do not include stale explicit years older than
 Prefer temporal wording such as latest, current, recent, or this month.
 Only mention {{ current_year }} if the year itself is materially relevant to the topic.
 Make search angles concrete and specific, not generic. Good angle examples include institutional flows, ETF demand, macro liquidity, retail behavior, volatility or risk, market structure, analyst outlook, on-chain data, implementation lessons, case study outcomes, or regulation shifts when relevant to the topic.
+When recent quality guidance recommends reports, data, flows, market structure, on-chain analysis, analyst research, or research papers, reflect that directly in the final queries. Make at least a few final queries explicitly use those material-oriented terms instead of only broad retail, beginner, or trading-strategy phrasing.
 
 Return JSON with exactly this structure:
 {
