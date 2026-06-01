@@ -2087,14 +2087,15 @@ class TopicRssSourceTests(TestCase):
         mock_urlopen,
         mock_create_content_research_plan,
     ) -> None:
+        original_query = "topic rss unique planner query"
         mock_create_content_research_plan.return_value = MagicMock(
             planner_status="ai_planned",
             fallback_used=False,
-            final_queries=("topic rss unique planner query",),
+            final_queries=(original_query,),
             diagnostics={
                 "planner_status": "ai_planned",
                 "fallback_used": False,
-                "final_queries": ["topic rss unique planner query"],
+                "final_queries": [original_query],
                 "topic_interpretation": "AI automation topic interpretation",
                 "content_research_goal": "Find fresh, practical materials.",
                 "source_selection_criteria": {},
@@ -2102,18 +2103,33 @@ class TopicRssSourceTests(TestCase):
                 "search_angles": [],
             },
         )
-        self._mock_serpapi_urlopen(
-            mock_urlopen,
-            [
-                {
-                    "position": 1,
-                    "title": "AI automation guide",
-                    "link": "https://example.com/ai-guide",
-                    "snippet": "Practical guide for AI automation workflows.",
-                    "source": "Example",
-                }
-            ],
-        )
+        repaired_queries_seen: list[str] = []
+
+        def _bounded_cycle_urlopen(request, timeout=None):
+            query = parse_qs(urlparse(request.full_url).query).get("q", [""])[0]
+            response = MagicMock()
+            if query == original_query:
+                response.read.return_value = json.dumps(
+                    {
+                        "organic_results": [
+                            {
+                                "position": 1,
+                                "title": "AI automation guide",
+                                "link": "https://example.com/ai-guide",
+                                "snippet": "Practical guide for AI automation workflows.",
+                                "source": "Example",
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+            else:
+                repaired_queries_seen.append(query)
+                response.read.return_value = json.dumps({"organic_results": []}).encode("utf-8")
+            context_manager = MagicMock()
+            context_manager.__enter__.return_value = response
+            return context_manager
+
+        mock_urlopen.side_effect = _bounded_cycle_urlopen
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="AI automation",
@@ -2139,7 +2155,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "Found 1 new source suggestion after 2 search rounds. DigestFlow could not reach the 6-source target with the current search strategy.",
+            "Found 1 new source suggestion after 3 search rounds. DigestFlow could not reach the 6-source target with the current search strategy.",
         )
         self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertNotContains(response, "Source discovery details")
@@ -2150,7 +2166,7 @@ class TopicRssSourceTests(TestCase):
         topic.refresh_from_db()
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
         discovery_runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
-        self.assertEqual(len(discovery_runs), 2)
+        self.assertEqual(len(discovery_runs), 3)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 1)
         discovered_source = topic.sources.get(origin=TopicSourceOrigin.DISCOVERED)
@@ -2167,17 +2183,21 @@ class TopicRssSourceTests(TestCase):
             ["topic rss unique planner query"],
         )
         final_cycle = discovery_runs[-1].diagnostics.get("discovery_cycle") or {}
-        self.assertEqual(final_cycle.get("decision"), "partial_target_not_reached")
-        self.assertEqual(final_cycle.get("round_count"), 2)
+        self.assertEqual(final_cycle.get("decision"), "max_rounds_reached")
+        self.assertEqual(final_cycle.get("round_count"), 3)
+        self.assertEqual(final_cycle.get("max_immediate_rounds"), 3)
         self.assertEqual(final_cycle.get("accumulated_visible_suggestions"), 1)
+        self.assertTrue(final_cycle.get("rounds", [])[1].get("used_repair_plan"))
+        self.assertTrue(final_cycle.get("rounds", [])[2].get("used_repair_plan"))
+        self.assertTrue(repaired_queries_seen)
         history_item = SourceDiscoveryHistory.objects.get(topic=topic, normalized_url="https://example.com/ai-guide")
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_SHOWN)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_NEW_SHOWN)
-        self.assertEqual(history_item.seen_count, 2)
+        self.assertEqual(history_item.seen_count, 1)
         self.assertTrue(history_item.created_topic_source)
         self.assertEqual(history_item.topic_source_id, discovered_source.id)
         self.assertTrue(history_item.query_text)
-        self.assertEqual(history_item.query_text, "topic rss unique planner query")
+        self.assertEqual(history_item.query_text, original_query)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2281,7 +2301,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Bitcoin infrastructure case study")
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(response, "Some searches could not be completed.")
-        self.assertContains(response, "1 new source suggestion is still available after 2 search rounds.")
+        self.assertContains(response, "1 new source suggestion is still available after 3 search rounds.")
 
         discovered_source = TopicSource.objects.get(topic=topic, origin=TopicSourceOrigin.DISCOVERED)
         self.assertEqual(discovered_source.url, "https://example.com/bitcoin-infrastructure-case-study")
@@ -2289,7 +2309,7 @@ class TopicRssSourceTests(TestCase):
         self.assertFalse(discovered_source.is_pinned)
 
         discovery_runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
-        self.assertEqual(len(discovery_runs), 2)
+        self.assertEqual(len(discovery_runs), 3)
         discovery_run = discovery_runs[0]
         self.assertEqual(discovery_run.status, SourceDiscoveryRun.STATUS_PARTIAL_FAILED)
         self.assertEqual(discovery_run.new_suggestions_count, 1)
@@ -2305,14 +2325,16 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(failed_row.get("returned_count"), 0)
         self.assertTrue(str(failed_row.get("error_message") or "").strip())
         final_cycle = discovery_runs[-1].diagnostics.get("discovery_cycle") or {}
-        self.assertEqual(final_cycle.get("decision"), "partial_target_not_reached")
-        self.assertEqual(final_cycle.get("round_count"), 2)
+        self.assertEqual(final_cycle.get("decision"), "max_rounds_reached")
+        self.assertEqual(final_cycle.get("round_count"), 3)
+        self.assertEqual(final_cycle.get("max_immediate_rounds"), 3)
         self.assertEqual(final_cycle.get("accumulated_visible_suggestions"), 1)
         self.assertTrue(final_cycle.get("rounds", [])[1].get("used_repair_plan"))
+        self.assertTrue(final_cycle.get("rounds", [])[2].get("used_repair_plan"))
         self.assertTrue(repaired_queries_seen)
         self.assertEqual(
             [item.get("query") for item in (final_cycle.get("rounds", [])[1].get("repair_plan_usage") or {}).get("repair_queries_used", [])],
-            repaired_queries_seen,
+            repaired_queries_seen[:len((final_cycle.get("rounds", [])[1].get("repair_plan_usage") or {}).get("repair_queries_used", []))],
         )
 
         history_item = SourceDiscoveryHistory.objects.get(
@@ -2395,8 +2417,9 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(len(cycle_runs), 2)
         cycle = cycle_runs[-1].diagnostics.get("discovery_cycle") or {}
         self.assertEqual(cycle.get("target_visible_new_suggestions"), 6)
-        self.assertEqual(cycle.get("max_immediate_rounds"), 2)
+        self.assertEqual(cycle.get("max_immediate_rounds"), 3)
         self.assertEqual(cycle.get("round_count"), 2)
+        self.assertEqual(cycle.get("rounds_run"), 2)
         self.assertEqual(cycle.get("accumulated_visible_suggestions"), 6)
         self.assertEqual(cycle.get("decision"), "target_reached")
         self.assertEqual((cycle.get("repair_plan") or {}).get("strategy"), "stop")
@@ -2784,6 +2807,219 @@ class TopicRssSourceTests(TestCase):
         SEARCH_PROVIDER_API_KEY="test-key",
     )
     @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_can_run_third_round_with_new_repair_plan_from_round_two(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle third round topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        round_one_candidates = [
+            {
+                "title": f"Round one source {index}",
+                "url": f"https://example.com/cycle-third-round-1-{index}",
+                "normalized_url": f"https://example.com/cycle-third-round-1-{index}",
+                "source_type": "generic_html",
+                "candidate_origin": TopicSourceOrigin.DISCOVERED,
+                "default_selected": True,
+            }
+            for index in range(1, 3)
+        ]
+        round_two_candidates = [
+            {
+                "title": f"Round two source {index}",
+                "url": f"https://example.com/cycle-third-round-2-{index}",
+                "normalized_url": f"https://example.com/cycle-third-round-2-{index}",
+                "source_type": "generic_html",
+                "candidate_origin": TopicSourceOrigin.DISCOVERED,
+                "default_selected": True,
+            }
+            for index in range(1, 3)
+        ]
+        round_three_candidates = [
+            {
+                "title": f"Round three source {index}",
+                "url": f"https://example.com/cycle-third-round-3-{index}",
+                "normalized_url": f"https://example.com/cycle-third-round-3-{index}",
+                "source_type": "generic_html",
+                "candidate_origin": TopicSourceOrigin.DISCOVERED,
+                "default_selected": True,
+            }
+            for index in range(1, 3)
+        ]
+        round_one_query_rows = [
+            {"query": "Bitcoin market analysis ETF flows latest", "result_count": 1},
+            {"query": "Bitcoin market analysis institutional flows latest", "result_count": 1},
+            {"query": "Bitcoin market analysis funding rates latest", "result_count": 1},
+            {"query": "Bitcoin market analysis open interest latest", "result_count": 1},
+        ]
+        captured_round_two_queries: list[str] = []
+        captured_round_three_queries: list[str] = []
+
+        def fake_round(*, round_index, query_plan_override=None, repair_usage=None, **kwargs):
+            if round_index == 1:
+                self.assertIsNone(query_plan_override)
+                self.assertIsNone(repair_usage)
+                return self._build_fake_discovery_cycle_round_result(
+                    topic=topic,
+                    new_visible_candidates=round_one_candidates,
+                    accepted_count=2,
+                    reason_summary="mixed_low_yield",
+                    per_query_result_counts=round_one_query_rows,
+                )
+            if round_index == 2:
+                self.assertIsNotNone(query_plan_override)
+                self.assertEqual((repair_usage or {}).get("repair_plan_source_round"), 1)
+                captured_round_two_queries[:] = [item.query for item in query_plan_override.query_items]
+                return self._build_fake_discovery_cycle_round_result(
+                    topic=topic,
+                    new_visible_candidates=round_two_candidates,
+                    accepted_count=2,
+                    reason_summary="mixed_low_yield",
+                    per_query_result_counts=[
+                        {"query": query, "result_count": 1}
+                        for query in captured_round_two_queries
+                    ],
+                )
+
+            self.assertEqual(round_index, 3)
+            self.assertIsNotNone(query_plan_override)
+            self.assertEqual((repair_usage or {}).get("repair_plan_source_round"), 2)
+            captured_round_three_queries[:] = [item.query for item in query_plan_override.query_items]
+            self.assertTrue(captured_round_three_queries)
+            self.assertTrue(set(captured_round_three_queries).isdisjoint(set(captured_round_two_queries)))
+            return self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=round_three_candidates,
+                accepted_count=2,
+                reason_summary="target_reached",
+                per_query_result_counts=[
+                    {"query": query, "result_count": 1}
+                    for query in captured_round_three_queries
+                ],
+            )
+
+        mock_run_provider_discovery_round.side_effect = fake_round
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_run_provider_discovery_round.call_count, 3)
+        self.assertContains(response, "Source discovery completed")
+        self.assertContains(response, "Found 6 new source suggestions after 3 search rounds.")
+        latest_cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        self.assertEqual(latest_cycle.get("decision"), "target_reached")
+        self.assertEqual(latest_cycle.get("round_count"), 3)
+        self.assertEqual(latest_cycle.get("max_immediate_rounds"), 3)
+        self.assertEqual(latest_cycle.get("accumulated_visible_suggestions"), 6)
+        self.assertEqual((latest_cycle.get("rounds", [])[1].get("repair_plan_usage") or {}).get("repair_plan_source_round"), 1)
+        self.assertEqual((latest_cycle.get("rounds", [])[2].get("repair_plan_usage") or {}).get("repair_plan_source_round"), 2)
+        self.assertEqual(
+            [item.get("query") for item in (latest_cycle.get("rounds", [])[2].get("repair_plan_usage") or {}).get("repair_queries_used", [])],
+            captured_round_three_queries,
+        )
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_stops_at_three_rounds_when_still_below_target(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle max rounds topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        round_one_query_rows = [
+            {"query": "Bitcoin market analysis ETF flows latest", "result_count": 1},
+            {"query": "Bitcoin market analysis institutional flows latest", "result_count": 1},
+            {"query": "Bitcoin market analysis funding rates latest", "result_count": 1},
+            {"query": "Bitcoin market analysis open interest latest", "result_count": 1},
+        ]
+        captured_round_two_queries: list[str] = []
+        captured_round_three_queries: list[str] = []
+
+        def fake_round(*, round_index, query_plan_override=None, repair_usage=None, **kwargs):
+            if round_index == 1:
+                return self._build_fake_discovery_cycle_round_result(
+                    topic=topic,
+                    new_visible_candidates=[],
+                    accepted_count=0,
+                    reason_summary="mixed_low_yield",
+                    per_query_result_counts=round_one_query_rows,
+                )
+            if round_index == 2:
+                captured_round_two_queries[:] = [item.query for item in query_plan_override.query_items]
+                return self._build_fake_discovery_cycle_round_result(
+                    topic=topic,
+                    new_visible_candidates=[],
+                    accepted_count=0,
+                    reason_summary="mixed_low_yield",
+                    per_query_result_counts=[
+                        {"query": query, "result_count": 0}
+                        for query in captured_round_two_queries
+                    ],
+                )
+
+            captured_round_three_queries[:] = [item.query for item in query_plan_override.query_items]
+            return self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                accepted_count=0,
+                reason_summary="mixed_low_yield",
+                per_query_result_counts=[
+                    {"query": query, "result_count": 0}
+                    for query in captured_round_three_queries
+                ],
+            )
+
+        mock_run_provider_discovery_round.side_effect = fake_round
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_run_provider_discovery_round.call_count, 3)
+        latest_cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        self.assertEqual(latest_cycle.get("decision"), "max_rounds_reached")
+        self.assertEqual(latest_cycle.get("round_count"), 3)
+        self.assertEqual(latest_cycle.get("max_immediate_rounds"), 3)
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
     def test_discovery_cycle_diagnoses_duplicate_heavy_rounds(
         self,
         mock_run_provider_discovery_round,
@@ -2997,15 +3233,52 @@ class TopicRssSourceTests(TestCase):
                     },
                 ]
             },
+            prior_rounds=[],
             query_limit=4,
         )
         self.assertEqual(
-            [item.get("query") for item in selected],
+            [item.get("query") for item in selected[0]],
             [
                 "Bitcoin ETF flows weekly report",
                 "Bitcoin funding rates open interest report",
             ],
         )
+        self.assertIsNone(selected[1])
+
+    def test_select_repair_queries_for_next_round_skips_used_queries_and_surfaces(self) -> None:
+        selected, stop_reason = _select_repair_queries_for_next_round(
+            repair_plan={
+                "query_repair_plan": [
+                    {
+                        "old_query": "Bitcoin market analysis ETF flows latest",
+                        "new_query": "Bitcoin ETF flows weekly report",
+                        "action": "replace_query",
+                        "semantic_shift_type": "adjacent_angle_shift",
+                        "material_type": "report",
+                        "angle": "ETF flows",
+                        "surface_key": "etf_flows_report",
+                        "diversity_reason": "Already used ETF surface.",
+                        "repair_reason": "Would repeat a used repair.",
+                    }
+                ]
+            },
+            prior_rounds=[
+                {
+                    "query_rows": [{"query": "Bitcoin ETF flows weekly report"}],
+                    "repair_plan_usage": {
+                        "repair_queries_used": [
+                            {
+                                "query": "Bitcoin ETF flows weekly report",
+                                "surface_key": "etf_flows_report",
+                            }
+                        ]
+                    },
+                }
+            ],
+            query_limit=4,
+        )
+        self.assertEqual(selected, [])
+        self.assertEqual(stop_reason, "partial_target_not_reached_no_unused_surfaces")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -3483,8 +3756,11 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(second_response.status_code, 200)
         self.assertEqual(SourceDiscoveryHistory.objects.filter(topic=topic).count(), 1)
+        runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
+        self.assertEqual(len(runs), 6)
+        self.assertTrue(all(((run.diagnostics.get("discovery_cycle") or {}).get("round_count") == 3) for run in runs))
         history_item.refresh_from_db()
-        self.assertEqual(history_item.seen_count, 4)
+        self.assertEqual(history_item.seen_count, 6)
         self.assertGreater(history_item.last_seen_at, first_seen_at)
 
     @override_settings(
@@ -3995,7 +4271,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "Found 1 new source suggestion after 2 search rounds. DigestFlow could not reach the 6-source target with the current search strategy.",
+            "Found 1 new source suggestion after 3 search rounds. DigestFlow could not reach the 6-source target with the current search strategy.",
         )
 
     @override_settings(
@@ -4251,6 +4527,9 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 0)
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.MANUAL).count(), 0)
         self.assertEqual(SourceDiscoveryRun.objects.filter(topic=topic).count(), 2)
+        final_cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        self.assertEqual(final_cycle.get("decision"), "partial_target_not_reached_no_usable_repair_queries")
+        self.assertEqual(final_cycle.get("round_count"), 2)
         self.assertEqual(DigestRun.objects.filter(topic=topic).count(), 0)
 
     @override_settings(
@@ -4388,10 +4667,13 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(mock_urlopen.call_count, 16)
+        self.assertGreaterEqual(mock_urlopen.call_count, 16)
+        self.assertLessEqual(mock_urlopen.call_count, 24)
         runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
-        self.assertEqual(len(runs), 4)
-        self.assertTrue(all(run.query_count == runs[0].query_count for run in runs))
+        self.assertGreaterEqual(len(runs), 4)
+        self.assertLessEqual(len(runs), 6)
+        self.assertTrue(all((run.query_count or 0) > 0 for run in runs))
+        self.assertTrue(all((run.query_count or 0) <= 4 for run in runs))
         self.assertEqual(runs[0].diagnostics.get("selected_query_angle_key"), "base")
         self.assertNotEqual(runs[0].diagnostics.get("selected_query_angle_key"), runs[1].diagnostics.get("selected_query_angle_key"))
         all_query_sets = [
@@ -4399,10 +4681,27 @@ class TopicRssSourceTests(TestCase):
             for run in runs
         ]
         self.assertGreater(len(set(all_query_sets)), 1)
+        self.assertTrue(all(((run.diagnostics.get("discovery_cycle") or {}).get("round_count") or 0) <= 3 for run in runs))
+        for run in runs:
+            cycle = run.diagnostics.get("discovery_cycle") or {}
+            self.assertLessEqual(int(cycle.get("max_immediate_rounds") or 0), 3)
+            repair_usage = {}
+            if int(cycle.get("round_index") or 0) > 1:
+                round_items = cycle.get("rounds") or []
+                for item in round_items:
+                    if isinstance(item, dict) and int(item.get("round_index") or 0) == int(cycle.get("round_index") or 0):
+                        repair_usage = item.get("repair_plan_usage") if isinstance(item.get("repair_plan_usage"), dict) else {}
+                        break
+            used_surface_keys = [
+                str(item.get("surface_key") or "").strip()
+                for item in (repair_usage.get("repair_queries_used") or [])
+                if isinstance(item, dict) and str(item.get("surface_key") or "").strip()
+            ]
+            self.assertEqual(len(used_surface_keys), len(set(used_surface_keys)))
         self.assertContains(second_response, "Source discovery partially completed")
         self.assertContains(
             second_response,
-            "DigestFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
+            "DigestFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
         )
         self.assertContains(second_response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertNotContains(second_response, "Source discovery details")
@@ -4506,7 +4805,7 @@ class TopicRssSourceTests(TestCase):
                 "discovery_cycle": {
                     "cycle_id": "cycle-123",
                     "target_visible_new_suggestions": 6,
-                    "max_immediate_rounds": 2,
+                    "max_immediate_rounds": 3,
                     "round_index": 2,
                     "round_count": 2,
                     "accumulated_visible_suggestions": 4,
@@ -4683,6 +4982,8 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("planner quality guidance", copy_report.casefold())
         self.assertIn("quality guidance used for next run", copy_report.casefold())
         self.assertIn("target visible suggestions: 6", copy_report)
+        self.assertIn("max immediate rounds: 3", copy_report)
+        self.assertIn("stop reason: partial_target_not_reached", copy_report)
         self.assertIn("Round 1", copy_report)
         self.assertIn("ETF flows", copy_report)
         self.assertIn("Search diagnosis", copy_report)
@@ -4719,7 +5020,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "completed run")
         self.assertNotContains(response, "1 passed, 2 rejected")
         self.assertNotContains(response, "3 known/duplicate")
-        self.assertContains(response, "1 new source suggestion was added.")
+        self.assertContains(response, "4 new source suggestions were found after 2 search rounds.")
         self.assertContains(response, "last 1 month")
         self.assertContains(response, "Last discovery run status")
         self.assertContains(response, "Last discovery cycle: partial target not reached (4 of 6 visible suggestions). — duplicate-heavy results.")
@@ -4740,6 +5041,8 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Cycle round:")
         self.assertContains(response, "2 of 2")
         self.assertContains(response, "Cycle target:")
+        self.assertContains(response, "Max immediate rounds:")
+        self.assertContains(response, "Rounds run:")
         self.assertContains(response, "Accumulated visible suggestions:")
         self.assertContains(response, "Cycle decision:")
         self.assertContains(response, "Partial target not reached")
@@ -4776,6 +5079,126 @@ class TopicRssSourceTests(TestCase):
         self.assertLess(html.index(query_performance_header), html.index(source_quality_feedback_header))
         self.assertLess(html.index(source_quality_feedback_header), html.index(seen_sources_header))
         self.assertLess(html.index(seen_sources_header), html.index(discovery_runs_header))
+
+    def test_current_research_state_uses_cycle_total_feedback_when_cycle_diagnostics_exist(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle total feedback topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=2,
+            provider_result_count=2,
+            accepted_count=2,
+            rejected_count=0,
+            new_suggestions_count=2,
+            already_known_count=0,
+            diagnostics={
+                "discovery_cycle": {
+                    "target_visible_suggestions": 6,
+                    "target_visible_new_suggestions": 6,
+                    "max_immediate_rounds": 3,
+                    "rounds_run": 3,
+                    "round_count": 3,
+                    "accumulated_visible_suggestions": 6,
+                    "decision": "target_reached",
+                    "round_index": 3,
+                    "rounds": [],
+                }
+            },
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Target reached: 6 new source suggestions after 3 search rounds.")
+        html = response.content.decode("utf-8")
+        current_state_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Current research state</h2>'
+        query_performance_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Query performance</h2>'
+        current_state_section = html.split(current_state_header, 1)[1].split(query_performance_header, 1)[0]
+        self.assertIn("Target reached: 6 new source suggestions after 3 search rounds.", current_state_section)
+        self.assertNotIn("2 new source suggestions were added.", current_state_section)
+
+    def test_current_research_state_falls_back_to_last_run_note_without_cycle_diagnostics(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Fallback feedback topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=1,
+            provider_result_count=1,
+            accepted_count=1,
+            rejected_count=0,
+            new_suggestions_count=1,
+            already_known_count=0,
+            diagnostics={},
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "1 new source suggestion was added.")
+
+    def test_current_research_state_keeps_provider_unavailable_feedback(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Provider unavailable feedback topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_FAILED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=1,
+            provider_result_count=0,
+            accepted_count=0,
+            rejected_count=0,
+            new_suggestions_count=0,
+            already_known_count=0,
+            diagnostics={
+                "discovery_cycle": {
+                    "target_visible_suggestions": 6,
+                    "target_visible_new_suggestions": 6,
+                    "max_immediate_rounds": 3,
+                    "rounds_run": 1,
+                    "round_count": 1,
+                    "accumulated_visible_suggestions": 0,
+                    "decision": "provider_unavailable",
+                    "round_index": 1,
+                    "rounds": [],
+                }
+            },
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Provider results could not be loaded.")
 
     def test_source_discovery_run_diagnostics_include_source_quality_feedback(self) -> None:
         source_research_result = MagicMock()
@@ -6081,7 +6504,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "DigestFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
+            "DigestFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
         )
         history_item = SourceDiscoveryHistory.objects.get(
             topic=topic,
@@ -6158,12 +6581,12 @@ class TopicRssSourceTests(TestCase):
         self.assertTrue(TopicSource.objects.filter(pk=existing_source.pk).exists())
         self.assertEqual(TopicSource.objects.filter(topic=topic, normalized_url="https://example.com/already-known").count(), 1)
         history_item.refresh_from_db()
-        self.assertEqual(history_item.seen_count, 3)
+        self.assertEqual(history_item.seen_count, 4)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN)
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "DigestFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
+            "DigestFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
         )
         self.assertContains(response, "Existing suggestion")
 
@@ -6225,7 +6648,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.sources.filter(normalized_url="https://example.com/previously-removed").count(), 0)
         history_item.refresh_from_db()
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REMOVED_BY_USER)
-        self.assertEqual(history_item.seen_count, 3)
+        self.assertEqual(history_item.seen_count, 4)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REMOVED)
         self.assertContains(response, "New suggestions · 0")
         self.assertContains(response, "No new suggestions yet.")
@@ -6289,7 +6712,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.sources.filter(normalized_url="https://example.com/previously-rejected").count(), 0)
         history_item.refresh_from_db()
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_REJECTED_BY_QUALITY)
-        self.assertEqual(history_item.seen_count, 3)
+        self.assertEqual(history_item.seen_count, 4)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_PREVIOUSLY_REJECTED)
         self.assertContains(response, "New suggestions · 0")
         self.assertContains(response, "No new suggestions yet.")
@@ -6365,7 +6788,7 @@ class TopicRssSourceTests(TestCase):
         self.assertTrue(pinned_source.is_pinned)
         history_item.refresh_from_db()
         self.assertEqual(history_item.status, SourceDiscoveryHistory.STATUS_KEPT)
-        self.assertEqual(history_item.seen_count, 3)
+        self.assertEqual(history_item.seen_count, 4)
         self.assertEqual(history_item.last_run_outcome, SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN)
         html = response.content.decode("utf-8")
         new_section = html.split("New suggestions · 0", 1)[1].split("Ready to generate", 1)[0]

@@ -67,7 +67,7 @@ VISIBLE_NEW_SOURCE_LIMIT = 12
 DISCOVERY_CONTEXT_PARAM = "discovery_context"
 SHOW_ALL_NEW_SUGGESTIONS_PARAM = "show_all_suggestions"
 DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS = 6
-DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS = 2
+DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS = 3
 DISCOVERY_REPAIR_PLAN_MAX_ITEMS = 6
 DISCOVERY_REPAIR_CONSTRAINTS = {
     "avoid_repeating_queries": True,
@@ -1755,13 +1755,17 @@ def _run_provider_discovery_cycle(
             decision = "provider_unavailable"
             break
         if round_index >= DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS:
-            decision = "partial_target_not_reached"
+            decision = "max_rounds_reached"
             break
-        next_round_query_plan, next_round_repair_usage = _build_next_round_repair_override(
+        next_round_query_plan, next_round_repair_usage, continuation_decision = _build_next_round_repair_override(
             topic=topic,
             round_summary=round_results[-1],
+            prior_rounds=round_results,
             query_limit=int(getattr(round_result.get("discovery_run"), "query_count", 0) or 0),
         )
+        if next_round_query_plan is None:
+            decision = continuation_decision or "partial_target_not_reached_no_usable_repair_queries"
+            break
 
     final_candidate_records = _finalize_discovery_cycle_candidate_records(
         topic=topic,
@@ -2037,16 +2041,22 @@ def _build_next_round_repair_override(
     *,
     topic: Topic,
     round_summary: dict,
+    prior_rounds: list[dict],
     query_limit: int,
 ):
+    if _should_stop_after_zero_yield_rounds(prior_rounds):
+        return None, None, "partial_target_not_reached_no_usable_repair_queries"
     repair_plan = round_summary.get("repair_plan_for_next_round") if isinstance(round_summary.get("repair_plan_for_next_round"), dict) else {}
+    if not repair_plan:
+        return None, None, "partial_target_not_reached_no_usable_repair_queries"
     source_round_index = int(round_summary.get("round_index") or 0)
-    repair_queries_used = _select_repair_queries_for_next_round(
+    repair_queries_used, stop_decision = _select_repair_queries_for_next_round(
         repair_plan=repair_plan,
+        prior_rounds=prior_rounds,
         query_limit=query_limit,
     )
     if not repair_queries_used:
-        return None, None
+        return None, None, stop_decision or "partial_target_not_reached_no_usable_repair_queries"
     query_plan_override = build_research_query_plan_from_repair_items(
         topic,
         repair_queries_used,
@@ -2058,19 +2068,24 @@ def _build_next_round_repair_override(
         "strategy": str(repair_plan.get("strategy") or "").strip(),
         "queries_used_count": len(repair_queries_used),
         "repair_queries_used": repair_queries_used,
-    }
+    }, None
 
 
 def _select_repair_queries_for_next_round(
     *,
     repair_plan: dict,
+    prior_rounds: list[dict],
     query_limit: int,
-) -> list[dict]:
+) -> tuple[list[dict], str | None]:
     if not isinstance(repair_plan, dict) or not repair_plan:
-        return []
+        return [], "partial_target_not_reached_no_usable_repair_queries"
     selected: list[dict] = []
     seen_queries: set[str] = set()
     limit = int(query_limit or 0)
+    used_repair_query_keys = _collect_used_repair_query_keys(prior_rounds)
+    used_surface_keys = _collect_used_surface_keys(prior_rounds)
+    used_provider_query_texts = _collect_used_provider_query_texts(prior_rounds)
+    has_usable_candidate = False
 
     for item in repair_plan.get("query_repair_plan") or []:
         if not isinstance(item, dict):
@@ -2082,8 +2097,14 @@ def _select_repair_queries_for_next_round(
             continue
         if new_query.casefold() == compact_search_query(old_query).casefold():
             continue
+        has_usable_candidate = True
         query_key = _normalized_repaired_query_key(new_query)
-        if query_key in seen_queries:
+        surface_key = str(item.get("surface_key") or "").strip()
+        if query_key in seen_queries or query_key in used_repair_query_keys:
+            continue
+        if new_query.casefold() in used_provider_query_texts:
+            continue
+        if surface_key and surface_key in used_surface_keys:
             continue
         seen_queries.add(query_key)
         selected.append(
@@ -2095,14 +2116,78 @@ def _select_repair_queries_for_next_round(
                 "material_type": str(item.get("material_type") or "").strip(),
                 "angle": str(item.get("angle") or "").strip(),
                 "source": "repair_plan",
-                "surface_key": str(item.get("surface_key") or "").strip(),
+                "surface_key": surface_key,
                 "diversity_reason": str(item.get("diversity_reason") or "").strip(),
                 "repair_reason": str(item.get("repair_reason") or "").strip(),
             }
         )
         if limit > 0 and len(selected) >= limit:
             break
-    return selected
+    if selected:
+        return selected, None
+    if has_usable_candidate:
+        return [], "partial_target_not_reached_no_unused_surfaces"
+    return [], "partial_target_not_reached_no_usable_repair_queries"
+
+
+def _should_stop_after_zero_yield_rounds(prior_rounds: list[dict]) -> bool:
+    if len(prior_rounds) < 2:
+        return False
+    recent_rounds = [item for item in prior_rounds[-2:] if isinstance(item, dict)]
+    if len(recent_rounds) < 2:
+        return False
+    return all(
+        int(item.get("returned_count") or 0) == 0
+        and int(item.get("visible_new_suggestions") or 0) == 0
+        for item in recent_rounds
+    )
+
+
+def _collect_used_repair_query_keys(rounds: list[dict]) -> set[str]:
+    used_query_keys: set[str] = set()
+    for round_item in rounds:
+        if not isinstance(round_item, dict):
+            continue
+        repair_usage = round_item.get("repair_plan_usage") if isinstance(round_item.get("repair_plan_usage"), dict) else {}
+        for item in repair_usage.get("repair_queries_used") or []:
+            if not isinstance(item, dict):
+                continue
+            query = str(item.get("query") or "").strip()
+            if query:
+                used_query_keys.add(_normalized_repaired_query_key(query))
+    return used_query_keys
+
+
+def _collect_used_surface_keys(rounds: list[dict]) -> set[str]:
+    used_surface_keys: set[str] = set()
+    for round_item in rounds:
+        if not isinstance(round_item, dict):
+            continue
+        repair_usage = round_item.get("repair_plan_usage") if isinstance(round_item.get("repair_plan_usage"), dict) else {}
+        for item in repair_usage.get("repair_queries_used") or []:
+            if not isinstance(item, dict):
+                continue
+            surface_key = str(item.get("surface_key") or "").strip()
+            if surface_key:
+                used_surface_keys.add(surface_key)
+    return used_surface_keys
+
+
+def _collect_used_provider_query_texts(rounds: list[dict]) -> set[str]:
+    used_queries: set[str] = set()
+    for round_item in rounds:
+        if not isinstance(round_item, dict):
+            continue
+        query_rows = round_item.get("query_rows")
+        if not isinstance(query_rows, list):
+            query_rows = _extract_repair_query_rows_from_round_summary(round_item)
+        for item in query_rows or []:
+            if not isinstance(item, dict):
+                continue
+            query = compact_search_query(str(item.get("query") or "").strip()).casefold()
+            if query:
+                used_queries.add(query)
+    return used_queries
 
 
 def _build_discovery_cycle_payload(
@@ -2128,8 +2213,10 @@ def _build_discovery_cycle_payload(
     )
     return {
         "cycle_id": cycle_id,
+        "target_visible_suggestions": int(target_visible_new_suggestions),
         "target_visible_new_suggestions": int(target_visible_new_suggestions),
         "max_immediate_rounds": int(max_immediate_rounds),
+        "rounds_run": int(round_count),
         "round_count": int(round_count),
         "accumulated_visible_suggestions": int(accumulated_visible_suggestions),
         "decision": str(decision or "").strip() or "partial_target_not_reached",
@@ -3265,8 +3352,10 @@ def _build_discovery_cycle_summary(
         "provider_error_count": provider_error_count,
         "existing_new_suggestion_count": existing_new_suggestion_count,
         "discovery_cycle": round_results and {
+            "target_visible_suggestions": DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
             "target_visible_new_suggestions": DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
             "max_immediate_rounds": DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
+            "rounds_run": round_count,
             "round_count": round_count,
             "accumulated_visible_suggestions": accumulated_visible_suggestions,
             "decision": decision,
@@ -4019,10 +4108,13 @@ def _build_research_history_cycle_info(diagnostics: dict) -> dict:
         "rows": [
             {"label": "Cycle round", "value": f"{int(cycle.get('round_index') or 0)} of {int(cycle.get('round_count') or 0)}"},
             {"label": "Cycle target", "value": str(int(cycle.get("target_visible_new_suggestions") or 0))},
+            {"label": "Max immediate rounds", "value": str(int(cycle.get("max_immediate_rounds") or 0))},
+            {"label": "Rounds run", "value": str(int(cycle.get("round_count") or 0))},
             {
                 "label": "Accumulated visible suggestions",
                 "value": str(int(cycle.get("accumulated_visible_suggestions") or 0)),
             },
+            {"label": "Cycle decision", "value": _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip())},
         ],
         "decision": _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip()),
         "diagnosis": _build_research_history_cycle_diagnosis(cycle_diagnosis),
@@ -4047,7 +4139,7 @@ def _build_current_research_state(topic: Topic) -> dict:
             {"label": "Seen only", "value": str(int(status_counts.get(SourceDiscoveryHistory.STATUS_SEEN, 0)))},
         ],
         "last_run_status": _format_research_history_status_title(last_run.status, run=last_run) if last_run else "No discovery runs yet",
-        "last_run_subtitle": _build_research_history_status_subtitle(last_run) if last_run else "Run Find sources to start source discovery for this topic.",
+        "last_run_subtitle": _build_current_research_feedback_note(last_run) if last_run else "Run Find sources to start source discovery for this topic.",
         "last_cycle_summary": _build_current_research_cycle_summary(last_cycle),
     }
 
@@ -4067,6 +4159,30 @@ def _build_current_research_cycle_summary(cycle: dict) -> str:
     if target > 0:
         return f"Last discovery cycle: {decision.lower()} ({visible} of {target} visible suggestions).{diagnosis_note}"
     return f"Last discovery cycle: {decision.lower()}.{diagnosis_note}"
+
+
+def _build_current_research_feedback_note(run: SourceDiscoveryRun) -> str:
+    diagnostics = dict(getattr(run, "diagnostics", {}) or {})
+    cycle = diagnostics.get("discovery_cycle")
+    if not isinstance(cycle, dict) or not cycle:
+        return _build_research_history_status_subtitle(run)
+
+    decision = str(cycle.get("decision") or "").strip()
+    visible = int(cycle.get("accumulated_visible_suggestions") or 0)
+    rounds_run = int(cycle.get("rounds_run") or cycle.get("round_count") or 0)
+    if decision == "provider_unavailable":
+        return _build_research_history_status_subtitle(run)
+    if decision == "target_reached" and visible > 0 and rounds_run > 0:
+        return (
+            f"Target reached: {visible} new source suggestion{'s' if visible != 1 else ''} "
+            f"after {rounds_run} search round{'s' if rounds_run != 1 else ''}."
+        )
+    if visible > 0 and rounds_run > 0:
+        return (
+            f"{visible} new source suggestion{'s' if visible != 1 else ''} were found "
+            f"after {rounds_run} search round{'s' if rounds_run != 1 else ''}."
+        )
+    return _build_research_history_status_subtitle(run)
 
 
 def _build_full_research_history_copy_report(
@@ -4255,6 +4371,8 @@ def _build_full_research_history_copy_report(
         lines.append(f"- rounds run: {latest_cycle.get('round_count')}")
         lines.append(f"- accumulated visible suggestions: {latest_cycle.get('accumulated_visible_suggestions')}")
         lines.append(f"- decision: {latest_cycle.get('decision')}")
+        if str(latest_cycle.get("decision") or "").strip() not in {"", "target_reached"}:
+            lines.append(f"- stop reason: {latest_cycle.get('decision')}")
         repair_plan = latest_cycle.get("repair_plan") if isinstance(latest_cycle.get("repair_plan"), dict) else {}
         if repair_plan:
             lines.append("- Strategy repair")
@@ -4521,6 +4639,9 @@ def _format_discovery_cycle_decision_label(decision: str) -> str:
     mapping = {
         "target_reached": "Target reached",
         "partial_target_not_reached": "Partial target not reached",
+        "partial_target_not_reached_no_unused_surfaces": "Partial target not reached - no unused surfaces",
+        "partial_target_not_reached_no_usable_repair_queries": "Partial target not reached - no usable repair queries",
+        "max_rounds_reached": "Max rounds reached",
         "provider_unavailable": "Provider unavailable",
     }
     return mapping.get(str(decision or "").strip().lower(), "Discovery cycle update")
