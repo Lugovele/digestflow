@@ -619,6 +619,62 @@
             {% endif %}
         </section>
 
+        <section class="card">
+            <h2 style="margin: 0 0 14px; font-size: 20px;">Search surface memory</h2>
+            <p class="muted" style="margin: 0 0 14px;">Compact memory from recent Find clicks. It helps the next first-round plan avoid exhausted surfaces and lean toward more promising adjacent ones.</p>
+            {% if search_surface_memory.has_memory %}
+                <div class="quality-columns">
+                    <div>
+                        <h3 class="section-title">Avoided</h3>
+                        {% if search_surface_memory.avoided_surfaces %}
+                            <ul class="quality-list">
+                                {% for item in search_surface_memory.avoided_surfaces %}
+                                    <li>{{ item }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No exhausted surface pattern yet.</p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <h3 class="section-title">Preferred</h3>
+                        {% if search_surface_memory.preferred_surfaces %}
+                            <ul class="quality-list">
+                                {% for item in search_surface_memory.preferred_surfaces %}
+                                    <li>{{ item }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No clearly preferred surface yet.</p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <h3 class="section-title">Underexplored</h3>
+                        {% if search_surface_memory.underexplored_surfaces %}
+                            <ul class="quality-list">
+                                {% for item in search_surface_memory.underexplored_surfaces %}
+                                    <li>{{ item }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="muted" style="margin: 8px 0 0;">No underexplored adjacent surface yet.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if search_surface_memory.surfaces %}
+                    <h3 class="section-title">Recent surface outcomes</h3>
+                    <ul class="quality-list">
+                        {% for item in search_surface_memory.surfaces %}
+                            <li><strong>{{ item.label }}</strong> — {{ item.status }}{% if item.reason %}: {{ item.reason }}{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            {% else %}
+                <p class="empty-state">No search surface memory yet.</p>
+                <p class="muted" style="margin: 8px 0 0;">Run Find sources a few times to build compact memory about which search surfaces are exhausted, useful, or still underexplored.</p>
+            {% endif %}
+        </section>
+
         <section class="card" id="seen-sources">
             <h2 style="margin: 0 0 14px; font-size: 20px;">Seen sources</h2>
             <p class="muted" style="margin: 0 0 14px;">All sources this topic has seen through discovery, with their current history state.</p>

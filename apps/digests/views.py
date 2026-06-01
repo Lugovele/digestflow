@@ -115,6 +115,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
     current_research_state = _build_current_research_state(topic)
     query_performance = _build_query_performance_section(topic)
     source_quality_feedback = _build_source_quality_feedback_section(topic)
+    search_surface_memory = _build_search_surface_memory_section(topic)
     history_runs = _build_research_history_run_entries(topic)
     seen_source_history = _build_seen_source_history_section(
         topic,
@@ -127,6 +128,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
         current_research_state=current_research_state,
         query_performance_entries=query_performance["entries"],
         source_quality_feedback=source_quality_feedback,
+        search_surface_memory=search_surface_memory,
         history_runs=history_runs,
         seen_source_history=seen_source_history["entries"],
     )
@@ -138,6 +140,7 @@ def topic_research_history_view(request: HttpRequest, topic_id: int) -> HttpResp
             "current_research_state": current_research_state,
             "query_performance_entries": query_performance["entries"],
             "source_quality_feedback": source_quality_feedback,
+            "search_surface_memory": search_surface_memory,
             "history_runs": history_runs,
             "seen_source_history": seen_source_history["entries"],
             "seen_source_history_filters": seen_source_history["filters"],
@@ -3879,6 +3882,54 @@ def _build_source_quality_feedback_section(topic: Topic) -> dict:
     }
 
 
+def _build_search_surface_memory_section(topic: Topic) -> dict:
+    latest_run = topic.source_discovery_runs.order_by("-created_at", "-id").first()
+    if latest_run is None or not isinstance(latest_run.diagnostics, dict):
+        return {"has_memory": False}
+    history_summary = latest_run.diagnostics.get("query_history_summary")
+    if not isinstance(history_summary, dict):
+        return {"has_memory": False}
+    memory = history_summary.get("search_surface_memory")
+    if not isinstance(memory, dict):
+        return {"has_memory": False}
+
+    surfaces = [
+        item
+        for item in memory.get("surfaces") or []
+        if isinstance(item, dict) and str(item.get("surface_key") or "").strip()
+    ]
+    if not surfaces and not any(memory.get(key) for key in ("avoided_surfaces", "preferred_surfaces", "underexplored_surfaces")):
+        return {"has_memory": False}
+
+    return {
+        "has_memory": True,
+        "recent_run_count": int(memory.get("recent_run_count") or 0),
+        "avoided_surfaces": [
+            _humanize_surface_key_label(item)
+            for item in memory.get("avoided_surfaces") or []
+            if str(item or "").strip()
+        ],
+        "preferred_surfaces": [
+            _humanize_surface_key_label(item)
+            for item in memory.get("preferred_surfaces") or []
+            if str(item or "").strip()
+        ],
+        "underexplored_surfaces": [
+            _humanize_surface_key_label(item)
+            for item in memory.get("underexplored_surfaces") or []
+            if str(item or "").strip()
+        ],
+        "surfaces": [
+            {
+                "label": _humanize_surface_key_label(item.get("surface_key")),
+                "status": _humanize_surface_status_label(item.get("status")),
+                "reason": str(item.get("reason") or "").strip(),
+            }
+            for item in surfaces[:4]
+        ],
+    }
+
+
 def _build_legacy_query_performance_rows(run: SourceDiscoveryRun, diagnostics: dict) -> list[dict]:
     rows: list[dict] = []
     for item in diagnostics.get("per_query_result_counts", []) or []:
@@ -4191,6 +4242,7 @@ def _build_full_research_history_copy_report(
     current_research_state: dict,
     query_performance_entries: list[dict],
     source_quality_feedback: dict,
+    search_surface_memory: dict,
     history_runs: list[dict],
     seen_source_history: list[dict],
 ) -> str:
@@ -4269,6 +4321,24 @@ def _build_full_research_history_copy_report(
                 lines.append(f"  - {item}")
     else:
         lines.append("- No source quality feedback yet.")
+
+    add_section("Search surface memory")
+    if search_surface_memory.get("has_memory"):
+        lines.append(f"- recent run count: {search_surface_memory.get('recent_run_count')}")
+        if search_surface_memory.get("avoided_surfaces"):
+            lines.append(f"- avoided surfaces: {', '.join(str(item) for item in search_surface_memory.get('avoided_surfaces') or [])}")
+        if search_surface_memory.get("preferred_surfaces"):
+            lines.append(f"- preferred surfaces: {', '.join(str(item) for item in search_surface_memory.get('preferred_surfaces') or [])}")
+        if search_surface_memory.get("underexplored_surfaces"):
+            lines.append(f"- underexplored surfaces: {', '.join(str(item) for item in search_surface_memory.get('underexplored_surfaces') or [])}")
+        if search_surface_memory.get("surfaces"):
+            lines.append("- surfaces:")
+            for item in search_surface_memory.get("surfaces", []):
+                lines.append(f"  - key: {item.get('label')}")
+                lines.append(f"    status: {item.get('status')}")
+                lines.append(f"    reason: {item.get('reason')}")
+    else:
+        lines.append("- No search surface memory yet.")
 
     add_section("Discovery runs")
     if history_runs:
@@ -4516,6 +4586,39 @@ def _dedupe_guidance_strings(items, *, skip_existing=None) -> list[str]:
         seen.add(key)
         deduped.append(cleaned)
     return deduped
+
+
+def _humanize_surface_key_label(surface_key: str) -> str:
+    value = str(surface_key or "").strip()
+    if not value:
+        return ""
+    labels = {
+        "etf_flows_report": "ETF flows",
+        "etf_flow_data_market_report": "ETF flow data",
+        "institutional_demand_report": "institutional demand",
+        "institutional_flows_report": "institutional flows",
+        "funding_open_interest_report": "funding rates / open interest",
+        "funding_rates_analysis": "funding rates",
+        "open_interest_futures_positioning": "open interest",
+        "derivatives_positioning_market_structure": "derivatives positioning",
+        "market_structure_report": "market structure",
+        "market_structure_research_paper": "market structure research paper",
+        "research_paper": "research paper",
+        "on_chain_exchange_reserves_analysis": "on-chain exchange reserves",
+        "on_chain_weekly_report": "on-chain weekly report",
+        "on_chain_analysis": "on-chain analysis",
+        "analyst_report": "analyst report",
+        "volatility_market_structure_report": "volatility market structure",
+        "volatility_drawdown_risk_analysis": "volatility drawdown risk",
+    }
+    return labels.get(value, value.replace("_", " "))
+
+
+def _humanize_surface_status_label(status: str) -> str:
+    value = str(status or "").strip().replace("_", " ")
+    if not value:
+        return ""
+    return value.capitalize()
 
 
 def _format_research_history_timestamp(run: SourceDiscoveryRun) -> str:

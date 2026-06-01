@@ -673,6 +673,164 @@ class ContentResearchPlannerHistorySummaryTests(TestCase):
         self.assertTrue(any("ETF flows" in item for item in summary["planning_guidance"]))
         self.assertTrue(any("quora.com" in item for item in summary["planning_guidance"]))
 
+    def test_recent_duplicate_heavy_surface_is_classified_as_exhausted(self) -> None:
+        topic = self._create_topic("Exhausted surface topic")
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+            diagnostics={
+                "query_performance": [
+                    {
+                        "query": "Bitcoin ETF flows latest",
+                        "angle": "ETF flows",
+                        "purpose": "Track ETF flow data.",
+                        "returned_count": 6,
+                        "accepted_count": 0,
+                        "rejected_count": 0,
+                        "duplicate_count": 5,
+                        "visible_new_suggestions_count": 0,
+                        "status": "duplicate_heavy",
+                        "surface_key": "etf_flows_report",
+                    },
+                    {
+                        "query": "Bitcoin ETF flows weekly report",
+                        "angle": "ETF flows",
+                        "purpose": "Track ETF flow data.",
+                        "returned_count": 5,
+                        "accepted_count": 0,
+                        "rejected_count": 0,
+                        "duplicate_count": 4,
+                        "visible_new_suggestions_count": 0,
+                        "status": "duplicate_heavy",
+                        "surface_key": "etf_flows_report",
+                    },
+                ]
+            },
+        )
+
+        summary = build_query_history_summary(topic)
+
+        self.assertEqual(summary["search_surface_memory"]["avoided_surfaces"], ["etf_flows_report"])
+        surface_row = summary["search_surface_memory"]["surfaces"][0]
+        self.assertEqual(surface_row["surface_key"], "etf_flows_report")
+        self.assertEqual(surface_row["status"], "exhausted")
+
+    def test_provider_error_only_surface_is_not_marked_exhausted(self) -> None:
+        topic = self._create_topic("Provider uncertain surface topic")
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_PARTIAL_FAILED,
+            diagnostics={
+                "query_performance": [
+                    {
+                        "query": "Bitcoin analyst report latest",
+                        "angle": "analyst report",
+                        "purpose": "Find analyst viewpoints.",
+                        "returned_count": 0,
+                        "accepted_count": 0,
+                        "rejected_count": 0,
+                        "duplicate_count": 0,
+                        "visible_new_suggestions_count": 0,
+                        "status": "partial_error",
+                        "error_message": "SerpAPI error",
+                        "surface_key": "analyst_report",
+                    }
+                ]
+            },
+        )
+
+        summary = build_query_history_summary(topic)
+
+        self.assertEqual(summary["search_surface_memory"]["avoided_surfaces"], [])
+        surface_row = summary["search_surface_memory"]["surfaces"][0]
+        self.assertEqual(surface_row["surface_key"], "analyst_report")
+        self.assertEqual(surface_row["status"], "unknown")
+
+    @override_settings(OPENAI_API_KEY="")
+    @patch("services.sources.content_research_planner.build_query_history_summary")
+    def test_first_round_query_planning_avoids_exhausted_surfaces_and_prefers_underexplored(self, mock_history_summary) -> None:
+        mock_history_summary.return_value = {
+            "history_available": True,
+            "recent_run_count": 3,
+            "malformed_run_count": 0,
+            "total_query_rows": 9,
+            "useful_queries": [],
+            "weak_queries": [],
+            "duplicate_heavy_queries": [],
+            "provider_error_queries": [],
+            "quality_rejected_queries": [],
+            "useful_angles": [],
+            "weak_angles": [],
+            "provider_error_angles": [],
+            "stale_year_patterns": [],
+            "weak_material_types": [],
+            "preferred_material_types_found": [{"material_type": "market data / flow analysis", "count": 2}],
+            "weak_domains": [],
+            "dominant_rejection_reasons": [],
+            "quality_guidance": [
+                "Use query terms such as ETF flows, institutional flows, funding rates, market structure, analyst report.",
+            ],
+            "recent_query_texts": [
+                "Bitcoin market analysis ETF flows latest",
+                "Bitcoin market analysis institutional flows latest",
+            ],
+            "search_surface_memory": {
+                "recent_run_count": 3,
+                "surfaces": [
+                    {
+                        "surface_key": "etf_flows_report",
+                        "status": "exhausted",
+                        "visible_count": 0,
+                        "known_duplicate_count": 6,
+                        "quality_rejected_count": 0,
+                        "returned_count": 6,
+                        "last_seen": "2026-06-02T00:00:00+00:00",
+                        "reason": "Recent clicks mostly hit already-known or duplicate URLs.",
+                    },
+                    {
+                        "surface_key": "market_structure_report",
+                        "status": "useful",
+                        "visible_count": 2,
+                        "known_duplicate_count": 0,
+                        "quality_rejected_count": 0,
+                        "returned_count": 3,
+                        "last_seen": "2026-06-02T00:00:00+00:00",
+                        "reason": "Recent clicks still surfaced visible suggestions.",
+                    },
+                    {
+                        "surface_key": "on_chain_exchange_reserves_analysis",
+                        "status": "underexplored",
+                        "visible_count": 0,
+                        "known_duplicate_count": 0,
+                        "quality_rejected_count": 0,
+                        "returned_count": 0,
+                        "last_seen": None,
+                        "reason": "Preferred adjacent surface has little or no recent coverage.",
+                    },
+                ],
+                "avoided_surfaces": ["etf_flows_report", "institutional_flows_report"],
+                "preferred_surfaces": ["market_structure_report", "analyst_report"],
+                "underexplored_surfaces": ["on_chain_exchange_reserves_analysis"],
+            },
+            "planning_guidance": [
+                "Avoid starting with exhausted surfaces from recent clicks: ETF flows weekly report, institutional fund flows report.",
+                "Try underexplored adjacent surfaces next: on-chain exchange reserves analysis.",
+            ],
+        }
+
+        topic = self._create_topic("bitcion market")
+        result = create_content_research_plan(topic)
+
+        self.assertGreaterEqual(len(result.final_queries), 3)
+        self.assertTrue(any("market structure report" in query.casefold() for query in result.final_queries))
+        self.assertTrue(any("on-chain exchange reserves analysis" in query.casefold() for query in result.final_queries))
+        self.assertFalse(any("etf flows weekly report" in query.casefold() for query in result.final_queries))
+        self.assertFalse(any(query.casefold() == "bitcoin market analysis etf flows latest" for query in result.final_queries))
+
     def test_stale_year_and_duplicate_heavy_patterns_influence_guidance(self) -> None:
         topic = self._create_topic("Pattern guidance topic")
         SourceDiscoveryRun.objects.create(
@@ -761,6 +919,8 @@ class ContentResearchPlannerHistorySummaryTests(TestCase):
         self.assertEqual(result.planner_status, "fallback_used")
         self.assertTrue(result.query_history_summary["history_available"])
         self.assertEqual(result.query_history_summary["useful_queries"][0]["query"], "history aware alpha")
+        self.assertIn("search_surface_memory", result.query_history_summary)
         self.assertIn("Recent query history summary:", result.prompt)
         self.assertIn("history aware alpha", result.prompt)
+        self.assertIn("Search surface memory", result.prompt)
         self.assertNotIn('"query_performance"', result.prompt)

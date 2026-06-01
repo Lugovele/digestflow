@@ -4801,6 +4801,34 @@ class TopicRssSourceTests(TestCase):
                     ],
                     "useful_angles": [{"angle": "market structure", "count": 1}],
                     "weak_angles": [{"angle": "retail behavior", "count": 1}],
+                    "search_surface_memory": {
+                        "recent_run_count": 2,
+                        "avoided_surfaces": ["etf_flows_report", "institutional_flows_report"],
+                        "preferred_surfaces": ["market_structure_report", "analyst_report"],
+                        "underexplored_surfaces": ["on_chain_exchange_reserves_analysis"],
+                        "surfaces": [
+                            {
+                                "surface_key": "etf_flows_report",
+                                "status": "exhausted",
+                                "visible_count": 0,
+                                "known_duplicate_count": 6,
+                                "quality_rejected_count": 0,
+                                "returned_count": 6,
+                                "last_seen": "2026-06-02T00:00:00+00:00",
+                                "reason": "Recent clicks mostly hit already-known or duplicate URLs.",
+                            },
+                            {
+                                "surface_key": "market_structure_report",
+                                "status": "useful",
+                                "visible_count": 2,
+                                "known_duplicate_count": 0,
+                                "quality_rejected_count": 0,
+                                "returned_count": 3,
+                                "last_seen": "2026-06-02T00:00:00+00:00",
+                                "reason": "Recent clicks still surfaced visible suggestions without heavy duplication.",
+                            },
+                        ],
+                    },
                 },
                 "discovery_cycle": {
                     "cycle_id": "cycle-123",
@@ -4966,6 +4994,9 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Current research state")
         self.assertContains(response, "Query performance")
         self.assertContains(response, "Source quality feedback")
+        self.assertContains(response, "Search surface memory")
+        self.assertContains(response, "ETF flows")
+        self.assertContains(response, "market structure")
         self.assertContains(response, "Copy full history")
         self.assertContains(response, 'id="copy-full-history-button"', html=False)
         self.assertContains(response, 'id="full-history-copy-payload"', html=False)
@@ -4974,6 +5005,8 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("Current research state", copy_report)
         self.assertIn("Query performance", copy_report)
         self.assertIn("Source quality feedback", copy_report)
+        self.assertIn("Search surface memory", copy_report)
+        self.assertIn("avoided surfaces: ETF flows, institutional flows", copy_report)
         self.assertIn("Discovery runs", copy_report)
         self.assertIn("Seen sources", copy_report)
         self.assertIn("Planner history guidance", copy_report)

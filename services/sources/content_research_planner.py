@@ -35,6 +35,25 @@ _GENERIC_RETAIL_QUERY_NEEDLES: tuple[str, ...] = (
     "price prediction",
     "live price",
 )
+_SURFACE_KEY_QUERY_TERMS: dict[str, str] = {
+    "etf_flows_report": "ETF flows weekly report",
+    "etf_flow_data_market_report": "spot ETF fund flows analysis",
+    "institutional_demand_report": "treasury holdings institutional demand",
+    "institutional_flows_report": "institutional fund flows report",
+    "funding_open_interest_report": "funding rates open interest report",
+    "funding_rates_analysis": "funding rates analysis",
+    "open_interest_futures_positioning": "open interest futures positioning",
+    "derivatives_positioning_market_structure": "derivatives positioning market structure",
+    "market_structure_report": "market structure report",
+    "market_structure_research_paper": "market structure research paper",
+    "research_paper": "research paper",
+    "on_chain_exchange_reserves_analysis": "on-chain exchange reserves analysis",
+    "on_chain_weekly_report": "on-chain weekly report",
+    "on_chain_analysis": "on-chain analysis recent report",
+    "analyst_report": "analyst report market outlook",
+    "volatility_market_structure_report": "volatility market structure report",
+    "volatility_drawdown_risk_analysis": "volatility drawdown risk analysis",
+}
 
 
 @dataclass(frozen=True)
@@ -420,18 +439,23 @@ def _apply_quality_material_guidance(
     query_history_summary: dict[str, Any] | None,
 ) -> list[str]:
     preferred_terms = _extract_preferred_material_terms(query_history_summary)
-    if not preferred_terms:
-        return list(queries)
-
     normalized_queries = [re.sub(r"\s+", " ", str(query or "").strip()) for query in queries if str(query or "").strip()]
+    if not preferred_terms:
+        return _apply_search_surface_memory(
+            normalized_queries[:MAX_FINAL_QUERY_COUNT],
+            topic_title=topic_title,
+            topic_keywords=topic_keywords,
+            query_history_summary=query_history_summary,
+        )
+
     current_material_query_count = sum(1 for query in normalized_queries if _query_uses_preferred_material_term(query, preferred_terms))
     target_material_query_count = min(3, len(preferred_terms), MAX_FINAL_QUERY_COUNT)
     if current_material_query_count >= target_material_query_count:
-        return _limit_generic_retail_queries(
+        return _apply_search_surface_memory(
             normalized_queries[:MAX_FINAL_QUERY_COUNT],
-            preferred_terms=preferred_terms,
             topic_title=topic_title,
             topic_keywords=topic_keywords,
+            query_history_summary=query_history_summary,
         )
 
     base_topic = _build_guided_query_topic_base(topic_title, topic_keywords)
@@ -453,6 +477,85 @@ def _apply_quality_material_guidance(
         merged.append(query)
         if len(merged) >= MAX_FINAL_QUERY_COUNT:
             break
+    return _apply_search_surface_memory(
+        merged[:MAX_FINAL_QUERY_COUNT],
+        topic_title=topic_title,
+        topic_keywords=topic_keywords,
+        query_history_summary=query_history_summary,
+    )
+
+
+def _apply_search_surface_memory(
+    queries: Sequence[str],
+    *,
+    topic_title: str,
+    topic_keywords: Sequence[str],
+    query_history_summary: dict[str, Any] | None,
+) -> list[str]:
+    preferred_terms = _extract_preferred_material_terms(query_history_summary)
+    memory = (
+        query_history_summary.get("search_surface_memory")
+        if isinstance(query_history_summary, dict) and isinstance(query_history_summary.get("search_surface_memory"), dict)
+        else {}
+    )
+    if not memory:
+        return _limit_generic_retail_queries(
+            queries,
+            preferred_terms=preferred_terms,
+            topic_title=topic_title,
+            topic_keywords=topic_keywords,
+        )
+
+    recent_query_keys = {
+        re.sub(r"\s+", " ", str(item or "").strip()).casefold()
+        for item in (query_history_summary.get("recent_query_texts") or [] if isinstance(query_history_summary, dict) else [])
+        if str(item or "").strip()
+    }
+    avoided_surfaces = {
+        str(item or "").strip()
+        for item in memory.get("avoided_surfaces") or []
+        if str(item or "").strip()
+    }
+    preferred_surfaces = [
+        str(item or "").strip()
+        for item in memory.get("preferred_surfaces") or []
+        if str(item or "").strip()
+    ]
+    underexplored_surfaces = [
+        str(item or "").strip()
+        for item in memory.get("underexplored_surfaces") or []
+        if str(item or "").strip()
+    ]
+
+    base_topic = _build_guided_query_topic_base(topic_title, topic_keywords)
+    injected_queries = _build_guided_queries_for_surface_keys(
+        base_topic,
+        [*preferred_surfaces, *underexplored_surfaces],
+    )
+    preferred_surface_set = set(preferred_surfaces) | set(underexplored_surfaces)
+
+    primary: list[str] = []
+    fallback: list[str] = []
+    seen_queries: set[str] = set()
+    seen_surfaces: set[str] = set()
+    for query in [*injected_queries, *queries]:
+        normalized_query = re.sub(r"\s+", " ", str(query or "").strip())
+        if not normalized_query:
+            continue
+        query_key = normalized_query.casefold()
+        if query_key in seen_queries:
+            continue
+        surface_key = _surface_key_for_query_text(normalized_query)
+        is_repeat = query_key in recent_query_keys
+        is_avoided = bool(surface_key and surface_key in avoided_surfaces)
+        is_duplicate_surface = bool(surface_key and surface_key in seen_surfaces and surface_key in preferred_surface_set)
+        target_bucket = fallback if is_repeat or is_avoided or is_duplicate_surface else primary
+        target_bucket.append(normalized_query)
+        seen_queries.add(query_key)
+        if surface_key:
+            seen_surfaces.add(surface_key)
+
+    merged = [*primary, *fallback]
     return _limit_generic_retail_queries(
         merged[:MAX_FINAL_QUERY_COUNT],
         preferred_terms=preferred_terms,
@@ -469,6 +572,22 @@ def _build_guided_queries_for_terms(base_topic: str, preferred_terms: Sequence[s
         if not guided_query:
             continue
         guided_queries.append(guided_query)
+    return guided_queries
+
+
+def _build_guided_queries_for_surface_keys(base_topic: str, surface_keys: Sequence[str]) -> list[str]:
+    guided_queries: list[str] = []
+    seen: set[str] = set()
+    for surface_key in surface_keys:
+        term = _SURFACE_KEY_QUERY_TERMS.get(str(surface_key or "").strip())
+        if not term:
+            continue
+        query = re.sub(r"\s+", " ", f"{base_topic} {term}".strip())
+        key = query.casefold()
+        if not query or key in seen:
+            continue
+        seen.add(key)
+        guided_queries.append(query)
     return guided_queries
 
 
@@ -534,6 +653,16 @@ def _extract_preferred_material_terms(query_history_summary: dict[str, Any] | No
 
     suggestions: list[str] = []
     seen: set[str] = set()
+    surface_memory = query_history_summary.get("search_surface_memory") if isinstance(query_history_summary.get("search_surface_memory"), dict) else {}
+    for surface_key in [*(surface_memory.get("preferred_surfaces") or []), *(surface_memory.get("underexplored_surfaces") or [])]:
+        candidate = _SURFACE_KEY_QUERY_TERMS.get(str(surface_key or "").strip(), "")
+        key = candidate.casefold()
+        if not candidate or key in seen:
+            continue
+        seen.add(key)
+        suggestions.append(candidate)
+        if len(suggestions) >= 5:
+            return suggestions
     for item in query_history_summary.get("quality_guidance") or []:
         cleaned = str(item or "").strip()
         if not cleaned:
@@ -574,6 +703,38 @@ def _extract_preferred_material_terms(query_history_summary: dict[str, Any] | No
 def _query_uses_preferred_material_term(query: str, preferred_terms: Sequence[str]) -> bool:
     normalized_query = str(query or "").casefold()
     return any(str(term or "").casefold() in normalized_query for term in preferred_terms)
+
+
+def _surface_key_for_query_text(query: str) -> str:
+    normalized_query = str(query or "").casefold()
+    for surface_key, term in _SURFACE_KEY_QUERY_TERMS.items():
+        if term.casefold() in normalized_query:
+            return surface_key
+    if "exchange reserves" in normalized_query:
+        return "on_chain_exchange_reserves_analysis"
+    if "on-chain" in normalized_query or "on chain" in normalized_query:
+        return "on_chain_analysis"
+    if "analyst report" in normalized_query:
+        return "analyst_report"
+    if "market structure" in normalized_query and "research paper" in normalized_query:
+        return "market_structure_research_paper"
+    if "research paper" in normalized_query:
+        return "research_paper"
+    if "market structure" in normalized_query:
+        return "market_structure_report"
+    if "funding rates" in normalized_query and "open interest" in normalized_query:
+        return "funding_open_interest_report"
+    if "funding rates" in normalized_query:
+        return "funding_rates_analysis"
+    if "open interest" in normalized_query:
+        return "open_interest_futures_positioning"
+    if "institutional flows" in normalized_query or "fund flows" in normalized_query:
+        return "institutional_flows_report"
+    if "treasury holdings" in normalized_query or "institutional demand" in normalized_query:
+        return "institutional_demand_report"
+    if "etf flows" in normalized_query or "spot etf" in normalized_query:
+        return "etf_flows_report"
+    return ""
 
 
 def _align_search_angles_with_final_queries(
