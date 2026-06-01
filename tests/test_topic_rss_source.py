@@ -96,6 +96,10 @@ class TopicRssSourceTests(TestCase):
         quality_rejected_count: int = 0,
         reason_summary: str = "mixed_low_yield",
         query_count: int = 4,
+        per_query_result_counts: list[dict] | None = None,
+        weak_domains: list[dict] | None = None,
+        weak_material_types: list[dict] | None = None,
+        dominant_rejection_reasons: list[dict] | None = None,
     ) -> dict:
         accepted_total = len(new_visible_candidates) if accepted_count is None else int(accepted_count)
         run = SourceDiscoveryRun.objects.create(
@@ -121,14 +125,15 @@ class TopicRssSourceTests(TestCase):
                     "quality_rejected_count": quality_rejected_count,
                     "known_or_duplicate_count": known_or_duplicate_count,
                     "shown_count": len(new_visible_candidates),
-                    "dominant_rejection_reasons": [],
-                    "weak_domains": [],
-                    "weak_material_types": [],
+                    "dominant_rejection_reasons": list(dominant_rejection_reasons or []),
+                    "weak_domains": list(weak_domains or []),
+                    "weak_material_types": list(weak_material_types or []),
                     "preferred_material_types_found": [],
                     "main_quality_issue": "",
                     "planner_quality_guidance": [],
                 },
                 "query_performance": [],
+                "per_query_result_counts": list(per_query_result_counts or []),
                 "provider_errors": (
                     [{"message": "SerpAPI returned an API error."}] if provider_error_count else []
                 ),
@@ -148,6 +153,7 @@ class TopicRssSourceTests(TestCase):
             "rejected_count": rejected_count,
             "known_or_duplicate_count": known_or_duplicate_count,
             "quality_rejected_count": quality_rejected_count,
+            "returned_count": provider_result_count,
             "reason_summary": reason_summary,
         }
 
@@ -2457,6 +2463,7 @@ class TopicRssSourceTests(TestCase):
             self.assertEqual(cycle.get("round_count"), 2)
             self.assertEqual(cycle.get("accumulated_visible_suggestions"), 6)
             self.assertEqual(len(cycle.get("rounds") or []), 2)
+            self.assertEqual((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), "target_reached")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2514,6 +2521,7 @@ class TopicRssSourceTests(TestCase):
         cycle = run.diagnostics.get("discovery_cycle") or {}
         self.assertEqual(cycle.get("decision"), "target_reached")
         self.assertEqual(cycle.get("round_count"), 1)
+        self.assertEqual((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), "target_reached")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2563,6 +2571,7 @@ class TopicRssSourceTests(TestCase):
         cycle = run.diagnostics.get("discovery_cycle") or {}
         self.assertEqual(cycle.get("decision"), "provider_unavailable")
         self.assertEqual(cycle.get("round_count"), 1)
+        self.assertEqual((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), "provider_unavailable")
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2643,6 +2652,248 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(cycle.get("decision"), "target_reached")
         self.assertEqual(cycle.get("accumulated_visible_suggestions"), 6)
         self.assertEqual(cycle.get("rounds", [])[0].get("provider_error_count"), 1)
+        self.assertIn("provider_partial_error", (cycle.get("rounds", [])[0].get("diagnosis") or {}).get("secondary_causes", []))
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_diagnoses_duplicate_heavy_rounds(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle duplicate-heavy topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        mock_run_provider_discovery_round.side_effect = [
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=10,
+                accepted_count=0,
+                known_or_duplicate_count=7,
+                quality_rejected_count=1,
+                reason_summary="duplicate_heavy",
+            ),
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=8,
+                accepted_count=0,
+                known_or_duplicate_count=5,
+                quality_rejected_count=1,
+                reason_summary="duplicate_heavy",
+            ),
+        ]
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        round_diagnosis = cycle.get("rounds", [])[0].get("diagnosis") or {}
+        self.assertEqual(round_diagnosis.get("primary_cause"), "duplicate_heavy")
+        self.assertEqual(round_diagnosis.get("recommended_next_action"), "pivot_to_new_subangles")
+        self.assertEqual((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), "duplicate_heavy")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_diagnoses_quality_heavy_rounds(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle quality-heavy topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        weak_material_types = [{"material_type": "beginner_seo_guide", "label": "beginner / SEO guide", "count": 6}]
+        mock_run_provider_discovery_round.side_effect = [
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=10,
+                accepted_count=0,
+                quality_rejected_count=7,
+                weak_material_types=weak_material_types,
+                reason_summary="quality_heavy",
+            ),
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=8,
+                accepted_count=0,
+                quality_rejected_count=5,
+                weak_material_types=weak_material_types,
+                reason_summary="quality_heavy",
+            ),
+        ]
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        round_diagnosis = cycle.get("rounds", [])[0].get("diagnosis") or {}
+        self.assertEqual(round_diagnosis.get("primary_cause"), "over_broad_query")
+        self.assertEqual(round_diagnosis.get("recommended_next_action"), "narrow_by_material_type")
+        self.assertIn((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), {"over_broad_query", "quality_heavy"})
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_diagnoses_zero_return_as_over_narrow_or_zero_return(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle zero-return topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        zero_query_rows = [
+            {"intent": "report", "query": "bitcoin market structure funding rates open interest report", "result_count": 0},
+            {"intent": "paper", "query": "bitcoin market structure funding rates open interest research paper", "result_count": 0},
+            {"intent": "analysis", "query": "bitcoin market structure funding rates open interest latest analysis", "result_count": 0},
+        ]
+        mock_run_provider_discovery_round.side_effect = [
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=0,
+                accepted_count=0,
+                quality_rejected_count=0,
+                known_or_duplicate_count=0,
+                per_query_result_counts=zero_query_rows,
+                reason_summary="zero_visible",
+            ),
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=0,
+                accepted_count=0,
+                quality_rejected_count=0,
+                known_or_duplicate_count=0,
+                per_query_result_counts=zero_query_rows,
+                reason_summary="zero_visible",
+            ),
+        ]
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        round_diagnosis = cycle.get("rounds", [])[0].get("diagnosis") or {}
+        self.assertIn(round_diagnosis.get("primary_cause"), {"zero_return", "over_narrow_query"})
+        self.assertEqual(round_diagnosis.get("recommended_next_action"), "broaden_query")
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_aggregates_mixed_failure_diagnoses_into_copy_report(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle mixed diagnosis topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        mock_run_provider_discovery_round.side_effect = [
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=10,
+                accepted_count=0,
+                known_or_duplicate_count=6,
+                quality_rejected_count=1,
+                reason_summary="duplicate_heavy",
+            ),
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=9,
+                accepted_count=0,
+                quality_rejected_count=6,
+                weak_material_types=[{"material_type": "beginner_seo_guide", "label": "beginner / SEO guide", "count": 6}],
+                reason_summary="quality_heavy",
+            ),
+        ]
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        history_response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+        self.assertContains(history_response, "Search diagnosis")
+        copy_report = history_response.context["full_history_copy_report"]
+        self.assertIn("Search diagnosis", copy_report)
+        self.assertIn("primary cause:", copy_report)
+        self.assertIn("secondary causes:", copy_report)
+        self.assertIn("recommended next action:", copy_report)
+        cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        cycle_diagnosis = cycle.get("cycle_diagnosis") or {}
+        self.assertIn(cycle_diagnosis.get("primary_cause"), {"duplicate_heavy", "quality_heavy", "over_broad_query", "mixed_low_yield"})
+        self.assertTrue({"duplicate_heavy", "quality_heavy"}.intersection(set(cycle_diagnosis.get("secondary_causes") or [])) or cycle_diagnosis.get("primary_cause") in {"duplicate_heavy", "quality_heavy"})
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -3895,6 +4146,13 @@ class TopicRssSourceTests(TestCase):
                     "round_count": 2,
                     "accumulated_visible_suggestions": 4,
                     "decision": "partial_target_not_reached",
+                    "cycle_diagnosis": {
+                        "primary_cause": "duplicate_heavy",
+                        "secondary_causes": ["provider_partial_error", "quality_heavy"],
+                        "severity": "high",
+                        "explanation": "Most returned URLs were already known or rejected, and some provider queries failed.",
+                        "recommended_next_action": "pivot_to_new_subangles",
+                    },
                     "rounds": [
                         {
                             "run_id": 123,
@@ -3904,7 +4162,15 @@ class TopicRssSourceTests(TestCase):
                             "quality_rejected_count": 3,
                             "known_or_duplicate_count": 2,
                             "provider_error_count": 1,
+                            "returned_count": 5,
                             "reason_summary": "provider_error",
+                            "diagnosis": {
+                                "primary_cause": "provider_partial_error",
+                                "secondary_causes": ["quality_heavy"],
+                                "severity": "high",
+                                "explanation": "Primary cause: Provider partial errors. 3 results were rejected by quality filters; 1 provider query failed.",
+                                "recommended_next_action": "retry_or_rephrase_failed_queries",
+                            },
                         },
                         {
                             "run_id": 124,
@@ -3914,7 +4180,15 @@ class TopicRssSourceTests(TestCase):
                             "quality_rejected_count": 1,
                             "known_or_duplicate_count": 0,
                             "provider_error_count": 0,
+                            "returned_count": 4,
                             "reason_summary": "partial_target_not_reached",
+                            "diagnosis": {
+                                "primary_cause": "duplicate_heavy",
+                                "secondary_causes": ["quality_heavy"],
+                                "severity": "medium",
+                                "explanation": "Primary cause: Duplicate-heavy results. 1 result was rejected by quality filters.",
+                                "recommended_next_action": "pivot_to_new_subangles",
+                            },
                         },
                     ],
                 },
@@ -3962,6 +4236,9 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("target visible suggestions: 6", copy_report)
         self.assertIn("Round 1", copy_report)
         self.assertIn("ETF flows", copy_report)
+        self.assertIn("Search diagnosis", copy_report)
+        self.assertIn("primary cause: duplicate_heavy", copy_report)
+        self.assertIn("recommended next action: pivot_to_new_subangles", copy_report)
         self.assertEqual(
             copy_report.count(
                 "Prefer material types like market data / flow analysis. Use query terms such as ETF flows, institutional flows, funding rates, open interest."
@@ -3991,7 +4268,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "1 new source suggestion was added.")
         self.assertContains(response, "last 1 month")
         self.assertContains(response, "Last discovery run status")
-        self.assertContains(response, "Last discovery cycle: partial target not reached (4 of 6 visible suggestions).")
+        self.assertContains(response, "Last discovery cycle: partial target not reached (4 of 6 visible suggestions). — duplicate-heavy results.")
         self.assertContains(response, "Stage diagnostics")
         self.assertContains(
             response,
@@ -4012,6 +4289,11 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Accumulated visible suggestions:")
         self.assertContains(response, "Cycle decision:")
         self.assertContains(response, "Partial target not reached")
+        self.assertContains(response, "Search diagnosis")
+        self.assertContains(response, "Primary cause:")
+        self.assertContains(response, "Duplicate-heavy results")
+        self.assertContains(response, "Recommended next action:")
+        self.assertContains(response, "Pivot to new sub-angles")
         self.assertNotContains(response, "https://quora.com/answer")
         self.assertNotContains(response, "Visible new suggestions from this run")
         self.assertNotContains(response, "URLs returned by provider")

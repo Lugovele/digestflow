@@ -759,6 +759,19 @@
                                         {% endfor %}
                                         <div class="diagnostic-pill"><strong>Cycle decision:</strong> {{ item.cycle_info.decision }}</div>
                                     </div>
+                                    {% if item.cycle_info.diagnosis.has_diagnosis %}
+                                        <h3 class="section-title">Search diagnosis</h3>
+                                        <div class="diagnostic-row">
+                                            <div class="diagnostic-pill"><strong>Primary cause:</strong> {{ item.cycle_info.diagnosis.primary_cause }}</div>
+                                            <div class="diagnostic-pill"><strong>Recommended next action:</strong> {{ item.cycle_info.diagnosis.recommended_next_action }}</div>
+                                            {% if item.cycle_info.diagnosis.secondary_causes %}
+                                                <div class="diagnostic-pill"><strong>Secondary:</strong> {{ item.cycle_info.diagnosis.secondary_causes|join:", " }}</div>
+                                            {% endif %}
+                                        </div>
+                                        {% if item.cycle_info.diagnosis.explanation %}
+                                            <p class="muted" style="margin: 10px 0 0;">{{ item.cycle_info.diagnosis.explanation }}</p>
+                                        {% endif %}
+                                    {% endif %}
                                 {% endif %}
 
                                 {% if item.quality_feedback.has_feedback %}
