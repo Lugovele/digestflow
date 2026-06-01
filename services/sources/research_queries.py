@@ -192,6 +192,88 @@ def _build_ai_research_query_plan(topic, planning_result) -> ResearchQueryPlan:
     )
 
 
+def build_research_query_plan_from_repair_items(
+    topic,
+    repair_items: Sequence[dict[str, Any]],
+    *,
+    source_round_index: int,
+) -> ResearchQueryPlan:
+    topic_name = str(getattr(topic, "name", "") or "").strip()
+    topic_keywords = _normalize_keywords(getattr(topic, "keywords", ()) or ())
+    topic_domain, domain_diagnostics = _detect_topic_domain(topic_name, topic_keywords)
+    previous_run_count = _count_previous_source_discovery_runs(topic)
+    query_items: list[ResearchQueryItem] = []
+    repair_queries_used: list[dict[str, Any]] = []
+
+    for item in repair_items:
+        if not isinstance(item, dict):
+            continue
+        query = str(item.get("query") or item.get("new_query") or "").strip()
+        if not query:
+            continue
+        angle = str(item.get("angle") or "").strip()
+        reason = str(item.get("repair_reason") or "").strip() or "Repair-plan query for the next discovery round."
+        query_items.append(
+            ResearchQueryItem(
+                intent=_infer_ai_query_intent(query),
+                query=query,
+                reason=reason,
+                source_type_hint="technical_web" if topic_domain == "technical" else "general_web",
+                diagnostics={
+                    "topic_name": topic_name,
+                    "topic_keywords": list(topic_keywords),
+                    "previous_discovery_run_count": previous_run_count,
+                    "planner_status": "repair_plan",
+                    "query_word_count": len(query.split()),
+                    "query_angle_key": "repair_plan",
+                    "query_angle_suffix": angle,
+                    "query_angle_reason": reason,
+                    "query_source": "repair_plan",
+                    "repair_action": str(item.get("action") or "").strip(),
+                    "semantic_shift_type": str(item.get("semantic_shift_type") or "").strip(),
+                    "material_type": str(item.get("material_type") or "").strip(),
+                    "original_old_query": str(item.get("old_query") or "").strip(),
+                    "repair_plan_source_round": int(source_round_index or 0),
+                    "surface_key": str(item.get("surface_key") or "").strip(),
+                    "diversity_reason": str(item.get("diversity_reason") or "").strip(),
+                },
+            )
+        )
+        repair_queries_used.append(
+            {
+                "query": query,
+                "old_query": str(item.get("old_query") or "").strip(),
+                "action": str(item.get("action") or "").strip(),
+                "semantic_shift_type": str(item.get("semantic_shift_type") or "").strip(),
+                "material_type": str(item.get("material_type") or "").strip(),
+                "angle": angle,
+                "source": "repair_plan",
+                "surface_key": str(item.get("surface_key") or "").strip(),
+                "diversity_reason": str(item.get("diversity_reason") or "").strip(),
+            }
+        )
+
+    diagnostics = {
+        "topic_domain": topic_domain,
+        "domain_diagnostics": domain_diagnostics,
+        "query_count": len(query_items),
+        "topic_keyword_count": len(topic_keywords),
+        "used_topic_keywords": _collect_used_keywords(query_items, topic_keywords),
+        "previous_discovery_run_count": previous_run_count,
+        "planner_status": "repair_plan",
+        "used_repair_plan": True,
+        "repair_plan_source_round": int(source_round_index or 0),
+        "repair_queries_used": repair_queries_used,
+    }
+    return ResearchQueryPlan(
+        topic_name=topic_name,
+        topic_keywords=tuple(topic_keywords),
+        topic_domain=topic_domain,
+        query_items=tuple(query_items),
+        diagnostics=diagnostics,
+    )
+
+
 def _normalize_keywords(raw_keywords: Iterable[str]) -> list[str]:
     if isinstance(raw_keywords, str):
         raw_values: list[str] = [raw_keywords]

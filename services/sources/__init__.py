@@ -29,6 +29,7 @@ from .research_queries import (
     ResearchQueryItem,
     ResearchQueryPlan,
     build_research_query_plan,
+    build_research_query_plan_from_repair_items,
 )
 from .research_orchestrator import (
     SourceResearchResult,
@@ -96,6 +97,7 @@ __all__ = [
     "evaluate_source_candidates",
     "get_demo_articles_for_topic",
     "build_research_query_plan",
+    "build_research_query_plan_from_repair_items",
     "ResearchQueryIntent",
     "ResearchQueryItem",
     "ResearchQueryPlan",

@@ -31,8 +31,13 @@ class SourceResearchResult:
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
-def run_source_research(topic, provider: SearchProvider | None = None) -> SourceResearchResult:
-    query_plan = build_research_query_plan(topic)
+def run_source_research(
+    topic,
+    provider: SearchProvider | None = None,
+    *,
+    query_plan_override: ResearchQueryPlan | None = None,
+) -> SourceResearchResult:
+    query_plan = query_plan_override or build_research_query_plan(topic)
     if provider is None:
         provider_resolution = resolve_configured_search_provider(topic)
         if provider_resolution.provider is None:
@@ -142,6 +147,14 @@ def _build_query_performance_diagnostics(
             "provider": provider_result.provider_name,
             "angle": str((query_item.diagnostics or {}).get("query_angle_suffix") or "").strip(),
             "purpose": str(query_item.reason or "").strip(),
+            "source": str((query_item.diagnostics or {}).get("query_source") or "").strip(),
+            "repair_action": str((query_item.diagnostics or {}).get("repair_action") or "").strip(),
+            "semantic_shift_type": str((query_item.diagnostics or {}).get("semantic_shift_type") or "").strip(),
+            "material_type": str((query_item.diagnostics or {}).get("material_type") or "").strip(),
+            "old_query": str((query_item.diagnostics or {}).get("original_old_query") or "").strip(),
+            "repair_plan_source_round": int((query_item.diagnostics or {}).get("repair_plan_source_round") or 0),
+            "surface_key": str((query_item.diagnostics or {}).get("surface_key") or "").strip(),
+            "diversity_reason": str((query_item.diagnostics or {}).get("diversity_reason") or "").strip(),
             "returned_count": 0,
             "accepted_count": 0,
             "rejected_count": 0,
@@ -165,6 +178,14 @@ def _build_query_performance_diagnostics(
                 "provider": str(item.get("provider_name") or provider_result.provider_name or "").strip(),
                 "angle": str(item.get("angle") or "").strip(),
                 "purpose": str(item.get("purpose") or item.get("query_reason") or "").strip(),
+                "source": str(item.get("source") or "").strip(),
+                "repair_action": str(item.get("repair_action") or "").strip(),
+                "semantic_shift_type": str(item.get("semantic_shift_type") or "").strip(),
+                "material_type": str(item.get("material_type") or "").strip(),
+                "old_query": str(item.get("old_query") or "").strip(),
+                "repair_plan_source_round": int(item.get("repair_plan_source_round") or 0),
+                "surface_key": str(item.get("surface_key") or "").strip(),
+                "diversity_reason": str(item.get("diversity_reason") or "").strip(),
                 "returned_count": 0,
                 "accepted_count": 0,
                 "rejected_count": 0,
@@ -182,6 +203,11 @@ def _build_query_performance_diagnostics(
             row["angle"] = str(item.get("angle") or "").strip()
         if str(item.get("purpose") or item.get("query_reason") or "").strip():
             row["purpose"] = str(item.get("purpose") or item.get("query_reason") or "").strip()
+        for key in ("source", "repair_action", "semantic_shift_type", "material_type", "old_query", "surface_key", "diversity_reason"):
+            if str(item.get(key) or "").strip():
+                row[key] = str(item.get(key) or "").strip()
+        if int(item.get("repair_plan_source_round") or 0):
+            row["repair_plan_source_round"] = int(item.get("repair_plan_source_round") or 0)
         if str(item.get("error") or "").strip():
             row["status"] = "partial_error"
             row["error_message"] = str(item.get("error") or "").strip()

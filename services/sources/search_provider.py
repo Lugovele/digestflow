@@ -57,6 +57,14 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
         query = str(query_item.query or "").strip()
         query_angle = str((query_item.diagnostics or {}).get("query_angle_suffix") or "").strip()
         query_purpose = str(query_item.reason or "").strip()
+        query_source = str((query_item.diagnostics or {}).get("query_source") or "").strip()
+        repair_action = str((query_item.diagnostics or {}).get("repair_action") or "").strip()
+        semantic_shift_type = str((query_item.diagnostics or {}).get("semantic_shift_type") or "").strip()
+        material_type = str((query_item.diagnostics or {}).get("material_type") or "").strip()
+        original_old_query = str((query_item.diagnostics or {}).get("original_old_query") or "").strip()
+        repair_plan_source_round = int((query_item.diagnostics or {}).get("repair_plan_source_round") or 0)
+        surface_key = str((query_item.diagnostics or {}).get("surface_key") or "").strip()
+        diversity_reason = str((query_item.diagnostics or {}).get("diversity_reason") or "").strip()
         query_duplicate_url_count = 0
         if not query:
             skipped_queries += 1
@@ -71,6 +79,14 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                     "query_reason": query_purpose,
                     "source_type_hint": str(query_item.source_type_hint or "").strip(),
                     "duplicate_url_count": 0,
+                    "source": query_source,
+                    "repair_action": repair_action,
+                    "semantic_shift_type": semantic_shift_type,
+                    "material_type": material_type,
+                    "old_query": original_old_query,
+                    "repair_plan_source_round": repair_plan_source_round,
+                    "surface_key": surface_key,
+                    "diversity_reason": diversity_reason,
                     "skipped": True,
                 }
             )
@@ -98,6 +114,14 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                     "query_reason": query_purpose,
                     "source_type_hint": str(query_item.source_type_hint or "").strip(),
                     "duplicate_url_count": 0,
+                    "source": query_source,
+                    "repair_action": repair_action,
+                    "semantic_shift_type": semantic_shift_type,
+                    "material_type": material_type,
+                    "old_query": original_old_query,
+                    "repair_plan_source_round": repair_plan_source_round,
+                    "surface_key": surface_key,
+                    "diversity_reason": diversity_reason,
                     "skipped": False,
                     "error": str(exc),
                 }
@@ -145,6 +169,14 @@ def search_research_query_plan(plan: ResearchQueryPlan, provider: SearchProvider
                 "query_reason": query_purpose,
                 "source_type_hint": str(query_item.source_type_hint or "").strip(),
                 "duplicate_url_count": query_duplicate_url_count,
+                "source": query_source,
+                "repair_action": repair_action,
+                "semantic_shift_type": semantic_shift_type,
+                "material_type": material_type,
+                "old_query": original_old_query,
+                "repair_plan_source_round": repair_plan_source_round,
+                "surface_key": surface_key,
+                "diversity_reason": diversity_reason,
                 "skipped": False,
             }
         )

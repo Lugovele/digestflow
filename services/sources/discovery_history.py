@@ -213,7 +213,7 @@ def record_source_discovery_history(
             existing_history_by_normalized[normalized_url] = history_item
             continue
 
-        if (
+        same_cycle_known_repeat = (
             existing_history is not None
             and _is_same_discovery_cycle(existing_history.discovery_run, discovery_run)
             and normalized_url not in shown_by_normalized
@@ -222,8 +222,10 @@ def record_source_discovery_history(
                 SourceDiscoveryHistory.STATUS_KEPT,
             }
             and last_run_outcome == SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN
-        ):
+        )
+        if same_cycle_known_repeat:
             last_run_outcome = existing_history.last_run_outcome or SourceDiscoveryHistory.OUTCOME_NEW_SHOWN
+        preserve_query_text = same_cycle_known_repeat
 
         existing_history.discovery_run = discovery_run
         if topic_source_id:
@@ -234,7 +236,8 @@ def record_source_discovery_history(
         existing_history.snippet = str(candidate.snippet or existing_history.snippet or "").strip()
         existing_history.domain = source_domain or existing_history.domain
         existing_history.provider_name = provider_name or existing_history.provider_name
-        existing_history.query_text = query_text or existing_history.query_text
+        if not preserve_query_text:
+            existing_history.query_text = query_text or existing_history.query_text
         existing_history.status = next_status
         existing_history.last_run_outcome = last_run_outcome
         existing_history.source_content_type = str(

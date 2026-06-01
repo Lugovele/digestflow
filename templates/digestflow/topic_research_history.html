@@ -796,6 +796,14 @@
                                             </ul>
                                         {% endif %}
                                     {% endif %}
+                                    {% if item.cycle_info.repair_used.has_used_repair %}
+                                        <h3 class="section-title">Repair plan used</h3>
+                                        <div class="diagnostic-row">
+                                            <div class="diagnostic-pill"><strong>Source round:</strong> {{ item.cycle_info.repair_used.source_round }}</div>
+                                            <div class="diagnostic-pill"><strong>Queries used:</strong> {{ item.cycle_info.repair_used.queries_used_count }}</div>
+                                            <div class="diagnostic-pill"><strong>Strategy:</strong> {{ item.cycle_info.repair_used.strategy }}</div>
+                                        </div>
+                                    {% endif %}
                                 {% endif %}
 
                                 {% if item.quality_feedback.has_feedback %}

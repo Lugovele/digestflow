@@ -25,6 +25,7 @@ from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceO
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import (
     build_research_review_context,
+    build_research_query_plan_from_repair_items,
     build_source_quality_feedback,
     build_topic_source_payloads_from_review_items,
     CuratedSourceSeed,
@@ -1709,8 +1710,11 @@ def _run_provider_discovery_cycle(
     round_results: list[dict] = []
     round_count = 0
     decision = "partial_target_not_reached"
+    next_round_query_plan = None
+    next_round_repair_usage = None
 
     for round_index in range(1, DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS + 1):
+        round_repair_usage = next_round_repair_usage
         round_result = _run_provider_discovery_round(
             topic=topic,
             provider_name=provider_name,
@@ -1718,7 +1722,14 @@ def _run_provider_discovery_cycle(
             prune_missing_discovered=False,
             cycle_id=cycle_id,
             round_index=round_index,
+            query_plan_override=next_round_query_plan,
+            repair_usage=round_repair_usage,
         )
+        next_round_query_plan = None
+        next_round_repair_usage = None
+        if round_repair_usage and not round_result.get("used_repair_plan"):
+            round_result["used_repair_plan"] = True
+            round_result["repair_plan_usage"] = dict(round_repair_usage)
         round_count = round_index
         for candidate in round_result["new_visible_candidates"]:
             normalized_url = str(candidate.get("normalized_url") or "").strip()
@@ -1746,6 +1757,11 @@ def _run_provider_discovery_cycle(
         if round_index >= DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS:
             decision = "partial_target_not_reached"
             break
+        next_round_query_plan, next_round_repair_usage = _build_next_round_repair_override(
+            topic=topic,
+            round_summary=round_results[-1],
+            query_limit=int(getattr(round_result.get("discovery_run"), "query_count", 0) or 0),
+        )
 
     final_candidate_records = _finalize_discovery_cycle_candidate_records(
         topic=topic,
@@ -1782,6 +1798,8 @@ def _run_provider_discovery_round(
     prune_missing_discovered: bool,
     cycle_id: str,
     round_index: int,
+    query_plan_override=None,
+    repair_usage: dict | None = None,
 ) -> dict:
     discovery_run = record_source_discovery_run_started(
         topic=topic,
@@ -1789,7 +1807,7 @@ def _run_provider_discovery_round(
         diagnostics=dict(provider_diagnostics),
     )
     known_normalized_urls = build_topic_known_url_set(topic)
-    source_research_result = run_source_research(topic)
+    source_research_result = run_source_research(topic, query_plan_override=query_plan_override)
     provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
     accepted_count = int(source_research_result.diagnostics.get("accepted_candidate_count") or 0)
     rejected_count = int(source_research_result.diagnostics.get("rejected_candidate_count") or 0)
@@ -1817,6 +1835,9 @@ def _run_provider_discovery_round(
             cycle_id=cycle_id,
             round_index=round_index,
         )
+        if repair_usage:
+            discovery_diagnostics["used_repair_plan"] = True
+            discovery_diagnostics["repair_plan_usage"] = dict(repair_usage)
         run_status = (
             SourceDiscoveryRun.STATUS_PARTIAL_FAILED
             if raw_result_count > 0
@@ -1852,6 +1873,8 @@ def _run_provider_discovery_round(
             "known_or_duplicate_count": already_known_count,
             "quality_rejected_count": int(discovery_diagnostics["source_quality_feedback"].get("quality_rejected_count") or 0),
             "returned_count": raw_result_count,
+            "used_repair_plan": bool(repair_usage and repair_usage.get("used_repair_plan")),
+            "repair_plan_usage": dict(repair_usage or {}),
             "reason_summary": _classify_discovery_cycle_round_reason(
                 provider_error_count=provider_error_count,
                 raw_result_count=raw_result_count,
@@ -1891,6 +1914,9 @@ def _run_provider_discovery_round(
         cycle_id=cycle_id,
         round_index=round_index,
     )
+    if repair_usage:
+        discovery_diagnostics["used_repair_plan"] = True
+        discovery_diagnostics["repair_plan_usage"] = dict(repair_usage)
     finalized_run = finalize_source_discovery_run(
         discovery_run,
         status=run_status,
@@ -1921,6 +1947,8 @@ def _run_provider_discovery_round(
         "known_or_duplicate_count": already_known_count,
         "quality_rejected_count": int(discovery_diagnostics["source_quality_feedback"].get("quality_rejected_count") or 0),
         "returned_count": raw_result_count,
+        "used_repair_plan": bool(repair_usage and repair_usage.get("used_repair_plan")),
+        "repair_plan_usage": dict(repair_usage or {}),
         "reason_summary": _classify_discovery_cycle_round_reason(
             provider_error_count=provider_error_count,
             raw_result_count=raw_result_count,
@@ -2000,7 +2028,81 @@ def _build_discovery_cycle_round_summary(
         "repair_plan_for_next_round": repair_plan_for_next_round,
         "query_rows": _extract_repair_query_rows(dict(getattr(run, "diagnostics", {}) or {})),
         "quality_feedback": dict((dict(getattr(run, "diagnostics", {}) or {})).get("source_quality_feedback") or {}),
+        "used_repair_plan": bool(round_result.get("used_repair_plan")),
+        "repair_plan_usage": dict(round_result.get("repair_plan_usage") or {}),
     }
+
+
+def _build_next_round_repair_override(
+    *,
+    topic: Topic,
+    round_summary: dict,
+    query_limit: int,
+):
+    repair_plan = round_summary.get("repair_plan_for_next_round") if isinstance(round_summary.get("repair_plan_for_next_round"), dict) else {}
+    source_round_index = int(round_summary.get("round_index") or 0)
+    repair_queries_used = _select_repair_queries_for_next_round(
+        repair_plan=repair_plan,
+        query_limit=query_limit,
+    )
+    if not repair_queries_used:
+        return None, None
+    query_plan_override = build_research_query_plan_from_repair_items(
+        topic,
+        repair_queries_used,
+        source_round_index=source_round_index,
+    )
+    return query_plan_override, {
+        "used_repair_plan": True,
+        "repair_plan_source_round": source_round_index,
+        "strategy": str(repair_plan.get("strategy") or "").strip(),
+        "queries_used_count": len(repair_queries_used),
+        "repair_queries_used": repair_queries_used,
+    }
+
+
+def _select_repair_queries_for_next_round(
+    *,
+    repair_plan: dict,
+    query_limit: int,
+) -> list[dict]:
+    if not isinstance(repair_plan, dict) or not repair_plan:
+        return []
+    selected: list[dict] = []
+    seen_queries: set[str] = set()
+    limit = int(query_limit or 0)
+
+    for item in repair_plan.get("query_repair_plan") or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").strip()
+        old_query = str(item.get("old_query") or "").strip()
+        new_query = compact_search_query(str(item.get("new_query") or "").strip())
+        if not new_query or action == "drop":
+            continue
+        if new_query.casefold() == compact_search_query(old_query).casefold():
+            continue
+        query_key = _normalized_repaired_query_key(new_query)
+        if query_key in seen_queries:
+            continue
+        seen_queries.add(query_key)
+        selected.append(
+            {
+                "query": new_query,
+                "old_query": old_query,
+                "action": action or "replace_query",
+                "semantic_shift_type": str(item.get("semantic_shift_type") or "").strip(),
+                "material_type": str(item.get("material_type") or "").strip(),
+                "angle": str(item.get("angle") or "").strip(),
+                "source": "repair_plan",
+                "surface_key": str(item.get("surface_key") or "").strip(),
+                "diversity_reason": str(item.get("diversity_reason") or "").strip(),
+                "repair_reason": str(item.get("repair_reason") or "").strip(),
+            }
+        )
+        if limit > 0 and len(selected) >= limit:
+            break
+    return selected
 
 
 def _build_discovery_cycle_payload(
@@ -2615,6 +2717,8 @@ def _repair_query_from_diagnosis(
     compacted_query = compact_search_query(new_query)
     if compacted_query.casefold() == compact_search_query(old_query).casefold() and strategy not in {"stop", "stop_provider_unavailable"}:
         compacted_query = compact_search_query(f"{subject} {_next_repair_term(preferred_terms, old_query, fallback=['market structure report'])}")
+    if strategy == "tighten_recency_or_current_terms":
+        compacted_query = _ensure_compact_current_year_query(compacted_query)
     return {
         "old_query": old_query,
         "action": action,
@@ -2969,6 +3073,18 @@ def compact_search_query(query: str) -> str:
     return " ".join(compacted)
 
 
+def _ensure_compact_current_year_query(query: str) -> str:
+    compacted = compact_search_query(query)
+    current_year = str(timezone.now().year)
+    tokens = [token for token in compacted.split(" ") if token]
+    if any(token == current_year for token in tokens):
+        return compacted
+    if len(tokens) >= 8:
+        tokens = tokens[:7]
+    tokens.append(current_year)
+    return " ".join(tokens)
+
+
 def choose_semantic_shift_type(primary_cause: str) -> str:
     mapping = {
         "provider_partial_error": "query_compression",
@@ -3215,6 +3331,18 @@ def _build_query_performance_entries_for_run(
             "visible_new_suggestions_count": 0,
             "status": str(item.get("status") or "").strip(),
         }
+        for key in (
+            "source",
+            "repair_action",
+            "semantic_shift_type",
+            "material_type",
+            "old_query",
+            "repair_plan_source_round",
+            "surface_key",
+            "diversity_reason",
+        ):
+            if str(item.get(key) or "").strip():
+                row[key] = str(item.get(key) or "").strip()
         if str(item.get("error_message") or "").strip():
             row["error_message"] = str(item.get("error_message") or "").strip()
         query_rows.append(row)
@@ -3879,6 +4007,12 @@ def _build_research_history_cycle_info(diagnostics: dict) -> dict:
         return {"has_cycle": False}
     cycle_diagnosis = cycle.get("cycle_diagnosis") if isinstance(cycle.get("cycle_diagnosis"), dict) else {}
     repair_plan = cycle.get("repair_plan") if isinstance(cycle.get("repair_plan"), dict) else {}
+    current_round_item = {}
+    current_round_index = int(cycle.get("round_index") or 0)
+    for item in cycle.get("rounds") or []:
+        if isinstance(item, dict) and int(item.get("round_index") or 0) == current_round_index:
+            current_round_item = item
+            break
     return {
         "has_cycle": True,
         "summary": _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip()),
@@ -3893,6 +4027,7 @@ def _build_research_history_cycle_info(diagnostics: dict) -> dict:
         "decision": _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip()),
         "diagnosis": _build_research_history_cycle_diagnosis(cycle_diagnosis),
         "repair": _build_research_history_cycle_repair(repair_plan),
+        "repair_used": _build_research_history_repair_usage(current_round_item),
     }
 
 
@@ -4160,6 +4295,26 @@ def _build_full_research_history_copy_report(
                     lines.append(f"      surface key: {item.get('surface_key')}")
                 if item.get("diversity_reason"):
                     lines.append(f"      diversity reason: {item.get('diversity_reason')}")
+        latest_round_index = int(latest_cycle.get("round_index") or 0)
+        latest_round_item = {}
+        for round_item in latest_cycle.get("rounds") or []:
+            if isinstance(round_item, dict) and int(round_item.get("round_index") or 0) == latest_round_index:
+                latest_round_item = round_item
+                break
+        latest_repair_usage = latest_round_item.get("repair_plan_usage") if isinstance(latest_round_item.get("repair_plan_usage"), dict) else {}
+        if latest_round_item.get("used_repair_plan"):
+            lines.append("- Repair plan used")
+            lines.append(f"  - source round: {latest_repair_usage.get('repair_plan_source_round')}")
+            lines.append(f"  - queries used: {latest_repair_usage.get('queries_used_count') or len(latest_repair_usage.get('repair_queries_used') or [])}")
+            lines.append(f"  - strategy: {latest_repair_usage.get('strategy')}")
+            for item in latest_repair_usage.get("repair_queries_used") or []:
+                if not isinstance(item, dict):
+                    continue
+                lines.append(f"  - query: {item.get('query')}")
+                lines.append(f"    old query: {item.get('old_query')}")
+                lines.append(f"    action: {item.get('action')}")
+                lines.append(f"    semantic shift: {item.get('semantic_shift_type')}")
+                lines.append(f"    material type: {item.get('material_type')}")
         cycle_diagnosis = latest_cycle.get("cycle_diagnosis") if isinstance(latest_cycle.get("cycle_diagnosis"), dict) else {}
         if cycle_diagnosis:
             lines.append("- Search diagnosis")
@@ -4183,6 +4338,20 @@ def _build_full_research_history_copy_report(
             lines.append(f"- provider errors: {round_item.get('provider_error_count')}")
             lines.append(f"- returned count: {round_item.get('returned_count')}")
             lines.append(f"- reason summary: {round_item.get('reason_summary')}")
+            if round_item.get("used_repair_plan"):
+                round_usage = round_item.get("repair_plan_usage") if isinstance(round_item.get("repair_plan_usage"), dict) else {}
+                lines.append("- repair plan used:")
+                lines.append(f"  - source round: {round_usage.get('repair_plan_source_round')}")
+                lines.append(f"  - queries used: {round_usage.get('queries_used_count') or len(round_usage.get('repair_queries_used') or [])}")
+                lines.append(f"  - strategy: {round_usage.get('strategy')}")
+                for item in round_usage.get("repair_queries_used") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    lines.append(f"  - query: {item.get('query')}")
+                    lines.append(f"    old query: {item.get('old_query')}")
+                    lines.append(f"    action: {item.get('action')}")
+                    lines.append(f"    semantic shift: {item.get('semantic_shift_type')}")
+                    lines.append(f"    material type: {item.get('material_type')}")
             round_repair = round_item.get("repair_plan_for_next_round") if isinstance(round_item.get("repair_plan_for_next_round"), dict) else {}
             if round_repair:
                 lines.append("- strategy repair:")
@@ -4435,6 +4604,18 @@ def _build_research_history_cycle_repair(repair_plan: dict) -> dict:
             {"label": "Recovered failed search areas", "value": str(recovered_failed_area_count)},
         ],
         "items": items[:3],
+    }
+
+
+def _build_research_history_repair_usage(round_item: dict) -> dict:
+    if not isinstance(round_item, dict) or not round_item.get("used_repair_plan"):
+        return {"has_used_repair": False}
+    usage = round_item.get("repair_plan_usage") if isinstance(round_item.get("repair_plan_usage"), dict) else {}
+    return {
+        "has_used_repair": True,
+        "source_round": int(usage.get("repair_plan_source_round") or 0),
+        "queries_used_count": int(usage.get("queries_used_count") or len(usage.get("repair_queries_used") or [])),
+        "strategy": str(usage.get("strategy") or "").replace("_", " ").strip().title() or "Repair plan",
     }
 
 
