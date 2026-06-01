@@ -16,6 +16,7 @@ from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
 from apps.digests.views import (
+    _build_discovery_repair_plan,
     _build_curated_source_seeds,
     _build_source_discovery_run_diagnostics,
     _upsert_and_build_source_candidates,
@@ -102,6 +103,16 @@ class TopicRssSourceTests(TestCase):
         dominant_rejection_reasons: list[dict] | None = None,
     ) -> dict:
         accepted_total = len(new_visible_candidates) if accepted_count is None else int(accepted_count)
+        query_rows = list(
+            per_query_result_counts
+            or [
+                {
+                    "intent": "analysis",
+                    "query": f"{topic.name} market analysis latest",
+                    "result_count": provider_result_count,
+                }
+            ]
+        )
         run = SourceDiscoveryRun.objects.create(
             user=topic.user,
             topic=topic,
@@ -133,7 +144,7 @@ class TopicRssSourceTests(TestCase):
                     "planner_quality_guidance": [],
                 },
                 "query_performance": [],
-                "per_query_result_counts": list(per_query_result_counts or []),
+                "per_query_result_counts": query_rows,
                 "provider_errors": (
                     [{"message": "SerpAPI returned an API error."}] if provider_error_count else []
                 ),
@@ -2368,6 +2379,8 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(cycle.get("round_count"), 2)
         self.assertEqual(cycle.get("accumulated_visible_suggestions"), 6)
         self.assertEqual(cycle.get("decision"), "target_reached")
+        self.assertEqual((cycle.get("repair_plan") or {}).get("strategy"), "stop")
+        self.assertEqual((cycle.get("repair_plan") or {}).get("query_repair_plan"), [])
         self.assertEqual(len(cycle.get("rounds") or []), 2)
         self.assertEqual(cycle["rounds"][0].get("visible_new_suggestions"), 0)
         self.assertEqual(cycle["rounds"][0].get("reason_summary"), "zero_visible")
@@ -2384,6 +2397,8 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("rounds run: 2", copy_report)
         self.assertIn("accumulated visible suggestions: 6", copy_report)
         self.assertIn("decision: target_reached", copy_report)
+        self.assertIn("Strategy repair", copy_report)
+        self.assertIn("strategy: stop", copy_report)
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2572,6 +2587,8 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(cycle.get("decision"), "provider_unavailable")
         self.assertEqual(cycle.get("round_count"), 1)
         self.assertEqual((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), "provider_unavailable")
+        self.assertEqual((cycle.get("repair_plan") or {}).get("strategy"), "stop_provider_unavailable")
+        self.assertEqual((cycle.get("repair_plan") or {}).get("query_repair_plan"), [])
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2653,6 +2670,14 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(cycle.get("accumulated_visible_suggestions"), 6)
         self.assertEqual(cycle.get("rounds", [])[0].get("provider_error_count"), 1)
         self.assertIn("provider_partial_error", (cycle.get("rounds", [])[0].get("diagnosis") or {}).get("secondary_causes", []))
+        repair_plan = cycle.get("rounds", [])[0].get("repair_plan_for_next_round") or {}
+        self.assertIn(
+            repair_plan.get("strategy"),
+            {"mixed_repair", "recover_failed_search_area"},
+        )
+        repaired_queries = [item.get("new_query") for item in repair_plan.get("query_repair_plan") or [] if isinstance(item, dict)]
+        self.assertTrue(repaired_queries)
+        self.assertTrue(all(len(str(query).split()) <= 8 for query in repaired_queries))
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2710,6 +2735,129 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(round_diagnosis.get("primary_cause"), "duplicate_heavy")
         self.assertEqual(round_diagnosis.get("recommended_next_action"), "pivot_to_new_subangles")
         self.assertEqual((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), "duplicate_heavy")
+        repair_plan = cycle.get("rounds", [])[0].get("repair_plan_for_next_round") or {}
+        self.assertEqual(repair_plan.get("strategy"), "pivot_exhausted_angle")
+        self.assertTrue(repair_plan.get("query_repair_plan"))
+        self.assertTrue(all(len(str(item.get("new_query") or "").split()) <= 8 for item in repair_plan.get("query_repair_plan") or []))
+
+    def test_repair_plan_diversifies_duplicate_heavy_queries_across_distinct_surfaces(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="bitcion market",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        diagnosis = {
+            "primary_cause": "duplicate_heavy",
+            "secondary_causes": ["provider_partial_error"],
+            "severity": "high",
+            "explanation": "Duplicate-heavy results need a fresh adjacent surface.",
+            "recommended_next_action": "pivot_to_new_subangles",
+        }
+        query_rows = [
+            {"query": "Bitcoin market analysis ETF flows latest", "status": "useful", "returned_count": 1},
+            {"query": "Bitcoin market analysis institutional flows latest", "status": "useful", "returned_count": 1},
+            {"query": "Bitcoin market analysis funding rates latest", "status": "useful", "returned_count": 1},
+            {"query": "Bitcoin market analysis open interest latest", "status": "useful", "returned_count": 1},
+            {"query": "Bitcoin market analysis research paper latest", "status": "useful", "returned_count": 1},
+        ]
+        repair_plan = _build_discovery_repair_plan(
+            topic=topic,
+            diagnosis=diagnosis,
+            rounds=[
+                {
+                    "run_id": 1,
+                    "round_index": 1,
+                    "returned_count": 10,
+                    "visible_new_suggestions": 0,
+                    "diagnosis": diagnosis,
+                    "query_rows": query_rows,
+                    "quality_feedback": {
+                        "preferred_material_types_found": [
+                            {"material_type": "market_data_flow_analysis", "label": "market data / flow analysis", "count": 2},
+                            {"material_type": "research_paper", "label": "research paper", "count": 1},
+                            {"material_type": "on_chain_analysis", "label": "on-chain analysis", "count": 1},
+                        ]
+                    },
+                }
+            ],
+        )
+
+        items = repair_plan.get("query_repair_plan") or []
+        new_queries = [str(item.get("new_query") or "") for item in items]
+        self.assertEqual(len(new_queries), len(set(new_queries)))
+        self.assertEqual(
+            {
+                str(item.get("old_query") or ""): str(item.get("new_query") or "")
+                for item in items
+            },
+            {
+                "Bitcoin market analysis ETF flows latest": "Bitcoin ETF flows weekly report",
+                "Bitcoin market analysis institutional flows latest": "Bitcoin treasury holdings institutional demand",
+                "Bitcoin market analysis funding rates latest": "Bitcoin funding rates open interest report",
+                "Bitcoin market analysis open interest latest": "Bitcoin derivatives positioning market structure",
+                "Bitcoin market analysis research paper latest": "Bitcoin market structure research paper",
+            },
+        )
+        self.assertTrue(all(len(query.split()) <= 8 for query in new_queries))
+        self.assertTrue(all(query != str(item.get("old_query") or "") for query, item in zip(new_queries, items, strict=False)))
+        self.assertTrue(all(str(item.get("surface_key") or "").strip() for item in items))
+
+    def test_repair_plan_remains_generation_only_and_does_not_replace_query_rows(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="bitcion market",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        diagnosis = {
+            "primary_cause": "mixed_low_yield",
+            "secondary_causes": ["duplicate_heavy", "quality_heavy"],
+            "severity": "medium",
+            "explanation": "Mixed low-yield results need diversified repair planning.",
+            "recommended_next_action": "reframe_search_strategy",
+        }
+        query_rows = [
+            {"query": "Bitcoin market analysis ETF flows latest", "status": "useful", "returned_count": 1},
+            {"query": "Bitcoin market analysis institutional flows latest", "status": "useful", "returned_count": 1},
+            {"query": "Bitcoin market analysis funding rates latest", "status": "useful", "returned_count": 1},
+        ]
+        repair_plan = _build_discovery_repair_plan(
+            topic=topic,
+            diagnosis=diagnosis,
+            rounds=[
+                {
+                    "run_id": 1,
+                    "round_index": 1,
+                    "returned_count": 8,
+                    "visible_new_suggestions": 0,
+                    "diagnosis": diagnosis,
+                    "query_rows": query_rows,
+                    "quality_feedback": {
+                        "preferred_material_types_found": [
+                            {"material_type": "market_data_flow_analysis", "label": "market data / flow analysis", "count": 2},
+                            {"material_type": "market_structure_analysis", "label": "market structure analysis", "count": 1},
+                        ]
+                    },
+                }
+            ],
+        )
+
+        repaired_queries = {str(item.get("new_query") or "") for item in repair_plan.get("query_repair_plan") or []}
+        executed_queries = {str(item.get("query") or "") for item in query_rows}
+        self.assertTrue(repaired_queries)
+        self.assertTrue(repaired_queries.isdisjoint(executed_queries))
+        self.assertTrue(
+            {
+                "avoid_duplicate_repaired_queries",
+                "avoid_near_duplicate_repaired_queries",
+                "require_query_surface_diversity",
+            }.issubset(set((repair_plan.get("constraints") or {}).keys()))
+        )
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2768,6 +2916,9 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(round_diagnosis.get("primary_cause"), "over_broad_query")
         self.assertEqual(round_diagnosis.get("recommended_next_action"), "narrow_by_material_type")
         self.assertIn((cycle.get("cycle_diagnosis") or {}).get("primary_cause"), {"over_broad_query", "quality_heavy"})
+        repair_plan = cycle.get("rounds", [])[0].get("repair_plan_for_next_round") or {}
+        self.assertEqual(repair_plan.get("strategy"), "narrow_by_material_type")
+        self.assertTrue(any("report" in str(item.get("new_query") or "").casefold() or "paper" in str(item.get("new_query") or "").casefold() for item in repair_plan.get("query_repair_plan") or []))
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2831,6 +2982,69 @@ class TopicRssSourceTests(TestCase):
         round_diagnosis = cycle.get("rounds", [])[0].get("diagnosis") or {}
         self.assertIn(round_diagnosis.get("primary_cause"), {"zero_return", "over_narrow_query"})
         self.assertEqual(round_diagnosis.get("recommended_next_action"), "broaden_query")
+        repair_plan = cycle.get("rounds", [])[0].get("repair_plan_for_next_round") or {}
+        self.assertEqual(repair_plan.get("strategy"), "adjacent_scope_shift")
+        self.assertTrue(all(len(str(item.get("new_query") or "").split()) <= 8 for item in repair_plan.get("query_repair_plan") or []))
+
+    @override_settings(
+        SEARCH_PROVIDER_ENABLED=True,
+        SEARCH_PROVIDER="serpapi",
+        SEARCH_PROVIDER_API_KEY="test-key",
+    )
+    @patch("apps.digests.views._run_provider_discovery_round")
+    def test_discovery_cycle_diagnoses_stale_heavy_rounds(
+        self,
+        mock_run_provider_discovery_round,
+    ) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle stale-heavy topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["bitcoin market"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        stale_reasons = [{"reason": "stale source outside recency window", "count": 5}]
+        mock_run_provider_discovery_round.side_effect = [
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=7,
+                accepted_count=0,
+                quality_rejected_count=5,
+                dominant_rejection_reasons=stale_reasons,
+                reason_summary="stale_heavy",
+            ),
+            self._build_fake_discovery_cycle_round_result(
+                topic=topic,
+                new_visible_candidates=[],
+                provider_result_count=6,
+                accepted_count=0,
+                quality_rejected_count=4,
+                dominant_rejection_reasons=stale_reasons,
+                reason_summary="stale_heavy",
+            ),
+        ]
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "source_url": "",
+                "source_mode": topic.source_mode,
+                "run_research": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
+        round_diagnosis = cycle.get("rounds", [])[0].get("diagnosis") or {}
+        self.assertEqual(round_diagnosis.get("primary_cause"), "stale_heavy")
+        self.assertEqual(round_diagnosis.get("recommended_next_action"), "tighten_recency_or_use_current_terms")
+        repair_plan = cycle.get("rounds", [])[0].get("repair_plan_for_next_round") or {}
+        self.assertEqual(repair_plan.get("strategy"), "tighten_recency_or_current_terms")
+        self.assertTrue(any(str(timezone.now().year) in str(item.get("new_query") or "") for item in repair_plan.get("query_repair_plan") or []))
 
     @override_settings(
         SEARCH_PROVIDER_ENABLED=True,
@@ -2885,11 +3099,14 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         history_response = self.client.get(reverse("topic-research-history", args=[topic.id]))
         self.assertContains(history_response, "Search diagnosis")
+        self.assertContains(history_response, "Strategy repair")
         copy_report = history_response.context["full_history_copy_report"]
         self.assertIn("Search diagnosis", copy_report)
+        self.assertIn("Strategy repair", copy_report)
         self.assertIn("primary cause:", copy_report)
         self.assertIn("secondary causes:", copy_report)
         self.assertIn("recommended next action:", copy_report)
+        self.assertIn("query repair plan:", copy_report)
         cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
         cycle_diagnosis = cycle.get("cycle_diagnosis") or {}
         self.assertIn(cycle_diagnosis.get("primary_cause"), {"duplicate_heavy", "quality_heavy", "over_broad_query", "mixed_low_yield"})
@@ -4153,6 +4370,30 @@ class TopicRssSourceTests(TestCase):
                         "explanation": "Most returned URLs were already known or rejected, and some provider queries failed.",
                         "recommended_next_action": "pivot_to_new_subangles",
                     },
+                    "repair_plan": {
+                        "strategy": "pivot_exhausted_angle",
+                        "reason": "The previous round underperformed because duplicate-heavy results dominated the visible output.",
+                        "constraints": {
+                            "avoid_repeating_queries": True,
+                            "avoid_verbatim_failed_queries": True,
+                            "avoid_long_natural_language_queries": True,
+                            "prefer_compact_search_grade_queries": True,
+                            "prefer_material_types": ["market data / flow analysis", "research paper"],
+                            "avoid_material_types": ["beginner / SEO guide"],
+                            "avoid_domains": ["quora.com"],
+                        },
+                        "query_repair_plan": [
+                            {
+                                "old_query": "Automation research report implementation guide",
+                                "action": "replace_query",
+                                "semantic_shift_type": "material_type_shift",
+                                "repair_reason": "Shifted the duplicate-heavy report query toward a more compact evidence surface.",
+                                "new_query": "Automation market structure report",
+                                "angle": "market structure",
+                                "material_type": "report",
+                            }
+                        ],
+                    },
                     "rounds": [
                         {
                             "run_id": 123,
@@ -4171,6 +4412,22 @@ class TopicRssSourceTests(TestCase):
                                 "explanation": "Primary cause: Provider partial errors. 3 results were rejected by quality filters; 1 provider query failed.",
                                 "recommended_next_action": "retry_or_rephrase_failed_queries",
                             },
+                            "repair_plan_for_next_round": {
+                                "strategy": "recover_failed_search_area",
+                                "reason": "Some provider queries failed, so the next round should recover the failed search area with compact queries.",
+                                "query_repair_plan": [
+                                    {
+                                        "old_query": "Automation research report implementation guide",
+                                        "action": "replace_query",
+                                        "semantic_shift_type": "query_compression",
+                                        "repair_reason": "Preserve the failed search area, but change to a compact report-style query.",
+                                        "new_query": "Automation market structure report",
+                                        "angle": "market structure",
+                                        "material_type": "report",
+                                    }
+                                ],
+                                "constraints": {},
+                            },
                         },
                         {
                             "run_id": 124,
@@ -4188,6 +4445,22 @@ class TopicRssSourceTests(TestCase):
                                 "severity": "medium",
                                 "explanation": "Primary cause: Duplicate-heavy results. 1 result was rejected by quality filters.",
                                 "recommended_next_action": "pivot_to_new_subangles",
+                            },
+                            "repair_plan_for_next_round": {
+                                "strategy": "pivot_exhausted_angle",
+                                "reason": "Avoid the exhausted duplicate-heavy angle and pivot to a fresh adjacent surface.",
+                                "query_repair_plan": [
+                                    {
+                                        "old_query": "Automation research report case study",
+                                        "action": "replace_query",
+                                        "semantic_shift_type": "adjacent_angle_shift",
+                                        "repair_reason": "Pivoted the exhausted angle to a stronger adjacent evidence layer.",
+                                        "new_query": "Automation ETF flows report",
+                                        "angle": "adjacent angle",
+                                        "material_type": "report",
+                                    }
+                                ],
+                                "constraints": {},
                             },
                         },
                     ],
@@ -4237,6 +4510,8 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("Round 1", copy_report)
         self.assertIn("ETF flows", copy_report)
         self.assertIn("Search diagnosis", copy_report)
+        self.assertIn("Strategy repair", copy_report)
+        self.assertIn("query repair plan:", copy_report)
         self.assertIn("primary cause: duplicate_heavy", copy_report)
         self.assertIn("recommended next action: pivot_to_new_subangles", copy_report)
         self.assertEqual(
@@ -4294,6 +4569,9 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Duplicate-heavy results")
         self.assertContains(response, "Recommended next action:")
         self.assertContains(response, "Pivot to new sub-angles")
+        self.assertContains(response, "Strategy repair")
+        self.assertContains(response, "Strategy:")
+        self.assertContains(response, "Changed queries:")
         self.assertNotContains(response, "https://quora.com/answer")
         self.assertNotContains(response, "Visible new suggestions from this run")
         self.assertNotContains(response, "URLs returned by provider")

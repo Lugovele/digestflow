@@ -772,6 +772,30 @@
                                             <p class="muted" style="margin: 10px 0 0;">{{ item.cycle_info.diagnosis.explanation }}</p>
                                         {% endif %}
                                     {% endif %}
+                                    {% if item.cycle_info.repair.has_repair %}
+                                        <h3 class="section-title">Strategy repair</h3>
+                                        <div class="diagnostic-row">
+                                            <div class="diagnostic-pill"><strong>Strategy:</strong> {{ item.cycle_info.repair.strategy }}</div>
+                                            {% for metric in item.cycle_info.repair.rows %}
+                                                <div class="diagnostic-pill"><strong>{{ metric.label }}:</strong> {{ metric.value }}</div>
+                                            {% endfor %}
+                                        </div>
+                                        {% if item.cycle_info.repair.reason %}
+                                            <p class="muted" style="margin: 10px 0 0;">{{ item.cycle_info.repair.reason }}</p>
+                                        {% endif %}
+                                        {% if item.cycle_info.repair.items %}
+                                            <ul class="quality-list">
+                                                {% for repair_item in item.cycle_info.repair.items %}
+                                                    <li>
+                                                        {{ repair_item.repair_reason }}
+                                                        {% if repair_item.new_query %}
+                                                            <div class="muted">{{ repair_item.new_query }}</div>
+                                                        {% endif %}
+                                                    </li>
+                                                {% endfor %}
+                                            </ul>
+                                        {% endif %}
+                                    {% endif %}
                                 {% endif %}
 
                                 {% if item.quality_feedback.has_feedback %}
