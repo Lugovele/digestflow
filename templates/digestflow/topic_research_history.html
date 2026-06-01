@@ -486,6 +486,9 @@
                 </div>
             </div>
             <p class="muted" style="margin: 12px 0 0;">{{ current_research_state.last_run_subtitle }}</p>
+            {% if current_research_state.last_cycle_summary %}
+                <p class="muted" style="margin: 8px 0 0;">{{ current_research_state.last_cycle_summary }}</p>
+            {% endif %}
         </section>
 
         <section class="card">
@@ -747,6 +750,16 @@
                                         <div class="strategy-chip"><strong>{{ detail.label }}:</strong> {{ detail.value }}</div>
                                     {% endfor %}
                                 </div>
+
+                                {% if item.cycle_info.has_cycle %}
+                                    <h3 class="section-title">Discovery cycle</h3>
+                                    <div class="diagnostic-row">
+                                        {% for metric in item.cycle_info.rows %}
+                                            <div class="diagnostic-pill"><strong>{{ metric.label }}:</strong> {{ metric.value }}</div>
+                                        {% endfor %}
+                                        <div class="diagnostic-pill"><strong>Cycle decision:</strong> {{ item.cycle_info.decision }}</div>
+                                    </div>
+                                {% endif %}
 
                                 {% if item.quality_feedback.has_feedback %}
                                     <h3 class="section-title">Quality diagnostics</h3>

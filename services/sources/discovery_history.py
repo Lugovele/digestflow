@@ -213,6 +213,18 @@ def record_source_discovery_history(
             existing_history_by_normalized[normalized_url] = history_item
             continue
 
+        if (
+            existing_history is not None
+            and _is_same_discovery_cycle(existing_history.discovery_run, discovery_run)
+            and normalized_url not in shown_by_normalized
+            and existing_history.status in {
+                SourceDiscoveryHistory.STATUS_SHOWN,
+                SourceDiscoveryHistory.STATUS_KEPT,
+            }
+            and last_run_outcome == SourceDiscoveryHistory.OUTCOME_ALREADY_KNOWN
+        ):
+            last_run_outcome = existing_history.last_run_outcome or SourceDiscoveryHistory.OUTCOME_NEW_SHOWN
+
         existing_history.discovery_run = discovery_run
         if topic_source_id:
             existing_history.topic_source_id = topic_source_id
@@ -274,6 +286,20 @@ def record_source_discovery_history(
         discovery_run=discovery_run,
         history_by_normalized_url=existing_history_by_normalized,
     )
+
+
+def _is_same_discovery_cycle(existing_run: SourceDiscoveryRun | None, current_run: SourceDiscoveryRun) -> bool:
+    if existing_run is None:
+        return False
+    existing_diagnostics = existing_run.diagnostics if isinstance(existing_run.diagnostics, dict) else {}
+    current_diagnostics = current_run.diagnostics if isinstance(current_run.diagnostics, dict) else {}
+    existing_cycle = existing_diagnostics.get("discovery_cycle")
+    current_cycle = current_diagnostics.get("discovery_cycle")
+    if not isinstance(existing_cycle, dict) or not isinstance(current_cycle, dict):
+        return False
+    existing_cycle_id = str(existing_cycle.get("cycle_id") or "").strip()
+    current_cycle_id = str(current_cycle.get("cycle_id") or "").strip()
+    return bool(existing_cycle_id and existing_cycle_id == current_cycle_id)
 
 
 def update_history_for_kept_source(source: TopicSource) -> None:

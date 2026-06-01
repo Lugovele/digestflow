@@ -65,6 +65,8 @@ INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were a
 VISIBLE_NEW_SOURCE_LIMIT = 12
 DISCOVERY_CONTEXT_PARAM = "discovery_context"
 SHOW_ALL_NEW_SUGGESTIONS_PARAM = "show_all_suggestions"
+DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS = 6
+DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS = 2
 
 
 def _get_user_facing_source_mode_label(mode: str) -> str:
@@ -1589,131 +1591,49 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
     provider_status = str(provider_diagnostics.get("search_provider_status") or "").strip().lower()
     provider_name = str(provider_diagnostics.get("search_provider_name") or "").strip().lower()
     provider_enabled = bool(provider_diagnostics.get("search_provider_enabled"))
-    existing_new_suggestion_count = _count_existing_new_suggestions(topic)
 
     if provider_status == "ready" and provider_name == "serpapi":
-        discovery_run = record_source_discovery_run_started(
+        return _run_provider_discovery_cycle(
             topic=topic,
             provider_name=provider_name,
-            diagnostics=dict(provider_diagnostics),
-        )
-        known_normalized_urls = build_topic_known_url_set(topic)
-        source_research_result = run_source_research(topic)
-        provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
-        accepted_count = int(source_research_result.diagnostics.get("accepted_candidate_count") or 0)
-        rejected_count = int(source_research_result.diagnostics.get("rejected_candidate_count") or 0)
-        already_known_count = _count_known_provider_results(
-            source_research_result=source_research_result,
-            known_normalized_urls=known_normalized_urls,
-        )
-
-        candidate_records = _build_provider_backed_candidate_records(source_research_result)
-        candidate_records = filter_new_source_candidates(candidate_records, topic.sources.all())
-        candidate_records = _filter_previously_handled_provider_candidates(topic, candidate_records)
-        has_new_visible_suggestions = _has_new_visible_suggestions(
-            candidate_records=candidate_records,
-            known_normalized_urls=known_normalized_urls,
-        )
-        if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0 and not has_new_visible_suggestions:
-            discovery_diagnostics = _build_source_discovery_run_diagnostics(
-                source_research_result=source_research_result,
-                known_normalized_urls=known_normalized_urls,
-                shown_candidates=[],
-            )
-            record_source_discovery_history(
-                topic=topic,
-                discovery_run=finalize_source_discovery_run(
-                    discovery_run,
-                    status=(
-                        SourceDiscoveryRun.STATUS_PARTIAL_FAILED
-                        if int(source_research_result.diagnostics.get("raw_result_count") or 0) > 0
-                        else SourceDiscoveryRun.STATUS_FAILED
-                    ),
-                    diagnostics=discovery_diagnostics,
-                    known_url_count=already_known_count,
-                    accepted_count=accepted_count,
-                    rejected_count=rejected_count,
-                    new_suggestions_count=0,
-                    already_known_count=already_known_count,
-                ),
-                source_research_result=source_research_result,
-                shown_candidates=[],
-                known_normalized_urls=known_normalized_urls,
-            )
-            return _build_persisted_new_source_candidates(topic), _build_provider_discovery_summary(
-                source_research_result=source_research_result,
-                candidate_records=[],
-                execution_status="failed",
-                existing_new_suggestion_count=existing_new_suggestion_count,
-            )
-        candidate_records = _upsert_and_build_source_candidates(
-            topic,
-            candidate_records,
-            prune_missing_discovered=has_new_visible_suggestions,
-        )
-        if not has_new_visible_suggestions:
-            candidate_records = _build_persisted_new_source_candidates(topic)
-        run_status = SourceDiscoveryRun.STATUS_COMPLETED
-        execution_status = "completed"
-        if int(source_research_result.diagnostics.get("provider_error_count") or 0) > 0:
-            run_status = (
-                SourceDiscoveryRun.STATUS_PARTIAL_FAILED
-                if int(source_research_result.diagnostics.get("raw_result_count") or 0) > 0
-                else SourceDiscoveryRun.STATUS_FAILED
-            )
-            execution_status = "failed"
-        discovery_diagnostics = _build_source_discovery_run_diagnostics(
-            source_research_result=source_research_result,
-            known_normalized_urls=known_normalized_urls,
-            shown_candidates=candidate_records,
-        )
-        record_source_discovery_history(
-            topic=topic,
-            discovery_run=finalize_source_discovery_run(
-                discovery_run,
-                status=run_status,
-                diagnostics=discovery_diagnostics,
-                known_url_count=already_known_count,
-                accepted_count=accepted_count,
-                rejected_count=rejected_count,
-                new_suggestions_count=len(candidate_records),
-                already_known_count=already_known_count,
-            ),
-            source_research_result=source_research_result,
-            shown_candidates=candidate_records,
-            known_normalized_urls=known_normalized_urls,
-        )
-        return candidate_records, _build_provider_discovery_summary(
-            source_research_result=source_research_result,
-            candidate_records=candidate_records,
-            execution_status=execution_status,
-            existing_new_suggestion_count=existing_new_suggestion_count,
-            had_new_visible_suggestions=has_new_visible_suggestions,
+            provider_diagnostics=dict(provider_diagnostics),
         )
 
     if provider_status != "ready" and (provider_enabled or provider_name not in {"", "unconfigured"}):
-        finalize_source_discovery_run(
+        blocked_run = finalize_source_discovery_run(
             record_source_discovery_run_started(
                 topic=topic,
                 provider_name=provider_name,
                 diagnostics=dict(provider_diagnostics),
             ),
             status=SourceDiscoveryRun.STATUS_BLOCKED,
-            diagnostics=dict(provider_diagnostics),
+            diagnostics={
+                **dict(provider_diagnostics),
+                "discovery_cycle": _build_discovery_cycle_payload(
+                    cycle_id=f"provider-unavailable-{topic.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}",
+                    target_visible_new_suggestions=DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
+                    max_immediate_rounds=DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
+                    round_count=0,
+                    accumulated_visible_suggestions=0,
+                    decision="provider_unavailable",
+                    rounds=[],
+                ),
+            },
         )
         return _build_persisted_new_source_candidates(topic), {
-            "title": "Source discovery did not run",
+            "title": "Source search is temporarily unavailable",
             "body": (
-                "Research provider is currently unavailable. Existing suggestions were kept."
-                if existing_new_suggestion_count > 0
-                else "Research provider is currently unavailable."
+                "DigestFlow could not connect to the search provider. Existing suggestions were kept."
+                if _count_existing_new_suggestions(topic) > 0
+                else "DigestFlow could not connect to the search provider. Please try again later."
             ),
             "provider_name": provider_name or str(provider_diagnostics.get("search_provider_name") or "").strip(),
-            "execution_status": "blocked",
+            "execution_status": "provider_unavailable",
             "provider_result_count": 0,
             "candidate_input_count": 0,
             "query_count": 0,
-            "existing_new_suggestion_count": existing_new_suggestion_count,
+            "existing_new_suggestion_count": _count_existing_new_suggestions(topic),
+            "discovery_cycle": blocked_run.diagnostics.get("discovery_cycle"),
         }
 
     raw_candidate_records = resolve_source_candidates(
@@ -1760,6 +1680,469 @@ def _build_provider_backed_candidate_records(source_research_result) -> list[dic
             }
         )
     return candidate_records
+
+
+def _run_provider_discovery_cycle(
+    *,
+    topic: Topic,
+    provider_name: str,
+    provider_diagnostics: dict,
+) -> tuple[list[dict], dict]:
+    cycle_id = f"cycle-{topic.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
+    accumulated_new_candidates: list[dict] = []
+    accumulated_seen_normalized_urls: set[str] = set()
+    round_results: list[dict] = []
+    round_count = 0
+    decision = "partial_target_not_reached"
+
+    for round_index in range(1, DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS + 1):
+        round_result = _run_provider_discovery_round(
+            topic=topic,
+            provider_name=provider_name,
+            provider_diagnostics=provider_diagnostics,
+            prune_missing_discovered=False,
+            cycle_id=cycle_id,
+            round_index=round_index,
+        )
+        round_count = round_index
+        for candidate in round_result["new_visible_candidates"]:
+            normalized_url = str(candidate.get("normalized_url") or "").strip()
+            if not normalized_url or normalized_url in accumulated_seen_normalized_urls:
+                continue
+            accumulated_seen_normalized_urls.add(normalized_url)
+            accumulated_new_candidates.append(candidate)
+
+        accumulated_visible_suggestions = len(accumulated_seen_normalized_urls)
+        round_results.append(
+            _build_discovery_cycle_round_summary(
+                round_result=round_result,
+                round_index=round_index,
+                accumulated_visible_suggestions=accumulated_visible_suggestions,
+            )
+        )
+
+        if accumulated_visible_suggestions >= DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS:
+            decision = "target_reached"
+            break
+        if round_result["provider_unavailable"]:
+            decision = "provider_unavailable"
+            break
+        if round_index >= DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS:
+            decision = "partial_target_not_reached"
+            break
+
+    final_candidate_records = _finalize_discovery_cycle_candidate_records(
+        topic=topic,
+        accumulated_new_candidates=accumulated_new_candidates,
+        prune_missing_discovered=(decision != "provider_unavailable"),
+    )
+    accumulated_visible_suggestions = len(accumulated_seen_normalized_urls)
+    cycle_payload = _build_discovery_cycle_payload(
+        cycle_id=cycle_id,
+        target_visible_new_suggestions=DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
+        max_immediate_rounds=DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
+        round_count=round_count,
+        accumulated_visible_suggestions=accumulated_visible_suggestions,
+        decision=decision,
+        rounds=round_results,
+    )
+    _attach_discovery_cycle_to_runs(round_results, cycle_payload)
+    return final_candidate_records, _build_discovery_cycle_summary(
+        topic=topic,
+        candidate_records=final_candidate_records,
+        accumulated_visible_suggestions=accumulated_visible_suggestions,
+        round_count=round_count,
+        decision=decision,
+        round_results=round_results,
+    )
+
+
+def _run_provider_discovery_round(
+    *,
+    topic: Topic,
+    provider_name: str,
+    provider_diagnostics: dict,
+    prune_missing_discovered: bool,
+    cycle_id: str,
+    round_index: int,
+) -> dict:
+    discovery_run = record_source_discovery_run_started(
+        topic=topic,
+        provider_name=provider_name,
+        diagnostics=dict(provider_diagnostics),
+    )
+    known_normalized_urls = build_topic_known_url_set(topic)
+    source_research_result = run_source_research(topic)
+    provider_error_count = int(source_research_result.diagnostics.get("provider_error_count") or 0)
+    accepted_count = int(source_research_result.diagnostics.get("accepted_candidate_count") or 0)
+    rejected_count = int(source_research_result.diagnostics.get("rejected_candidate_count") or 0)
+    raw_result_count = int(source_research_result.diagnostics.get("raw_result_count") or 0)
+    candidate_input_count = int(source_research_result.diagnostics.get("candidate_input_count") or 0)
+    already_known_count = _count_known_provider_results(
+        source_research_result=source_research_result,
+        known_normalized_urls=known_normalized_urls,
+    )
+
+    new_visible_candidates = _build_provider_backed_candidate_records(source_research_result)
+    new_visible_candidates = filter_new_source_candidates(new_visible_candidates, topic.sources.all())
+    new_visible_candidates = _filter_previously_handled_provider_candidates(topic, new_visible_candidates)
+    has_new_visible_suggestions = _has_new_visible_suggestions(
+        candidate_records=new_visible_candidates,
+        known_normalized_urls=known_normalized_urls,
+    )
+    if provider_error_count > 0 and not has_new_visible_suggestions:
+        discovery_diagnostics = _build_source_discovery_run_diagnostics(
+            source_research_result=source_research_result,
+            known_normalized_urls=known_normalized_urls,
+            shown_candidates=[],
+        )
+        discovery_diagnostics["discovery_cycle"] = _build_discovery_cycle_round_stub(
+            cycle_id=cycle_id,
+            round_index=round_index,
+        )
+        run_status = (
+            SourceDiscoveryRun.STATUS_PARTIAL_FAILED
+            if raw_result_count > 0
+            else SourceDiscoveryRun.STATUS_FAILED
+        )
+        finalized_run = finalize_source_discovery_run(
+            discovery_run,
+            status=run_status,
+            diagnostics=discovery_diagnostics,
+            known_url_count=already_known_count,
+            accepted_count=accepted_count,
+            rejected_count=rejected_count,
+            new_suggestions_count=0,
+            already_known_count=already_known_count,
+        )
+        record_source_discovery_history(
+            topic=topic,
+            discovery_run=finalized_run,
+            source_research_result=source_research_result,
+            shown_candidates=[],
+            known_normalized_urls=known_normalized_urls,
+        )
+        return {
+            "display_candidate_records": _build_persisted_new_source_candidates(topic),
+            "new_visible_candidates": [],
+            "source_research_result": source_research_result,
+            "discovery_run": finalized_run,
+            "execution_status": "failed",
+            "provider_unavailable": raw_result_count == 0 and candidate_input_count == 0,
+            "provider_error_count": provider_error_count,
+            "accepted_count": accepted_count,
+            "rejected_count": rejected_count,
+            "known_or_duplicate_count": already_known_count,
+            "quality_rejected_count": int(discovery_diagnostics["source_quality_feedback"].get("quality_rejected_count") or 0),
+            "reason_summary": _classify_discovery_cycle_round_reason(
+                provider_error_count=provider_error_count,
+                raw_result_count=raw_result_count,
+                visible_new_suggestions_count=0,
+                quality_rejected_count=int(discovery_diagnostics["source_quality_feedback"].get("quality_rejected_count") or 0),
+                known_or_duplicate_count=already_known_count,
+            ),
+        }
+
+    display_candidate_records = _upsert_and_build_source_candidates(
+        topic,
+        new_visible_candidates,
+        prune_missing_discovered=prune_missing_discovered and has_new_visible_suggestions,
+    )
+    shown_candidate_records = _select_round_shown_candidate_records(
+        display_candidate_records=display_candidate_records,
+        new_visible_candidates=new_visible_candidates,
+    )
+    if not has_new_visible_suggestions:
+        display_candidate_records = _build_persisted_new_source_candidates(topic)
+        shown_candidate_records = []
+    run_status = SourceDiscoveryRun.STATUS_COMPLETED
+    execution_status = "completed"
+    if provider_error_count > 0:
+        run_status = (
+            SourceDiscoveryRun.STATUS_PARTIAL_FAILED
+            if raw_result_count > 0
+            else SourceDiscoveryRun.STATUS_FAILED
+        )
+        execution_status = "failed"
+    discovery_diagnostics = _build_source_discovery_run_diagnostics(
+        source_research_result=source_research_result,
+        known_normalized_urls=known_normalized_urls,
+        shown_candidates=shown_candidate_records,
+    )
+    discovery_diagnostics["discovery_cycle"] = _build_discovery_cycle_round_stub(
+        cycle_id=cycle_id,
+        round_index=round_index,
+    )
+    finalized_run = finalize_source_discovery_run(
+        discovery_run,
+        status=run_status,
+        diagnostics=discovery_diagnostics,
+        known_url_count=already_known_count,
+        accepted_count=accepted_count,
+        rejected_count=rejected_count,
+        new_suggestions_count=len(shown_candidate_records),
+        already_known_count=already_known_count,
+    )
+    record_source_discovery_history(
+        topic=topic,
+        discovery_run=finalized_run,
+        source_research_result=source_research_result,
+        shown_candidates=shown_candidate_records,
+        known_normalized_urls=known_normalized_urls,
+    )
+    return {
+        "display_candidate_records": display_candidate_records,
+        "new_visible_candidates": shown_candidate_records,
+        "source_research_result": source_research_result,
+        "discovery_run": finalized_run,
+        "execution_status": execution_status,
+        "provider_unavailable": False,
+        "provider_error_count": provider_error_count,
+        "accepted_count": accepted_count,
+        "rejected_count": rejected_count,
+        "known_or_duplicate_count": already_known_count,
+        "quality_rejected_count": int(discovery_diagnostics["source_quality_feedback"].get("quality_rejected_count") or 0),
+        "reason_summary": _classify_discovery_cycle_round_reason(
+            provider_error_count=provider_error_count,
+            raw_result_count=raw_result_count,
+            visible_new_suggestions_count=len(new_visible_candidates),
+            quality_rejected_count=int(discovery_diagnostics["source_quality_feedback"].get("quality_rejected_count") or 0),
+            known_or_duplicate_count=already_known_count,
+        ),
+    }
+
+
+def _select_round_shown_candidate_records(
+    *,
+    display_candidate_records: list[dict],
+    new_visible_candidates: list[dict],
+) -> list[dict]:
+    visible_normalized_urls = {
+        str(candidate.get("normalized_url") or "").strip()
+        for candidate in new_visible_candidates
+        if str(candidate.get("normalized_url") or "").strip()
+    }
+    return [
+        candidate
+        for candidate in display_candidate_records
+        if str(candidate.get("normalized_url") or "").strip() in visible_normalized_urls
+    ]
+
+
+def _finalize_discovery_cycle_candidate_records(
+    *,
+    topic: Topic,
+    accumulated_new_candidates: list[dict],
+    prune_missing_discovered: bool,
+) -> list[dict]:
+    if accumulated_new_candidates:
+        return _upsert_and_build_source_candidates(
+            topic,
+            accumulated_new_candidates,
+            prune_missing_discovered=prune_missing_discovered,
+        )
+    if prune_missing_discovered:
+        _upsert_and_build_source_candidates(topic, [], prune_missing_discovered=True)
+    return _build_persisted_new_source_candidates(topic)
+
+
+def _build_discovery_cycle_round_summary(
+    *,
+    round_result: dict,
+    round_index: int,
+    accumulated_visible_suggestions: int,
+) -> dict:
+    run = round_result["discovery_run"]
+    return {
+        "run_id": run.id,
+        "round_index": round_index,
+        "visible_new_suggestions": len(round_result["new_visible_candidates"]),
+        "accepted_count": int(round_result.get("accepted_count") or 0),
+        "quality_rejected_count": int(round_result.get("quality_rejected_count") or 0),
+        "known_or_duplicate_count": int(round_result.get("known_or_duplicate_count") or 0),
+        "provider_error_count": int(round_result.get("provider_error_count") or 0),
+        "reason_summary": str(round_result.get("reason_summary") or "").strip() or "mixed_low_yield",
+        "accumulated_visible_suggestions": accumulated_visible_suggestions,
+    }
+
+
+def _build_discovery_cycle_payload(
+    *,
+    cycle_id: str,
+    target_visible_new_suggestions: int,
+    max_immediate_rounds: int,
+    round_count: int,
+    accumulated_visible_suggestions: int,
+    decision: str,
+    rounds: list[dict],
+) -> dict:
+    return {
+        "cycle_id": cycle_id,
+        "target_visible_new_suggestions": int(target_visible_new_suggestions),
+        "max_immediate_rounds": int(max_immediate_rounds),
+        "round_count": int(round_count),
+        "accumulated_visible_suggestions": int(accumulated_visible_suggestions),
+        "decision": str(decision or "").strip() or "partial_target_not_reached",
+        "rounds": rounds,
+    }
+
+
+def _build_discovery_cycle_round_stub(*, cycle_id: str, round_index: int) -> dict:
+    return {
+        "cycle_id": cycle_id,
+        "target_visible_new_suggestions": DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
+        "max_immediate_rounds": DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
+        "round_index": int(round_index),
+    }
+
+
+def _attach_discovery_cycle_to_runs(rounds: list[dict], cycle_payload: dict) -> None:
+    round_count = int(cycle_payload.get("round_count") or len(rounds))
+    for round_item in rounds:
+        run = SourceDiscoveryRun.objects.filter(pk=round_item.get("run_id")).first()
+        if run is None:
+            continue
+        diagnostics = dict(run.diagnostics or {})
+        diagnostics["discovery_cycle"] = {
+            **cycle_payload,
+            "round_index": int(round_item.get("round_index") or 0),
+            "round_count": round_count,
+            "rounds": cycle_payload.get("rounds", []),
+        }
+        run.diagnostics = diagnostics
+        run.save(update_fields=["diagnostics", "updated_at"])
+
+
+def _classify_discovery_cycle_round_reason(
+    *,
+    provider_error_count: int,
+    raw_result_count: int,
+    visible_new_suggestions_count: int,
+    quality_rejected_count: int,
+    known_or_duplicate_count: int,
+) -> str:
+    if visible_new_suggestions_count >= DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS:
+        return "target_reached"
+    if provider_error_count > 0 and raw_result_count == 0 and visible_new_suggestions_count == 0:
+        return "provider_error"
+    if quality_rejected_count > 0 and quality_rejected_count >= max(known_or_duplicate_count, 1):
+        return "quality_heavy"
+    if known_or_duplicate_count > 0 and known_or_duplicate_count >= max(quality_rejected_count, 1):
+        return "duplicate_heavy"
+    if visible_new_suggestions_count == 0:
+        return "zero_visible"
+    return "mixed_low_yield"
+
+
+def _build_discovery_cycle_summary(
+    *,
+    topic: Topic,
+    candidate_records: list[dict],
+    accumulated_visible_suggestions: int,
+    round_count: int,
+    decision: str,
+    round_results: list[dict],
+) -> dict:
+    provider_name = ""
+    provider_result_count = 0
+    candidate_input_count = 0
+    query_count = 0
+    provider_error_count = 0
+    if round_results:
+        runs_by_id = {
+            run.id: run
+            for run in SourceDiscoveryRun.objects.filter(pk__in=[item.get("run_id") for item in round_results if item.get("run_id")])
+        }
+        last_run = runs_by_id.get(round_results[-1].get("run_id"))
+        if last_run is not None and isinstance(last_run.diagnostics, dict):
+            diagnostics = last_run.diagnostics
+            provider_name = str(diagnostics.get("provider_name") or last_run.provider_name or "").strip() or "unknown"
+        provider_result_count = sum(
+            int((runs_by_id.get(item.get("run_id")).provider_result_count if runs_by_id.get(item.get("run_id")) else 0) or 0)
+            for item in round_results
+        )
+        candidate_input_count = sum(
+            int(
+                (
+                    (runs_by_id.get(item.get("run_id")).diagnostics or {}).get("candidate_input_count")
+                    if runs_by_id.get(item.get("run_id"))
+                    else 0
+                )
+                or 0
+            )
+            for item in round_results
+        )
+        query_count = sum(
+            int((runs_by_id.get(item.get("run_id")).query_count if runs_by_id.get(item.get("run_id")) else 0) or 0)
+            for item in round_results
+        )
+        provider_error_count = sum(int(item.get("provider_error_count") or 0) for item in round_results)
+
+    existing_new_suggestion_count = _count_existing_new_suggestions(topic)
+
+    if decision == "provider_unavailable":
+        title = "Source search is temporarily unavailable"
+        if existing_new_suggestion_count > 0:
+            body = "DigestFlow could not connect to the search provider. Existing suggestions were kept."
+        else:
+            body = "DigestFlow could not connect to the search provider. Please try again later."
+        execution_status = "provider_unavailable"
+    elif provider_error_count > 0 and accumulated_visible_suggestions > 0:
+        title = "Source discovery partially completed"
+        body = (
+            f"Some searches could not be completed. {accumulated_visible_suggestions} new source suggestion"
+            f"{'s' if accumulated_visible_suggestions != 1 else ''} "
+            f"{'are' if accumulated_visible_suggestions != 1 else 'is'} still available"
+            f"{f' after {round_count} search rounds' if round_count > 1 else ''}."
+        )
+        execution_status = "failed"
+    elif decision == "target_reached":
+        title = "Source discovery completed"
+        if round_count > 1:
+            body = (
+                f"Found {accumulated_visible_suggestions} new source suggestion"
+                f"{'s' if accumulated_visible_suggestions != 1 else ''} after {round_count} search rounds."
+            )
+        else:
+            body = (
+                f"Found {accumulated_visible_suggestions} new source suggestion"
+                f"{'s' if accumulated_visible_suggestions != 1 else ''}."
+            )
+        execution_status = "completed"
+    else:
+        title = "Source discovery partially completed"
+        if accumulated_visible_suggestions > 0:
+            body = (
+                f"Found {accumulated_visible_suggestions} new source suggestion"
+                f"{'s' if accumulated_visible_suggestions != 1 else ''} after {round_count} search rounds. "
+                f"DigestFlow could not reach the {DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS}-source target "
+                f"with the current search strategy."
+            )
+        else:
+            body = (
+                f"DigestFlow could not reach the {DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS}-source target "
+                f"after {round_count} search rounds with the current search strategy."
+            )
+        execution_status = "partial"
+
+    return {
+        "title": title,
+        "body": body,
+        "provider_name": provider_name,
+        "execution_status": execution_status,
+        "provider_result_count": provider_result_count,
+        "candidate_input_count": candidate_input_count,
+        "query_count": query_count,
+        "provider_error_count": provider_error_count,
+        "existing_new_suggestion_count": existing_new_suggestion_count,
+        "discovery_cycle": round_results and {
+            "target_visible_new_suggestions": DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
+            "max_immediate_rounds": DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
+            "round_count": round_count,
+            "accumulated_visible_suggestions": accumulated_visible_suggestions,
+            "decision": decision,
+        } or None,
+    }
 
 
 def _count_known_provider_results(*, source_research_result, known_normalized_urls: set[str]) -> int:
@@ -2065,6 +2448,7 @@ def _build_research_history_run_entries(topic: Topic) -> list[dict]:
                 "technical_rows": _build_research_history_detail_rows(run, diagnostics, provider_errors),
                 "query_rows": _build_discovery_query_rows(diagnostics),
                 "quality_feedback": _build_research_history_quality_feedback(diagnostics),
+                "cycle_info": _build_research_history_cycle_info(diagnostics),
                 "provider_errors": provider_errors,
                 "warning_title": _build_research_history_warning_title(run, provider_errors),
                 "warning_body": _build_research_history_warning_body(run, provider_errors),
@@ -2476,11 +2860,33 @@ def _build_research_history_quality_feedback(diagnostics: dict) -> dict:
     }
 
 
+def _build_research_history_cycle_info(diagnostics: dict) -> dict:
+    cycle = diagnostics.get("discovery_cycle")
+    if not isinstance(cycle, dict):
+        return {"has_cycle": False}
+    return {
+        "has_cycle": True,
+        "summary": _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip()),
+        "rows": [
+            {"label": "Cycle round", "value": f"{int(cycle.get('round_index') or 0)} of {int(cycle.get('round_count') or 0)}"},
+            {"label": "Cycle target", "value": str(int(cycle.get("target_visible_new_suggestions") or 0))},
+            {
+                "label": "Accumulated visible suggestions",
+                "value": str(int(cycle.get("accumulated_visible_suggestions") or 0)),
+            },
+        ],
+        "decision": _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip()),
+    }
+
+
 def _build_current_research_state(topic: Topic) -> dict:
     history_qs = topic.source_discovery_history.all()
     status_counts = Counter(history_qs.values_list("status", flat=True))
     current_discovered_sources = topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED)
     last_run = topic.source_discovery_runs.order_by("-created_at", "-id").first()
+    last_cycle = {}
+    if last_run is not None and isinstance(last_run.diagnostics, dict):
+        last_cycle = last_run.diagnostics.get("discovery_cycle") or {}
     return {
         "cards": [
             {"label": "Kept", "value": str(current_discovered_sources.filter(is_pinned=True).count())},
@@ -2490,7 +2896,19 @@ def _build_current_research_state(topic: Topic) -> dict:
         ],
         "last_run_status": _format_research_history_status_title(last_run.status, run=last_run) if last_run else "No discovery runs yet",
         "last_run_subtitle": _build_research_history_status_subtitle(last_run) if last_run else "Run Find sources to start source discovery for this topic.",
+        "last_cycle_summary": _build_current_research_cycle_summary(last_cycle),
     }
+
+
+def _build_current_research_cycle_summary(cycle: dict) -> str:
+    if not isinstance(cycle, dict) or not cycle:
+        return ""
+    target = int(cycle.get("target_visible_new_suggestions") or 0)
+    visible = int(cycle.get("accumulated_visible_suggestions") or 0)
+    decision = _format_discovery_cycle_decision_label(str(cycle.get("decision") or "").strip())
+    if target > 0:
+        return f"Last discovery cycle: {decision.lower()} ({visible} of {target} visible suggestions)."
+    return f"Last discovery cycle: {decision.lower()}."
 
 
 def _build_full_research_history_copy_report(
@@ -2671,6 +3089,29 @@ def _build_full_research_history_copy_report(
     else:
         lines.append("- No compact planner history guidance available.")
 
+    add_section("Discovery cycle")
+    latest_cycle = latest_run.diagnostics.get("discovery_cycle") if latest_run and isinstance(latest_run.diagnostics, dict) else {}
+    if isinstance(latest_cycle, dict) and latest_cycle:
+        lines.append(f"- target visible suggestions: {latest_cycle.get('target_visible_new_suggestions')}")
+        lines.append(f"- max immediate rounds: {latest_cycle.get('max_immediate_rounds')}")
+        lines.append(f"- rounds run: {latest_cycle.get('round_count')}")
+        lines.append(f"- accumulated visible suggestions: {latest_cycle.get('accumulated_visible_suggestions')}")
+        lines.append(f"- decision: {latest_cycle.get('decision')}")
+        for round_item in latest_cycle.get("rounds") or []:
+            if not isinstance(round_item, dict):
+                continue
+            lines.append("")
+            lines.append(f"Round {round_item.get('round_index')}")
+            lines.append(f"- run id: {round_item.get('run_id')}")
+            lines.append(f"- visible new suggestions: {round_item.get('visible_new_suggestions')}")
+            lines.append(f"- accepted count: {round_item.get('accepted_count')}")
+            lines.append(f"- quality rejected: {round_item.get('quality_rejected_count')}")
+            lines.append(f"- known / duplicate: {round_item.get('known_or_duplicate_count')}")
+            lines.append(f"- provider errors: {round_item.get('provider_error_count')}")
+            lines.append(f"- reason summary: {round_item.get('reason_summary')}")
+    else:
+        lines.append("- No discovery cycle diagnostics available yet.")
+
     return "\n".join(str(line) for line in lines if line is not None)
 
 
@@ -2809,6 +3250,15 @@ def _build_research_history_status_subtitle(run: SourceDiscoveryRun) -> str:
     if status == SourceDiscoveryRun.STATUS_STARTED:
         return "Source discovery started for this topic."
     return ""
+
+
+def _format_discovery_cycle_decision_label(decision: str) -> str:
+    mapping = {
+        "target_reached": "Target reached",
+        "partial_target_not_reached": "Partial target not reached",
+        "provider_unavailable": "Provider unavailable",
+    }
+    return mapping.get(str(decision or "").strip().lower(), "Discovery cycle update")
 
 
 def _build_research_history_warning_title(run: SourceDiscoveryRun, provider_errors: list[str]) -> str:
