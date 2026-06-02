@@ -2173,6 +2173,16 @@ def _build_discovery_cycle_summary(
         else:
             body = "DigestFlow could not connect to the search provider. Please try again later."
         execution_status = DISCOVERY_DECISION_PROVIDER_UNAVAILABLE
+    elif decision == DISCOVERY_DECISION_TARGET_REACHED:
+        title = "Source discovery completed"
+        body = (
+            f"Target reached: {accumulated_visible_suggestions} new source suggestion"
+            f"{'s' if accumulated_visible_suggestions != 1 else ''} "
+            f"after {round_count} search round{'s' if round_count != 1 else ''}."
+        )
+        if provider_error_count > 0:
+            body = f"{body} Some provider queries failed."
+        execution_status = "completed"
     elif provider_error_count > 0 and accumulated_visible_suggestions > 0:
         title = "Source discovery partially completed"
         body = (
@@ -2182,19 +2192,6 @@ def _build_discovery_cycle_summary(
             f"{f' after {round_count} search rounds' if round_count > 1 else ''}."
         )
         execution_status = "failed"
-    elif decision == DISCOVERY_DECISION_TARGET_REACHED:
-        title = "Source discovery completed"
-        if round_count > 1:
-            body = (
-                f"Found {accumulated_visible_suggestions} new source suggestion"
-                f"{'s' if accumulated_visible_suggestions != 1 else ''} after {round_count} search rounds."
-            )
-        else:
-            body = (
-                f"Found {accumulated_visible_suggestions} new source suggestion"
-                f"{'s' if accumulated_visible_suggestions != 1 else ''}."
-            )
-        execution_status = "completed"
     else:
         title = "Source discovery partially completed"
         if accumulated_visible_suggestions > 0:

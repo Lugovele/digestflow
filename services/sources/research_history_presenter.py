@@ -268,13 +268,22 @@ def _build_source_quality_feedback_section(topic: Topic) -> dict:
 def _build_search_surface_memory_section(topic: Topic) -> dict:
     latest_run = topic.source_discovery_runs.order_by("-created_at", "-id").first()
     if latest_run is None or not isinstance(latest_run.diagnostics, dict):
-        return {"has_memory": False}
+        return {
+            "has_memory": False,
+            "empty_message": "No recent search surface memory is available for this run yet.",
+        }
     history_summary = latest_run.diagnostics.get("query_history_summary")
     if not isinstance(history_summary, dict):
-        return {"has_memory": False}
+        return {
+            "has_memory": False,
+            "empty_message": "No recent search surface memory is available for this run yet.",
+        }
     memory = history_summary.get("search_surface_memory")
     if not isinstance(memory, dict):
-        return {"has_memory": False}
+        return {
+            "has_memory": False,
+            "empty_message": "No recent search surface memory is available for this run yet.",
+        }
 
     surfaces = [
         item
@@ -282,7 +291,10 @@ def _build_search_surface_memory_section(topic: Topic) -> dict:
         if isinstance(item, dict) and str(item.get("surface_key") or "").strip()
     ]
     if not surfaces and not any(memory.get(key) for key in ("avoided_surfaces", "preferred_surfaces", "underexplored_surfaces")):
-        return {"has_memory": False}
+        return {
+            "has_memory": False,
+            "empty_message": "No recent search surface memory is available for this run yet.",
+        }
 
     return {
         "has_memory": True,
@@ -552,10 +564,13 @@ def _build_current_research_feedback_note(run: SourceDiscoveryRun) -> str:
     if decision == DISCOVERY_DECISION_PROVIDER_UNAVAILABLE:
         return _build_research_history_status_subtitle(run)
     if decision == DISCOVERY_DECISION_TARGET_REACHED and visible > 0 and rounds_run > 0:
-        return (
+        note = (
             f"Target reached: {visible} new source suggestion{'s' if visible != 1 else ''} "
             f"after {rounds_run} search round{'s' if rounds_run != 1 else ''}."
         )
+        if _cycle_has_provider_partial_warning(run, cycle):
+            note = f"{note} Some provider queries failed."
+        return note
     if visible > 0 and rounds_run > 0:
         return (
             f"{visible} new source suggestion{'s' if visible != 1 else ''} were found "
@@ -666,7 +681,9 @@ def _build_full_research_history_copy_report(
                 lines.append(f"    status: {item.get('status')}")
                 lines.append(f"    reason: {item.get('reason')}")
     else:
-        lines.append("- No search surface memory yet.")
+        lines.append(
+            f"- {search_surface_memory.get('empty_message') or 'No recent search surface memory is available for this run yet.'}"
+        )
 
     add_section("Discovery runs")
     if history_runs:
@@ -1134,3 +1151,15 @@ def _build_research_history_warning_body(run: SourceDiscoveryRun, provider_error
     if str(run.status or "").strip().lower() == SourceDiscoveryRun.STATUS_PARTIAL_FAILED:
         return "Some searches could not be completed. Other searches still returned results."
     return "Some searches could not be completed."
+
+
+def _cycle_has_provider_partial_warning(run: SourceDiscoveryRun, cycle: dict) -> bool:
+    if not isinstance(cycle, dict) or not cycle:
+        return False
+    if str(run.status or "").strip().lower() != SourceDiscoveryRun.STATUS_PARTIAL_FAILED:
+        return False
+    for round_item in cycle.get("rounds") or []:
+        if isinstance(round_item, dict) and int(round_item.get("provider_error_count") or 0) > 0:
+            return True
+    diagnostics = dict(getattr(run, "diagnostics", {}) or {})
+    return int(diagnostics.get("provider_error_count") or 0) > 0

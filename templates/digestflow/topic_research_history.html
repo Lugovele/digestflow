@@ -670,7 +670,7 @@
                     </ul>
                 {% endif %}
             {% else %}
-                <p class="empty-state">No search surface memory yet.</p>
+                <p class="empty-state">{{ search_surface_memory.empty_message|default:"No recent search surface memory is available for this run yet." }}</p>
                 <p class="muted" style="margin: 8px 0 0;">Run Find sources a few times to build compact memory about which search surfaces are exhausted, useful, or still underexplored.</p>
             {% endif %}
         </section>

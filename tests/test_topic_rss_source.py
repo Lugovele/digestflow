@@ -2412,7 +2412,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_run_provider_discovery_round.call_count, 2)
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Found 6 new source suggestions after 2 search rounds.")
+        self.assertContains(response, "Target reached: 6 new source suggestions after 2 search rounds.")
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 6)
 
         cycle_runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
@@ -2548,7 +2548,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_run_provider_discovery_round.call_count, 2)
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Found 6 new source suggestions after 2 search rounds.")
+        self.assertContains(response, "Target reached: 6 new source suggestions after 2 search rounds.")
         self.assertEqual(topic.sources.filter(origin=TopicSourceOrigin.DISCOVERED).count(), 6)
         cycle_runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
         self.assertEqual(len(cycle_runs), 2)
@@ -2625,7 +2625,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_run_provider_discovery_round.call_count, 1)
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Found 6 new source suggestions.")
+        self.assertContains(response, "Target reached: 6 new source suggestions after 1 search round.")
         self.assertNotContains(response, "after 2 search rounds")
         run = SourceDiscoveryRun.objects.get(topic=topic)
         cycle = run.diagnostics.get("discovery_cycle") or {}
@@ -2780,8 +2780,9 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_run_provider_discovery_round.call_count, 2)
-        self.assertContains(response, "Source discovery partially completed")
-        self.assertContains(response, "Some searches could not be completed. 6 new source suggestions are still available after 2 search rounds.")
+        self.assertContains(response, "Source discovery completed")
+        self.assertContains(response, "Target reached: 6 new source suggestions after 2 search rounds. Some provider queries failed.")
+        self.assertNotContains(response, "Source discovery partially completed")
         cycle_runs = list(SourceDiscoveryRun.objects.filter(topic=topic).order_by("id"))
         self.assertEqual(len(cycle_runs), 2)
         cycle = cycle_runs[-1].diagnostics.get("discovery_cycle") or {}
@@ -2922,7 +2923,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_run_provider_discovery_round.call_count, 3)
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Found 6 new source suggestions after 3 search rounds.")
+        self.assertContains(response, "Target reached: 6 new source suggestions after 3 search rounds.")
         latest_cycle = SourceDiscoveryRun.objects.filter(topic=topic).order_by("id").last().diagnostics.get("discovery_cycle") or {}
         self.assertEqual(latest_cycle.get("decision"), "target_reached")
         self.assertEqual(latest_cycle.get("round_count"), 3)
@@ -4055,7 +4056,7 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Source discovery completed")
-        self.assertContains(response, "Found 14 new source suggestions.")
+        self.assertContains(response, "Target reached: 14 new source suggestions after 1 search round.")
         self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertContains(response, "Showing the first 12 suggestions. Refine the research focus to narrow results.")
         self.assertContains(response, "Show all suggestions")
@@ -5163,6 +5164,60 @@ class TopicRssSourceTests(TestCase):
         self.assertIn("Target reached: 6 new source suggestions after 3 search rounds.", current_state_section)
         self.assertNotIn("2 new source suggestions were added.", current_state_section)
 
+    def test_current_research_state_target_reached_with_provider_warning_keeps_success_first_feedback(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Cycle total partial warning topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_PARTIAL_FAILED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=2,
+            provider_result_count=10,
+            accepted_count=4,
+            rejected_count=2,
+            new_suggestions_count=4,
+            already_known_count=1,
+            diagnostics={
+                "provider_error_count": 1,
+                "discovery_cycle": {
+                    "target_visible_suggestions": 6,
+                    "target_visible_new_suggestions": 6,
+                    "max_immediate_rounds": 3,
+                    "rounds_run": 2,
+                    "round_count": 2,
+                    "accumulated_visible_suggestions": 14,
+                    "decision": "target_reached",
+                    "round_index": 2,
+                    "rounds": [
+                        {"round_index": 1, "provider_error_count": 1},
+                        {"round_index": 2, "provider_error_count": 0},
+                    ],
+                },
+            },
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        current_state_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Current research state</h2>'
+        query_performance_header = '<h2 style="margin: 0 0 14px; font-size: 20px;">Query performance</h2>'
+        current_state_section = html.split(current_state_header, 1)[1].split(query_performance_header, 1)[0]
+        self.assertIn(
+            "Target reached: 14 new source suggestions after 2 search rounds. Some provider queries failed.",
+            current_state_section,
+        )
+        self.assertNotIn("Source discovery partially completed", current_state_section)
+
     def test_current_research_state_falls_back_to_last_run_note_without_cycle_diagnostics(self) -> None:
         topic = Topic.objects.create(
             user=self._get_ui_user(),
@@ -5234,6 +5289,49 @@ class TopicRssSourceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Provider results could not be loaded.")
+
+    def test_search_surface_memory_empty_state_uses_clearer_wording(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Empty surface memory topic",
+            source_mode=TopicSourceMode.DISCOVERY_ONLY,
+            keywords=["automation"],
+            focus_initialized=True,
+            excluded_keywords=[],
+        )
+        SourceDiscoveryRun.objects.create(
+            user=topic.user,
+            topic=topic,
+            provider_name="serpapi",
+            status=SourceDiscoveryRun.STATUS_COMPLETED,
+            search_recency_months=1,
+            search_time_filter="qdr:m",
+            query_count=1,
+            provider_result_count=1,
+            accepted_count=1,
+            rejected_count=0,
+            new_suggestions_count=1,
+            already_known_count=0,
+            diagnostics={
+                "query_history_summary": {
+                    "search_surface_memory": {
+                        "recent_run_count": 1,
+                        "surfaces": [],
+                        "avoided_surfaces": [],
+                        "preferred_surfaces": [],
+                        "underexplored_surfaces": [],
+                    }
+                }
+            },
+        )
+
+        response = self.client.get(reverse("topic-research-history", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No recent search surface memory is available for this run yet.")
+        self.assertNotContains(response, "No search surface memory yet.")
+        copy_report = response.context["full_history_copy_report"]
+        self.assertIn("No recent search surface memory is available for this run yet.", copy_report)
 
     def test_source_discovery_run_diagnostics_include_source_quality_feedback(self) -> None:
         source_research_result = MagicMock()
