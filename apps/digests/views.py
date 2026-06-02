@@ -78,6 +78,8 @@ from services.sources.research_history_presenter import (
     _build_research_history_run_entries,
     _build_search_surface_memory_section,
     _build_seen_source_history_entries,
+    _build_seen_source_history_filters,
+    _build_seen_source_history_pagination,
     _build_source_quality_feedback_section,
 )
 from services.sources.detector import classify_source_url
@@ -2545,56 +2547,6 @@ def _build_seen_source_history_section(
         "search_query": search_query,
         "active_filter": applied_filter,
         "pagination": pagination,
-    }
-
-
-def _build_seen_source_history_filters(topic: Topic, active_filter: str, search_query: str) -> list[dict[str, str | bool]]:
-    filter_specs = [
-        {"key": "", "label": "All"},
-        {"key": "kept", "label": "Kept"},
-        {"key": "shown", "label": "Shown"},
-        {"key": "rejected", "label": "Rejected"},
-        {"key": "seen", "label": "Seen only"},
-    ]
-    filters: list[dict[str, str | bool]] = []
-    for spec in filter_specs:
-        params = {}
-        if spec["key"]:
-            params["status"] = spec["key"]
-        if search_query:
-            params["q"] = search_query
-        url = reverse("topic-research-history", args=[topic.id])
-        if params:
-            url = f"{url}?{urlencode(params)}"
-        url = f"{url}#seen-sources"
-        filters.append(
-            {
-                "label": spec["label"],
-                "url": url,
-                "is_active": spec["key"] == active_filter,
-            }
-        )
-    return filters
-
-
-def _build_seen_source_history_pagination(page_obj, active_filter: str, search_query: str) -> dict:
-    def build_url(page_number: int) -> str:
-        params = {"page": page_number}
-        if active_filter:
-            params["status"] = active_filter
-        if search_query:
-            params["q"] = search_query
-        return f"?{urlencode(params)}#seen-sources"
-
-    return {
-        "has_previous": page_obj.has_previous(),
-        "has_next": page_obj.has_next(),
-        "previous_url": build_url(page_obj.previous_page_number()) if page_obj.has_previous() else "",
-        "next_url": build_url(page_obj.next_page_number()) if page_obj.has_next() else "",
-        "page_number": page_obj.number,
-        "total_pages": page_obj.paginator.num_pages,
-        "showing_count": len(page_obj.object_list),
-        "total_count": page_obj.paginator.count,
     }
 
 
