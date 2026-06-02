@@ -56,6 +56,15 @@ from services.sources.discovery_history import (
     update_history_for_removed_source,
     update_history_for_unpinned_source,
 )
+from services.sources.discovery_constants import (
+    DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
+    DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS,
+    DISCOVERY_DECISION_MAX_ROUNDS_REACHED,
+    DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR,
+    DISCOVERY_DECISION_PARTIAL_TARGET_NOT_REACHED,
+    DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
+    DISCOVERY_DECISION_TARGET_REACHED,
+)
 from services.sources.discovery_repair import (
     _build_discovery_repair_plan,
     _build_next_round_repair_override,
@@ -87,8 +96,6 @@ INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were a
 VISIBLE_NEW_SOURCE_LIMIT = 12
 DISCOVERY_CONTEXT_PARAM = "discovery_context"
 SHOW_ALL_NEW_SUGGESTIONS_PARAM = "show_all_suggestions"
-DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS = 6
-DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS = 3
 
 
 def _get_user_facing_source_mode_label(mode: str) -> str:
@@ -1641,7 +1648,7 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
                     max_immediate_rounds=DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS,
                     round_count=0,
                     accumulated_visible_suggestions=0,
-                    decision="provider_unavailable",
+                    decision=DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
                     rounds=[],
                 ),
             },
@@ -1654,7 +1661,7 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
                 else "DigestFlow could not connect to the search provider. Please try again later."
             ),
             "provider_name": provider_name or str(provider_diagnostics.get("search_provider_name") or "").strip(),
-            "execution_status": "provider_unavailable",
+            "execution_status": DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
             "provider_result_count": 0,
             "candidate_input_count": 0,
             "query_count": 0,
@@ -1719,7 +1726,7 @@ def _run_provider_discovery_cycle(
     accumulated_seen_normalized_urls: set[str] = set()
     round_results: list[dict] = []
     round_count = 0
-    decision = "partial_target_not_reached"
+    decision = DISCOVERY_DECISION_PARTIAL_TARGET_NOT_REACHED
     next_round_query_plan = None
     next_round_repair_usage = None
 
@@ -1759,13 +1766,13 @@ def _run_provider_discovery_cycle(
         )
 
         if accumulated_visible_suggestions >= DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS:
-            decision = "target_reached"
+            decision = DISCOVERY_DECISION_TARGET_REACHED
             break
         if round_result["provider_unavailable"]:
-            decision = "provider_unavailable"
+            decision = DISCOVERY_DECISION_PROVIDER_UNAVAILABLE
             break
         if round_index >= DISCOVERY_CYCLE_MAX_IMMEDIATE_ROUNDS:
-            decision = "max_rounds_reached"
+            decision = DISCOVERY_DECISION_MAX_ROUNDS_REACHED
             break
         next_round_query_plan, next_round_repair_usage, continuation_decision = _build_next_round_repair_override(
             topic=topic,
@@ -1774,13 +1781,13 @@ def _run_provider_discovery_cycle(
             query_limit=int(getattr(round_result.get("discovery_run"), "query_count", 0) or 0),
         )
         if next_round_query_plan is None:
-            decision = continuation_decision or "partial_target_not_reached_no_usable_repair_queries"
+            decision = continuation_decision or DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR
             break
 
     final_candidate_records = _finalize_discovery_cycle_candidate_records(
         topic=topic,
         accumulated_new_candidates=accumulated_new_candidates,
-        prune_missing_discovered=(decision != "provider_unavailable"),
+        prune_missing_discovered=(decision != DISCOVERY_DECISION_PROVIDER_UNAVAILABLE),
     )
     accumulated_visible_suggestions = len(accumulated_seen_normalized_urls)
     cycle_payload = _build_discovery_cycle_payload(
@@ -2157,13 +2164,13 @@ def _build_discovery_cycle_summary(
 
     existing_new_suggestion_count = _count_existing_new_suggestions(topic)
 
-    if decision == "provider_unavailable":
+    if decision == DISCOVERY_DECISION_PROVIDER_UNAVAILABLE:
         title = "Source search is temporarily unavailable"
         if existing_new_suggestion_count > 0:
             body = "DigestFlow could not connect to the search provider. Existing suggestions were kept."
         else:
             body = "DigestFlow could not connect to the search provider. Please try again later."
-        execution_status = "provider_unavailable"
+        execution_status = DISCOVERY_DECISION_PROVIDER_UNAVAILABLE
     elif provider_error_count > 0 and accumulated_visible_suggestions > 0:
         title = "Source discovery partially completed"
         body = (
@@ -2173,7 +2180,7 @@ def _build_discovery_cycle_summary(
             f"{f' after {round_count} search rounds' if round_count > 1 else ''}."
         )
         execution_status = "failed"
-    elif decision == "target_reached":
+    elif decision == DISCOVERY_DECISION_TARGET_REACHED:
         title = "Source discovery completed"
         if round_count > 1:
             body = (
@@ -2497,26 +2504,6 @@ def _finalize_discovery_summary(
     else:
         summary["truncation_hint"] = ""
     return summary
-
-
-def _build_discovery_query_rows(diagnostics: dict) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for item in diagnostics.get("per_query_result_counts", []) or []:
-        if not isinstance(item, dict):
-            continue
-        intent = _format_query_intent_label(str(item.get("intent") or "").strip())
-        result_count = int(item.get("result_count") or 0)
-        query = str(item.get("query") or "").strip()
-        if not intent and not query:
-            continue
-        rows.append(
-            {
-                "label": intent or "query",
-                "value": f"{result_count} result{'s' if result_count != 1 else ''}",
-                "query": query,
-            }
-        )
-    return rows
 
 
 def _build_seen_source_history_section(

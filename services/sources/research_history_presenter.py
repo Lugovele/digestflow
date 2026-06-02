@@ -5,6 +5,10 @@ from django.utils import timezone
 
 from apps.digests.models import SourceDiscoveryHistory, SourceDiscoveryRun
 from apps.topics.models import Topic, TopicSourceOrigin
+from services.sources.discovery_constants import (
+    DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
+    DISCOVERY_DECISION_TARGET_REACHED,
+)
 from services.sources.discovery_diagnostics import (
     format_discovery_cycle_decision_label,
     format_discovery_cycle_diagnosis_label,
@@ -39,6 +43,26 @@ def _build_research_history_run_entries(topic: Topic) -> list[dict]:
             }
         )
     return entries
+
+
+def _build_discovery_query_rows(diagnostics: dict) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in diagnostics.get("per_query_result_counts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        intent = _format_query_intent_label(str(item.get("intent") or "").strip())
+        result_count = int(item.get("result_count") or 0)
+        query = str(item.get("query") or "").strip()
+        if not intent and not query:
+            continue
+        rows.append(
+            {
+                "label": intent or "query",
+                "value": f"{result_count} result{'s' if result_count != 1 else ''}",
+                "query": query,
+            }
+        )
+    return rows
 
 
 def _build_seen_source_history_entries(history_rows: list[SourceDiscoveryHistory]) -> list[dict]:
@@ -266,17 +290,17 @@ def _build_query_performance_purpose(item: dict) -> str:
     angle = str(item.get("angle") or "").strip()
     purpose = str(item.get("purpose") or "").strip()
     if angle and purpose:
-        return f"{angle} вЂ” {purpose}"
+        return f"{angle} — {purpose}"
     if angle:
         return angle
     if purpose:
         return purpose
-    return "вЂ”"
+    return "—"
 
 
 def _format_query_metric_value(value) -> str:
     if value is None:
-        return "вЂ”"
+        return "—"
     return str(int(value))
 
 
@@ -298,7 +322,7 @@ def _build_research_history_compact_metrics(run: SourceDiscoveryRun, diagnostics
             "blocked run" if status == SourceDiscoveryRun.STATUS_BLOCKED else "completed run"
         )
     )
-    return " В· ".join(
+    return " · ".join(
         [
             f"{int(run.provider_result_count or 0)} URLs returned",
             f"{int(run.new_suggestions_count or 0)} visible new suggestions",
@@ -457,8 +481,8 @@ def _build_current_research_cycle_summary(cycle: dict) -> str:
     diagnosis_note = ""
     if cycle_diagnosis:
         primary_cause = str(cycle_diagnosis.get("primary_cause") or "").strip()
-        if primary_cause not in {"", "target_reached", "provider_unavailable"}:
-            diagnosis_note = f" вЂ” {format_discovery_cycle_diagnosis_label(primary_cause).lower()}."
+        if primary_cause not in {"", DISCOVERY_DECISION_TARGET_REACHED, DISCOVERY_DECISION_PROVIDER_UNAVAILABLE}:
+            diagnosis_note = f" — {format_discovery_cycle_diagnosis_label(primary_cause).lower()}."
     if target > 0:
         return f"Last discovery cycle: {decision.lower()} ({visible} of {target} visible suggestions).{diagnosis_note}"
     return f"Last discovery cycle: {decision.lower()}.{diagnosis_note}"
@@ -473,9 +497,9 @@ def _build_current_research_feedback_note(run: SourceDiscoveryRun) -> str:
     decision = str(cycle.get("decision") or "").strip()
     visible = int(cycle.get("accumulated_visible_suggestions") or 0)
     rounds_run = int(cycle.get("rounds_run") or cycle.get("round_count") or 0)
-    if decision == "provider_unavailable":
+    if decision == DISCOVERY_DECISION_PROVIDER_UNAVAILABLE:
         return _build_research_history_status_subtitle(run)
-    if decision == "target_reached" and visible > 0 and rounds_run > 0:
+    if decision == DISCOVERY_DECISION_TARGET_REACHED and visible > 0 and rounds_run > 0:
         return (
             f"Target reached: {visible} new source suggestion{'s' if visible != 1 else ''} "
             f"after {rounds_run} search round{'s' if rounds_run != 1 else ''}."
@@ -597,7 +621,7 @@ def _build_full_research_history_copy_report(
         for item in history_runs:
             run = item.get("run")
             lines.append(f"- run id: {getattr(run, 'id', '')}")
-            lines.append(f"  timestamp: {item.get('completed_label') or 'вЂ”'}")
+            lines.append(f"  timestamp: {item.get('completed_label') or '—'}")
             lines.append(f"  status: {item.get('title')}")
             if item.get("subtitle"):
                 lines.append(f"  note: {item.get('subtitle')}")
@@ -642,7 +666,7 @@ def _build_full_research_history_copy_report(
     if seen_source_history:
         for item in seen_source_history:
             lines.append(f"- title: {item.get('title')}")
-            lines.append(f"  url: {item.get('url') or 'вЂ”'}")
+            lines.append(f"  url: {item.get('url') or '—'}")
             lines.append(f"  domain: {item.get('domain')}")
             lines.append(f"  status: {item.get('status_label')}")
             lines.append(f"  last outcome: {item.get('outcome_label')}")
@@ -693,7 +717,7 @@ def _build_full_research_history_copy_report(
         lines.append(f"- rounds run: {latest_cycle.get('round_count')}")
         lines.append(f"- accumulated visible suggestions: {latest_cycle.get('accumulated_visible_suggestions')}")
         lines.append(f"- decision: {latest_cycle.get('decision')}")
-        if str(latest_cycle.get("decision") or "").strip() not in {"", "target_reached"}:
+        if str(latest_cycle.get("decision") or "").strip() not in {"", DISCOVERY_DECISION_TARGET_REACHED}:
             lines.append(f"- stop reason: {latest_cycle.get('decision')}")
         repair_plan = latest_cycle.get("repair_plan") if isinstance(latest_cycle.get("repair_plan"), dict) else {}
         if repair_plan:

@@ -3,6 +3,15 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from services.sources.discovery_constants import (
+    DISCOVERY_DECISION_MAX_ROUNDS_REACHED,
+    DISCOVERY_DECISION_PARTIAL_NO_UNUSED_SURFACES,
+    DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR,
+    DISCOVERY_DECISION_PARTIAL_TARGET_NOT_REACHED,
+    DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
+    DISCOVERY_DECISION_TARGET_REACHED,
+)
+
 
 def build_discovery_cycle_payload(
     *,
@@ -24,7 +33,7 @@ def build_discovery_cycle_payload(
         "rounds_run": int(round_count),
         "round_count": int(round_count),
         "accumulated_visible_suggestions": int(accumulated_visible_suggestions),
-        "decision": str(decision or "").strip() or "partial_target_not_reached",
+        "decision": str(decision or "").strip() or DISCOVERY_DECISION_PARTIAL_TARGET_NOT_REACHED,
         "rounds": rounds,
         "cycle_diagnosis": dict(cycle_diagnosis or {}),
         "repair_plan": dict(repair_plan or {}),
@@ -41,7 +50,7 @@ def classify_discovery_cycle_round_reason(
     target_visible_new_suggestions: int,
 ) -> str:
     if visible_new_suggestions_count >= target_visible_new_suggestions:
-        return "target_reached"
+        return DISCOVERY_DECISION_TARGET_REACHED
     if provider_error_count > 0 and raw_result_count == 0 and visible_new_suggestions_count == 0:
         return "provider_error"
     if quality_rejected_count > 0 and quality_rejected_count >= max(known_or_duplicate_count, 1):
@@ -192,9 +201,9 @@ def build_discovery_cycle_overall_diagnosis(
     accumulated_visible_suggestions: int,
     target_visible_new_suggestions: int,
 ) -> dict:
-    if decision == "target_reached":
+    if decision == DISCOVERY_DECISION_TARGET_REACHED:
         return {
-            "primary_cause": "target_reached",
+            "primary_cause": DISCOVERY_DECISION_TARGET_REACHED,
             "secondary_causes": [],
             "severity": "low",
             "explanation": (
@@ -203,9 +212,9 @@ def build_discovery_cycle_overall_diagnosis(
             ),
             "recommended_next_action": "stop",
         }
-    if decision == "provider_unavailable":
+    if decision == DISCOVERY_DECISION_PROVIDER_UNAVAILABLE:
         return {
-            "primary_cause": "provider_unavailable",
+            "primary_cause": DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
             "secondary_causes": [],
             "severity": "high",
             "explanation": "The search provider was unavailable, so the cycle could not process meaningful provider results.",
@@ -353,12 +362,12 @@ def dedupe_string_list(items) -> list[str]:
 
 def format_discovery_cycle_decision_label(decision: str) -> str:
     mapping = {
-        "target_reached": "Target reached",
-        "partial_target_not_reached": "Partial target not reached",
-        "partial_target_not_reached_no_unused_surfaces": "Partial target not reached - no unused surfaces",
-        "partial_target_not_reached_no_usable_repair_queries": "Partial target not reached - no usable repair queries",
-        "max_rounds_reached": "Max rounds reached",
-        "provider_unavailable": "Provider unavailable",
+        DISCOVERY_DECISION_TARGET_REACHED: "Target reached",
+        DISCOVERY_DECISION_PARTIAL_TARGET_NOT_REACHED: "Partial target not reached",
+        DISCOVERY_DECISION_PARTIAL_NO_UNUSED_SURFACES: "Partial target not reached - no unused surfaces",
+        DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR: "Partial target not reached - no usable repair queries",
+        DISCOVERY_DECISION_MAX_ROUNDS_REACHED: "Max rounds reached",
+        DISCOVERY_DECISION_PROVIDER_UNAVAILABLE: "Provider unavailable",
     }
     return mapping.get(str(decision or "").strip().lower(), "Discovery cycle update")
 

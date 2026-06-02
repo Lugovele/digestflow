@@ -3,9 +3,12 @@ import re
 from django.utils import timezone
 
 from apps.topics.models import Topic
+from services.sources.discovery_constants import (
+    DISCOVERY_DECISION_PARTIAL_NO_UNUSED_SURFACES,
+    DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR,
+    DISCOVERY_REPAIR_PLAN_MAX_ITEMS,
+)
 from services.sources.research_queries import build_research_query_plan_from_repair_items
-
-DISCOVERY_REPAIR_PLAN_MAX_ITEMS = 6
 DISCOVERY_REPAIR_CONSTRAINTS = {
     "avoid_repeating_queries": True,
     "avoid_verbatim_failed_queries": True,
@@ -29,10 +32,10 @@ def _build_next_round_repair_override(
     query_limit: int,
 ):
     if _should_stop_after_zero_yield_rounds(prior_rounds):
-        return None, None, "partial_target_not_reached_no_usable_repair_queries"
+        return None, None, DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR
     repair_plan = round_summary.get("repair_plan_for_next_round") if isinstance(round_summary.get("repair_plan_for_next_round"), dict) else {}
     if not repair_plan:
-        return None, None, "partial_target_not_reached_no_usable_repair_queries"
+        return None, None, DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR
     source_round_index = int(round_summary.get("round_index") or 0)
     repair_queries_used, stop_decision = _select_repair_queries_for_next_round(
         repair_plan=repair_plan,
@@ -40,7 +43,7 @@ def _build_next_round_repair_override(
         query_limit=query_limit,
     )
     if not repair_queries_used:
-        return None, None, stop_decision or "partial_target_not_reached_no_usable_repair_queries"
+        return None, None, stop_decision or DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR
     query_plan_override = build_research_query_plan_from_repair_items(
         topic,
         repair_queries_used,
@@ -62,7 +65,7 @@ def _select_repair_queries_for_next_round(
     query_limit: int,
 ) -> tuple[list[dict], str | None]:
     if not isinstance(repair_plan, dict) or not repair_plan:
-        return [], "partial_target_not_reached_no_usable_repair_queries"
+        return [], DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR
     selected: list[dict] = []
     seen_queries: set[str] = set()
     limit = int(query_limit or 0)
@@ -110,8 +113,8 @@ def _select_repair_queries_for_next_round(
     if selected:
         return selected, None
     if has_usable_candidate:
-        return [], "partial_target_not_reached_no_unused_surfaces"
-    return [], "partial_target_not_reached_no_usable_repair_queries"
+        return [], DISCOVERY_DECISION_PARTIAL_NO_UNUSED_SURFACES
+    return [], DISCOVERY_DECISION_PARTIAL_NO_USABLE_REPAIR
 
 
 def _should_stop_after_zero_yield_rounds(prior_rounds: list[dict]) -> bool:
