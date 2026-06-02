@@ -18,6 +18,16 @@ from .content_research_planner import (
     create_content_research_plan,
 )
 from .detector import classify_source_url, detect_source_type
+from .discovery_diagnostics import (
+    build_discovery_cycle_diagnosis_explanation,
+    build_discovery_cycle_overall_diagnosis,
+    build_discovery_cycle_payload,
+    build_discovery_cycle_round_diagnosis,
+    classify_discovery_cycle_round_reason,
+    format_discovery_cycle_decision_label,
+    format_discovery_cycle_diagnosis_label,
+    format_discovery_cycle_next_action_label,
+)
 from .discovery import (
     CuratedSourceSeed,
     TopicSourceDiscoveryRequest,
@@ -82,7 +92,12 @@ from .storage import save_articles_for_topic
 
 __all__ = [
     "build_content_research_planner_prompt",
+    "build_discovery_cycle_diagnosis_explanation",
+    "build_discovery_cycle_overall_diagnosis",
+    "build_discovery_cycle_payload",
+    "build_discovery_cycle_round_diagnosis",
     "classify_source_url",
+    "classify_discovery_cycle_round_reason",
     "CandidateReviewItem",
     "ContentResearchPlannerResult",
     "CuratedSourceSeed",
@@ -131,6 +146,9 @@ __all__ = [
     "TopicSourceGroups",
     "TopicSourceDiscoveryRequest",
     "filter_new_source_candidates",
+    "format_discovery_cycle_decision_label",
+    "format_discovery_cycle_diagnosis_label",
+    "format_discovery_cycle_next_action_label",
     "is_manual_saved_source",
     "is_new_research_source",
     "is_pinned_research_source",

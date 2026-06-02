@@ -197,7 +197,7 @@ def render_query_history_summary_for_prompt(summary: dict[str, Any] | None) -> s
         return "No prior query performance history is available for this topic."
 
     lines = [
-        "Recent query performance summary:",
+        "Recent query history summary:",
         f"- Recent discovery runs considered: {int(normalized.get('recent_run_count') or 0)}",
         f"- Query rows summarized: {int(normalized.get('total_query_rows') or 0)}",
     ]
