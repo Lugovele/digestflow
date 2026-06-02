@@ -31,6 +31,22 @@ The system is designed to be debug-friendly and safe to iterate on locally:
 - `DigestRun` metrics and console logging
 - minimal Django UI for creating a topic, running the pipeline, and viewing the result
 
+## Research / Source Discovery
+
+DigestFlow also includes a history-aware source discovery engine for long-lived topics. It can:
+
+- track query performance and source quality over time
+- diagnose weak discovery outcomes, such as duplicate-heavy or quality-heavy results
+- repair search strategy across bounded discovery rounds
+- run target-seeking discovery with a safety cap
+- avoid exhausted search surfaces on repeated Find clicks
+- expose Research History and Copy full history for debugging and review
+
+For the detailed flow and terminology, see:
+
+- `docs/research_discovery_flow.md`
+- `docs/research_discovery_glossary.md`
+
 ## Current MVP status
 
 Implemented:
@@ -99,7 +115,7 @@ Result page / admin / metrics
 ## Local setup
 
 ```powershell
-cd C:\Users\Елена\Documents\DigestFlow
+cd C:\Projects\DigestFlow
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py runserver
 ```
