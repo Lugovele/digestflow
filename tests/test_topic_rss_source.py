@@ -16,14 +16,16 @@ from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
 from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
 from apps.digests.views import (
-    _build_discovery_repair_plan,
     _build_curated_source_seeds,
-    _select_repair_queries_for_next_round,
     _build_source_discovery_run_diagnostics,
     _upsert_and_build_source_candidates,
 )
 from apps.sources.models import Article
 from services.sources.content_research_planner import ContentResearchPlannerResult
+from services.sources.discovery_repair import (
+    _build_discovery_repair_plan,
+    _select_repair_queries_for_next_round,
+)
 from services.sources.discovery_history import sync_topic_discovered_sources_into_history
 from apps.topics.focus import (
     FOCUS_DUPLICATE_MESSAGE,
