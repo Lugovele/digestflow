@@ -190,7 +190,7 @@ def generate_carousel_from_articles(
             {
                 "slide": 1,
                 "title": digest.title,
-                "bullets": ["No digest articles available."],
+                "bullets": ["No post draft articles available."],
             }
         ]
 
@@ -381,7 +381,7 @@ def _build_mock_payload(digest: Digest, articles: list[dict[str, Any]]) -> dict[
 
 def _build_mock_post_text_from_articles(articles: list[dict[str, Any]]) -> str:
     if not articles:
-        return "No digest articles were available."
+        return "No post draft articles were available."
 
     pattern = _build_cross_article_pattern(articles)
     top_article = articles[0]
@@ -442,7 +442,7 @@ def _build_cross_article_pattern(articles: list[dict[str, Any]]) -> str:
 
 def _build_safe_fallback_post(digest: Digest) -> dict[str, Any]:
     return {
-        "post_text": f"{digest.title}\n\nNo digest articles were available.",
+        "post_text": f"{digest.title}\n\nNo post draft articles were available.",
         "hook_variants": [
             "No article pattern was available.",
             "The source set was too thin to shape a post.",
@@ -458,7 +458,7 @@ def _build_safe_fallback_post(digest: Digest) -> dict[str, Any]:
             {
                 "slide": 1,
                 "title": digest.title,
-                "bullets": ["No digest articles were available."],
+                "bullets": ["No post draft articles were available."],
             }
         ],
         "quality_checks": {

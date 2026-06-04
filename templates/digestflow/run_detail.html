@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>DigestFlow Run {{ run.id }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostFlow Run {{ run.id }}</title>
     <style>
         :root {
             color-scheme: light;
@@ -762,14 +763,14 @@
     </style>
 </head>
 <body>
-    <div class="run-page">
+    <main class="run-page">
         <header class="page-header">
             <div class="page-header__left">
-                <p><a href="{% url 'topic-list' %}">Back to topics</a></p>
-                <p class="section-kicker">Pipeline result</p>
-                <h1 class="page-header__title">DigestFlow Run {{ run.id }}</h1>
+                <p><a href="{% url 'topic-list' %}">Back to workspace</a></p>
+                <p class="section-kicker">Post generation result</p>
+                <h1 class="page-header__title">PostFlow Run {{ run.id }}</h1>
                 <div class="page-header__meta">
-                    <span class="muted-block">Topic {{ run.topic.name }}</span>
+                    <span class="muted-block">Post idea {{ run.topic.name }}</span>
                 </div>
             </div>
             <div class="page-header__actions">
@@ -778,6 +779,7 @@
                     id="copy-diagnostics-button"
                     class="action-button"
                     data-default-label="Copy full diagnostics"
+                    data-testid="run-detail-copy-button"
                 >
                     Copy full diagnostics
                 </button>
@@ -787,6 +789,7 @@
                     class="action-button"
                     data-expand-label="Expand all"
                     data-collapse-label="Collapse all"
+                    data-testid="run-detail-toggle-details-button"
                 >
                     Expand all
                 </button>
@@ -800,8 +803,8 @@
 
         <ul class="page-nav">
             <li><a href="#overview">Overview</a></li>
-            <li><a href="#digest">Digest</a></li>
-            <li><a href="#content-package">Content Package</a></li>
+            <li><a href="#digest">Post Draft</a></li>
+            <li><a href="#content-package">Publish-Ready Post</a></li>
             <li><a href="#diagnostics">Diagnostics</a></li>
         </ul>
 
@@ -809,7 +812,7 @@
             <p class="section-kicker">Run summary</p>
             <h2>Overview</h2>
             <div class="muted-block" style="margin-bottom: 14px;">
-                <div class="label-line"><strong>Topic:</strong> {{ run.topic.name }}</div>
+                <div class="label-line"><strong>Post idea:</strong> {{ run.topic.name }}</div>
                 <div class="label-line"><strong>Status:</strong> {{ run.status }}</div>
             </div>
             <div class="summary-grid">
@@ -818,16 +821,16 @@
                     <div class="value-strong">{{ run.id }}</div>
                 </div>
                 <div>
-                    <div class="section-label">Topic</div>
+                    <div class="section-label">Post idea</div>
                     <div class="value-strong">{{ run.topic.name }}</div>
                 </div>
                 <div>
                     <div class="section-label">Result</div>
                     <div class="value-strong">
                         {% if is_insufficient_quality %}
-                            {{ insufficient_quality_message|default:run.result_message|default:"-" }}
+                            {{ insufficient_quality_message|default:display_result_message|default:run.result_message|default:"-" }}
                         {% else %}
-                            {{ run.result_message|default:"-" }}
+                            {{ display_result_message|default:run.result_message|default:"-" }}
                         {% endif %}
                     </div>
                 </div>
@@ -839,24 +842,24 @@
         </section>
 
         <section id="digest" class="section-card section-anchor">
-            <p class="section-kicker">Digest output</p>
-            <h2>Digest</h2>
+            <p class="section-kicker">Post draft output</p>
+            <h2>Post draft</h2>
             {% if is_insufficient_quality %}
-                <p>No digest was generated because the selected articles did not meet the required quality level.</p>
+                <p>No post draft was generated because the selected articles did not meet the required quality level.</p>
             {% elif has_digest %}
                 <div class="meta-grid">
                     <div>
-                        <div class="section-label">Digest title</div>
+                        <div class="section-label">Post draft title</div>
                         <div class="value-strong">{{ digest_payload.title }}</div>
                     </div>
                     <div>
-                        <div class="section-label">Articles in digest</div>
+                        <div class="section-label">Articles in post draft</div>
                         <div class="value-strong">{{ digest_payload.articles|length|default:"0" }}</div>
                     </div>
                 </div>
                 {% if has_digest_articles %}
                     <details class="detail-block">
-                        <summary>Show digest article analysis</summary>
+                        <summary>Show post draft article analysis</summary>
                         <div class="article-list article-list--stack" style="margin-top: 14px;">
                             {% for article in digest_payload.articles %}
                                 <article class="article-card">
@@ -891,15 +894,15 @@
                     </details>
                 {% endif %}
             {% else %}
-                <p>No digest has been generated yet.</p>
+                <p>No post draft has been generated yet.</p>
             {% endif %}
         </section>
 
         <section id="content-package" class="section-card section-anchor">
-            <p class="section-kicker">Packaging details</p>
-            <h2>Content package</h2>
+            <p class="section-kicker">Publishing details</p>
+            <h2>Publish-ready post</h2>
             {% if is_insufficient_quality %}
-                <p>No LinkedIn post or content package was generated because too few articles passed the quality threshold.</p>
+                <p>No publish-ready post was generated because too few articles passed the quality threshold.</p>
             {% elif content_package %}
                 <div class="meta-grid" style="margin-bottom: 12px;">
                     <div>
@@ -918,7 +921,7 @@
                 <div class="package-section-list">
                     {% if content_package.post_text %}
                         <details class="detail-block package-details-row" open>
-                            <summary>Generated post</summary>
+                            <summary>Publish-ready post</summary>
                             <div class="scroll-box">{{ content_package.post_text }}</div>
                         </details>
                     {% endif %}
@@ -990,7 +993,7 @@
                     </details>
                 </div>
             {% else %}
-                <p>No content package has been generated yet.</p>
+                <p>No publish-ready post has been generated yet.</p>
             {% endif %}
         </section>
 
@@ -1053,11 +1056,11 @@
                     </div>
                 </details>
 
-                <details id="used-article-history" class="detail-block used-article-history">
-                    <summary>Used article history for this topic ({{ used_article_count }})</summary>
+                <details id="used-article-history" class="detail-block used-article-history" data-testid="used-article-history-region">
+                    <summary>Used article history for this post idea ({{ used_article_count }})</summary>
                     {% if used_articles %}
                         <p class="used-article-history__helper">
-                            Articles already used in successful digests for this topic. Future repeat filtering will use this topic-level history.
+                            Articles already used in successful posts for this post idea. Future repeat filtering will use this post idea history.
                         </p>
                         <div class="table-scroll used-article-history__table">
                             <table class="diagnostics-table">
@@ -1131,8 +1134,9 @@
                                                         <button
                                                             type="submit"
                                                             class="used-article-history__delete-button"
-                                                            title="Delete from topic history"
-                                                            aria-label="Delete {{ article.title|default:'used article' }} from topic history"
+                                                            title="Delete from post idea history"
+                                                            aria-label="Delete {{ article.title|default:'used article' }} from post idea history"
+                                                            data-testid="used-article-delete-button"
                                                         >
                                                             Delete
                                                         </button>
@@ -1146,9 +1150,9 @@
                         </div>
                     {% else %}
                         <p class="used-article-history__helper">
-                            Articles already used in successful digests for this topic. Future repeat filtering will use this topic-level history.
+                            Articles already used in successful posts for this post idea. Future repeat filtering will use this post idea history.
                         </p>
-                        <p class="muted-block" style="margin-top: 14px;">No used article history yet for this topic.</p>
+                        <p class="muted-block" style="margin-top: 14px;">No used article history yet for this post idea.</p>
                     {% endif %}
                 </details>
 
@@ -1261,7 +1265,7 @@
                             <ul class="metric-list">
                                 <li><strong>Total tokens:</strong> {{ total_tokens_display }}</li>
                                 <li><strong>Total estimated cost:</strong> {{ total_estimated_cost_display }}</li>
-                                <li><strong>Digest provider:</strong> {{ digest_provider|default:"-" }}</li>
+                                <li><strong>Post draft provider:</strong> {{ digest_provider|default:"-" }}</li>
                                 <li><strong>Packaging provider:</strong> {{ packaging_provider|default:"-" }}</li>
                             </ul>
                         </div>
@@ -1313,7 +1317,7 @@
                 </details>
             </div>
         </section>
-    </div>
+    </main>
     <script>
         (function () {
             const button = document.getElementById('copy-diagnostics-button');

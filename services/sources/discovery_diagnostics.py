@@ -326,7 +326,7 @@ def build_discovery_cycle_diagnosis_explanation(
     if primary_cause == "target_reached":
         return "The discovery cycle reached the visible-source target."
     if primary_cause == "provider_unavailable":
-        return "The search provider was unavailable, so DigestFlow could not process meaningful provider data."
+        return "The search provider was unavailable, so PostFlow could not process meaningful provider data."
     fragments = []
     if known_or_duplicate_count > 0:
         fragments.append(f"{known_or_duplicate_count} returned URL{'s were' if known_or_duplicate_count != 1 else ' was'} already known or duplicate")

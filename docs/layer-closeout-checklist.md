@@ -378,6 +378,21 @@ Minimum MVP LinkedIn package:
 - [ ] Layout remains usable on narrower screens.
 - [ ] The UI workflow is not overloaded with full account/dashboard responsibilities.
 
+For frontend implementation quality, also follow:
+- `docs/frontend-style-guide.md`
+
+Frontend UI quality checks:
+- [ ] interactive elements use semantic HTML
+- [ ] buttons are real `<button>` elements
+- [ ] navigation uses appropriate links/nav structure
+- [ ] repeated UI blocks are extracted or intentionally kept inline
+- [ ] templates remain readable and scoped
+- [ ] UI / E2E tests use `data-testid`
+- [ ] tests do not rely on CSS classes as selectors
+- [ ] CSS nesting remains shallow
+- [ ] unnecessary `!important` is avoided
+- [ ] JavaScript remains minimal and behavior-focused
+
 Important:
 
 The MVP UI workflow is the working path inside a topic. It is not the full personal account or SaaS workspace shell.
@@ -439,4 +454,3 @@ Post-MVP items moved to parking lot:
 Next layer:
 Reviewer notes:
 ```
-

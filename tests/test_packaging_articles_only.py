@@ -110,4 +110,4 @@ class PackagingArticlesOnlyTests(TestCase):
         content_package, _debug_info = generate_content_package_for_digest(digest)
 
         self.assertFalse(digest.has_articles())
-        self.assertIn("No digest articles were available.", content_package.post_text)
+        self.assertIn("No post draft articles were available.", content_package.post_text)

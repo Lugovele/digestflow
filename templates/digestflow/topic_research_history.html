@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Research history</title>
     <style>
         * { box-sizing: border-box; }
@@ -49,6 +50,17 @@
         .page-header__copy:disabled {
             cursor: default;
             opacity: 0.85;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
         }
         .muted {
             color: #5b6472;
@@ -444,7 +456,7 @@
     </style>
 </head>
 <body>
-    <div class="page">
+    <main class="page" data-testid="research-history-page">
         <p style="margin: 0 0 14px;">
             <a href="{% url 'topic-workspace' topic.id %}" class="inline-link">&larr; Back to topic</a>
         </p>
@@ -452,7 +464,7 @@
         <div class="page-header">
             <div>
                 <h1 class="page-title">Research history</h1>
-                <p class="muted" style="margin: 0;">Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.</p>
+                <p class="muted" style="margin: 0;">Understand how this topic's source research evolved over time. See the current research state, past discovery runs, and all seen sources.</p>
             </div>
             <button
                 id="copy-full-history-button"
@@ -462,6 +474,7 @@
                 data-default-label="Copy full history"
                 data-copied-label="Copied"
                 data-failed-label="Copy failed"
+                data-testid="research-history-copy-button"
             >Copy full history</button>
         </div>
 
@@ -498,7 +511,7 @@
                 <div class="history-table-wrap">
                     <table class="history-table">
                         <thead>
-                            <tr>
+                            <tr data-testid="query-performance-row">
                                 <th>Query</th>
                                 <th>Purpose / angle</th>
                                 <th>Returned</th>
@@ -512,7 +525,7 @@
                         </thead>
                         <tbody>
                             {% for item in query_performance_entries %}
-                            <tr>
+                            <tr data-testid="seen-source-row">
                                 <td class="history-table__title">
                                     <strong>{{ item.query }}</strong>
                                     <span class="muted">{{ item.provider }}</span>
@@ -683,12 +696,25 @@
                     <a href="{{ item.url }}" class="filter-chip{% if item.is_active %} filter-chip--active{% endif %}">{{ item.label }}</a>
                 {% endfor %}
             </div>
-            <form method="get" action="{% url 'topic-research-history' topic.id %}#seen-sources" class="search-row">
+            <form
+                method="get"
+                action="{% url 'topic-research-history' topic.id %}#seen-sources"
+                class="search-row"
+                data-testid="research-history-search-form"
+            >
                 {% if seen_source_history_active_filter %}
                     <input type="hidden" name="status" value="{{ seen_source_history_active_filter }}">
                 {% endif %}
-                <input type="text" name="q" value="{{ seen_source_history_search_query }}" placeholder="Search by title or domain">
-                <button type="submit">Search</button>
+                <label class="sr-only" for="seen-source-history-query">Search seen sources by title or domain</label>
+                <input
+                    type="text"
+                    id="seen-source-history-query"
+                    name="q"
+                    value="{{ seen_source_history_search_query }}"
+                    placeholder="Search by title or domain"
+                    data-testid="research-history-search-input"
+                >
+                <button type="submit" data-testid="research-history-search-button">Search</button>
                 {% if seen_source_history_search_query or seen_source_history_active_filter %}
                     <a href="{% url 'topic-research-history' topic.id %}" class="inline-link">Clear</a>
                 {% endif %}
@@ -757,7 +783,7 @@
                     </div>
                 </div>
             {% else %}
-                <p class="empty-state">No seen sources yet. Run Find sources to start source discovery for this topic.</p>
+                <p class="empty-state" data-testid="seen-sources-empty-state">No seen sources yet. Run Find sources to start source discovery for this topic.</p>
             {% endif %}
         </section>
 
@@ -767,7 +793,7 @@
             {% if history_runs %}
                 <div class="history-list">
                     {% for item in history_runs %}
-                        <details class="history-run">
+                        <details class="history-run" data-testid="research-history-run-row">
                             <summary class="history-run__summary">
                                 <div>
                                     <h2 class="history-run__title">{{ item.title }}</h2>
@@ -930,10 +956,10 @@
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="empty-state">No research history yet. Run Find sources to start source discovery for this topic.</p>
+                <p class="empty-state" data-testid="research-history-empty-state">No research history yet. Run Find sources to start source discovery for this topic.</p>
             {% endif %}
         </section>
-    </div>
+    </main>
     <script>
 (() => {
     const button = document.getElementById("copy-full-history-button");

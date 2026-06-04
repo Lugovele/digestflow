@@ -2,28 +2,52 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>DigestFlow Topics</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostFlow Workspace</title>
     <style>
         * { box-sizing: border-box; }
+        :root {
+            color-scheme: light;
+            --bg-base: #faf9f6;
+            --bg-mid: #f6f5f1;
+            --bg-end: #f3f4f8;
+            --text: #0f172a;
+            --muted: #64748b;
+            --brand: #20243a;
+            --panel: rgba(255, 255, 255, 0.76);
+            --panel-strong: #fbfaf7;
+            --panel-border: rgba(255, 255, 255, 0.92);
+            --card-border: rgba(226, 232, 240, 0.9);
+            --shadow: 0 34px 88px rgba(15, 23, 42, 0.08);
+        }
         body {
             margin: 0;
             font-family: Arial, sans-serif;
             line-height: 1.45;
-            color: #1f2937;
-            background: #f6f8fb;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 18% 10%, rgba(224, 231, 255, 0.72) 0, transparent 30%),
+                radial-gradient(circle at 84% 16%, rgba(248, 250, 252, 0.9) 0, transparent 26%),
+                linear-gradient(135deg, var(--bg-base) 0%, var(--bg-mid) 48%, var(--bg-end) 100%);
+            overflow-x: hidden;
         }
         .page {
-            max-width: 1100px;
+            max-width: 1180px;
             margin: 0 auto;
-            padding: 24px 16px 48px;
+            padding: 28px 16px 56px;
+            overflow-x: clip;
         }
         .card {
-            background: #fff;
-            border: 1px solid #d9e2f1;
-            border-radius: 10px;
-            padding: 18px;
-            margin-bottom: 18px;
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            padding: 22px;
+            margin-bottom: 20px;
             max-width: 100%;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.9),
+                var(--shadow);
+            backdrop-filter: blur(12px);
         }
         .workflow-card {
             padding: 0;
@@ -64,7 +88,7 @@
         }
         .section-hint {
             margin: 4px 0 0;
-            color: #5b6472;
+            color: var(--muted);
         }
         .section-notice {
             margin-top: 12px;
@@ -217,6 +241,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            overflow-wrap: anywhere;
         }
         .source-url:hover,
         .source-url:focus-visible {
@@ -261,7 +286,7 @@
             text-decoration: underline;
         }
         .run-meta {
-            color: #5b6472;
+            color: var(--muted);
             font-size: 14px;
         }
         .topic-row {
@@ -351,14 +376,324 @@
             flex: 0 0 auto;
         }
         .drag-handle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            min-width: 0;
+            border: 0;
+            background: transparent;
             color: #94a3b8;
             cursor: grab;
             font-size: 18px;
+            font-weight: 400;
             line-height: 1;
             user-select: none;
         }
+        .drag-handle:focus-visible {
+            outline: 2px solid rgba(34, 81, 204, 0.2);
+            outline-offset: 3px;
+        }
         .topic-delete-form {
             margin: 0;
+        }
+        .workspace-landing {
+            display: grid;
+            gap: 14px;
+            max-width: 980px;
+            margin: 0 auto;
+        }
+        .workspace-app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.35rem 0.15rem 0.2rem;
+        }
+        .workspace-app-header__brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 0;
+        }
+        .workspace-app-header__logo {
+            width: 2.45rem;
+            height: 2.45rem;
+            flex: none;
+            filter: drop-shadow(0 10px 18px rgba(32, 36, 58, 0.12));
+        }
+        .workspace-app-header__title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--brand);
+        }
+        .workspace-app-header__subtitle {
+            font-size: 0.75rem;
+            letter-spacing: 0.06em;
+            color: var(--muted);
+            text-transform: lowercase;
+        }
+        .workspace-app-header__utility {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.25rem;
+            padding: 0 0.8rem;
+            border-radius: 999px;
+            border: 1px solid rgba(203, 213, 225, 0.62);
+            background: rgba(255, 255, 255, 0.58);
+            color: #617185;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: default;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                0 6px 18px rgba(15, 23, 42, 0.05);
+        }
+        .workspace-hero {
+            position: relative;
+            overflow: hidden;
+            padding: 18px 18px 16px;
+            border-radius: 24px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(251, 250, 247, 0.92) 18%, rgba(249, 248, 244, 0.96) 100%);
+            border: 1px solid var(--panel-border);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+                0 18px 48px rgba(30, 41, 59, 0.07);
+        }
+        .workspace-hero::before {
+            content: "";
+            position: absolute;
+            left: 18px;
+            right: 18px;
+            top: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9), transparent);
+        }
+        .workspace-hero__kicker {
+            margin: 0 0 6px;
+            font-size: 0.86rem;
+            line-height: 1.35;
+            color: #536274;
+            font-weight: 500;
+        }
+        .workspace-hero__action-title {
+            margin: 0 0 4px;
+            font-size: clamp(1.95rem, 4.2vw, 2.45rem);
+            line-height: 1.05;
+            letter-spacing: -0.04em;
+            color: #020617;
+            font-weight: 600;
+        }
+        .workspace-hero__subtitle {
+            margin: 0;
+            font-size: 0.96rem;
+            line-height: 1.45;
+            color: #526070;
+        }
+        .workspace-start-card {
+            margin-top: 14px;
+            padding: 14px;
+            border-radius: 18px;
+            border: 1px solid var(--card-border);
+            background: rgba(255, 254, 253, 0.72);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.88),
+                0 10px 24px rgba(15, 23, 42, 0.03);
+        }
+        .workspace-start-label {
+            margin: 0 0 8px;
+            font-size: 12px;
+            letter-spacing: 0;
+            color: #243041;
+            text-transform: none;
+            font-weight: 600;
+        }
+        .workspace-start-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: stretch;
+        }
+        .workspace-start-row input,
+        .workspace-start-row select {
+            min-height: 52px;
+            border-radius: 14px;
+            border: 1px solid #d8dee8;
+            background: rgba(255, 255, 255, 0.92);
+            padding: 0 16px;
+            font-size: 15px;
+            color: var(--text);
+        }
+        .workspace-start-row input::placeholder {
+            color: #7c8aa0;
+        }
+        .workspace-start-button {
+            width: auto;
+            min-width: 152px;
+            min-height: 52px;
+            border-radius: 14px;
+            background: var(--brand);
+            box-shadow: 0 14px 30px rgba(32, 36, 58, 0.15);
+        }
+        .workspace-start-button:hover {
+            background: #252a44;
+        }
+        .workspace-start-button:disabled {
+            background: rgba(226, 232, 240, 0.58);
+            color: #a0aec0;
+            box-shadow: none;
+            border-color: rgba(203, 213, 225, 0.72);
+            cursor: not-allowed;
+        }
+        .workspace-start-helper {
+            margin: 7px 2px 0;
+            color: #64748b;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .workspace-panel {
+            padding: 13px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.62);
+            border: 1px solid rgba(255, 255, 255, 0.85);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.88),
+                0 10px 24px rgba(15, 23, 42, 0.03);
+        }
+        .workspace-panel__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .workspace-panel__header-main {
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .workspace-panel__title {
+            margin: 0;
+            font-size: 16px;
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+            font-weight: 600;
+        }
+        .workspace-panel__hint {
+            margin: 2px 0 0;
+            color: var(--muted);
+            font-size: 12.5px;
+            line-height: 1.35;
+        }
+        .workspace-panel__link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+            color: #7b8797;
+            font-size: 13px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            white-space: nowrap;
+            flex: 0 0 auto;
+        }
+        .workspace-panel__link:hover,
+        .workspace-panel__link:focus-visible {
+            color: #475569;
+            text-decoration: underline;
+        }
+        /* reason: the hidden attribute must win over display:flex layout rules for collapsed UI rows */
+        .idea-chip[hidden],
+        .topic-row[hidden],
+        [data-history-extra][hidden] {
+            display: none !important;
+        }
+        .idea-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .idea-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 42px;
+            padding: 9px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(226, 232, 240, 0.64);
+            background: rgba(255, 255, 255, 0.76);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.86),
+                0 4px 10px rgba(15, 23, 42, 0.02);
+        }
+        .idea-chip .drag-handle {
+            display: none;
+        }
+        .idea-row-copy {
+            min-width: 0;
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .idea-title {
+            min-width: 0;
+            max-width: 100%;
+            color: #0f172a;
+            font-size: 13.5px;
+            line-height: 1.28;
+            font-weight: 500;
+            text-decoration: none;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 320px;
+        }
+        .idea-row-chevron {
+            display: inline-block;
+            flex: 0 0 auto;
+            color: #c0c9d5;
+            font-size: 14px;
+            line-height: 1;
+        }
+        .idea-title:hover,
+        .idea-title:focus-visible {
+            color: #1d4ed8;
+            text-decoration: underline;
+        }
+        .history-empty {
+            padding: 14px 16px;
+            border-radius: 16px;
+            border: 1px dashed rgba(203, 213, 225, 0.9);
+            background: rgba(255, 255, 255, 0.56);
+            color: var(--muted);
+            max-width: 320px;
+        }
+        .history-empty strong {
+            display: block;
+            margin-bottom: 4px;
+            color: #0f172a;
+            font-size: 15px;
+            font-weight: 500;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
         }
         .icon-button {
             display: inline-flex;
@@ -567,6 +902,21 @@
             margin: 0;
             padding-left: 20px;
         }
+        @media (max-width: 900px) {
+            .page {
+                padding: 22px 14px 42px;
+            }
+            .card {
+                border-radius: 22px;
+                padding: 18px;
+            }
+            .page-title {
+                font-size: 28px;
+            }
+            .workflow-title {
+                font-size: 20px;
+            }
+        }
         @media (max-width: 720px) {
             .workflow-header,
             .section-header,
@@ -575,7 +925,23 @@
                 flex-direction: column;
                 align-items: stretch;
             }
+            .page-title,
+            .workflow-title,
+            .workspace-panel__title,
+            .section-heading,
+            .section-heading--subgroup {
+                overflow-wrap: anywhere;
+            }
+            .section-header > div,
+            .subsection-heading-row > * {
+                min-width: 0;
+            }
             .topic-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .topic-header-row,
+            .subsection-heading-row {
                 flex-direction: column;
                 align-items: stretch;
             }
@@ -587,6 +953,7 @@
                 flex-wrap: wrap;
                 margin-left: 0;
                 min-width: 0;
+                width: 100%;
             }
             .topic-form-actions > * {
                 width: 100%;
@@ -601,19 +968,457 @@
             .inventory-actions {
                 justify-content: flex-start;
             }
-        }
-        @media (max-width: 640px) {
             .inline-add-controls {
                 grid-template-columns: 1fr;
+            }
+            .inline-add-form button,
+            .topic-form-actions button,
+            .discovery-row button,
+            .discovery-row .secondary-button,
+            .section-header form button,
+            #workspace-run-form + button,
+            form[action*="/run/"] .primary-cta,
+            form[action*="/run-selected/"] .primary-cta {
+                width: 100%;
+            }
+            .inventory-row {
+                gap: 12px;
+            }
+        }
+        @media (max-width: 640px) {
+            .page {
+                padding: 16px 12px 32px;
+            }
+            .card {
+                padding: 16px;
+                border-radius: 18px;
+            }
+            .page-title {
+                font-size: 26px;
+                line-height: 1.15;
+            }
+            .workflow-section {
+                padding: 14px;
+            }
+            .workspace-landing {
+                gap: 12px;
+                max-width: 430px;
+            }
+            .workspace-app-header {
+                padding: 0.1rem 0.1rem 0.15rem;
+            }
+            .workspace-app-header__brand {
+                gap: 0.65rem;
+            }
+            .workspace-app-header__logo {
+                width: 2.35rem;
+                height: 2.35rem;
+            }
+            .workspace-hero {
+                padding: 15px 14px 14px;
+                border-radius: 20px;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                    0 12px 28px rgba(30, 41, 59, 0.05);
+            }
+            .workspace-hero::before {
+                left: 14px;
+                right: 14px;
+            }
+            .workspace-hero__kicker {
+                margin-bottom: 5px;
+                font-size: 0.82rem;
+            }
+            .workspace-hero__action-title {
+                font-size: clamp(1.85rem, 8vw, 2.2rem);
+                line-height: 1.04;
+            }
+            .workspace-hero__subtitle {
+                max-width: 16rem;
+                font-size: 0.9rem;
+                line-height: 1.4;
+            }
+            .workspace-start-card {
+                margin-top: 12px;
+                padding: 12px;
+                border-radius: 16px;
+            }
+            .workspace-start-row {
+                grid-template-columns: 1fr;
+                gap: 9px;
+            }
+            .workspace-start-row input {
+                min-height: 48px;
+                border-radius: 12px;
+                padding: 0 14px;
+                font-size: 15px;
+            }
+            .workspace-start-button {
+                width: 100%;
+                min-width: 0;
+                min-height: 48px;
+                border-radius: 12px;
+                box-shadow: 0 10px 22px rgba(32, 36, 58, 0.14);
+            }
+            .workspace-start-helper {
+                font-size: 12px;
+                line-height: 1.4;
+            }
+            .workspace-panel {
+                padding: 12px;
+                border-radius: 18px;
+            }
+            .workspace-panel__title {
+                font-size: 15px;
+            }
+            .idea-list {
+                gap: 8px;
+            }
+            .idea-chip {
+                padding: 8px 12px;
+                gap: 8px;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+                    0 6px 14px rgba(15, 23, 42, 0.025);
+            }
+            .inventory-row,
+            .topic-row {
+                gap: 10px;
+                padding: 12px;
+            }
+            .idea-list .topic-row,
+            .idea-list .idea-chip {
+                display: inline-flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: flex-start;
+                width: auto;
+                max-width: 100%;
+                min-width: 0;
+                padding: 8px 12px;
+                border-radius: 999px;
+            }
+            .inventory-toggle {
+                gap: 10px;
+            }
+            .topic-card-actions {
+                min-width: 0;
+            }
+            .source-url {
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+            .focus-chip-list {
+                gap: 6px;
+            }
+            .focus-chip {
+                max-width: 100%;
+            }
+            .focus-chip button,
+            .icon-button,
+            .idea-title {
+                width: auto;
+            }
+            .topic-run-hint {
+                text-align: left;
+                white-space: normal;
+                flex-basis: 100%;
+            }
+            .topic-run-form,
+            .topic-run-button,
+            .topic-card-actions .topic-delete-form,
+            .topic-card-actions .secondary-button,
+            .topic-card-actions button {
+                width: 100%;
+            }
+            .topic-card-actions .topic-delete-form {
+                margin-left: 0;
+            }
+            .meta-strip,
+            .source-meta,
+            .topic-meta,
+            .candidate-summary,
+            .inventory-actions,
+            .source-footer {
+                gap: 6px;
+            }
+            .inventory-actions,
+            .source-footer,
+            .section-header > div:last-child,
+            .subsection-heading-row > div:last-child {
+                width: 100%;
+            }
+            .section-header > div:last-child form,
+            .section-header > div:last-child button,
+            .subsection-heading-row > div:last-child form,
+            .subsection-heading-row > div:last-child button {
+                width: 100%;
+            }
+            .source-line {
+                align-items: flex-start;
+            }
+            .source-separator {
+                display: none;
+            }
+            .action-hint {
+                white-space: normal;
+            }
+            .workspace-admin-link {
+                margin-top: 14px;
+                font-size: 13px;
+            }
+        }
+        @media (max-width: 480px) {
+            .page {
+                padding: 12px 10px 28px;
+            }
+            .card {
+                padding: 14px;
+                border-radius: 16px;
+            }
+            .page-title {
+                font-size: 24px;
+                line-height: 1.12;
+            }
+            .workflow-title {
+                font-size: 18px;
+            }
+            .workspace-hero {
+                padding: 14px 13px 13px;
+                border-radius: 18px;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                    0 10px 22px rgba(30, 41, 59, 0.045);
+            }
+            .workspace-hero::before {
+                left: 14px;
+                right: 14px;
+            }
+            .workspace-hero__subtitle {
+                font-size: 0.88rem;
+                line-height: 1.36;
+            }
+            .workspace-start-card,
+            .workspace-panel,
+            .workflow-section {
+                padding: 13px;
+                border-radius: 16px;
+            }
+            .workspace-start-row input,
+            .workspace-start-row select,
+            input[type="text"],
+            input[type="url"],
+            textarea,
+            select,
+            .workspace-start-button,
+            .primary-cta,
+            .secondary-button {
+                min-height: 46px;
+                font-size: 15px;
+            }
+            .workspace-start-helper,
+            .section-hint,
+            .run-meta,
+            .muted {
+                font-size: 12px;
+                line-height: 1.45;
+            }
+            .idea-chip,
+            .inventory-row,
+            .topic-row,
+            .run-row {
+                padding: 11px 12px;
+                border-radius: 12px;
+            }
+            .idea-title {
+                max-width: min(54vw, 230px);
+            }
+            .focus-chip {
+                padding: 6px 10px;
+                font-size: 13px;
+            }
+            .focus-chip button {
+                font-size: 13px;
+            }
+            .inline-add-label-group,
+            .field-row,
+            .stack,
+            .topic-form,
+            .source-list,
+            .topics-list,
+            .runs-list,
+            .inventory-list {
+                gap: 10px;
+            }
+        }
+        @media (max-width: 390px) {
+            .page {
+                padding: 10px 10px 28px;
+            }
+            .workspace-landing {
+                max-width: 430px;
+            }
+            .workspace-app-header {
+                padding-inline: 0;
+            }
+            .workspace-app-header__logo {
+                width: 2.2rem;
+                height: 2.2rem;
+            }
+            .workspace-hero {
+                padding: 14px 12px 12px;
+                border-radius: 20px;
+            }
+            .workspace-start-card,
+            .workspace-panel {
+                padding: 12px;
+            }
+            .idea-title {
+                max-width: min(50vw, 180px);
+            }
+        }
+        @media (max-width: 760px) {
+            .workspace-landing {
+                max-width: 430px;
+                gap: 16px;
+            }
+            .workspace-hero {
+                padding: 12px;
+                border-radius: 18px;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                    0 10px 22px rgba(30, 41, 59, 0.045);
+            }
+            .workspace-hero::before {
+                left: 12px;
+                right: 12px;
+            }
+            .workspace-hero__action-title {
+                font-size: clamp(1.6rem, 6.4vw, 1.92rem);
+                line-height: 1.03;
+            }
+            .workspace-start-card {
+                margin-top: 10px;
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: transparent;
+                box-shadow: none;
+            }
+            .workspace-start-label {
+                margin-bottom: 5px;
+                font-size: 0.92rem;
+                color: #1f2937;
+                font-weight: 600;
+            }
+            .workspace-start-row {
+                grid-template-columns: 1fr;
+                gap: 7px;
+            }
+            .workspace-start-row input {
+                min-height: 46px;
+                padding: 0 14px;
+                border-radius: 12px;
+            }
+            .workspace-start-button {
+                width: 100%;
+                min-width: 0;
+                min-height: 46px;
+                border-radius: 12px;
+                box-shadow: 0 9px 18px rgba(32, 36, 58, 0.12);
+            }
+            .workspace-start-button:disabled {
+                box-shadow: none;
+            }
+            .workspace-start-helper {
+                margin-top: 5px;
+                font-size: 11px;
+                line-height: 1.35;
+                color: #6b7280;
+            }
+            .workspace-panel {
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: transparent;
+                box-shadow: none;
+                backdrop-filter: none;
+            }
+            .workspace-panel__title {
+                font-size: 14px;
+            }
+            .workspace-panel__hint {
+                font-size: 11px;
+                line-height: 1.28;
+            }
+            .workspace-panel__link {
+                font-size: 12px;
+            }
+            .idea-list .topic-row,
+            .idea-list .idea-chip {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+                min-height: 38px;
+                padding: 9px 11px;
+                border-radius: 11px;
+                gap: 8px;
+                border: 1px solid rgba(226, 232, 240, 0.62);
+                background: rgba(255, 255, 255, 0.72);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.84);
+            }
+            .idea-chip .drag-handle {
+                display: none;
+            }
+            .idea-row-copy {
+                gap: 2px;
+            }
+            .idea-row-chevron {
+                display: inline-block;
+                color: #c1cad7;
+                font-size: 14px;
+            }
+            .idea-title {
+                flex: 1 1 auto;
+                max-width: none;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                font-size: 13px;
+                line-height: 1.3;
+            }
+        }
+        @media (max-width: 390px) {
+            .page {
+                padding: 10px 10px 28px;
+            }
+            .workspace-landing {
+                max-width: 430px;
+                gap: 20px;
+            }
+            .workspace-hero {
+                padding: 11px;
+                border-radius: 17px;
+            }
+            .workspace-start-card,
+            .workspace-panel {
+                padding: 0;
+            }
+            .idea-title {
+                max-width: none;
             }
         }
     </style>
 </head>
 <body>
-    <div class="page">
+    <main class="page">
         {% if discovered_topic %}
             <p style="margin: 0 0 14px;">
-                <a href="{% url 'topic-list' %}" class="inline-link">&larr; Back to topics</a>
+                <a href="{% url 'topic-list' %}" class="inline-link">&larr; Back to workspace</a>
             </p>
 
             <h1 class="page-title">{{ discovered_topic.name }}</h1>
@@ -684,70 +1489,6 @@
                     {% endif %}
                 </form>
             </section>
-        {% else %}
-            <h1>DigestFlow</h1>
-            <section class="card">
-                <form method="post" action="{% url 'discover-sources' %}" novalidate class="topic-form">
-                    {% csrf_token %}
-                    <p class="topic-form-prompt">What do you want to explore?</p>
-                    <div class="field-row">
-                        <input
-                            type="text"
-                            name="{{ topic_form.topic_name.html_name }}"
-                            id="{{ topic_form.topic_name.id_for_label }}"
-                            value="{{ topic_form.topic_name.value|default_if_none:'' }}"
-                            maxlength="{{ topic_form.topic_name.field.max_length }}"
-                            placeholder="AI agents, baby sleep, travel planning"
-                            required
-                        >
-                    </div>
-                    <div class="topic-form-actions">
-                        <select
-                            name="{{ topic_form.source_mode.html_name }}"
-                            id="{{ topic_form.source_mode.id_for_label }}"
-                        >
-                            {% for value, label in topic_form.source_mode.field.choices %}
-                                <option value="{{ value }}"{% if topic_form.source_mode.value == value %} selected{% endif %}>
-                                    {% if value == "hybrid" %}
-                                        Use my sources & research
-                                    {% elif value == "curated_only" %}
-                                        Use my sources only
-                                    {% elif value == "discovery_only" %}
-                                        Use research sources only
-                                    {% else %}
-                                        {{ label }}
-                                    {% endif %}
-                                </option>
-                            {% endfor %}
-                        </select>
-                        <button type="submit" class="secondary-button">Find sources</button>
-                    </div>
-                    {% if topic_form_error %}
-                        <p class="error">{{ topic_form_error }}</p>
-                    {% endif %}
-                    {% if topic_form.topic_name.errors and not topic_form_error %}
-                        <ul class="error">
-                            {% for error in topic_form.topic_name.errors %}
-                                <li>{{ error }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% endif %}
-                    {% if topic_form.source_url.errors %}
-                        <ul class="error">
-                            {% for error in topic_form.source_url.errors %}
-                                <li>{{ error }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% endif %}
-                    {% if topic_form.source_mode.errors %}
-                        <ul class="error">
-                            {% for error in topic_form.source_mode.errors %}
-                                <li>{{ error }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% endif %}
-                </form>
-            </section>
         {% endif %}
 
         {% if discovered_topic %}
@@ -763,19 +1504,23 @@
                     class="focus-form"
                     data-focus-form
                     data-preserve-scroll
+                    data-testid="focus-form"
                 >
                     {% csrf_token %}
                     <input type="hidden" name="focus_terms" value="{% for term in focus_terms %}{{ term }}{% if not forloop.last %}&#10;{% endif %}{% endfor %}" data-focus-hidden>
+                    <label class="sr-only" for="research-angle-input">What should research focus on?</label>
                     <input
                         type="text"
                         class="focus-input"
-                        placeholder="Add a research angle and press Enter"
+                        id="research-angle-input"
+                        placeholder="Add a post angle and press Enter"
                         autocomplete="off"
                         value="{{ focus_input_value }}"
                         data-focus-input
+                        data-testid="focus-input"
                     >
                     {% if not focus_terms %}
-                        <p class="section-hint">Add at least one research angle so DigestFlow knows what sources to look for.</p>
+                        <p class="section-hint">Add at least one post angle so PostFlow knows what sources to look for.</p>
                     {% endif %}
                     <p
                         class="focus-inline-feedback"
@@ -786,7 +1531,12 @@
                         {% for term in focus_terms %}
                             <span class="focus-chip" data-focus-chip data-focus-value="{{ term }}">
                                 <span>{{ term }}</span>
-                                <button type="button" aria-label="Remove focus term {{ term }}" data-focus-remove>&times;</button>
+                                <button
+                                    type="button"
+                                    aria-label="Remove focus term {{ term }}"
+                                    data-focus-remove
+                                    data-testid="remove-focus-button"
+                                >&times;</button>
                             </span>
                         {% endfor %}
                     </div>
@@ -833,16 +1583,17 @@
                                 {% for source in topic_source_inventory %}
                                     <div class="inventory-row{% if not source.is_active %} inventory-row--disabled{% endif %}">
                                         <div class="inventory-main">
-                                            <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
-                                                {% csrf_token %}
-                                                <label class="inventory-toggle">
-                                                    <input
-                                                        type="checkbox"
-                                                        name="is_active"
-                                                        value="1"
-                                                        {% if source.is_active %}checked{% endif %}
-                                                        onchange="this.form.requestSubmit();"
-                                                    >
+                                                    <form method="post" action="{% url 'toggle-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
+                                                        {% csrf_token %}
+                                                        <label class="inventory-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                name="is_active"
+                                                                value="1"
+                                                                {% if source.is_active %}checked{% endif %}
+                                                                onchange="this.form.requestSubmit();"
+                                                                data-testid="saved-source-toggle"
+                                                            >
                                                     <span class="source-identity">
                                                         <span class="source-line">
                                                             <strong>{{ source.name }}</strong>
@@ -856,7 +1607,13 @@
                                         <div class="inventory-actions">
                                             <form method="post" action="{% url 'remove-topic-source' discovered_topic.id source.id %}" data-preserve-scroll>
                                                 {% csrf_token %}
-                                                <button type="submit" class="icon-button icon-button--subtle" aria-label="Remove saved source {{ source.name }}" title="Remove">
+                                                <button
+                                                    type="submit"
+                                                    class="icon-button icon-button--subtle"
+                                                    aria-label="Remove saved source {{ source.name }}"
+                                                    title="Remove"
+                                                    data-testid="remove-saved-source-button"
+                                                >
                                                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                                         <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11V8h12v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>
                                                     </svg>
@@ -872,7 +1629,7 @@
             {% endif %}
 
             {% if discovered_topic.uses_source_discovery %}
-                <section class="card workflow-card">
+                <section class="card workflow-card" data-testid="research-sources-region">
                     <div class="workflow-section">
                         <div class="section-header section-header--stack">
                             <div class="subsection-heading-row">
@@ -894,11 +1651,16 @@
                                         {% if show_all_new_suggestions %}
                                             <input type="hidden" name="show_all_suggestions" value="1">
                                         {% endif %}
-                                        <button type="submit" class="secondary-button secondary-button--local" {% if not can_find_research_sources %}disabled aria-disabled="true"{% endif %}>{{ source_discovery_button_label }}</button>
+                                        <button
+                                            type="submit"
+                                            class="secondary-button secondary-button--local"
+                                            data-testid="find-sources-button"
+                                            {% if not can_find_research_sources %}disabled aria-disabled="true"{% endif %}
+                                        >{{ source_discovery_button_label }}</button>
                                     </form>
                                 </div>
                             </div>
-                            <p class="section-hint">Check sources to use in the next digest. Keep useful ones for future runs.</p>
+                            <p class="section-hint">Check sources to use in the next post. Keep useful ones for future runs.</p>
                             {% if research_history_url %}
                                 <p class="section-hint"><a class="inline-link" href="{{ research_history_url }}">Research history</a></p>
                             {% endif %}
@@ -940,13 +1702,14 @@
                                                             <input type="hidden" name="show_all_suggestions" value="1">
                                                         {% endif %}
                                                         <label class="inventory-toggle">
-                                                            <input
-                                                                type="checkbox"
-                                                                name="is_active"
-                                                                value="1"
-                                                                {% if source.is_active %}checked{% endif %}
-                                                                onchange="this.form.requestSubmit();"
-                                                            >
+                                                        <input
+                                                            type="checkbox"
+                                                            name="is_active"
+                                                            value="1"
+                                                            {% if source.is_active %}checked{% endif %}
+                                                            onchange="this.form.requestSubmit();"
+                                                            data-testid="saved-source-toggle"
+                                                        >
                                                             <span class="source-identity">
                                                                 <span class="source-line">
                                                                     <strong>{{ source.name }}</strong>
@@ -966,7 +1729,11 @@
                                                         {% if show_all_new_suggestions %}
                                                             <input type="hidden" name="show_all_suggestions" value="1">
                                                         {% endif %}
-                                                        <button type="submit" class="secondary-button secondary-button--tertiary">Remove</button>
+                                                        <button
+                                                            type="submit"
+                                                            class="secondary-button secondary-button--tertiary"
+                                                            data-testid="remove-saved-source-button"
+                                                        >Remove</button>
                                                     </form>
                                                 </div>
                                             </div>
@@ -998,6 +1765,7 @@
                                                                 value="1"
                                                                 {% if candidate.selected %}checked{% endif %}
                                                                 onchange="this.form.requestSubmit();"
+                                                                data-testid="suggested-source-toggle"
                                                             >
                                                             <span class="source-identity">
                                                                 <span class="source-line">
@@ -1018,7 +1786,11 @@
                                                         {% if show_all_new_suggestions %}
                                                             <input type="hidden" name="show_all_suggestions" value="1">
                                                         {% endif %}
-                                                        <button type="submit" class="secondary-button secondary-button--tertiary">Keep</button>
+                                                        <button
+                                                            type="submit"
+                                                            class="secondary-button secondary-button--tertiary"
+                                                            data-testid="keep-source-button"
+                                                        >Keep</button>
                                                     </form>
                                                 </div>
                                             </div>
@@ -1027,14 +1799,18 @@
                                     {% if new_suggestions_is_truncated %}
                                         <p class="section-hint" style="margin: 0;">
                                             {{ discovery_summary.truncation_hint }}
-                                            <a class="inline-link" href="{{ show_all_new_suggestions_url }}">Show all suggestions</a>
+                                            <a
+                                                class="inline-link"
+                                                href="{{ show_all_new_suggestions_url }}"
+                                                data-testid="show-all-suggestions-link"
+                                            >Show all suggestions</a>
                                         </p>
                                     {% endif %}
                                 {% else %}
-                                    <div>
+                                    <div data-testid="new-suggestions-empty-state">
                                         <p class="section-hint" style="margin: 0;">No new suggestions yet.</p>
                                         {% if not can_find_research_sources %}
-                                            <p class="section-hint" style="margin-top: 6px;">Add at least one research angle before finding sources.</p>
+                                            <p class="section-hint" style="margin-top: 6px;">Add at least one post angle before finding sources.</p>
                                         {% endif %}
                                     </div>
                                 {% endif %}
@@ -1045,7 +1821,7 @@
             {% endif %}
 
             {% if discovered_topic.uses_source_discovery %}
-                <section class="card workflow-card">
+                <section class="card workflow-card" data-testid="ready-to-generate-region">
                     <div class="workflow-section">
                         <div class="section-header">
                             <div>
@@ -1063,8 +1839,9 @@
                                     form="workspace-run-form"
                                     class="primary-cta"
                                     data-run-source-count-button
+                                    data-testid="generate-post-button"
                                     {% if not run_eligibility.is_eligible %}disabled{% endif %}
-                                >Run digest</button>
+                                >Generate post</button>
                             </div>
                         </div>
                     </div>
@@ -1082,7 +1859,12 @@
                             <div>
                                 <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
                                     {% csrf_token %}
-                                    <button type="submit" class="primary-cta" {% if not run_eligibility.is_eligible %}disabled{% endif %}>Run digest</button>
+                                    <button
+                                        type="submit"
+                                        class="primary-cta"
+                                        data-testid="generate-post-button"
+                                        {% if not run_eligibility.is_eligible %}disabled{% endif %}
+                                    >Generate post</button>
                                 </form>
                             </div>
                         </div>
@@ -1090,136 +1872,170 @@
                 </section>
             {% endif %}
         {% else %}
-            <section class="card">
-                <div class="section-header">
-                    <h2 style="margin: 0;">Saved topics</h2>
-                    <button
-                        type="button"
-                        class="secondary-button secondary-button--subtle"
-                        data-collapse-button
-                        aria-expanded="true"
-                        aria-controls="saved-topics-section-body"
-                        data-expand-label="Expand"
-                        data-collapse-label="Collapse"
-                    >
-                        Collapse
-                    </button>
-                </div>
-                <div
-                    id="saved-topics-section-body"
-                    data-collapse-root
-                    data-collapse-key="saved-topics"
-                    data-default-expanded="true"
-                    data-collapse-region
-                    style="margin-top: 14px;"
-                >
-                {% if topics %}
-                    <div id="saved-topics-list" class="topics-list">
-                        {% for topic in topics %}
-                            <div class="topic-row" data-topic-id="{{ topic.id }}">
-    <div class="topic-main">
-        <div class="topic-title-row">
-            <span class="drag-handle" aria-hidden="true" title="Reorder" draggable="true">⋮⋮</span>
-            <strong><a href="{% url 'topic-workspace' topic.id %}" class="inline-link">{{ topic.name }}</a></strong>
-        </div>
-        <div class="topic-meta">
-            <span class="pill">{{ topic.source_count }} my source{% if topic.source_count != 1 %}s{% endif %}</span>
-            <span class="pill">{{ topic.research_source_count }} research source{% if topic.research_source_count != 1 %}s{% endif %}</span>
-            <span class="pill">
-                {% if topic.source_mode == "hybrid" %}
-                    my sources & research
-                {% elif topic.source_mode == "curated_only" %}
-                    my sources only
-                {% elif topic.source_mode == "discovery_only" %}
-                    research only
-                {% else %}
-                    {{ topic.get_source_mode_display }}
-                {% endif %}
-            </span>
-        </div>
-        {% if topic.description %}
-            <div class="muted">{{ topic.description }}</div>
-        {% endif %}
-    </div>
-    <div class="topic-card-actions">
-        {% if not topic.run_eligibility.is_eligible and topic.run_eligibility.short_message %}
-            <span class="muted topic-run-hint">{{ topic.run_eligibility.short_message }}</span>
-        {% else %}
-            <span class="topic-run-hint" aria-hidden="true"></span>
-        {% endif %}
-        <form method="post" action="{% url 'run-pipeline' topic.id %}" class="topic-run-form">
-            {% csrf_token %}
-            <button
-                type="submit"
-                class="topic-run-button"
-                {% if not topic.run_eligibility.is_eligible %}disabled title="{{ topic.run_eligibility.short_message }}" aria-label="Run disabled: {{ topic.run_eligibility.short_message }}"{% endif %}
-            >Run</button>
-        </form>
-        <form
-            method="post"
-            action="{% url 'delete-topic' topic.id %}"
-            class="topic-delete-form"
-            onsubmit="return confirm('Delete this topic?');"
-            data-preserve-scroll
-        >
-            {% csrf_token %}
-            <button type="submit" class="icon-button" aria-label="Delete topic" title="Delete">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11V8h12v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>
-                </svg>
-            </button>
-        </form>
-    </div>
-</div>
-                        {% endfor %}
+            <div class="workspace-landing">
+                <header class="workspace-app-header" aria-label="PostFlow workspace">
+                    <div class="workspace-app-header__brand">
+                        <svg class="workspace-app-header__logo" viewBox="0 0 72 72" aria-hidden="true">
+                            <defs>
+                                <linearGradient id="workspaceFrontPage" x1="13" y1="6" x2="46" y2="57" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#121A31"></stop>
+                                    <stop offset="1" stop-color="#20243A"></stop>
+                                </linearGradient>
+                                <linearGradient id="workspaceBackPageA" x1="38" y1="10" x2="61" y2="58" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#DADDE4"></stop>
+                                    <stop offset="1" stop-color="#BFC2CA"></stop>
+                                </linearGradient>
+                                <linearGradient id="workspaceBackPageB" x1="30" y1="8" x2="55" y2="61" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#F4F1EA"></stop>
+                                    <stop offset="1" stop-color="#D8D5CC"></stop>
+                                </linearGradient>
+                                <linearGradient id="workspaceFold" x1="25" y1="46" x2="45" y2="63" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#FFFFFF"></stop>
+                                    <stop offset="0.55" stop-color="#EEEAE1"></stop>
+                                    <stop offset="1" stop-color="#C9C5BC"></stop>
+                                </linearGradient>
+                            </defs>
+                            <path d="M36 12.5 57 8.4c1.6-.3 3 1 3 2.6v47.7c0 1.4-1 2.7-2.4 3L36 66V12.5Z" fill="url(#workspaceBackPageA)"></path>
+                            <path d="M28.5 9.8 51.5 5.2c1.7-.3 3.2 1 3.2 2.7v48.6c0 1.5-1.1 2.8-2.6 3.1L28.5 64V9.8Z" fill="url(#workspaceBackPageB)"></path>
+                            <path d="M12 7.6 43.5 1.8c1.4-.3 2.7.8 2.7 2.3v39.2c0 2.3-.9 4.6-2.5 6.3L30.6 64H12V7.6Z" fill="url(#workspaceFrontPage)"></path>
+                            <path d="M30.6 64c.9-8.5 5.9-13.8 15.1-16L30.6 64Z" fill="url(#workspaceFold)"></path>
+                            <path d="M13.2 63.1h16.4c1-7.5 5.7-12.3 14.2-14.4" fill="none" stroke="#F9F5EC" stroke-width="1.5" opacity="0.9"></path>
+                            <path d="M20 18.5h17" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.94"></path>
+                            <path d="M20 27.5h15.5" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.84"></path>
+                            <path d="M20 36.5h17.5" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.76"></path>
+                        </svg>
+                        <div>
+                            <div class="workspace-app-header__title">PostFlow</div>
+                            <div class="workspace-app-header__subtitle">from idea to final post</div>
+                        </div>
                     </div>
-                {% else %}
-                    <p>No topics yet. Enter a topic above to find sources and start a digest.</p>
-                {% endif %}
-                </div>
-            </section>
-
-            <section class="card">
-                <div class="section-header">
-                    <h2 style="margin: 0;">Recent digests</h2>
-                    <button
-                        type="button"
-                        class="secondary-button secondary-button--subtle"
-                        data-collapse-button
-                        aria-expanded="true"
-                        aria-controls="recent-runs-section-body"
-                        data-expand-label="Expand"
-                        data-collapse-label="Collapse"
-                    >
-                        Collapse
-                    </button>
-                </div>
-                <div
-                    id="recent-runs-section-body"
-                    data-collapse-root
-                    data-collapse-key="recent-runs"
-                    data-default-expanded="true"
-                    data-collapse-region
-                    style="margin-top: 14px;"
-                >
-                {% if recent_runs %}
-                    <div class="runs-list">
-                        {% for run in recent_runs %}
-                            <div class="run-row">
-                                <a href="{% url 'run-detail' run.id %}" class="run-title">{{ run.topic.name }}</a>
-                                <div class="run-meta">{{ run.display_time }}</div>
+                    <button type="button" class="workspace-app-header__utility" aria-disabled="true" title="Login is not available yet">Log in</button>
+                </header>
+                <section class="workspace-hero">
+                    <p class="workspace-hero__kicker">Start with an idea</p>
+                    <h1 class="workspace-hero__action-title">Turn an idea into a post</h1>
+                    <p class="workspace-hero__subtitle">What do you want to write about?</p>
+                    <section class="workspace-start-card">
+                        <form
+                            method="post"
+                            action="{% url 'discover-sources' %}"
+                            novalidate
+                            class="topic-form"
+                            data-testid="workspace-start-form"
+                        >
+                            {% with topic_form.topic_name.value|default_if_none:'' as workspace_topic_value %}
+                            {% csrf_token %}
+                            <input
+                                type="hidden"
+                                name="{{ topic_form.source_mode.html_name }}"
+                                value="{{ topic_form.source_mode.value|default:'hybrid' }}"
+                            >
+                            <label
+                                class="workspace-start-label"
+                                for="{{ topic_form.topic_name.id_for_label }}"
+                            >What do you want to write about?</label>
+                            <div class="workspace-start-row" data-workspace-start-row>
+                                <input
+                                    type="text"
+                                    name="{{ topic_form.topic_name.html_name }}"
+                                    id="{{ topic_form.topic_name.id_for_label }}"
+                                    value="{{ workspace_topic_value }}"
+                                    maxlength="{{ topic_form.topic_name.field.max_length }}"
+                                    placeholder="e.g. AI workflows for solo founders"
+                                    required
+                                    data-workspace-idea-input
+                                    data-testid="workspace-topic-input"
+                                >
+                                    <button
+                                        type="submit"
+                                        class="primary-cta workspace-start-button"
+                                        data-workspace-submit
+                                        data-testid="workspace-continue-button"
+                                        {% if not workspace_topic_value %}disabled{% endif %}
+                                    >Continue</button>
                             </div>
-                        {% endfor %}
+                            <p class="workspace-start-helper">PostFlow will research your idea and turn it into a ready-to-publish post.</p>
+                            {% if topic_form_error %}
+                                <p class="error">{{ topic_form_error }}</p>
+                            {% endif %}
+                            {% if topic_form.topic_name.errors and not topic_form_error %}
+                                <ul class="error">
+                                    {% for error in topic_form.topic_name.errors %}
+                                        <li>{{ error }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
+                            {% if topic_form.source_url.errors %}
+                                <ul class="error">
+                                    {% for error in topic_form.source_url.errors %}
+                                        <li>{{ error }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
+                            {% if topic_form.source_mode.errors %}
+                                <ul class="error">
+                                    {% for error in topic_form.source_mode.errors %}
+                                        <li>{{ error }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
+                            {% endwith %}
+                        </form>
+                    </section>
+                </section>
+
+                <section class="card workspace-panel" data-testid="recent-ideas-region">
+                    <div class="workspace-panel__header">
+                        <div class="workspace-panel__header-main">
+                            <h2 class="workspace-panel__title">Recent ideas</h2>
+                            <p class="workspace-panel__hint">Pick up where you left off.</p>
+                        </div>
+                        {% if history_topics|length > 3 %}
+                            <a
+                                href="{{ idea_history_url }}"
+                                class="workspace-panel__link"
+                                data-testid="view-all-ideas-link"
+                            >View all &rarr;</a>
+                        {% endif %}
                     </div>
-                {% else %}
-                    <p>No runs yet.</p>
-                {% endif %}
-                </div>
-            </section>
+                    <div id="saved-topics-section-body" data-history-root>
+                        {% if history_topics %}
+                            <div id="saved-topics-list" class="idea-list">
+                                {% for history_topic in recent_history_topics %}
+                                    {% with topic=history_topic.topic %}
+                                    <div class="idea-chip topic-row" data-topic-id="{{ topic.id }}" data-testid="recent-idea-row">
+                                        <button
+                                            type="button"
+                                            class="drag-handle"
+                                            draggable="true"
+                                            aria-label="Reorder post idea {{ topic.name }}"
+                                            title="Reorder post idea"
+                                            data-testid="recent-idea-reorder-handle"
+                                        >&#8942;&#8942;</button>
+                                        <div class="idea-row-copy">
+                                            <a
+                                                href="{% url 'topic-workspace' topic.id %}"
+                                                class="idea-title"
+                                                data-testid="recent-idea-link"
+                                            >{{ topic.name }}</a>
+                                        </div>
+                                        <span class="idea-row-chevron" aria-hidden="true">&rsaquo;</span>
+                                    </div>
+                                    {% endwith %}
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="history-empty" data-testid="recent-ideas-empty-state">
+                                <strong>No post ideas yet</strong>
+                                <span>Start a new post to begin</span>
+                            </div>
+                        {% endif %}
+                    </div>
+                </section>
+            </div>
         {% endif %}
 
-        <p><a href="/admin/">Open Django admin</a></p>
-    </div>
+    </main>
     {% if discovered_topic %}
     <script>
 (() => {
@@ -1321,6 +2137,24 @@
     }
 })();
     </script>
+    {% if not discovered_topic %}
+    <script>
+(() => {
+    const input = document.querySelector("[data-workspace-idea-input]");
+    const button = document.querySelector("[data-workspace-submit]");
+    if (!input || !button) {
+        return;
+    }
+
+    function syncWorkspaceSubmitState() {
+        button.disabled = !input.value.trim();
+    }
+
+    input.addEventListener("input", syncWorkspaceSubmitState);
+    syncWorkspaceSubmitState();
+})();
+    </script>
+    {% endif %}
     {% if not discovered_topic and topics %}
     <script>
 (() => {

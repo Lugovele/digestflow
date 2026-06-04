@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostFlow</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg-base: #faf9f6;
+            --bg-mid: #f6f5f1;
+            --bg-end: #f3f4f8;
+            --text: #0f172a;
+            --muted: #64748b;
+            --brand: #20243a;
+            --panel: #fbfaf7;
+            --panel-border: rgba(255, 255, 255, 0.9);
+            --card-bg: rgba(255, 254, 253, 0.72);
+            --card-border: rgba(231, 229, 228, 0.7);
+            --step-line: rgba(32, 36, 58, 0.12);
+            --step-line-mid: rgba(231, 229, 228, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            min-height: 100%;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 16% 8%, rgba(222, 229, 255, 0.72) 0, transparent 31%),
+                radial-gradient(circle at 82% 20%, rgba(255, 255, 255, 0.82) 0, transparent 24%),
+                radial-gradient(circle at 76% 84%, rgba(233, 236, 244, 0.64) 0, transparent 28%),
+                linear-gradient(140deg, #fbfaf7 0%, #f6f5f1 44%, #eef1f7 100%);
+            overflow-x: hidden;
+        }
+
+        .page {
+            position: relative;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .page::before,
+        .page::after {
+            content: "";
+            position: absolute;
+            pointer-events: none;
+            border-radius: 999px;
+            filter: blur(72px);
+        }
+
+        .page::before {
+            right: 1rem;
+            top: 3rem;
+            width: 18rem;
+            height: 18rem;
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .page::after {
+            left: -6rem;
+            bottom: 0;
+            width: 20rem;
+            height: 20rem;
+            background: rgba(220, 224, 233, 0.42);
+        }
+
+        .shell {
+            position: relative;
+            z-index: 1;
+            max-width: 72rem;
+            margin: 0 auto;
+            padding: 1.1rem 1rem 1.75rem;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.35rem 0.15rem 0.2rem;
+            margin-bottom: 1rem;
+        }
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .header-utility {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.5rem;
+            padding: 0 0.9rem;
+            border-radius: 999px;
+            border: 1px solid rgba(203, 213, 225, 0.62);
+            background: rgba(255, 255, 255, 0.58);
+            color: #617185;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: default;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                0 6px 18px rgba(15, 23, 42, 0.05);
+        }
+
+        .brand-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--brand);
+        }
+
+        .brand-subtitle {
+            font-size: 0.875rem;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            text-transform: lowercase;
+        }
+
+        .hero {
+            position: relative;
+            border: 1px solid var(--panel-border);
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(251, 250, 247, 0.92) 18%, rgba(249, 248, 244, 0.96) 100%);
+            border-radius: 2rem;
+            padding: 1.4rem;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.98),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+                0 26px 64px rgba(30, 41, 59, 0.08),
+                0 8px 18px rgba(30, 41, 59, 0.035);
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            left: 2.5rem;
+            right: 2.5rem;
+            top: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9), transparent);
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            inset: auto 8% -22px 8%;
+            height: 44px;
+            border-radius: 999px;
+            background: radial-gradient(circle at center, rgba(148, 163, 184, 0.18) 0, rgba(148, 163, 184, 0.04) 48%, transparent 74%);
+            filter: blur(18px);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .hero-grid {
+            display: grid;
+            gap: 1.2rem;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-copy {
+            padding: 0.25rem 0 0.5rem;
+        }
+
+        .hero-title {
+            max-width: 38rem;
+            margin: 0;
+            font-size: clamp(2.2rem, 7vw, 4rem);
+            line-height: 1.04;
+            letter-spacing: -0.05em;
+            color: #020617;
+            font-weight: 600;
+        }
+
+        .hero-divider {
+            display: none;
+        }
+
+        .cta-wrap {
+            margin-top: 1.1rem;
+        }
+
+        .cta-form {
+            margin: 0;
+        }
+
+        .primary-cta {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            min-height: 2.9rem;
+            border: 0;
+            border-radius: 0.9rem;
+            background: var(--brand);
+            color: #fff;
+            padding: 0 1.45rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                0 12px 28px rgba(32, 36, 58, 0.16),
+                0 4px 10px rgba(15, 23, 42, 0.08);
+            transition: transform 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .primary-cta:hover {
+            background: #252a44;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                0 16px 32px rgba(32, 36, 58, 0.18),
+                0 6px 14px rgba(15, 23, 42, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .primary-cta:focus-visible {
+            outline: 2px solid rgba(32, 36, 58, 0.25);
+            outline-offset: 3px;
+        }
+
+        .primary-cta svg {
+            flex: none;
+        }
+
+        .steps-card {
+            overflow: visible;
+            border-radius: 0;
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+        }
+
+        .steps-card__content {
+            padding: 0.1rem 0 0;
+        }
+
+        .steps {
+            position: relative;
+            display: grid;
+            gap: 1rem;
+        }
+
+        .steps::before {
+            content: "";
+            position: absolute;
+            left: 12px;
+            top: 1.15rem;
+            width: 1px;
+            height: calc(100% - 2.1rem);
+            background: linear-gradient(to bottom, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0.05), transparent);
+        }
+
+        .step {
+            position: relative;
+            display: grid;
+            grid-template-columns: 28px minmax(0, 1fr);
+            gap: 0.85rem;
+            align-items: start;
+        }
+
+        .step-number {
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(247, 248, 250, 0.78) 100%);
+            border: 1px solid rgba(226, 232, 240, 0.78);
+            color: #5a6678;
+            font-size: 0.62rem;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.94),
+                0 4px 10px rgba(148, 163, 184, 0.08);
+        }
+
+        .step-title {
+            font-size: 0.94rem;
+            font-weight: 650;
+            color: #020617;
+        }
+
+        .step-text {
+            margin-top: 0.35rem;
+            max-width: 22rem;
+            font-size: 0.95rem;
+            line-height: 1.65;
+            color: #475569;
+        }
+
+        .mobile-cta {
+            display: none;
+            margin-top: 1rem;
+        }
+
+        @media (min-width: 860px) {
+            .page::before {
+                right: 6%;
+                top: 6rem;
+                width: 24rem;
+                height: 24rem;
+                background: rgba(228, 235, 255, 0.68);
+                filter: blur(82px);
+            }
+
+            .page::after {
+                left: -2rem;
+                bottom: 3rem;
+                width: 24rem;
+                height: 24rem;
+                background: rgba(235, 238, 246, 0.54);
+                filter: blur(84px);
+            }
+
+            .shell {
+                max-width: 64rem;
+                padding: 1.65rem 1.75rem 1.9rem;
+            }
+
+            .header {
+                margin-bottom: 0.75rem;
+                padding-inline: 0.1rem;
+            }
+
+            .header-brand {
+                gap: 0.7rem;
+            }
+
+            .header-brand svg {
+                /* reason: override inline logo sizing for the desktop header treatment */
+                width: 2.75rem !important;
+                height: 2.75rem !important;
+            }
+
+            .brand-title {
+                font-size: 1.18rem;
+            }
+
+            .brand-subtitle {
+                font-size: 0.78rem;
+                letter-spacing: 0.065em;
+            }
+
+            .header-utility {
+                min-height: 2.35rem;
+                padding: 0 0.9rem;
+                font-size: 0.85rem;
+            }
+
+            .hero {
+                padding: 2.4rem 2.25rem 2rem;
+                border-radius: 2rem;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+                    inset 0 -1px 0 rgba(255, 255, 255, 0.32),
+                    0 30px 78px rgba(30, 41, 59, 0.1),
+                    0 10px 24px rgba(30, 41, 59, 0.04);
+            }
+
+            .hero::before {
+                left: 2.3rem;
+                right: 2.3rem;
+            }
+
+            .hero-grid {
+                grid-template-columns: minmax(0, 1.12fr) minmax(20rem, 0.88fr);
+                gap: 1.25rem;
+                align-items: start;
+            }
+
+            .hero-copy {
+                max-width: 32rem;
+                padding: 0.15rem 0 0.2rem;
+            }
+
+            .hero-title {
+                max-width: 30rem;
+                font-size: clamp(2.8rem, 3.75vw, 3.4rem);
+                line-height: 1.05;
+                letter-spacing: -0.055em;
+                font-weight: 550;
+            }
+
+            .cta-wrap {
+                margin-top: 1rem;
+            }
+
+            .primary-cta {
+                min-height: 3.35rem;
+                padding: 0 1.8rem;
+                border-radius: 1rem;
+                font-size: 1.02rem;
+                box-shadow: 0 14px 30px rgba(32, 36, 58, 0.17);
+            }
+
+            .steps-card {
+                align-self: stretch;
+                position: relative;
+            }
+
+            .steps-card__content {
+                padding: 0.1rem 0 0;
+            }
+
+            .steps {
+                gap: 1.1rem;
+            }
+
+            .steps::before {
+                left: 13px;
+                top: 0.95rem;
+                height: calc(100% - 1.8rem);
+                background: linear-gradient(to bottom, rgba(15, 23, 42, 0.1), rgba(15, 23, 42, 0.045), transparent);
+            }
+
+            .step {
+                grid-template-columns: 30px minmax(0, 1fr);
+                gap: 0.82rem;
+            }
+
+            .step-number {
+                width: 26px;
+                height: 26px;
+                font-size: 0.56rem;
+                letter-spacing: 0.08em;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+                    0 6px 14px rgba(148, 163, 184, 0.1);
+            }
+
+            .step-title {
+                font-size: 0.98rem;
+                font-weight: 650;
+            }
+
+            .step-text {
+                max-width: 20.5rem;
+                font-size: 0.94rem;
+                line-height: 1.56;
+                color: #5a697a;
+            }
+        }
+
+        @media (max-width: 859px) {
+            .shell {
+                padding: 1.1rem 0.875rem 1.5rem;
+            }
+
+            .header {
+                gap: 0.75rem;
+                margin-bottom: 1.15rem;
+                padding: 0.25rem 0;
+            }
+
+            .header-brand {
+                min-width: 0;
+                gap: 0.625rem;
+            }
+
+            .header-brand svg {
+                /* reason: override inline logo sizing for the mobile header treatment */
+                width: 2.4rem !important;
+                height: 2.4rem !important;
+            }
+
+            .brand-title {
+                font-size: 1.1rem;
+            }
+
+            .brand-subtitle {
+                font-size: 0.75rem;
+                letter-spacing: 0.06em;
+            }
+
+            .header-utility {
+                min-height: 2.25rem;
+                padding: 0 0.75rem;
+                font-size: 0.85rem;
+                white-space: nowrap;
+            }
+
+            .hero {
+                padding: 1.55rem 1rem 0.9rem;
+                border-radius: 1.25rem;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                    0 14px 34px rgba(30, 41, 59, 0.07);
+            }
+
+            .hero::before {
+                left: 1.25rem;
+                right: 1.25rem;
+            }
+
+            .hero-grid {
+                gap: 0.75rem;
+            }
+
+            .hero-title {
+                font-size: clamp(2.4rem, 11vw, 3rem);
+                line-height: 1.07;
+            }
+
+            .cta-wrap {
+                display: none;
+            }
+
+            .mobile-cta {
+                display: block;
+                margin-top: 0.55rem;
+            }
+
+            .primary-cta {
+                width: 100%;
+                min-height: 4rem;
+                border-radius: 1rem;
+                box-shadow: 0 10px 22px rgba(32, 36, 58, 0.16);
+            }
+
+            .steps-card__content {
+                padding: 0.05rem 0 0;
+            }
+
+            .steps::before {
+                left: 12px;
+                top: 1rem;
+                height: calc(100% - 1.9rem);
+            }
+
+            .step {
+                grid-template-columns: 28px minmax(0, 1fr);
+                gap: 0.68rem;
+            }
+
+            .step-number {
+                width: 22px;
+                height: 22px;
+                font-size: 0.52rem;
+                letter-spacing: 0.08em;
+            }
+
+            .step-title {
+                font-size: 0.9rem;
+            }
+
+            .step-text {
+                font-size: 0.89rem;
+                line-height: 1.46;
+                color: #526070;
+            }
+        }
+
+        @media (max-width: 520px) {
+            .page::before {
+                right: -3rem;
+                top: 1rem;
+                width: 12rem;
+                height: 12rem;
+            }
+
+            .page::after {
+                left: -7rem;
+                bottom: -2rem;
+                width: 14rem;
+                height: 14rem;
+            }
+
+            .shell {
+                padding: 0.95rem 0.75rem 1.25rem;
+            }
+
+            .header {
+                align-items: flex-start;
+                margin-bottom: 1.25rem;
+            }
+
+            .header-utility {
+                min-height: 2rem;
+                padding: 0 0.68rem;
+                font-size: 0.78rem;
+            }
+
+            .hero {
+                padding: 1.45rem 1rem 0.88rem;
+                border-radius: 1.15rem;
+            }
+
+            .hero::before {
+                left: 1rem;
+                right: 1rem;
+            }
+
+            .hero-grid {
+                gap: 0.7rem;
+            }
+
+            .hero-title {
+                font-size: clamp(2.6rem, 11vw, 2.95rem);
+                line-height: 1.08;
+            }
+
+            .steps-card__content {
+                padding: 0;
+            }
+
+            .steps {
+                gap: 0.7rem;
+            }
+
+            .steps::before {
+                left: 12px;
+                top: 0.95rem;
+                height: calc(100% - 1.85rem);
+            }
+
+            .step {
+                grid-template-columns: 28px minmax(0, 1fr);
+                gap: 0.62rem;
+            }
+
+            .step-number {
+                width: 24px;
+                height: 24px;
+                font-size: 0.52rem;
+            }
+
+            .step-title {
+                font-size: 0.89rem;
+            }
+
+            .step-text {
+                font-size: 0.87rem;
+                line-height: 1.42;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <main class="shell">
+            <header class="header">
+                <div class="header-brand">
+                    <svg viewBox="0 0 72 72" aria-hidden="true" style="width:3rem;height:3rem;flex:none;filter:drop-shadow(0 10px 18px rgba(32,36,58,0.12));">
+                        <defs>
+                            <linearGradient id="frontPage" x1="13" y1="6" x2="46" y2="57" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#121A31"></stop>
+                                <stop offset="1" stop-color="#20243A"></stop>
+                            </linearGradient>
+                            <linearGradient id="backPageA" x1="38" y1="10" x2="61" y2="58" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#DADDE4"></stop>
+                                <stop offset="1" stop-color="#BFC2CA"></stop>
+                            </linearGradient>
+                            <linearGradient id="backPageB" x1="30" y1="8" x2="55" y2="61" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#F4F1EA"></stop>
+                                <stop offset="1" stop-color="#D8D5CC"></stop>
+                            </linearGradient>
+                            <linearGradient id="fold" x1="25" y1="46" x2="45" y2="63" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#FFFFFF"></stop>
+                                <stop offset="0.55" stop-color="#EEEAE1"></stop>
+                                <stop offset="1" stop-color="#C9C5BC"></stop>
+                            </linearGradient>
+                        </defs>
+                        <path d="M36 12.5 57 8.4c1.6-.3 3 1 3 2.6v47.7c0 1.4-1 2.7-2.4 3L36 66V12.5Z" fill="url(#backPageA)"></path>
+                        <path d="M28.5 9.8 51.5 5.2c1.7-.3 3.2 1 3.2 2.7v48.6c0 1.5-1.1 2.8-2.6 3.1L28.5 64V9.8Z" fill="url(#backPageB)"></path>
+                        <path d="M12 7.6 43.5 1.8c1.4-.3 2.7.8 2.7 2.3v39.2c0 2.3-.9 4.6-2.5 6.3L30.6 64H12V7.6Z" fill="url(#frontPage)"></path>
+                        <path d="M30.6 64c.9-8.5 5.9-13.8 15.1-16L30.6 64Z" fill="url(#fold)"></path>
+                        <path d="M13.2 63.1h16.4c1-7.5 5.7-12.3 14.2-14.4" fill="none" stroke="#F9F5EC" stroke-width="1.5" opacity="0.9"></path>
+                        <path d="M20 18.5h17" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.94"></path>
+                        <path d="M20 27.5h15.5" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.84"></path>
+                        <path d="M20 36.5h17.5" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.76"></path>
+                    </svg>
+                    <div>
+                        <div class="brand-title">PostFlow</div>
+                        <div class="brand-subtitle">from idea to final post</div>
+                    </div>
+                </div>
+                <button type="button" class="header-utility" aria-disabled="true" title="Login is not available yet">Log in</button>
+            </header>
+
+            <section class="hero" data-testid="onboarding-card">
+                <div class="hero-grid">
+                    <div class="hero-copy">
+                        <h1 class="hero-title">Turn ideas into ready posts</h1>
+                        <div class="hero-divider"></div>
+                        <div class="cta-wrap">
+                            <form method="post" action="{{ complete_onboarding_url }}" class="cta-form">
+                                {% csrf_token %}
+                                <button
+                                    type="submit"
+                                    class="primary-cta"
+                                    aria-label="Start your first post"
+                                    data-testid="onboarding-primary-cta-desktop"
+                                >
+                                    Start your first post
+                                    <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                                        <path d="M4 10h10.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+                                        <path d="m10.5 4.5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                                    </svg>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <section class="steps-card" aria-label="Onboarding steps">
+                        <div class="steps-card__content">
+                            <div class="steps">
+                                <div class="step">
+                                    <div class="step-number">01</div>
+                                    <div>
+                                        <div class="step-title">Enter a post idea</div>
+                                        <div class="step-text">Tell PostFlow what you want to write about.</div>
+                                    </div>
+                                </div>
+                                <div class="step">
+                                    <div class="step-number">02</div>
+                                    <div>
+                                        <div class="step-title">Set the direction</div>
+                                        <div class="step-text">Add an angle, audience, or point of view. PostFlow will shape the post around it.</div>
+                                    </div>
+                                </div>
+                                <div class="step">
+                                    <div class="step-number">03</div>
+                                    <div>
+                                        <div class="step-title">Get a ready-to-publish post</div>
+                                        <div class="step-text">PostFlow turns your idea and direction into a polished final post.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="mobile-cta">
+                    <form method="post" action="{{ complete_onboarding_url }}" class="cta-form">
+                        {% csrf_token %}
+                        <button
+                            type="submit"
+                            class="primary-cta"
+                            aria-label="Start your first post"
+                            data-testid="onboarding-primary-cta-mobile"
+                        >
+                            Start your first post
+                            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                                <path d="M4 10h10.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+                                <path d="m10.5 4.5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                            </svg>
+                        </button>
+                    </form>
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

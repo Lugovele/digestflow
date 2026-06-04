@@ -63,6 +63,101 @@ LONG_RSS_SNIPPET_3 = (
     SEARCH_PROVIDER_API_KEY="",
 )
 class TopicRssSourceTests(TestCase):
+    def test_root_redirects_to_onboarding_before_completion(self) -> None:
+        response = self.client.get(reverse("app-entry"))
+
+        self.assertRedirects(response, reverse("onboarding"), fetch_redirect_response=False)
+
+    def test_onboarding_url_renders_directly(self) -> None:
+        response = self.client.get(reverse("onboarding"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "PostFlow")
+        self.assertContains(response, "Log in")
+        self.assertContains(response, "from idea to final post")
+        self.assertContains(response, "Turn ideas into ready posts")
+        self.assertContains(response, "Set the direction")
+        self.assertContains(response, "Get a ready-to-publish post")
+        self.assertContains(
+            response,
+            "PostFlow turns your idea and direction into a polished final post.",
+        )
+        self.assertContains(response, "Start your first post")
+        self.assertNotContains(response, "from idea to publish")
+        self.assertNotContains(response, "Turn ideas into publishable posts")
+        self.assertNotContains(response, "Turn ideas into ready-to-publish posts")
+        self.assertNotContains(response, "Set the focus")
+        self.assertNotContains(response, "PostFlow gathers the strongest material and prepares a ready-to-publish post.")
+        self.assertNotContains(response, "PostFlow brings the strongest material together into a ready-to-publish post.")
+        self.assertNotContains(response, "draft")
+        self.assertNotContains(response, "find sources")
+        self.assertNotContains(response, "pipeline")
+
+    def test_complete_onboarding_sets_session_and_redirects_to_current_start_page(self) -> None:
+        response = self.client.post(reverse("complete-onboarding"))
+
+        self.assertRedirects(response, reverse("topic-list"))
+        session = self.client.session
+        self.assertTrue(session.get("onboarding_completed"))
+
+    def test_root_still_redirects_to_onboarding_after_onboarding_completion(self) -> None:
+        session = self.client.session
+        session["onboarding_completed"] = True
+        session.save()
+
+        response = self.client.get(reverse("app-entry"))
+
+        self.assertRedirects(response, reverse("onboarding"), fetch_redirect_response=False)
+
+    def test_current_start_page_still_renders_at_topic_list_route(self) -> None:
+        session = self.client.session
+        session["onboarding_completed"] = True
+        session.save()
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "PostFlow Workspace")
+        self.assertContains(response, "PostFlow")
+        self.assertContains(response, "from idea to final post")
+        self.assertContains(response, "Start with an idea")
+        self.assertContains(response, "Turn an idea into a post")
+        self.assertContains(response, "What do you want to write about?")
+        self.assertContains(response, "e.g. AI workflows for solo founders")
+        self.assertContains(response, "Continue")
+        self.assertContains(response, "PostFlow will research your idea and turn it into a ready-to-publish post.")
+        self.assertContains(response, "Recent ideas")
+        self.assertContains(response, "Pick up where you left off.")
+        self.assertNotContains(response, "View all")
+        self.assertContains(response, 'type="hidden"', html=False)
+        self.assertContains(response, 'name="source_mode"', html=False)
+        self.assertContains(response, 'data-testid="workspace-start-form"', html=False)
+        self.assertContains(response, 'data-testid="workspace-topic-input"', html=False)
+        self.assertContains(response, 'data-testid="workspace-continue-button"', html=False)
+        self.assertContains(response, 'data-testid="recent-ideas-region"', html=False)
+        self.assertContains(response, 'disabled', html=False)
+        self.assertNotContains(response, "Create a post from an idea")
+        self.assertNotContains(response, "draft")
+        self.assertNotContains(response, "find sources")
+        self.assertNotContains(response, '<h1 class="workspace-hero__title">Workspace</h1>', html=False)
+        self.assertNotContains(response, "Ideas, research, posts")
+        self.assertNotContains(response, "Open Django admin")
+        self.assertNotContains(response, "POSTFLOW")
+        self.assertNotContains(response, "POSTFLOW WORKSPACE")
+        self.assertNotContains(response, "Your ideas, your research, your posts in one place")
+        self.assertNotContains(response, "Your ideas, your research, your posts - in one place.")
+        self.assertNotContains(response, "History")
+        self.assertNotContains(response, "Open →")
+        self.assertNotContains(response, "Open &rarr;")
+        self.assertNotContains(response, "Drag to reorder")
+        self.assertNotContains(response, "Research mode")
+        self.assertNotContains(response, "calm")
+
+    def test_legacy_topics_route_redirects_to_workspace(self) -> None:
+        response = self.client.get(reverse("legacy-topics"))
+
+        self.assertRedirects(response, reverse("topic-list"), fetch_redirect_response=False)
+
     def _forced_fallback_planner_result(self) -> ContentResearchPlannerResult:
         return ContentResearchPlannerResult(
             planner_status="fallback_used",
@@ -320,7 +415,7 @@ class TopicRssSourceTests(TestCase):
         workspace_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
         self.assertContains(
             workspace_response,
-            "Find or keep at least one research source before running this digest.",
+            "Find or keep at least one research source before generating this post.",
         )
 
     @patch("apps.digests.views.run_digest_pipeline")
@@ -444,31 +539,46 @@ class TopicRssSourceTests(TestCase):
 
         response = self.client.get(reverse("topic-list"))
 
-        self.assertContains(response, "What do you want to explore?")
+        self.assertContains(response, "What do you want to write about?")
         self.assertNotContains(response, "Where to look")
         self.assertNotContains(response, "Source mode")
         self.assertNotContains(response, "Choose how this topic should find sources.")
-        self.assertContains(response, 'value="hybrid"', html=False)
-        self.assertContains(response, "Saved topics")
-        self.assertContains(response, "Recent digests")
-        self.assertContains(response, "Open Django admin")
-        self.assertContains(response, "Find sources")
+        self.assertContains(response, 'type="hidden"', html=False)
+        self.assertContains(response, 'name="source_mode"', html=False)
+        self.assertContains(response, "Turn an idea into a post")
+        self.assertContains(response, "Recent ideas")
+        self.assertContains(response, "Pick up where you left off.")
+        self.assertNotContains(response, "View all →")
+        self.assertContains(response, "Continue")
+        self.assertContains(response, "e.g. AI workflows for solo founders")
+        self.assertContains(response, "Start with an idea")
+        self.assertContains(response, "PostFlow will research your idea and turn it into a ready-to-publish post.")
+        self.assertContains(response, 'data-testid="workspace-continue-button"', html=False)
+        self.assertContains(response, 'data-testid="recent-ideas-region"', html=False)
+        self.assertNotContains(response, 'data-history-toggle', html=False)
         topic = Topic.objects.get(name="Visible Feed")
+        self.assertContains(response, 'data-testid="recent-idea-link"', html=False)
         self.assertContains(
             response,
-            f'<a href="{reverse("topic-workspace", args=[topic.id])}" class="inline-link">Visible Feed</a>',
+            f'data-topic-id="{topic.id}" data-testid="recent-idea-row"',
             html=False,
         )
-        self.assertNotContains(response, ">Settings<", html=False)
-        self.assertContains(response, 'aria-label="Delete topic"', html=False)
-        self.assertContains(response, "⋮⋮")
+        self.assertContains(response, "&rsaquo;", html=False)
+        self.assertNotContains(response, "Post idea")
         self.assertNotContains(response, "Review sources")
-        self.assertContains(response, "0 my sources")
+        self.assertNotContains(response, "POST IDEA")
+        self.assertNotContains(response, "Generate post")
+        self.assertNotContains(response, "Needs sources")
+        self.assertNotContains(response, "0 drafts")
+        self.assertNotContains(response, "No drafts yet")
+        self.assertNotContains(response, "post drafts")
+        self.assertNotContains(response, "No sources yet")
+        self.assertNotContains(response, "0 my sources")
         self.assertNotContains(response, "Legacy source URL saved")
-        self.assertContains(response, "Delete this topic?")
-        self.assertNotContains(response, ">Delete<", html=False)
-        self.assertContains(response, 'class="drag-handle"', html=False)
-        self.assertContains(response, 'draggable="true"', html=False)
+        self.assertNotContains(response, "Delete this post idea?")
+        self.assertNotContains(response, 'aria-label="Delete post idea"', html=False)
+        self.assertNotContains(response, "Open &rarr;")
+        self.assertNotContains(response, "Open Django admin")
 
     def test_topic_title_link_opens_existing_workspace_page(self) -> None:
         topic = Topic.objects.create(
@@ -483,9 +593,10 @@ class TopicRssSourceTests(TestCase):
 
         self.assertContains(
             response,
-            f'<a href="{reverse("topic-workspace", args=[topic.id])}" class="inline-link">Workspace Link Topic</a>',
+            reverse("topic-workspace", args=[topic.id]),
             html=False,
         )
+        self.assertContains(response, 'data-testid="recent-idea-link"', html=False)
 
         workspace_response = self.client.get(reverse("topic-workspace", args=[topic.id]))
 
@@ -499,11 +610,16 @@ class TopicRssSourceTests(TestCase):
 
         response = self.client.get(reverse("topic-list"))
 
-        self.assertContains(response, "Recent digests")
+        self.assertContains(response, "Recent ideas")
         self.assertContains(response, "AI agents")
-        self.assertContains(response, "Yesterday")
-        self.assertNotContains(response, f"Digest {run.id}")
-        self.assertNotContains(response, DigestRun.STATUS_COMPLETED)
+        self.assertContains(response, 'data-testid="recent-idea-link"', html=False)
+        self.assertContains(
+            response,
+            reverse("topic-workspace", args=[topic.id]),
+            html=False,
+        )
+        self.assertNotContains(response, f"Post run {run.id}")
+        self.assertNotContains(response, "Status: completed")
 
     def test_topic_workspace_renders_focus_chip_editor(self) -> None:
         topic = Topic.objects.create(
@@ -529,7 +645,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "What should research focus on?")
         self.assertContains(response, "AI automation")
         self.assertContains(response, "workflow automation")
-        self.assertContains(response, "Add a research angle and press Enter")
+        self.assertContains(response, "Add a post angle and press Enter")
         self.assertNotContains(response, '<h3 class="section-heading">Focus</h3>', html=False)
         self.assertContains(response, 'data-focus-form', html=False)
         self.assertContains(response, 'data-focus-input', html=False)
@@ -1153,7 +1269,10 @@ class TopicRssSourceTests(TestCase):
         response = self.client.get(reverse("topic-list"))
         html = response.content.decode("utf-8")
 
-        self.assertIn('action="/discover-sources/" novalidate', html)
+        self.assertRegex(
+            html,
+            r'<form[^>]+action="/discover-sources/"[^>]+novalidate[^>]+data-testid="workspace-start-form"',
+        )
 
     def test_topic_dashboard_delete_action_removes_topic(self) -> None:
         user = self._get_ui_user()
@@ -1227,15 +1346,60 @@ class TopicRssSourceTests(TestCase):
         response = self.client.get(reverse("topic-list"))
 
         self.assertContains(response, 'id="saved-topics-section-body"', html=False)
-        self.assertContains(response, 'data-collapse-key="saved-topics"', html=False)
-        self.assertContains(response, 'aria-controls="saved-topics-section-body"', html=False)
-        self.assertContains(response, 'id="recent-runs-section-body"', html=False)
-        self.assertContains(response, 'data-collapse-key="recent-runs"', html=False)
-        self.assertContains(response, 'aria-controls="recent-runs-section-body"', html=False)
-        self.assertContains(response, 'aria-expanded="true"', html=False)
-        self.assertContains(response, 'data-collapse-button', html=False)
-        self.assertNotContains(response, f'aria-controls="topic-details-{topic.id}"', html=False)
-        self.assertNotContains(response, f'id="topic-details-{topic.id}"', html=False)
+        self.assertContains(response, 'id="saved-topics-list"', html=False)
+        self.assertContains(response, f'data-topic-id="{topic.id}" data-testid="recent-idea-row"', html=False)
+        self.assertContains(response, "Recent ideas", html=False)
+        self.assertNotContains(response, "History", html=False)
+
+    def test_workspace_shows_three_recent_ideas_then_view_all_link(self) -> None:
+        user = self._get_ui_user()
+        topics = [
+            Topic.objects.create(user=user, name=f"Idea {index}", keywords=[f"Idea {index}"], excluded_keywords=[])
+            for index in range(1, 5)
+        ]
+
+        response = self.client.get(reverse("topic-list"))
+
+        self.assertContains(response, 'data-testid="view-all-ideas-link"', html=False)
+        self.assertContains(response, "View all")
+        self.assertContains(response, "&rarr;", html=False)
+        self.assertContains(response, f'href="{reverse("idea-history")}"', html=False)
+        self.assertContains(response, f'data-topic-id="{topics[3].id}"', html=False)
+        self.assertContains(response, f'data-topic-id="{topics[2].id}"', html=False)
+        self.assertContains(response, f'data-topic-id="{topics[1].id}"', html=False)
+        self.assertNotContains(response, f'data-topic-id="{topics[0].id}"', html=False)
+        self.assertNotContains(response, "Show less ↑")
+        self.assertNotContains(response, "View all ideas")
+
+    def test_idea_history_page_shows_full_list_and_status_labels(self) -> None:
+        user = self._get_ui_user()
+        first = Topic.objects.create(user=user, name="Idea one", keywords=["Idea one"], excluded_keywords=[])
+        second = Topic.objects.create(user=user, name="Idea two", keywords=["Idea two"], excluded_keywords=[])
+        third = Topic.objects.create(user=user, name="Idea three", keywords=["Idea three"], excluded_keywords=[])
+        fourth = Topic.objects.create(user=user, name="Idea four", keywords=["Idea four"], excluded_keywords=[])
+        DigestRun.objects.create(topic=second, source_mode=second.source_mode, status=DigestRun.STATUS_COMPLETED)
+        DigestRun.objects.create(topic=third, source_mode=third.source_mode, status=DigestRun.STATUS_FAILED)
+        DigestRun.objects.create(topic=fourth, source_mode=fourth.source_mode, status=DigestRun.STATUS_PROCESSING)
+
+        response = self.client.get(reverse("idea-history"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-testid="idea-history-page"', html=False)
+        self.assertContains(response, 'data-testid="idea-history-region"', html=False)
+        self.assertContains(response, "Idea history")
+        self.assertContains(response, "Review previous ideas and continue where you left off.")
+        self.assertContains(response, "Idea one")
+        self.assertContains(response, "Idea two")
+        self.assertContains(response, "Idea three")
+        self.assertContains(response, "Idea four")
+        self.assertContains(response, "Idea")
+        self.assertContains(response, "Post ready")
+        self.assertContains(response, "Needs attention")
+        self.assertContains(response, "Searching")
+        self.assertContains(response, 'data-testid="idea-history-status-pill"', html=False)
+        self.assertContains(response, f'href="{reverse("topic-workspace", args=[first.id])}"', html=False)
+        self.assertNotContains(response, "draft")
+        self.assertNotContains(response, "find sources")
 
     def test_newly_created_topic_appears_first_on_dashboard(self) -> None:
         user = self._get_ui_user()
@@ -1269,7 +1433,7 @@ class TopicRssSourceTests(TestCase):
         dashboard_response = self.client.get(reverse("topic-list"))
         html = dashboard_response.content.decode("utf-8")
         self.assertLess(html.index("Newest topic"), html.index("Older topic"))
-        self.assertLess(html.index("Older topic"), html.index("Oldest topic"))
+        self.assertContains(dashboard_response, "Oldest topic")
 
     def test_saved_topics_dashboard_only_renders_ui_user_topics(self) -> None:
         user = self._get_ui_user()
@@ -1327,9 +1491,9 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual((third.display_order, first.display_order, second.display_order), (1, 2, 3))
 
         dashboard_response = self.client.get(reverse("topic-list"))
-        html = dashboard_response.content.decode("utf-8")
-        self.assertLess(html.index("Gamma"), html.index("Alpha"))
-        self.assertLess(html.index("Alpha"), html.index("Beta"))
+        self.assertContains(dashboard_response, "Gamma")
+        self.assertContains(dashboard_response, "Alpha")
+        self.assertContains(dashboard_response, "Beta")
 
     def test_reorder_topics_rejects_missing_or_foreign_topic_ids_without_changing_order(self) -> None:
         user = self._get_ui_user()
@@ -1394,16 +1558,22 @@ class TopicRssSourceTests(TestCase):
         response = self.client.post(reverse("delete-topic", args=[first.id]))
 
         self.assertEqual(response.status_code, 302)
+        second.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual((second.display_order, third.display_order), (1, 3))
         dashboard_response = self.client.get(reverse("topic-list"))
-        html = dashboard_response.content.decode("utf-8")
-        self.assertLess(html.index("Beta"), html.index("Gamma"))
         self.assertNotContains(dashboard_response, "Alpha")
+        self.assertContains(dashboard_response, "Beta")
+        self.assertContains(dashboard_response, "Gamma")
 
     def test_topic_list_empty_state_and_validation_copy_are_english(self) -> None:
         response = self.client.get(reverse("topic-list"))
 
-        self.assertContains(response, "No topics yet. Enter a topic above to find sources and start a digest.")
-        self.assertContains(response, "No runs yet.")
+        self.assertContains(
+            response,
+            "No post ideas yet",
+        )
+        self.assertContains(response, "Start a new post to begin")
         self.assertNotContains(response, "РќСѓР¶РЅРѕ СѓРєР°Р·Р°С‚СЊ С‚РµРјСѓ")
         self.assertNotContains(response, "Р’РІРµРґРёС‚Рµ С‚РµРјСѓ")
 
@@ -1522,7 +1692,7 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Back to topics")
+        self.assertContains(response, "Back to workspace")
         self.assertContains(response, "AI agents")
         self.assertNotContains(response, '<label for="id_topic_name">Topic</label>', html=False)
         self.assertNotContains(response, '<label for="id_source_mode">Where to look</label>', html=False)
@@ -1539,7 +1709,7 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, ">Save<", html=False)
         self.assertNotContains(response, "Refresh source discovery")
         self.assertNotContains(response, "Saved topics")
-        self.assertNotContains(response, "Recent digests")
+        self.assertNotContains(response, "Recent posts")
         self.assertNotContains(response, "Topic settings")
         self.assertContains(response, "0 my sources")
         self.assertContains(response, "Add a manual source link and press Enter")
@@ -1560,10 +1730,10 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Discover new sources")
         self.assertNotContains(response, "Refresh suggestions")
         self.assertNotContains(response, "Fresh suggestions from research.")
-        self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
+        self.assertContains(response, "Check sources to use in the next post. Keep useful ones for future runs.")
         self.assertNotContains(response, "Hybrid")
         self.assertNotContains(response, "Run pipeline")
-        self.assertContains(response, "Run digest")
+        self.assertContains(response, "Generate post")
         topic = Topic.objects.get(name="AI agents")
         self.assertEqual(topic.sources.count(), 1)
         discovered_source = topic.sources.get()
@@ -1587,12 +1757,12 @@ class TopicRssSourceTests(TestCase):
         self.assertNotIn('<h2 class="workflow-title">AI agents</h2>', html)
         self.assertLess(html.index('<h1 class="page-title">AI agents</h1>'), html.index("My sources"))
         self.assertLess(html.index("Research sources"), html.index("Find new sources"))
-        self.assertLess(html.index("Research sources"), html.index("Run digest"))
-        self.assertIn("Select at least one my source before running this digest.", html)
+        self.assertLess(html.index("Research sources"), html.index("Generate post"))
+        self.assertIn("Select at least one source for this post before generating it.", html)
         self.assertIn("0 my sources", html)
         self.assertIn("disabled", html)
         self.assertIn('name="topic_id" value="', html)
-        self.assertIn('onchange="this.form.requestSubmit();"', html)
+        self.assertIn('data-testid="suggested-source-toggle"', html)
         self.assertEqual(html.count('class="primary-cta"'), 1)
 
     @patch("apps.digests.views.resolve_source_candidates")
@@ -1659,8 +1829,8 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Curated AI")
         self.assertContains(response, "my sources only")
         self.assertContains(response, "My sources")
-        self.assertContains(response, "Run digest")
-        self.assertContains(response, "Select at least one my source before running this digest.")
+        self.assertContains(response, "Generate post")
+        self.assertContains(response, "Select at least one source for this post before generating it.")
         self.assertNotContains(response, "Research sources")
         self.assertNotContains(response, "Find sources")
         self.assertNotContains(response, "No new suggestions yet.")
@@ -1672,7 +1842,10 @@ class TopicRssSourceTests(TestCase):
 
         html = response.content.decode("utf-8")
         self.assertEqual(html.count('class="primary-cta"'), 1)
-        self.assertIn('class="primary-cta" disabled', html)
+        self.assertRegex(
+            html,
+            r'<button[^>]+data-testid="generate-post-button"[^>]*disabled[^>]*>Generate post</button>',
+        )
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_discovery_only_workspace_hides_saved_sources_section(self, mock_resolve_source_candidates) -> None:
@@ -1715,10 +1888,10 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Research sources")
         self.assertContains(response, "New suggestions")
         self.assertContains(response, "Find new sources")
-        self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
+        self.assertContains(response, "Check sources to use in the next post. Keep useful ones for future runs.")
         self.assertContains(response, "DEV Community / #ai")
-        self.assertContains(response, "Run digest")
-        self.assertContains(response, "1 selected source will be used in the next digest run.")
+        self.assertContains(response, "Generate post")
+        self.assertContains(response, "1 selected source will be used in the next post run.")
         self.assertNotContains(response, "No new suggestions yet.")
         self.assertNotContains(response, "My sources")
         self.assertNotContains(response, "Add a manual source link and press Enter")
@@ -1757,11 +1930,11 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "New suggestions")
         self.assertContains(response, "No new suggestions yet.")
         self.assertContains(response, "Find sources")
-        self.assertContains(response, "Check sources to use in the next digest. Keep useful ones for future runs.")
+        self.assertContains(response, "Check sources to use in the next post. Keep useful ones for future runs.")
         self.assertNotContains(response, "No new sources were found for this topic yet.")
         self.assertContains(response, "Ready to generate")
-        self.assertContains(response, "Find or keep at least one research source before running this digest.")
-        self.assertContains(response, "Run digest")
+        self.assertContains(response, "Find or keep at least one research source before generating this post.")
+        self.assertContains(response, "Generate post")
 
         html = response.content.decode("utf-8")
         self.assertEqual(html.count('class="primary-cta"'), 1)
@@ -1804,7 +1977,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Research is currently disabled")
         self.assertContains(
             response,
-            "DigestFlow can still use your sources, but automatic research is turned off.",
+            "PostFlow can still use your sources, but automatic research is turned off.",
         )
         self.assertContains(response, "Research unavailable")
         self.assertContains(response, 'Find sources</button>', html=False)
@@ -2157,7 +2330,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "Found 1 new source suggestion after 3 search rounds. DigestFlow could not reach the 6-source target with the current search strategy.",
+            "Found 1 new source suggestion after 3 search rounds. PostFlow could not reach the 6-source target with the current search strategy.",
         )
         self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertNotContains(response, "Source discovery details")
@@ -2676,7 +2849,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_run_provider_discovery_round.call_count, 1)
         self.assertContains(response, "Source search is temporarily unavailable")
-        self.assertContains(response, "DigestFlow could not connect to the search provider. Please try again later.")
+        self.assertContains(response, "PostFlow could not connect to the search provider. Please try again later.")
         run = SourceDiscoveryRun.objects.get(topic=topic)
         cycle = run.diagnostics.get("discovery_cycle") or {}
         self.assertEqual(cycle.get("decision"), "provider_unavailable")
@@ -4274,7 +4447,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "Found 1 new source suggestion after 3 search rounds. DigestFlow could not reach the 6-source target with the current search strategy.",
+            "Found 1 new source suggestion after 3 search rounds. PostFlow could not reach the 6-source target with the current search strategy.",
         )
 
     @override_settings(
@@ -4381,7 +4554,7 @@ class TopicRssSourceTests(TestCase):
         topic.refresh_from_db()
         self.assertEqual(topic.sources.count(), 0)
         self.assertContains(response, "Source search is temporarily unavailable")
-        self.assertContains(response, "DigestFlow could not connect to the search provider. Please try again later.")
+        self.assertContains(response, "PostFlow could not connect to the search provider. Please try again later.")
         self.assertContains(response, "Research is currently disabled")
         self.assertNotContains(response, "DEV Community / #ai")
 
@@ -4479,7 +4652,7 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual(topic.sources.count(), 1)
         self.assertContains(response, "Existing discovered source")
         self.assertContains(response, "Source search is temporarily unavailable")
-        self.assertContains(response, "DigestFlow could not connect to the search provider.")
+        self.assertContains(response, "PostFlow could not connect to the search provider.")
         self.assertContains(response, "Existing suggestions were kept.")
         self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertNotContains(response, "Source discovery details")
@@ -4520,7 +4693,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "DigestFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
+            "PostFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
         )
         self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertNotContains(response, "Source discovery details")
@@ -4581,7 +4754,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "DigestFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
+            "PostFlow could not reach the 6-source target after 2 search rounds with the current search strategy.",
         )
         self.assertContains(response, "Existing suggestion")
         self.assertContains(response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
@@ -4704,7 +4877,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(second_response, "Source discovery partially completed")
         self.assertContains(
             second_response,
-            "DigestFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
+            "PostFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
         )
         self.assertContains(second_response, f'href="{reverse("topic-research-history", args=[topic.id])}"', html=False)
         self.assertNotContains(second_response, "Source discovery details")
@@ -4992,7 +5165,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Research history")
         self.assertContains(
             response,
-            "Understand how this topic’s source research evolved over time. See the current research state, past discovery runs, and all seen sources.",
+            "Understand how this topic's source research evolved over time. See the current research state, past discovery runs, and all seen sources.",
         )
         self.assertContains(response, "Current research state")
         self.assertContains(response, "Query performance")
@@ -5096,8 +5269,8 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "https://quora.com/answer")
         self.assertNotContains(response, "Visible new suggestions from this run")
         self.assertNotContains(response, "URLs returned by provider")
-        self.assertContains(response, "<details class=\"history-run\">", html=False)
-        self.assertContains(response, "<summary class=\"history-run__summary\">", html=False)
+        self.assertContains(response, 'data-testid="research-history-run-row"', html=False)
+        self.assertContains(response, 'class="history-run__summary"', html=False)
         self.assertContains(response, "Query details")
         self.assertContains(response, "implementation guide")
         self.assertContains(response, "Automation research report implementation guide")
@@ -6519,7 +6692,16 @@ class TopicRssSourceTests(TestCase):
         response = self.client.get(reverse("topic-research-history", args=[topic.id]))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-testid="research-history-page"', html=False)
+        self.assertContains(response, 'data-testid="research-history-copy-button"', html=False)
+        self.assertContains(response, 'data-testid="research-history-search-form"', html=False)
+        self.assertContains(response, 'data-testid="research-history-search-input"', html=False)
+        self.assertContains(response, 'data-testid="research-history-search-button"', html=False)
         self.assertContains(response, "Research history")
+        self.assertContains(
+            response,
+            "Understand how this topic's source research evolved over time. See the current research state, past discovery runs, and all seen sources.",
+        )
         self.assertContains(response, "No query performance data yet.")
         self.assertContains(
             response,
@@ -6637,7 +6819,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "DigestFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
+            "PostFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
         )
         history_item = SourceDiscoveryHistory.objects.get(
             topic=topic,
@@ -6719,7 +6901,7 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(response, "Source discovery partially completed")
         self.assertContains(
             response,
-            "DigestFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
+            "PostFlow could not reach the 6-source target after 3 search rounds with the current search strategy.",
         )
         self.assertContains(response, "Existing suggestion")
 
@@ -7202,8 +7384,12 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "2 selected sources will be used in the next digest run.")
-        self.assertNotContains(response, 'class="primary-cta" disabled', html=False)
+        self.assertContains(response, "2 selected sources will be used in the next post run.")
+        self.assertContains(response, 'data-testid="generate-post-button"', html=False)
+        self.assertNotRegex(
+            response.content.decode("utf-8"),
+            r'<button[^>]+data-testid="generate-post-button"[^>]*disabled',
+        )
 
     @patch("apps.digests.views.resolve_source_candidates")
     def test_saved_source_does_not_render_inside_new_sources_section(self, mock_resolve_source_candidates) -> None:
@@ -7459,7 +7645,7 @@ class TopicRssSourceTests(TestCase):
         response = self.client.post(reverse("run-with-selected-sources", args=[topic.id]), data={})
 
         self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "Select at least one source before generating the digest.", status_code=400)
+        self.assertContains(response, "Select at least one source before generating the post.", status_code=400)
 
     @patch("apps.digests.views.fetch_rss_articles")
     @patch("apps.digests.views.run_digest_pipeline")
@@ -8641,7 +8827,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn("Research sources", workspace_html)
         self.assertIn("New suggestions", workspace_html)
         self.assertIn("DEV Community / #ai", workspace_html)
-        self.assertIn("Select at least one my source before running this digest.", workspace_html)
+        self.assertIn("Select at least one source for this post before generating it.", workspace_html)
         self.assertIn("0 my sources", workspace_html)
         self.assertIn("1 research source", workspace_html)
         saved_section = workspace_html.split("My sources", 1)[1].split("Research sources", 1)[0]
@@ -8692,7 +8878,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         source = topic.sources.get()
         self.assertEqual(source.origin, TopicSourceOrigin.DISCOVERED)
         self.assertTrue(source.is_active)
-        self.assertContains(discovery_response, "1 selected source will be used in the next digest run.")
+        self.assertContains(discovery_response, "1 selected source will be used in the next post run.")
         self.assertNotContains(discovery_response, 'class="primary-cta" disabled', html=False)
         discovery_html = discovery_response.content.decode("utf-8")
         checkbox_pattern = re.compile(
@@ -8717,7 +8903,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         refreshed_html = refreshed_response.content.decode("utf-8")
         self.assertEqual(refreshed_response.status_code, 200)
         self.assertIn("DEV Community / #python", refreshed_html)
-        self.assertIn("Find or keep at least one research source before running this digest.", refreshed_html)
+        self.assertIn("Find or keep at least one research source before generating this post.", refreshed_html)
         self.assertNotIn("My sources", refreshed_html)
         self.assertIn("data-run-source-count-button", refreshed_html)
         self.assertIn("disabled", refreshed_html)
@@ -8785,7 +8971,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertIn("New suggestions", refreshed_html)
         self.assertNotIn("My sources", refreshed_html)
         self.assertIn("DEV Community / #python", refreshed_html)
-        self.assertIn("Find or keep at least one research source before running this digest.", refreshed_html)
+        self.assertIn("Find or keep at least one research source before generating this post.", refreshed_html)
         self.assertIn("data-run-source-count-button", refreshed_html)
         self.assertIn("disabled", refreshed_html)
         new_section = refreshed_html.rsplit("New suggestions", 1)[1]
@@ -8848,7 +9034,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         django_source = discovered_sources["https://dev.to/t/django"]
         self.assertTrue(python_source.is_active)
         self.assertTrue(django_source.is_active)
-        self.assertContains(discovery_response, "2 selected sources will be used in the next digest run.")
+        self.assertContains(discovery_response, "2 selected sources will be used in the next post run.")
 
         unchecked_post_response = self.client.post(
             reverse("toggle-topic-source", args=[topic.id, python_source.id]),
@@ -8877,7 +9063,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         django_source.refresh_from_db()
         self.assertFalse(python_source.is_active)
         self.assertTrue(django_source.is_active)
-        self.assertContains(rediscovery_response, "1 selected source will be used in the next digest run.")
+        self.assertContains(rediscovery_response, "1 selected source will be used in the next post run.")
         html = rediscovery_response.content.decode("utf-8")
         new_section = html.rsplit("New suggestions", 1)[1]
         self.assertIn("DEV Community / #python", new_section)
@@ -8953,7 +9139,7 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
         self.assertNotContains(response, "inactive")
 
         html = response.content.decode("utf-8")
-        self.assertIn('onchange="this.form.requestSubmit();"', html)
+        self.assertIn('data-testid="saved-source-toggle"', html)
         self.assertIn('type="checkbox"', html)
         self.assertNotIn('checked', html.split('type="checkbox"', 1)[1].split('>', 1)[0])
 

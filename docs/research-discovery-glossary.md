@@ -12,7 +12,7 @@ It is intended to help with:
 - source discovery planning and repair logic
 
 Related workflow doc:
-- [docs/research_discovery_flow.md](C:\Users\Елена\Documents\DigestFlow\docs\research_discovery_flow.md) for the end-to-end Find-click lifecycle and module responsibility overview
+- [docs/research-discovery-flow.md](C:\Users\Елена\Documents\DigestFlow\docs\research-discovery-flow.md) for the end-to-end Find-click lifecycle and module responsibility overview
 
 ## Core source states
 

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostFlow Idea History</title>
+    <style>
+        * { box-sizing: border-box; }
+        :root {
+            color-scheme: light;
+            --bg-base: #faf9f6;
+            --bg-mid: #f6f5f1;
+            --bg-end: #f3f4f8;
+            --text: #0f172a;
+            --muted: #64748b;
+            --brand: #20243a;
+            --panel: rgba(255, 255, 255, 0.78);
+            --panel-border: rgba(255, 255, 255, 0.92);
+            --shadow: 0 22px 60px rgba(15, 23, 42, 0.08);
+        }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            line-height: 1.45;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 18% 10%, rgba(224, 231, 255, 0.72) 0, transparent 30%),
+                radial-gradient(circle at 84% 16%, rgba(248, 250, 252, 0.9) 0, transparent 26%),
+                linear-gradient(135deg, var(--bg-base) 0%, var(--bg-mid) 48%, var(--bg-end) 100%);
+        }
+        .page {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 22px 14px 40px;
+        }
+        .hero,
+        .list-shell,
+        .empty-state {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.9),
+                var(--shadow);
+            backdrop-filter: blur(12px);
+        }
+        .hero {
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: #5b6a82;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .back-link:hover,
+        .back-link:focus-visible {
+            text-decoration: underline;
+        }
+        .eyebrow {
+            margin: 0 0 6px;
+            font-size: 10px;
+            letter-spacing: 0.16em;
+            color: var(--muted);
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+        .title {
+            margin: 0;
+            font-size: clamp(1.9rem, 6vw, 2.5rem);
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+        }
+        .subtitle {
+            margin: 7px 0 0;
+            color: #475569;
+            font-size: 0.92rem;
+            line-height: 1.4;
+            max-width: 32rem;
+        }
+        .list-shell {
+            padding: 8px;
+        }
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .history-item {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            padding: 12px;
+            border-radius: 16px;
+            border: 1px solid rgba(226, 232, 240, 0.74);
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+        }
+        .history-item:hover,
+        .history-item:focus-visible {
+            border-color: rgba(148, 163, 184, 0.75);
+            text-decoration: none;
+        }
+        .history-item__top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .history-item__title {
+            margin: 0;
+            font-size: 14px;
+            line-height: 1.32;
+            font-weight: 600;
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+        .history-item__chevron {
+            color: #c1cad7;
+            font-size: 15px;
+            flex: 0 0 auto;
+        }
+        .history-item__meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-top: 6px;
+            font-size: 11.5px;
+            color: #718096;
+        }
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+            background: #f3f5f8;
+            color: #5b6778;
+        }
+        .status-pill--info {
+            background: #eef4ff;
+            color: #4362b4;
+        }
+        .status-pill--success {
+            background: #eef8f1;
+            color: #2d7a4c;
+        }
+        .status-pill--warning {
+            background: #fff5e6;
+            color: #8d6a1e;
+        }
+        .empty-state {
+            padding: 24px 18px;
+            text-align: left;
+        }
+        .empty-state h2 {
+            margin: 0 0 8px;
+            font-size: 1.2rem;
+        }
+        .empty-state p {
+            margin: 0 0 14px;
+            color: #475569;
+        }
+        .empty-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 10px 16px;
+            border-radius: 12px;
+            background: var(--brand);
+            color: #fff;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .empty-link:hover,
+        .empty-link:focus-visible {
+            text-decoration: none;
+            background: #252a44;
+        }
+        @media (max-width: 480px) {
+            .page {
+                padding: 14px 10px 28px;
+            }
+            .hero {
+                padding: 13px;
+                border-radius: 18px;
+            }
+            .list-shell {
+                padding: 8px;
+                border-radius: 18px;
+            }
+            .history-item {
+                padding: 11px;
+                border-radius: 13px;
+            }
+            .title {
+                font-size: clamp(1.7rem, 7vw, 2.1rem);
+            }
+            .subtitle {
+                font-size: 0.88rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="page" data-testid="idea-history-page">
+        <section class="hero">
+            <a href="{{ start_page_url }}" class="back-link">&larr; Back to start</a>
+            <p class="eyebrow">POSTFLOW</p>
+            <h1 class="title">Idea history</h1>
+            <p class="subtitle">Review previous ideas and continue where you left off.</p>
+        </section>
+
+        {% if history_topics %}
+            <section class="list-shell" data-testid="idea-history-region">
+                <div class="history-list">
+                    {% for history_topic in history_topics %}
+                        {% with topic=history_topic.topic status=history_topic.status %}
+                        <a
+                            href="{% url 'topic-workspace' topic.id %}"
+                            class="history-item"
+                            data-testid="idea-history-row"
+                        >
+                            <div class="history-item__top">
+                                <h2 class="history-item__title">{{ topic.name }}</h2>
+                                <span class="history-item__chevron" aria-hidden="true">&rsaquo;</span>
+                            </div>
+                            <div class="history-item__meta">
+                                <span class="status-pill status-pill--{{ status.tone }}" data-testid="idea-history-status-pill">{{ status.label }}</span>
+                                <span>{{ history_topic.latest_activity_display }}</span>
+                                <span>{{ topic.active_source_count|default:0 }} source{% if topic.active_source_count|default:0 != 1 %}s{% endif %}</span>
+                            </div>
+                        </a>
+                        {% endwith %}
+                    {% endfor %}
+                </div>
+            </section>
+        {% else %}
+            <section class="empty-state" data-testid="idea-history-empty-state">
+                <h2>No ideas yet</h2>
+                <p>Start with a rough idea and PostFlow will turn it into a ready-to-use post.</p>
+                <a href="{{ start_page_url }}" class="empty-link">Create your first post</a>
+            </section>
+        {% endif %}
+    </main>
+</body>
+</html>

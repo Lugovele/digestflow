@@ -7,18 +7,18 @@ This document describes the Research / Source Discovery flow end to end: how one
 Use this document as a workflow and responsibility map.
 
 Use related docs for adjacent detail:
-- [docs/research_discovery_glossary.md](C:\Users\Елена\Documents\DigestFlow\docs\research_discovery_glossary.md) for terminology
-- [docs/source_discovery_history.md](C:\Users\Елена\Documents\DigestFlow\docs\source_discovery_history.md) for source-history behavior
-- [docs/research_layer_followups.md](C:\Users\Елена\Documents\DigestFlow\docs\research_layer_followups.md) for non-blocking maintainability follow-ups
+- [docs/research-discovery-glossary.md](C:\Users\Елена\Documents\DigestFlow\docs\research-discovery-glossary.md) for terminology
+- [docs/source-discovery-history.md](C:\Users\Елена\Documents\DigestFlow\docs\source-discovery-history.md) for source-history behavior
+- [docs/research-layer-followups.md](C:\Users\Елена\Documents\DigestFlow\docs\research-layer-followups.md) for non-blocking maintainability follow-ups
 
 This document does not replace those.
 
 ## Related docs
 
-- [docs/research_discovery_glossary.md](C:\Users\Елена\Documents\DigestFlow\docs\research_discovery_glossary.md) - terminology and diagnostics field definitions
-- [docs/source_discovery_history.md](C:\Users\Елена\Documents\DigestFlow\docs\source_discovery_history.md) - source history model and source-state behavior
-- [docs/research_layer_followups.md](C:\Users\Елена\Documents\DigestFlow\docs\research_layer_followups.md) - non-blocking maintainability follow-ups for this layer
-- [docs/layer_closeout_checklist.md](C:\Users\Елена\Documents\DigestFlow\docs\layer_closeout_checklist.md) - general checklist used to close product layers
+- [docs/research-discovery-glossary.md](C:\Users\Елена\Documents\DigestFlow\docs\research-discovery-glossary.md) - terminology and diagnostics field definitions
+- [docs/source-discovery-history.md](C:\Users\Елена\Documents\DigestFlow\docs\source-discovery-history.md) - source history model and source-state behavior
+- [docs/research-layer-followups.md](C:\Users\Елена\Documents\DigestFlow\docs\research-layer-followups.md) - non-blocking maintainability follow-ups for this layer
+- [docs/layer-closeout-checklist.md](C:\Users\Елена\Documents\DigestFlow\docs\layer-closeout-checklist.md) - general checklist used to close product layers
 
 ## 1. Find click lifecycle
 
@@ -113,7 +113,7 @@ Provider errors are tracked separately from source-quality failure.
 
 This matters because partial provider failure can still preserve useful suggestions from successful queries. A technical failure in one query should not automatically be interpreted as weak topic evidence.
 
-For deeper source-history and repeated-source behavior, see [docs/source_discovery_history.md](C:\Users\Елена\Documents\DigestFlow\docs\source_discovery_history.md).
+For deeper source-history and repeated-source behavior, see [docs/source-discovery-history.md](C:\Users\Елена\Documents\DigestFlow\docs\source-discovery-history.md).
 
 ## 6. Diagnosis
 
@@ -254,4 +254,4 @@ Relevant module:
 
 ## Maintenance note
 
-When discovery decisions, diagnosis causes, repair strategies, diagnostics payloads, or module responsibilities change, update this document and [docs/research_discovery_glossary.md](C:\Users\Елена\Documents\DigestFlow\docs\research_discovery_glossary.md).
+When discovery decisions, diagnosis causes, repair strategies, diagnostics payloads, or module responsibilities change, update this document and [docs/research-discovery-glossary.md](C:\Users\Елена\Documents\DigestFlow\docs\research-discovery-glossary.md).

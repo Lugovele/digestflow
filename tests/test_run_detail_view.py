@@ -307,13 +307,13 @@ class RunDetailViewTests(TestCase):
         response = self.client.get(reverse("run-detail", args=[run.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'id="copy-diagnostics-button"', html=False)
-        self.assertContains(response, 'id="toggle-details-button"', html=False)
+        self.assertContains(response, 'data-testid="run-detail-copy-button"', html=False)
+        self.assertContains(response, 'data-testid="run-detail-toggle-details-button"', html=False)
         self.assertContains(response, "Expand all")
         self.assertContains(response, 'id="copy-diagnostics-payload"', html=False)
         copy_payload = response.context["copy_diagnostics_text"]
         self.assertIn("Run ID: {}".format(run.id), copy_payload)
-        self.assertIn("Topic: AI agents", copy_payload)
+        self.assertIn("Post idea: AI agents", copy_payload)
         self.assertIn("Architect A Personalized Multi-Agent System with Long-Term Memory", copy_payload)
         self.assertIn("I Built My Mom an AI Recipe Helper for Mother's Day", copy_payload)
         self.assertIn("Status: selected", copy_payload)
@@ -432,15 +432,11 @@ class RunDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["used_article_count"], 3)
         self.assertEqual(len(response.context["used_articles"]), 3)
+        self.assertContains(response, 'data-testid="used-article-history-region"', html=False)
+        self.assertContains(response, "Used article history for this post idea (3)")
         self.assertContains(
             response,
-            '<details id="used-article-history" class="detail-block used-article-history">',
-            html=False,
-        )
-        self.assertContains(response, "Used article history for this topic (3)")
-        self.assertContains(
-            response,
-            "Articles already used in successful digests for this topic. Future repeat filtering will use this topic-level history.",
+            "Articles already used in successful posts for this post idea. Future repeat filtering will use this post idea history.",
         )
         self.assertContains(response, "Renamed topic diagnostics")
         self.assertContains(response, "Used article from previous run")
@@ -503,7 +499,7 @@ class RunDetailViewTests(TestCase):
         response = self.client.get(reverse("run-detail", args=[run.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Used article history for this topic (1)")
+        self.assertContains(response, "Used article history for this post idea (1)")
         self.assertContains(response, "Repeated article")
         self.assertContains(response, "Used 2 times")
         self.assertContains(response, "First")
@@ -544,11 +540,7 @@ class RunDetailViewTests(TestCase):
         response = self.client.get(reverse("run-detail", args=[run.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response,
-            '<details id="used-article-history" class="detail-block used-article-history">',
-            html=False,
-        )
+        self.assertContains(response, 'data-testid="used-article-history-region"', html=False)
         self.assertNotContains(
             response,
             '<details id="used-article-history" class="detail-block used-article-history" open>',
@@ -593,6 +585,7 @@ class RunDetailViewTests(TestCase):
 
         self.assertContains(response, "Delete")
         self.assertContains(response, 'id="used-article-history"', html=False)
+        self.assertContains(response, 'data-testid="used-article-delete-button"', html=False)
         self.assertContains(
             response,
             reverse("delete-used-article", args=[run.id, used_article.id]),
@@ -647,7 +640,7 @@ class RunDetailViewTests(TestCase):
 
         detail_response = self.client.get(reverse("run-detail", args=[run.id]))
         self.assertEqual(detail_response.context["used_article_count"], 1)
-        self.assertContains(detail_response, "Used article history for this topic (1)")
+        self.assertContains(detail_response, "Used article history for this post idea (1)")
         self.assertNotContains(detail_response, "Used article one")
         self.assertContains(detail_response, "Used article two")
 
@@ -682,8 +675,8 @@ class RunDetailViewTests(TestCase):
         detail_response = self.client.get(reverse("run-detail", args=[run.id]))
 
         self.assertEqual(detail_response.context["used_article_count"], 0)
-        self.assertContains(detail_response, "Used article history for this topic (0)")
-        self.assertContains(detail_response, "No used article history yet for this topic.")
+        self.assertContains(detail_response, "Used article history for this post idea (0)")
+        self.assertContains(detail_response, "No used article history yet for this post idea.")
 
     def test_delete_used_article_invalid_target_does_not_delete_unrelated_rows(self) -> None:
         user = get_user_model().objects.create_user(username="detail-user-used-articles-invalid")
@@ -1017,11 +1010,11 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, 'href="https://example.com/article-1"', html=False)
         self.assertContains(response, "First article title")
         self.assertContains(response, "Article one summary")
-        self.assertContains(response, "Digest generated successfully.")
-        self.assertContains(response, "Content package")
+        self.assertContains(response, "Publish-ready post generated successfully.")
+        self.assertContains(response, "Publish-ready post")
         self.assertContains(response, "Validation status")
         self.assertContains(response, "valid")
-        self.assertContains(response, "Generated post")
+        self.assertContains(response, "Publish-ready post")
         self.assertContains(response, "Generated editorial post text.")
         self.assertContains(response, "Primary hook")
         self.assertContains(response, "Hook one")
@@ -1036,9 +1029,9 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, "Validation report and quality checks")
         self.assertContains(response, "Post length:")
         self.assertContains(response, "Length ok:")
-        self.assertContains(response, "Back to topics")
-        self.assertContains(response, "Pipeline result")
-        self.assertContains(response, "Topic:</strong> AI workflows", html=False)
+        self.assertContains(response, "Back to workspace")
+        self.assertContains(response, "Post generation result")
+        self.assertContains(response, "Post idea:</strong> AI workflows", html=False)
         self.assertContains(response, "Status:</strong> completed", html=False)
         self.assertContains(response, "Pipeline diagnostics")
         self.assertContains(response, "Source Stage")
@@ -1414,20 +1407,20 @@ class RunDetailViewTests(TestCase):
         self.assertTrue(response.context["is_insufficient_quality"])
         self.assertEqual(
             response.context["insufficient_quality_message"],
-            "Not enough high-quality articles for a full digest.",
+            "Not enough high-quality articles for a publish-ready post.",
         )
         self.assertEqual(
             response.context["display_error_message"],
             "Insufficient-quality diagnostics are available in metrics.",
         )
-        self.assertContains(response, "Not enough high-quality articles for a full digest.")
+        self.assertContains(response, "Not enough high-quality articles for a publish-ready post.")
         self.assertContains(response, "Insufficient-quality diagnostics are available in metrics.")
         self.assertEqual(
-            response_text.count("Not enough high-quality articles for a full digest."),
+            response_text.count("Not enough high-quality articles for a publish-ready post."),
             1,
         )
         self.assertLess(
-            response_text.index("Not enough high-quality articles for a full digest."),
+            response_text.index("Not enough high-quality articles for a publish-ready post."),
             response_text.index("Insufficient-quality diagnostics are available in metrics."),
         )
         visible_without_pre = re.sub(r"<pre.*?</pre>", "", response_text, flags=re.DOTALL)
@@ -1438,7 +1431,7 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, "Pipeline decision:")
         self.assertContains(
             response,
-            "Digest generation skipped because too few articles passed quality validation.",
+            "Post draft generation skipped because too few articles passed quality validation.",
         )
         self.assertContains(response, "Primary article type:</strong> community_update", html=False)
         self.assertContains(response, "Secondary tags:</strong> event", html=False)
@@ -1460,11 +1453,11 @@ class RunDetailViewTests(TestCase):
         self.assertContains(response, "https://example.com/weak-1")
         self.assertContains(
             response,
-            "No digest was generated because the selected articles did not meet the required quality level.",
+            "No post draft was generated because the selected articles did not meet the required quality level.",
         )
         self.assertContains(
             response,
-            "No LinkedIn post or content package was generated because too few articles passed the quality threshold.",
+            "No publish-ready post was generated because too few articles passed the quality threshold.",
         )
         self.assertContains(response, "Articles above threshold:</strong> 1", html=False)
 
@@ -1506,13 +1499,13 @@ class RunDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.context["insufficient_quality_message"],
-            "Not enough high-quality articles for a full digest.",
+            "Not enough high-quality articles for a publish-ready post.",
         )
         self.assertEqual(
             response.context["display_error_message"],
             "Insufficient-quality diagnostics are available in metrics.",
         )
-        self.assertContains(response, "Not enough high-quality articles for a full digest.")
+        self.assertContains(response, "Not enough high-quality articles for a publish-ready post.")
         self.assertContains(response, "Insufficient-quality diagnostics are available in metrics.")
         self.assertNotIn(legacy_error_message, visible_without_pre)
         self.assertIn(legacy_error_message, response_text)

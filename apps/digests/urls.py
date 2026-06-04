@@ -1,11 +1,16 @@
 from django.urls import path
 
 from .views import (
+    app_entry_view,
     add_topic_source_view,
+    complete_onboarding_view,
     create_topic_and_run_view,
     delete_topic_view,
     delete_used_article_view,
     discover_sources_view,
+    idea_history_view,
+    legacy_topics_redirect_view,
+    onboarding_view,
     pin_topic_source_view,
     reorder_topics_view,
     run_detail_view,
@@ -22,7 +27,12 @@ from .views import (
 
 
 urlpatterns = [
-    path("", topic_list_view, name="topic-list"),
+    path("", app_entry_view, name="app-entry"),
+    path("onboarding/", onboarding_view, name="onboarding"),
+    path("onboarding/complete/", complete_onboarding_view, name="complete-onboarding"),
+    path("workspace/", topic_list_view, name="topic-list"),
+    path("history/", idea_history_view, name="idea-history"),
+    path("topics/", legacy_topics_redirect_view, name="legacy-topics"),
     path("topics/<int:topic_id>/", topic_workspace_view, name="topic-workspace"),
     path("topics/<int:topic_id>/research-history/", topic_research_history_view, name="topic-research-history"),
     path("discover-sources/", discover_sources_view, name="discover-sources"),

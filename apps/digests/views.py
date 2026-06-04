@@ -94,10 +94,39 @@ from .forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 
 logger = logging.getLogger(__name__)
 INSUFFICIENT_QUALITY_ERROR_FALLBACK = "Insufficient-quality diagnostics are available in metrics."
-INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were available for a full digest."
+INSUFFICIENT_QUALITY_GENERIC_FALLBACK = "Not enough high-quality articles were available for a publish-ready post."
 VISIBLE_NEW_SOURCE_LIMIT = 12
 DISCOVERY_CONTEXT_PARAM = "discovery_context"
 SHOW_ALL_NEW_SUGGESTIONS_PARAM = "show_all_suggestions"
+ONBOARDING_COMPLETED_SESSION_KEY = "onboarding_completed"
+
+
+@require_GET
+def app_entry_view(_request: HttpRequest) -> HttpResponse:
+    return redirect("onboarding")
+
+
+@require_GET
+def onboarding_view(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "digestflow/onboarding.html",
+        {
+            "start_page_url": reverse("topic-list"),
+            "complete_onboarding_url": reverse("complete-onboarding"),
+        },
+    )
+
+
+@require_POST
+def complete_onboarding_view(request: HttpRequest) -> HttpResponse:
+    request.session[ONBOARDING_COMPLETED_SESSION_KEY] = True
+    return redirect("topic-list")
+
+
+@require_GET
+def legacy_topics_redirect_view(_request: HttpRequest) -> HttpResponse:
+    return redirect("topic-list")
 
 
 def _get_user_facing_source_mode_label(mode: str) -> str:
@@ -116,6 +145,20 @@ def _get_user_facing_source_mode_label(mode: str) -> str:
 @require_GET
 def topic_list_view(request: HttpRequest) -> HttpResponse:
     return render(request, "digestflow/topic_list.html", _build_topic_list_context())
+
+
+@require_GET
+def idea_history_view(request: HttpRequest) -> HttpResponse:
+    user = _get_or_create_ui_user()
+    history_topics = _build_history_topics_for_user(user)
+    return render(
+        request,
+        "digestflow/idea_history.html",
+        {
+            "history_topics": history_topics,
+            "start_page_url": reverse("topic-list"),
+        },
+    )
 
 
 @require_GET
@@ -342,7 +385,7 @@ def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpR
             discovered_topic=topic,
             discovered_source_candidates=discovered_source_candidates,
         )
-        context["source_selection_error"] = "Select at least one source before generating the digest."
+        context["source_selection_error"] = "Select at least one source before generating the post."
         return render(request, "digestflow/topic_list.html", context, status=400)
 
     run = _create_ui_digest_run(
@@ -551,6 +594,7 @@ def run_detail_view(request: HttpRequest, run_id: int) -> HttpResponse:
         "has_digest": digest is not None,
         "content_package": content_package,
         "display_error_message": _get_display_error_message(run),
+        "display_result_message": _get_display_result_message(run),
         "is_insufficient_quality": is_insufficient_quality,
         "insufficient_quality_message": _get_insufficient_quality_message(run),
         "metrics": metrics,
@@ -621,8 +665,23 @@ def _get_display_error_message(run: DigestRun) -> str:
     return run.error_message
 
 
-def _get_insufficient_quality_message(run: DigestRun) -> str:
+def _get_display_result_message(run: DigestRun) -> str:
     result_message = str(getattr(run, "result_message", "") or "").strip()
+    if not result_message:
+        return ""
+
+    legacy_map = {
+        "Digest generated successfully.": result_messages.COMPLETED,
+        "Not enough high-quality articles for a full digest.": result_messages.INSUFFICIENT_QUALITY,
+        "Source processed, but no usable articles were found.": result_messages.SOURCE_NO_USABLE_ARTICLES,
+        "Digest run failed before completion.": result_messages.FAILED,
+        "Digest generated, but content packaging failed.": result_messages.PARTIAL_FAILED,
+    }
+    return legacy_map.get(result_message, result_message)
+
+
+def _get_insufficient_quality_message(run: DigestRun) -> str:
+    result_message = _get_display_result_message(run)
     if result_message:
         return result_message
 
@@ -705,7 +764,7 @@ def _build_ranking_stage_report(
         "status": ranking_stage.get("status", "unknown"),
         "pipeline_items": [
             ("Articles processed", _display_metric_value(ranking_stage.get("ranked_articles_count"))),
-            ("Selected for digest", _display_metric_value(ranking_stage.get("selected_for_prompt"))),
+            ("Selected for post draft", _display_metric_value(ranking_stage.get("selected_for_prompt"))),
         ],
         "summary_items": [
             ("Articles ranked", _display_metric_value(ranking_stage.get("ranked_articles_count"))),
@@ -743,9 +802,9 @@ def _build_ranking_stage_report(
 
 def _build_ranking_decision_message(ranking_stage: dict, run_status: str) -> str:
     if run_status == DigestRun.STATUS_INSUFFICIENT_QUALITY:
-        return "Digest generation skipped because too few articles passed quality validation."
+        return "Post draft generation skipped because too few articles passed quality validation."
     if ranking_stage.get("selected_for_prompt"):
-        return "Digest generation proceeded with the selected articles."
+        return "Post draft generation proceeded with the selected articles."
     return "No ranking decision details are available."
 
 
@@ -1020,12 +1079,12 @@ def _build_copy_diagnostics_text(
 ) -> str:
     lines = [
         f"Run ID: {run.id}",
-        f"Topic: {run.topic.name}",
+        f"Post idea: {run.topic.name}",
         f"Status: {run.status}",
         (
             "Result: insufficient quality"
             if is_insufficient_quality
-            else f"Result: {run.result_message or '-'}"
+            else f"Result: {_get_display_result_message(run) or '-'}"
         ),
         (
             "Error: see diagnostics"
@@ -1033,14 +1092,14 @@ def _build_copy_diagnostics_text(
             else f"Error: {display_error_message or '-'}"
         ),
         "",
-        "Digest",
+        "Post draft",
         f"Title: {digest_payload.get('title') or '-'}",
-        f"Digest articles: {len(digest_payload.get('articles') or [])}",
+        f"Post draft articles: {len(digest_payload.get('articles') or [])}",
     ]
 
     digest_articles = digest_payload.get("articles") or []
     if digest_articles:
-        lines.append("Digest article summaries:")
+        lines.append("Post draft article summaries:")
         for index, article in enumerate(digest_articles, start=1):
             lines.extend(
                 [
@@ -1055,14 +1114,14 @@ def _build_copy_diagnostics_text(
                 for point in key_points:
                     lines.append(f"   - {point}")
     else:
-        lines.append("Digest article summaries: none")
+        lines.append("Post draft article summaries: none")
 
     lines.extend(
         [
             "",
-            "Content package",
+            "Publish-ready post",
             f"Validation status: {validation_status}",
-            f"Generated post: {getattr(content_package, 'post_text', '') or '-'}",
+            f"Publish-ready post: {getattr(content_package, 'post_text', '') or '-'}",
             f"Primary hook: {content_package.primary_hook() if content_package else '-'}",
             f"Primary CTA: {content_package.primary_cta() if content_package else '-'}",
             "Hooks:",
@@ -1099,7 +1158,7 @@ def _build_copy_diagnostics_text(
             f"Pipeline decision: {ranking_stage_report.get('decision_message') or '-'}",
             f"Total tokens: {total_tokens if total_tokens is not None else '-'}",
             f"Total estimated cost: {total_estimated_cost if total_estimated_cost is not None else '-'}",
-            f"Digest provider: {digest_provider or '-'}",
+            f"Post draft provider: {digest_provider or '-'}",
             f"Packaging provider: {packaging_provider or '-'}",
             "",
             f"All ranked articles ({len(ranked_articles)})",
@@ -1422,12 +1481,16 @@ def _build_topic_list_context(
     recent_runs = DigestRun.objects.filter(topic__user=user).select_related("topic").order_by("-created_at")[:10]
     for run in recent_runs:
         run.display_time = _format_recent_run_time(run.created_at)
+    history_topics = _build_history_topics_for_user(user, topics=topics)
     run_eligibility = _build_run_eligibility(discovered_topic)
     research_provider_state = _build_research_provider_state(discovered_topic)
     hidden_new_source_candidate_count = max(0, len(total_new_source_candidates) - len(visible_new_source_candidates))
     has_research_discovery_results = _topic_has_research_discovery_results(discovered_topic)
     return {
         "topics": topics,
+        "history_topics": history_topics,
+        "recent_history_topics": history_topics[:3],
+        "idea_history_url": reverse("idea-history"),
         "recent_runs": recent_runs,
         "topic_form": form or TopicInputForm(),
         "discovered_topic": discovered_topic,
@@ -1522,7 +1585,7 @@ def _build_research_provider_notice_from_diagnostics(diagnostics: dict) -> dict 
     body = ""
     if status == "disabled":
         title = "Research is currently disabled"
-        body = "DigestFlow can still use your sources, but automatic research is turned off."
+        body = "PostFlow can still use your sources, but automatic research is turned off."
     elif status == "missing_config":
         title = "Research provider needs configuration"
         body = "Automatic research is enabled, but the selected provider is missing required settings."
@@ -1559,6 +1622,80 @@ def _format_recent_run_time(created_at):
     if created_date == today - timedelta(days=1):
         return "Yesterday"
     return f"{local_created_at.strftime('%b')} {local_created_at.day}"
+
+
+def _build_history_topics_for_user(user, *, topics: list[Topic] | None = None) -> list[dict]:
+    topic_list = topics
+    if topic_list is None:
+        topic_list = list(
+            Topic.objects.filter(user=user)
+            .order_by("display_order", "name")
+            .prefetch_related("sources")
+        )
+        for topic in topic_list:
+            topic.source_count = sum(1 for source in topic.sources.all() if source.origin != TopicSourceOrigin.DISCOVERED)
+            topic.research_source_count = sum(1 for source in topic.sources.all() if source.origin == TopicSourceOrigin.DISCOVERED)
+            topic.active_source_count = sum(
+                1 for source in topic.sources.all() if source.is_active and source.origin != TopicSourceOrigin.DISCOVERED
+            )
+            topic.run_eligibility = _build_run_eligibility(topic)
+            topic.legacy_source_display = _build_legacy_source_display(topic)
+
+    history_runs = list(
+        DigestRun.objects.filter(topic__user=user)
+        .select_related("topic")
+        .order_by("-created_at")
+    )
+    history_runs_by_topic_id: dict[int, list[DigestRun]] = {}
+    for run in history_runs:
+        run.display_time = _format_recent_run_time(run.created_at)
+        history_runs_by_topic_id.setdefault(run.topic_id, []).append(run)
+
+    history_topics = []
+    for topic in topic_list:
+        topic_runs = history_runs_by_topic_id.get(topic.id, [])
+        latest_run = topic_runs[0] if topic_runs else None
+        latest_activity_at = latest_run.created_at if latest_run is not None else topic.updated_at
+        latest_activity_display = _format_recent_run_time(latest_activity_at)
+        history_topics.append(
+            {
+                "topic": topic,
+                "runs": topic_runs[:6],
+                "run_count": len(topic_runs),
+                "latest_run": latest_run,
+                "latest_run_display_time": latest_run.display_time if latest_run else "",
+                "latest_activity_at": latest_activity_at,
+                "latest_activity_display": latest_activity_display,
+                "status": _build_idea_history_status(latest_run),
+            }
+        )
+
+    history_topics.sort(
+        key=lambda item: (
+            item["latest_activity_at"],
+            item["topic"].id,
+        ),
+        reverse=True,
+    )
+    return history_topics
+
+
+def _build_idea_history_status(latest_run: DigestRun | None) -> dict:
+    if latest_run is None:
+        return {"label": "Idea", "tone": "neutral"}
+
+    status = str(latest_run.status or "").strip().lower()
+    if status in {DigestRun.STATUS_PENDING}:
+        return {"label": "Waiting", "tone": "neutral"}
+    if status in {DigestRun.STATUS_COLLECTING, DigestRun.STATUS_PROCESSING}:
+        return {"label": "Searching", "tone": "info"}
+    if status in {DigestRun.STATUS_GENERATING_DIGEST, DigestRun.STATUS_PACKAGING}:
+        return {"label": "Generating", "tone": "info"}
+    if status == DigestRun.STATUS_COMPLETED:
+        return {"label": "Post ready", "tone": "success"}
+    if status in {DigestRun.STATUS_INSUFFICIENT_QUALITY, DigestRun.STATUS_PARTIAL_FAILED, DigestRun.STATUS_FAILED}:
+        return {"label": "Needs attention", "tone": "warning"}
+    return {"label": "Idea", "tone": "neutral"}
 
 
 def _render_topic_source_review(
@@ -1658,9 +1795,9 @@ def _discover_and_prepare_candidates_with_summary(topic: Topic) -> tuple[list[di
         return _build_persisted_new_source_candidates(topic), {
             "title": "Source search is temporarily unavailable",
             "body": (
-                "DigestFlow could not connect to the search provider. Existing suggestions were kept."
+                "PostFlow could not connect to the search provider. Existing suggestions were kept."
                 if _count_existing_new_suggestions(topic) > 0
-                else "DigestFlow could not connect to the search provider. Please try again later."
+                else "PostFlow could not connect to the search provider. Please try again later."
             ),
             "provider_name": provider_name or str(provider_diagnostics.get("search_provider_name") or "").strip(),
             "execution_status": DISCOVERY_DECISION_PROVIDER_UNAVAILABLE,
@@ -2169,9 +2306,9 @@ def _build_discovery_cycle_summary(
     if decision == DISCOVERY_DECISION_PROVIDER_UNAVAILABLE:
         title = "Source search is temporarily unavailable"
         if existing_new_suggestion_count > 0:
-            body = "DigestFlow could not connect to the search provider. Existing suggestions were kept."
+            body = "PostFlow could not connect to the search provider. Existing suggestions were kept."
         else:
-            body = "DigestFlow could not connect to the search provider. Please try again later."
+            body = "PostFlow could not connect to the search provider. Please try again later."
         execution_status = DISCOVERY_DECISION_PROVIDER_UNAVAILABLE
     elif decision == DISCOVERY_DECISION_TARGET_REACHED:
         title = "Source discovery completed"
@@ -2198,12 +2335,12 @@ def _build_discovery_cycle_summary(
             body = (
                 f"Found {accumulated_visible_suggestions} new source suggestion"
                 f"{'s' if accumulated_visible_suggestions != 1 else ''} after {round_count} search rounds. "
-                f"DigestFlow could not reach the {DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS}-source target "
+                f"PostFlow could not reach the {DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS}-source target "
                 f"with the current search strategy."
             )
         else:
             body = (
-                f"DigestFlow could not reach the {DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS}-source target "
+                f"PostFlow could not reach the {DISCOVERY_CYCLE_TARGET_VISIBLE_NEW_SUGGESTIONS}-source target "
                 f"after {round_count} search rounds with the current search strategy."
             )
         execution_status = "partial"
@@ -2714,7 +2851,7 @@ def _build_run_eligibility(topic: Topic | None) -> dict:
     if topic is None:
         return {
             "is_eligible": False,
-            "message": "Please select at least one source to run a new digest.",
+            "message": "Please select at least one source to generate a new post.",
             "short_message": "Needs sources",
             "selected_source_count": 0,
             "selected_sources": [],
@@ -2734,7 +2871,7 @@ def _build_run_eligibility(topic: Topic | None) -> dict:
         message = (
             _build_selected_source_count_message(len(selected_sources))
             if is_eligible
-            else "Select at least one my source before running this digest."
+            else "Select at least one source for this post before generating it."
         )
         short_message = "" if is_eligible else "Needs a my source"
     elif mode == TopicSourceMode.DISCOVERY_ONLY:
@@ -2743,7 +2880,7 @@ def _build_run_eligibility(topic: Topic | None) -> dict:
         message = (
             _build_selected_source_count_message(len(selected_sources))
             if is_eligible
-            else "Find or keep at least one research source before running this digest."
+            else "Find or keep at least one research source before generating this post."
         )
         short_message = "" if is_eligible else "Needs a research source"
     else:
@@ -2755,13 +2892,13 @@ def _build_run_eligibility(topic: Topic | None) -> dict:
             message = _build_selected_source_count_message(len(selected_sources))
             short_message = ""
         elif not has_my_sources and not has_research_sources:
-            message = "Please select at least one my source and one research source."
+            message = "Please select at least one source for this post and one research source."
             short_message = "Needs sources"
         elif not has_my_sources:
-            message = "Select at least one my source before running this digest."
+            message = "Select at least one source for this post before generating it."
             short_message = "Needs a my source"
         else:
-            message = "Find or keep at least one research source before running this digest."
+            message = "Find or keep at least one research source before generating this post."
             short_message = "Needs a research source"
 
     return {
@@ -2778,10 +2915,10 @@ def _build_run_eligibility(topic: Topic | None) -> dict:
 
 def _build_selected_source_count_message(selected_source_count: int) -> str:
     if selected_source_count <= 0:
-        return "Please select at least one source to run a new digest."
+        return "Please select at least one source to generate a new post."
     if selected_source_count == 1:
-        return "1 selected source will be used in the next digest run."
-    return f"{selected_source_count} selected sources will be used in the next digest run."
+        return "1 selected source will be used in the next post run."
+    return f"{selected_source_count} selected sources will be used in the next post run."
 
 
 def _build_curated_source_seeds(topic: Topic) -> list[CuratedSourceSeed]:
@@ -2944,7 +3081,7 @@ def _validate_topic_source_submission_v2(topic: Topic, source_url: str) -> dict:
         "level": str(availability.get("level") or "success"),
         "message": str(
             availability.get("message")
-            or "Source added and saved for this topic. It will be used when generating the digest."
+            or "Source added and saved for this post idea. It will be used when generating the post."
         ),
         "normalized_source": normalized_source,
         "resolved_title": str(availability.get("resolved_title") or "").strip(),

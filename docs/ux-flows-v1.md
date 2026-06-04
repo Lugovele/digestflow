@@ -4,6 +4,9 @@
 
 DigestFlow is evolving from a simple AI digest generator into an AI-powered editorial system.
 
+Related:
+- `docs/frontend-style-guide.md` - frontend implementation quality rules for Django templates, CSS, JavaScript, and UI tests.
+
 The core product value is no longer just summarization. The product should help users move from broad or ambiguous topics toward usable digest streams through:
 
 - topic refinement
@@ -539,4 +542,3 @@ The user wants more exploratory coverage or stronger filtering.
   - define when source strategy becomes explicit
   - define how quality outcomes are explained
   - define how multiple digest streams should be represented
-

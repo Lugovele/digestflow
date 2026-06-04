@@ -44,8 +44,8 @@ DigestFlow also includes a history-aware source discovery engine for long-lived 
 
 For the detailed flow and terminology, see:
 
-- `docs/research_discovery_flow.md`
-- `docs/research_discovery_glossary.md`
+- `docs/research-discovery-flow.md`
+- `docs/research-discovery-glossary.md`
 
 ## Current MVP status
 

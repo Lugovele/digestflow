@@ -1,5 +1,8 @@
 # Testing Strategy
 
+Related:
+- `docs/frontend-style-guide.md` - frontend implementation quality rules for Django templates, CSS, JavaScript, and UI tests.
+
 Use the narrowest test target that matches the layer you are changing.
 
 ## Small source workspace UI changes

@@ -4,6 +4,9 @@
 
 DigestFlow should use a repeatable testing workflow that keeps the development loop fast during normal work and reserves the full Django suite for the right moments.
 
+Related:
+- `docs/frontend-style-guide.md` - frontend implementation quality rules for Django templates, CSS, JavaScript, and UI tests.
+
 The intent is simple:
 
 - use the narrowest test that proves the change
