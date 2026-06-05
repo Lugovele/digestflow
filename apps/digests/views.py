@@ -143,8 +143,15 @@ def _get_user_facing_source_mode_label(mode: str) -> str:
 
 
 @require_GET
-def topic_list_view(request: HttpRequest) -> HttpResponse:
-    return render(request, "digestflow/topic_list.html", _build_topic_list_context())
+def topic_list_view(request: HttpRequest, topic_id: int | None = None) -> HttpResponse:
+    editing_topic = None
+    if topic_id is not None:
+        editing_topic = get_object_or_404(Topic, pk=topic_id, user=_get_or_create_ui_user())
+    return render(
+        request,
+        "digestflow/topic_list.html",
+        _build_topic_list_context(editing_topic=editing_topic),
+    )
 
 
 @require_GET
@@ -162,8 +169,22 @@ def idea_history_view(request: HttpRequest) -> HttpResponse:
 
 
 @require_GET
+def topic_setup_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    return _render_topic_setup(request, topic)
+
+
+@require_POST
+def continue_topic_setup_view(request: HttpRequest, topic_id: int) -> HttpResponse:
+    topic = get_object_or_404(Topic, pk=topic_id)
+    _mark_topic_committed(topic)
+    return redirect("topic-workspace", topic_id=topic.id)
+
+
+@require_GET
 def topic_workspace_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
+    _mark_topic_committed(topic)
     return _render_topic_source_review(request, topic)
 
 
@@ -221,9 +242,14 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
         return render(request, "digestflow/topic_list.html", context, status=400)
 
     topic_id = str(request.POST.get("topic_id") or "").strip() or None
+    entry_step = str(request.POST.get("entry_step") or "").strip()
     topic_name = form.cleaned_data["topic_name"]
     source_url = str(form.cleaned_data.get("source_url") or "").strip()
     source_mode = form.cleaned_data.get("source_mode") or TopicSourceMode.HYBRID
+    was_existing_topic = False
+    if not topic_id:
+        user = _get_or_create_ui_user()
+        was_existing_topic = Topic.objects.filter(user=user, name=topic_name).exists()
     try:
         topic = _get_or_create_ui_topic(
             topic_name,
@@ -239,6 +265,12 @@ def discover_sources_view(request: HttpRequest) -> HttpResponse:
     discovery_summary = None
     discovered_source_candidates = None
     discovery_requested = _should_run_research_discovery(request, topic_id=topic_id)
+    created_from_workspace_start = entry_step == "workspace-start" and not topic_id and not was_existing_topic
+    updated_from_workspace_start = entry_step == "workspace-start" and bool(topic_id)
+    if created_from_workspace_start and not discovery_requested:
+        return redirect("topic-setup", topic_id=topic.id)
+    if updated_from_workspace_start and not discovery_requested:
+        return redirect("topic-setup", topic_id=topic.id)
     if discovery_requested:
         discovered_source_candidates, discovery_summary = _discover_and_prepare_candidates_with_summary(topic)
     return render(
@@ -268,6 +300,7 @@ def create_topic_and_run_view(request: HttpRequest) -> HttpResponse:
     source_mode = form.cleaned_data.get("source_mode") or TopicSourceMode.HYBRID
     topic = _get_or_create_ui_topic(topic_name, source_urls=[source_url] if source_url else [], source_mode=source_mode)
     topic.manual_source_inputs = [source_url] if source_url else []
+    _mark_topic_committed(topic)
     run = _create_ui_digest_run(topic, source="web_ui_form")
 
     _start_topic_run(run, topic, default_source="web_ui_form")
@@ -318,15 +351,41 @@ def add_topic_source_view(request: HttpRequest, topic_id: int) -> HttpResponse:
 @require_POST
 def update_topic_focus_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
+    return_target = str(request.POST.get("return_to") or "").strip().lower()
     focus_terms = _parse_focus_terms(request.POST)
+    raw_focus_candidate = " ".join(str(request.POST.get("focus_candidate") or "").strip().split())
+    if return_target == "setup" and "focus_candidate" in request.POST and not raw_focus_candidate and not focus_terms:
+        return _render_topic_setup(
+            request,
+            topic,
+            focus_feedback={
+                "level": "error",
+                "message": "Enter a focus point.",
+            },
+            status=400,
+        )
     validation_error = validate_new_focus_terms(_build_topic_focus_terms(topic), focus_terms)
     if validation_error:
+        feedback_message = validation_error.message
+        if return_target == "setup" and validation_error.message == FOCUS_VALIDATION_MESSAGE:
+            feedback_message = "Enter a focus point."
+        if return_target == "setup":
+            return _render_topic_setup(
+                request,
+                topic,
+                focus_feedback={
+                    "level": "error",
+                    "message": feedback_message,
+                },
+                focus_input_value=validation_error.term,
+                status=400,
+            )
         return _render_topic_source_review(
             request,
             topic,
             focus_feedback={
                 "level": "error",
-                "message": validation_error.message,
+                "message": feedback_message,
             },
             focus_input_value=validation_error.term,
             status=400,
@@ -338,6 +397,8 @@ def update_topic_focus_view(request: HttpRequest, topic_id: int) -> HttpResponse
     elif not topic.focus_initialized:
         topic.focus_initialized = True
         topic.save(update_fields=["focus_initialized", "updated_at"])
+    if return_target == "setup":
+        return _render_topic_setup(request, topic)
     return _render_topic_source_review(request, topic)
 
 
@@ -348,6 +409,7 @@ def run_pipeline_view(request: HttpRequest, topic_id: int) -> HttpResponse:
         run_eligibility = _build_run_eligibility(topic)
         if not run_eligibility["is_eligible"]:
             return redirect("topic-workspace", topic_id=topic.id)
+    _mark_topic_committed(topic)
     run = _create_ui_digest_run(topic, source="web_ui")
 
     _start_topic_run(run, topic, default_source="web_ui")
@@ -373,6 +435,7 @@ def delete_used_article_view(request: HttpRequest, run_id: int, used_article_id:
 @require_POST
 def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
+    _mark_topic_committed(topic)
     discovered_source_candidates = _discover_and_prepare_candidates(topic)
     selected_source_urls = [str(raw_url).strip() for raw_url in request.POST.getlist("selected_source_urls") if str(raw_url).strip()]
     selected_candidates = _resolve_selected_source_candidates(
@@ -1434,6 +1497,7 @@ def _build_topic_list_context(
     form: TopicInputForm | None = None,
     *,
     discovered_topic: Topic | None = None,
+    editing_topic: Topic | None = None,
     discovered_source_candidates: list[dict] | None = None,
     discovery_summary: dict | None = None,
     discovery_context_active: bool = False,
@@ -1486,13 +1550,25 @@ def _build_topic_list_context(
     research_provider_state = _build_research_provider_state(discovered_topic)
     hidden_new_source_candidate_count = max(0, len(total_new_source_candidates) - len(visible_new_source_candidates))
     has_research_discovery_results = _topic_has_research_discovery_results(discovered_topic)
+    topic_form = form
+    if topic_form is None:
+        if editing_topic is not None:
+            topic_form = TopicInputForm(
+                initial={
+                    "topic_name": editing_topic.name,
+                    "source_mode": editing_topic.source_mode or TopicSourceMode.HYBRID,
+                }
+            )
+        else:
+            topic_form = TopicInputForm()
     return {
         "topics": topics,
         "history_topics": history_topics,
         "recent_history_topics": history_topics[:3],
         "idea_history_url": reverse("idea-history"),
         "recent_runs": recent_runs,
-        "topic_form": form or TopicInputForm(),
+        "topic_form": topic_form,
+        "editing_topic": editing_topic,
         "discovered_topic": discovered_topic,
         "focus_terms": _build_topic_focus_terms(discovered_topic),
         "focus_feedback": focus_feedback,
@@ -1654,6 +1730,8 @@ def _build_history_topics_for_user(user, *, topics: list[Topic] | None = None) -
     history_topics = []
     for topic in topic_list:
         topic_runs = history_runs_by_topic_id.get(topic.id, [])
+        if not _topic_is_committed_for_history(topic, topic_runs):
+            continue
         latest_run = topic_runs[0] if topic_runs else None
         latest_activity_at = latest_run.created_at if latest_run is not None else topic.updated_at
         latest_activity_display = _format_recent_run_time(latest_activity_at)
@@ -1678,6 +1756,26 @@ def _build_history_topics_for_user(user, *, topics: list[Topic] | None = None) -
         reverse=True,
     )
     return history_topics
+
+
+def _topic_is_committed_for_history(topic: Topic, topic_runs: list[DigestRun]) -> bool:
+    if topic.committed_at is not None:
+        return True
+    if topic_runs:
+        return True
+    if str(topic.source_url or "").strip():
+        return True
+    prefetched_sources = getattr(topic, "_prefetched_objects_cache", {}).get("sources")
+    if prefetched_sources is not None:
+        return bool(prefetched_sources)
+    return topic.sources.exists()
+
+
+def _mark_topic_committed(topic: Topic) -> None:
+    if topic.committed_at is not None:
+        return
+    topic.committed_at = timezone.now()
+    topic.save(update_fields=["committed_at", "updated_at"])
 
 
 def _build_idea_history_status(latest_run: DigestRun | None) -> dict:
@@ -1735,11 +1833,93 @@ def _render_topic_source_review(
     )
 
 
+def _render_topic_setup(
+    request: HttpRequest,
+    topic: Topic,
+    *,
+    status: int = 200,
+    focus_feedback: dict | None = None,
+    focus_input_value: str = "",
+) -> HttpResponse:
+    focus_terms = _build_topic_focus_terms(topic)
+    return render(
+        request,
+        "digestflow/topic_setup.html",
+        {
+            "topic": topic,
+            "focus_terms": focus_terms,
+            "focus_chip_terms": _build_topic_setup_focus_chip_terms(focus_terms),
+            "focus_feedback": focus_feedback,
+            "focus_input_value": focus_input_value,
+            "review_sources_url": reverse("topic-workspace", args=[topic.id]),
+            "continue_setup_url": reverse("continue-topic-setup", args=[topic.id]),
+            "update_focus_url": reverse("update-topic-focus", args=[topic.id]),
+        },
+        status=status,
+    )
+
+
 def _build_topic_focus_terms(topic: Topic | None) -> list[str]:
     if topic is None:
         return []
     raw_terms = topic.keywords if isinstance(topic.keywords, list) else []
     return clean_focus_terms(raw_terms)
+
+
+def _build_topic_setup_focus_chip_terms(focus_terms: list[str]) -> list[dict[str, str]]:
+    chip_terms: list[dict[str, str]] = []
+    for term in focus_terms:
+        chip_terms.append(
+            {
+                "value": term,
+                "label": _build_topic_setup_focus_chip_label(term),
+            }
+        )
+    return chip_terms
+
+
+def _build_topic_setup_focus_chip_label(term: str) -> str:
+    normalized = " ".join(str(term or "").strip().split())
+    if not normalized:
+        return ""
+
+    exact_display_labels = {
+        "hands-on activities for early childhood education": "hands-on activities",
+        "language development resources for toddlers": "language development",
+        "music and movement activities for young children": "music and movement",
+    }
+    exact_match = exact_display_labels.get(normalized.casefold())
+    if exact_match:
+        return exact_match
+
+    if len(normalized.split()) <= 4:
+        return normalized
+
+    shortened = re.split(r"\s+(?:for|with|about|around|to)\s+", normalized, maxsplit=1, flags=re.IGNORECASE)[0]
+    if shortened:
+        normalized = shortened
+
+    words = normalized.split()
+    trailing_generic_terms = {
+        "activities",
+        "activity",
+        "resources",
+        "resource",
+        "tools",
+        "tool",
+        "ideas",
+        "idea",
+        "strategies",
+        "strategy",
+        "examples",
+        "example",
+    }
+    if len(words) > 2 and words[-1].casefold() in trailing_generic_terms:
+        words = words[:-1]
+
+    if len(words) > 4:
+        words = words[:4]
+    return " ".join(words)
 
 
 def _should_run_research_discovery(request: HttpRequest, *, topic_id: str | None) -> bool:

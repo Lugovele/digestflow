@@ -153,6 +153,344 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "Research mode")
         self.assertNotContains(response, "calm")
 
+    def test_workspace_continue_creates_topic_and_redirects_to_setup_page(self) -> None:
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "AI onboarding flow",
+                "source_mode": TopicSourceMode.HYBRID,
+                "entry_step": "workspace-start",
+            },
+        )
+
+        topic = Topic.objects.get(name="AI onboarding flow")
+        self.assertRedirects(response, reverse("topic-setup", args=[topic.id]), fetch_redirect_response=False)
+        self.assertTrue(topic.focus_initialized)
+        self.assertTrue(topic.keywords)
+
+    def test_topic_setup_page_renders_guided_post_setup_for_topic(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="AI onboarding flow",
+            keywords=["automation angle", "solo founder workflow"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.get(reverse("topic-setup", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-testid="new-topic-setup-page"', html=False)
+        self.assertContains(response, 'data-testid="new-topic-setup-card"', html=False)
+        self.assertContains(response, "Back to ideas")
+        self.assertContains(response, 'data-testid="edit-idea-link"', html=False)
+        self.assertContains(
+            response,
+            f'href="{reverse("topic-edit", args=[topic.id])}"',
+            html=False,
+        )
+        self.assertContains(response, "Set the direction")
+        self.assertContains(response, "Post idea:")
+        self.assertContains(response, "AI onboarding flow")
+        self.assertContains(response, "Use the suggested focus areas, or add a new one.")
+        self.assertContains(response, "automation angle")
+        self.assertContains(response, "solo founder workflow")
+        self.assertContains(response, 'data-testid="post-focus-chip"', html=False)
+        self.assertContains(response, 'data-testid="post-focus-input"', html=False)
+        self.assertContains(response, "Add focus area...")
+        self.assertContains(response, 'data-testid="post-focus-add-button"', html=False)
+        self.assertContains(response, "Add")
+        self.assertNotContains(response, "Press Enter to add")
+        self.assertNotContains(response, "<strong>Enter a focus point.</strong>", html=False)
+        self.assertContains(
+            response,
+            "PostFlow will turn this into a final post.",
+        )
+        self.assertContains(response, "Need more control?")
+        self.assertContains(response, "Review sources first")
+        self.assertContains(
+            response,
+            f'href="{reverse("topic-workspace", args=[topic.id])}"',
+            html=False,
+        )
+        self.assertContains(response, "Create post")
+        self.assertContains(response, 'data-testid="new-topic-continue-button"', html=False)
+        self.assertNotContains(response, "digest")
+        self.assertNotContains(response, "draft")
+        self.assertNotContains(response, "pipeline")
+        self.assertNotContains(response, "source discovery")
+        self.assertNotContains(response, "research mode")
+        self.assertNotContains(response, "find sources")
+        self.assertNotContains(response, "Post focus")
+        self.assertNotContains(response, "Focus areas")
+        self.assertNotContains(response, "Choose what this post should emphasize.")
+        self.assertNotContains(response, "Refine what the post should focus on.")
+        self.assertNotContains(response, "<p class=\"setup-label\">Idea</p>", html=False)
+        self.assertNotContains(response, "+ Add another")
+        self.assertNotContains(response, "+ Add focus")
+        self.assertNotContains(response, "Add a focus point and press Enter")
+
+    def test_topic_setup_page_shows_shorter_focus_chip_labels_without_changing_stored_terms(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Toddler learning activities",
+            keywords=[
+                "hands-on activities for early childhood education",
+                "language development resources for toddlers",
+                "music and movement activities for young children",
+            ],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.get(reverse("topic-setup", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "hands-on activities")
+        self.assertContains(response, "language development")
+        self.assertContains(response, "music and movement")
+        self.assertContains(
+            response,
+            'data-focus-value="hands-on activities for early childhood education"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'title="language development resources for toddlers"',
+            html=False,
+        )
+        topic.refresh_from_db()
+        self.assertEqual(
+            topic.keywords,
+            [
+                "hands-on activities for early childhood education",
+                "language development resources for toddlers",
+                "music and movement activities for young children",
+            ],
+        )
+
+    def test_topic_setup_page_can_add_and_remove_focus_points(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Setup focus editing",
+            keywords=["initial angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        add_response = self.client.post(
+            reverse("update-topic-focus", args=[topic.id]),
+            data={
+                "return_to": "setup",
+                "focus_terms": "initial angle\nworkflow automation",
+            },
+        )
+
+        self.assertEqual(add_response.status_code, 200)
+        topic.refresh_from_db()
+        self.assertEqual(topic.keywords, ["initial angle", "workflow automation"])
+        self.assertContains(add_response, "workflow automation")
+        self.assertContains(add_response, 'data-testid="post-focus-region"', html=False)
+
+        remove_response = self.client.post(
+            reverse("update-topic-focus", args=[topic.id]),
+            data={
+                "return_to": "setup",
+                "focus_terms": "workflow automation",
+            },
+        )
+
+        self.assertEqual(remove_response.status_code, 200)
+        topic.refresh_from_db()
+        self.assertEqual(topic.keywords, ["workflow automation"])
+        self.assertNotContains(remove_response, "initial angle")
+        self.assertContains(remove_response, "workflow automation")
+
+    def test_topic_setup_empty_focus_submission_shows_validation_only_after_submission(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Setup validation",
+            keywords=["initial angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        initial_response = self.client.get(reverse("topic-setup", args=[topic.id]))
+        self.assertEqual(initial_response.status_code, 200)
+        self.assertNotContains(initial_response, "<strong>Enter a focus point.</strong>", html=False)
+
+        invalid_response = self.client.post(
+            reverse("update-topic-focus", args=[topic.id]),
+            data={
+                "return_to": "setup",
+                "focus_candidate": "",
+                "focus_terms": "\n",
+                "focus_terms[]": [""],
+            },
+        )
+
+        self.assertEqual(invalid_response.status_code, 400)
+        self.assertContains(
+            invalid_response,
+            "<strong>Enter a focus point.</strong>",
+            html=False,
+            status_code=400,
+        )
+
+    def test_topic_setup_continue_uses_safe_existing_next_step(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Continue from setup",
+            keywords=["initial angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.post(reverse("continue-topic-setup", args=[topic.id]))
+
+        self.assertRedirects(response, reverse("topic-workspace", args=[topic.id]), fetch_redirect_response=False)
+
+    def test_back_to_ideas_edit_route_prefills_existing_topic_name(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="career strategy",
+            keywords=["promotion path"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.get(reverse("topic-edit", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'value="{topic.name}"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            f'name="topic_id" value="{topic.id}"',
+            html=False,
+        )
+        self.assertContains(response, 'data-testid="workspace-start-form"', html=False)
+
+    def test_back_to_ideas_edit_submission_updates_same_topic_without_duplicate(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="career strategy",
+            keywords=["promotion path"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": str(topic.id),
+                "topic_name": "career strategy for product managers",
+                "source_mode": TopicSourceMode.HYBRID,
+                "entry_step": "workspace-start",
+            },
+        )
+
+        self.assertRedirects(response, reverse("topic-setup", args=[topic.id]), fetch_redirect_response=False)
+        topic.refresh_from_db()
+        self.assertEqual(topic.name, "career strategy for product managers")
+        self.assertEqual(Topic.objects.count(), 1)
+
+        setup_response = self.client.get(reverse("topic-setup", args=[topic.id]))
+        self.assertContains(setup_response, "career strategy for product managers")
+
+    def test_back_to_ideas_flow_preserves_single_history_item(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="career strategy",
+            keywords=["promotion path"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_id": str(topic.id),
+                "topic_name": "career strategy update",
+                "source_mode": TopicSourceMode.HYBRID,
+                "entry_step": "workspace-start",
+            },
+        )
+
+        history_response = self.client.get(reverse("idea-history"))
+
+        self.assertNotContains(history_response, "career strategy update")
+        self.assertNotContains(history_response, "career strategy</a>", html=False)
+        self.assertEqual(Topic.objects.count(), 1)
+
+    def test_setup_back_to_ideas_keeps_uncommitted_topic_hidden_from_recent_ideas(self) -> None:
+        response = self.client.post(
+            reverse("discover-sources"),
+            data={
+                "topic_name": "quiet draft idea",
+                "source_mode": TopicSourceMode.HYBRID,
+                "entry_step": "workspace-start",
+            },
+        )
+
+        topic = Topic.objects.get(name="quiet draft idea")
+        self.assertRedirects(response, reverse("topic-setup", args=[topic.id]), fetch_redirect_response=False)
+
+        back_response = self.client.get(reverse("topic-edit", args=[topic.id]))
+        self.assertContains(back_response, 'value="quiet draft idea"', html=False)
+
+        workspace_response = self.client.get(reverse("topic-list"))
+        history_response = self.client.get(reverse("idea-history"))
+
+        self.assertNotContains(workspace_response, "quiet draft idea")
+        self.assertNotContains(history_response, "quiet draft idea")
+        self.assertEqual(Topic.objects.count(), 1)
+        topic.refresh_from_db()
+        self.assertIsNone(topic.committed_at)
+
+    def test_create_post_from_setup_commits_topic_and_shows_it_in_history(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="committed by create",
+            keywords=["angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.post(reverse("continue-topic-setup", args=[topic.id]))
+
+        self.assertRedirects(response, reverse("topic-workspace", args=[topic.id]), fetch_redirect_response=False)
+        topic.refresh_from_db()
+        self.assertIsNotNone(topic.committed_at)
+
+        workspace_response = self.client.get(reverse("topic-list"))
+        history_response = self.client.get(reverse("idea-history"))
+        self.assertContains(workspace_response, "committed by create")
+        self.assertContains(history_response, "committed by create")
+
+    def test_review_sources_first_commits_topic_and_shows_it_in_history(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="committed by review",
+            keywords=["angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        topic.refresh_from_db()
+        self.assertIsNotNone(topic.committed_at)
+
+        workspace_response = self.client.get(reverse("topic-list"))
+        history_response = self.client.get(reverse("idea-history"))
+        self.assertContains(workspace_response, "committed by review")
+        self.assertContains(history_response, "committed by review")
+
     def test_legacy_topics_route_redirects_to_workspace(self) -> None:
         response = self.client.get(reverse("legacy-topics"))
 
@@ -587,6 +925,7 @@ class TopicRssSourceTests(TestCase):
             source_mode=TopicSourceMode.HYBRID,
             keywords=["automation"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.get(reverse("topic-list"))
@@ -604,7 +943,12 @@ class TopicRssSourceTests(TestCase):
         self.assertContains(workspace_response, "Workspace Link Topic")
 
     def test_dashboard_recent_digests_show_human_readable_time_without_run_metadata(self) -> None:
-        topic = Topic.objects.create(name="AI agents", source_mode=TopicSourceMode.HYBRID, user=self._get_ui_user())
+        topic = Topic.objects.create(
+            name="AI agents",
+            source_mode=TopicSourceMode.HYBRID,
+            user=self._get_ui_user(),
+            committed_at=timezone.now(),
+        )
         run = DigestRun.objects.create(topic=topic, source_mode=topic.source_mode, status=DigestRun.STATUS_COMPLETED)
         DigestRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(days=1))
 
@@ -1341,6 +1685,7 @@ class TopicRssSourceTests(TestCase):
             name="Collapsible topic",
             keywords=["Collapsible topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.get(reverse("topic-list"))
@@ -1354,7 +1699,13 @@ class TopicRssSourceTests(TestCase):
     def test_workspace_shows_three_recent_ideas_then_view_all_link(self) -> None:
         user = self._get_ui_user()
         topics = [
-            Topic.objects.create(user=user, name=f"Idea {index}", keywords=[f"Idea {index}"], excluded_keywords=[])
+            Topic.objects.create(
+                user=user,
+                name=f"Idea {index}",
+                keywords=[f"Idea {index}"],
+                excluded_keywords=[],
+                committed_at=timezone.now(),
+            )
             for index in range(1, 5)
         ]
 
@@ -1373,10 +1724,10 @@ class TopicRssSourceTests(TestCase):
 
     def test_idea_history_page_shows_full_list_and_status_labels(self) -> None:
         user = self._get_ui_user()
-        first = Topic.objects.create(user=user, name="Idea one", keywords=["Idea one"], excluded_keywords=[])
-        second = Topic.objects.create(user=user, name="Idea two", keywords=["Idea two"], excluded_keywords=[])
-        third = Topic.objects.create(user=user, name="Idea three", keywords=["Idea three"], excluded_keywords=[])
-        fourth = Topic.objects.create(user=user, name="Idea four", keywords=["Idea four"], excluded_keywords=[])
+        first = Topic.objects.create(user=user, name="Idea one", keywords=["Idea one"], excluded_keywords=[], committed_at=timezone.now())
+        second = Topic.objects.create(user=user, name="Idea two", keywords=["Idea two"], excluded_keywords=[], committed_at=timezone.now())
+        third = Topic.objects.create(user=user, name="Idea three", keywords=["Idea three"], excluded_keywords=[], committed_at=timezone.now())
+        fourth = Topic.objects.create(user=user, name="Idea four", keywords=["Idea four"], excluded_keywords=[], committed_at=timezone.now())
         DigestRun.objects.create(topic=second, source_mode=second.source_mode, status=DigestRun.STATUS_COMPLETED)
         DigestRun.objects.create(topic=third, source_mode=third.source_mode, status=DigestRun.STATUS_FAILED)
         DigestRun.objects.create(topic=fourth, source_mode=fourth.source_mode, status=DigestRun.STATUS_PROCESSING)
@@ -1401,19 +1752,21 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "draft")
         self.assertNotContains(response, "find sources")
 
-    def test_newly_created_topic_appears_first_on_dashboard(self) -> None:
+    def test_newly_created_topic_updates_display_order_before_commit(self) -> None:
         user = self._get_ui_user()
         older = Topic.objects.create(
             user=user,
             name="Older topic",
             keywords=["Older topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         oldest = Topic.objects.create(
             user=user,
             name="Oldest topic",
             keywords=["Oldest topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.post(
@@ -1431,8 +1784,8 @@ class TopicRssSourceTests(TestCase):
         self.assertEqual((newest.display_order, older.display_order, oldest.display_order), (1, 2, 3))
 
         dashboard_response = self.client.get(reverse("topic-list"))
-        html = dashboard_response.content.decode("utf-8")
-        self.assertLess(html.index("Newest topic"), html.index("Older topic"))
+        self.assertNotContains(dashboard_response, "Newest topic")
+        self.assertContains(dashboard_response, "Older topic")
         self.assertContains(dashboard_response, "Oldest topic")
 
     def test_saved_topics_dashboard_only_renders_ui_user_topics(self) -> None:

@@ -116,6 +116,38 @@
         .section-notice--summary {
             background: #fbfcfe;
         }
+        .form-reset {
+            margin: 0;
+        }
+        .section-gap-top {
+            margin-top: 14px;
+        }
+        .section-gap-top--small {
+            margin-top: 12px;
+        }
+        .section-gap-stack {
+            margin-top: 12px;
+            gap: 12px;
+        }
+        .stack-tight {
+            gap: 8px;
+        }
+        .section-hint--flush {
+            margin: 0;
+        }
+        .section-hint--small-top {
+            margin-top: 6px;
+        }
+        .action-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .topic-back-link-wrap {
+            margin: 0 0 14px;
+        }
         .action-hint {
             font-size: 12px;
             color: #6b7280;
@@ -1417,8 +1449,8 @@
 <body>
     <main class="page">
         {% if discovered_topic %}
-            <p style="margin: 0 0 14px;">
-                <a href="{% url 'topic-list' %}" class="inline-link">&larr; Back to workspace</a>
+            <p class="topic-back-link-wrap">
+                <a href="{% url 'topic-list' %}" class="inline-link">&larr; Back to ideas</a>
             </p>
 
             <h1 class="page-title">{{ discovered_topic.name }}</h1>
@@ -1579,7 +1611,7 @@
                             <textarea hidden data-source-add-diagnostics>{{ source_add_diagnostics_json }}</textarea>
                         {% endif %}
                         {% if topic_source_inventory %}
-                            <div class="inventory-list" style="margin-top: 14px;">
+                            <div class="inventory-list section-gap-top">
                                 {% for source in topic_source_inventory %}
                                     <div class="inventory-row{% if not source.is_active %} inventory-row--disabled{% endif %}">
                                         <div class="inventory-main">
@@ -1634,11 +1666,11 @@
                         <div class="section-header section-header--stack">
                             <div class="subsection-heading-row">
                                 <h3 class="section-heading">Research sources</h3>
-                                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                                <div class="action-row">
                                     {% if find_sources_disabled_hint %}
                                         <span class="action-hint">{{ find_sources_disabled_hint }}</span>
                                     {% endif %}
-                                    <form method="post" action="{% url 'discover-sources' %}" style="margin: 0;" data-preserve-scroll>
+                                    <form method="post" action="{% url 'discover-sources' %}" class="form-reset" data-preserve-scroll>
                                         {% csrf_token %}
                                         <input type="hidden" name="topic_id" value="{{ discovered_topic.id }}">
                                         <input type="hidden" name="topic_name" value="{{ discovered_topic.name }}">
@@ -1683,9 +1715,9 @@
                         {% if source_selection_error %}
                             <p class="error">{{ source_selection_error }}</p>
                         {% endif %}
-                        <div class="stack" style="margin-top: 12px; gap: 12px;">
+                        <div class="stack section-gap-stack">
                             {% if pinned_research_source_inventory %}
-                                <div class="stack" style="gap: 8px;">
+                                <div class="stack stack-tight">
                                     <div>
                                         <h4 class="section-heading section-heading--subgroup">Kept sources · {{ pinned_research_source_inventory|length }}</h4>
                                     </div>
@@ -1741,7 +1773,7 @@
                                     </div>
                                 </div>
                             {% endif %}
-                            <div class="stack" style="gap: 8px;">
+                            <div class="stack stack-tight">
                                 <div>
                                     <h4 class="section-heading section-heading--subgroup">New suggestions · {{ total_new_source_candidate_count }}</h4>
                                 </div>
@@ -1797,7 +1829,7 @@
                                         {% endfor %}
                                     </div>
                                     {% if new_suggestions_is_truncated %}
-                                        <p class="section-hint" style="margin: 0;">
+                                        <p class="section-hint section-hint--flush">
                                             {{ discovery_summary.truncation_hint }}
                                             <a
                                                 class="inline-link"
@@ -1808,9 +1840,9 @@
                                     {% endif %}
                                 {% else %}
                                     <div data-testid="new-suggestions-empty-state">
-                                        <p class="section-hint" style="margin: 0;">No new suggestions yet.</p>
+                                        <p class="section-hint section-hint--flush">No new suggestions yet.</p>
                                         {% if not can_find_research_sources %}
-                                            <p class="section-hint" style="margin-top: 6px;">Add at least one post angle before finding sources.</p>
+                                            <p class="section-hint section-hint--small-top">Add at least one post angle before finding sources.</p>
                                         {% endif %}
                                     </div>
                                 {% endif %}
@@ -1831,7 +1863,7 @@
                                 </p>
                             </div>
                             <div>
-                                <form id="workspace-run-form" method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
+                                <form id="workspace-run-form" method="post" action="{% url 'run-pipeline' discovered_topic.id %}" class="form-reset">
                                     {% csrf_token %}
                                 </form>
                                 <button
@@ -1857,7 +1889,7 @@
                                 </p>
                             </div>
                             <div>
-                                <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" style="margin: 0;">
+                                <form method="post" action="{% url 'run-pipeline' discovered_topic.id %}" class="form-reset">
                                     {% csrf_token %}
                                     <button
                                         type="submit"
@@ -1925,6 +1957,10 @@
                         >
                             {% with topic_form.topic_name.value|default_if_none:'' as workspace_topic_value %}
                             {% csrf_token %}
+                            <input type="hidden" name="entry_step" value="workspace-start">
+                            {% if editing_topic %}
+                            <input type="hidden" name="topic_id" value="{{ editing_topic.id }}">
+                            {% endif %}
                             <input
                                 type="hidden"
                                 name="{{ topic_form.source_mode.html_name }}"
