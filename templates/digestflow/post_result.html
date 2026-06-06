@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostFlow Post</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg-base: #faf9f6;
+            --bg-mid: #f6f5f1;
+            --bg-end: #f3f4f8;
+            --text: #0f172a;
+            --muted: #64748b;
+            --brand: #20243a;
+            --panel-border: rgba(255, 255, 255, 0.92);
+            --card-border: rgba(226, 232, 240, 0.9);
+            --soft-border: rgba(216, 209, 198, 0.78);
+            --soft-bg: rgba(248, 244, 238, 0.72);
+            --card-bg: rgba(255, 255, 255, 0.72);
+            --field-bg: rgba(255, 252, 247, 0.96);
+            --field-border: rgba(199, 190, 178, 0.96);
+            --accent-soft: rgba(241, 237, 230, 0.92);
+            --accent-border: rgba(195, 187, 174, 0.92);
+            --success-bg: rgba(236, 244, 238, 0.94);
+            --success-border: rgba(170, 198, 177, 0.95);
+        }
+
+        * { box-sizing: border-box; }
+
+        html,
+        body {
+            margin: 0;
+            min-height: 100%;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 18% 10%, rgba(224, 231, 255, 0.72) 0, transparent 30%),
+                radial-gradient(circle at 84% 16%, rgba(248, 250, 252, 0.9) 0, transparent 26%),
+                linear-gradient(135deg, var(--bg-base) 0%, var(--bg-mid) 48%, var(--bg-end) 100%);
+            overflow-x: hidden;
+        }
+
+        .post-result-page {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 28px 16px 56px;
+        }
+
+        .post-result-shell {
+            display: grid;
+            gap: 14px;
+            max-width: 780px;
+            margin: 0 auto;
+        }
+
+        .post-result-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.3rem 0.15rem 0.18rem;
+        }
+
+        .post-result-header__brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 0;
+        }
+
+        .post-result-header__logo {
+            width: 2.45rem;
+            height: 2.45rem;
+            flex: none;
+            filter: drop-shadow(0 10px 18px rgba(32, 36, 58, 0.12));
+        }
+
+        .post-result-header__title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--brand);
+        }
+
+        .post-result-header__subtitle {
+            font-size: 0.75rem;
+            letter-spacing: 0.06em;
+            color: var(--muted);
+            text-transform: lowercase;
+        }
+
+        .post-result-header__utility {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.25rem;
+            padding: 0 0.8rem;
+            border-radius: 999px;
+            border: 1px solid rgba(203, 213, 225, 0.62);
+            background: rgba(255, 255, 255, 0.58);
+            color: #617185;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: default;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                0 6px 18px rgba(15, 23, 42, 0.05);
+        }
+
+        .post-result-card {
+            position: relative;
+            overflow: hidden;
+            padding: 20px 20px 18px;
+            border-radius: 22px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(251, 250, 247, 0.92) 18%, rgba(249, 248, 244, 0.96) 100%);
+            border: 1px solid var(--panel-border);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+                0 16px 42px rgba(30, 41, 59, 0.065);
+        }
+
+        .post-result-card::before {
+            content: "";
+            position: absolute;
+            left: 18px;
+            right: 18px;
+            top: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9), transparent);
+        }
+
+        .post-result-back-link {
+            display: inline-flex;
+            align-items: center;
+            min-height: 2.1rem;
+            margin: 0 0 6px;
+            padding-right: 0.2rem;
+            color: #637081;
+            font-size: 0.88rem;
+            font-weight: 500;
+            text-decoration: none;
+        }
+
+        .post-result-back-link:hover,
+        .post-result-back-link:focus-visible {
+            color: #243041;
+            text-decoration: underline;
+            text-decoration-color: rgba(36, 48, 65, 0.38);
+            text-underline-offset: 0.16em;
+            outline: none;
+        }
+
+        .post-result-title {
+            margin: 0 0 10px;
+            font-size: clamp(1.95rem, 3.8vw, 2.4rem);
+            line-height: 1.06;
+            letter-spacing: -0.04em;
+            color: #020617;
+            font-weight: 600;
+        }
+
+        .post-result-subcopy,
+        .post-result-context,
+        .post-result-note,
+        .post-result-helper,
+        .post-result-recovery-copy,
+        .post-result-disclosure-copy {
+            margin: 0;
+            color: #556273;
+            font-size: 0.94rem;
+            line-height: 1.5;
+        }
+
+        .post-result-context {
+            margin-top: 8px;
+        }
+
+        .post-result-context strong {
+            color: #243041;
+            font-weight: 600;
+        }
+
+        .post-result-stack {
+            display: grid;
+            gap: 14px;
+            margin-top: 18px;
+        }
+
+        .post-result-stage-card,
+        .post-result-panel,
+        .post-result-preview-card,
+        .post-result-recovery-card {
+            border-radius: 18px;
+            border: 1px solid var(--soft-border);
+            background: var(--soft-bg);
+        }
+
+        .post-result-stage-card,
+        .post-result-panel,
+        .post-result-recovery-card {
+            padding: 14px;
+        }
+
+        .post-result-stage-title,
+        .post-result-panel-title,
+        .post-result-preview-title,
+        .post-result-recovery-title {
+            margin: 0 0 6px;
+            font-size: 1rem;
+            line-height: 1.3;
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        .post-result-stage-line {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-top: 14px;
+            color: #667487;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .post-result-stage-line__item {
+            color: #7b8797;
+        }
+
+        .post-result-stage-line__item--complete,
+        .post-result-stage-line__item--active {
+            color: #243041;
+        }
+
+        .post-result-stage-line__separator {
+            color: #9aa6b7;
+        }
+
+        .post-result-note {
+            margin-top: 14px;
+        }
+
+        .post-result-preview-card {
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.82);
+            border: 1px solid var(--card-border);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.86),
+                0 10px 24px rgba(15, 23, 42, 0.03);
+        }
+
+        .post-result-preview-copy {
+            margin: 0;
+            white-space: pre-wrap;
+            color: #182233;
+            line-height: 1.65;
+            overflow-wrap: anywhere;
+        }
+
+        .post-result-preview-copy [data-preview-body] {
+            white-space: pre-wrap;
+        }
+
+        .post-result-preview-actions {
+            margin-top: 16px;
+        }
+
+        .post-result-primary-button,
+        .post-result-retry-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            min-height: 48px;
+            border: 0;
+            border-radius: 16px;
+            background: var(--brand);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 14px 30px rgba(32, 36, 58, 0.15);
+        }
+
+        .post-result-primary-button:hover,
+        .post-result-retry-button:hover {
+            background: #252a44;
+        }
+
+        .post-result-copy-hint {
+            margin-top: 8px;
+        }
+
+        .post-result-panel {
+            background: rgba(249, 247, 242, 0.76);
+        }
+
+        .post-result-option-grid {
+            display: grid;
+            gap: 14px;
+            margin-top: 12px;
+        }
+
+        .post-result-option-group-title {
+            margin: 0 0 4px;
+            font-size: 0.94rem;
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        .post-result-option-group-hint {
+            margin: 0 0 8px;
+            color: #6b7280;
+            font-size: 0.88rem;
+            line-height: 1.45;
+        }
+
+        .post-result-option-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .post-result-option {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(211, 205, 195, 0.88);
+            background: rgba(255, 255, 255, 0.72);
+            cursor: pointer;
+        }
+
+        .post-result-option:hover,
+        .post-result-option:focus-within {
+            border-color: var(--accent-border);
+            background: rgba(255, 255, 255, 0.84);
+        }
+
+        .post-result-option input {
+            margin-top: 2px;
+        }
+
+        .post-result-option__text {
+            color: #243041;
+            font-size: 0.92rem;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+
+        .post-result-option input:checked + .post-result-option__text {
+            font-weight: 600;
+        }
+
+        .post-result-disclosure {
+            margin-top: 4px;
+            border-radius: 14px;
+            border: 1px solid rgba(214, 209, 200, 0.86);
+            background: rgba(255, 255, 255, 0.62);
+            overflow: hidden;
+        }
+
+        .post-result-disclosure summary {
+            cursor: pointer;
+            list-style: none;
+            padding: 12px 14px;
+            font-size: 0.94rem;
+            font-weight: 600;
+            color: #243041;
+        }
+
+        .post-result-disclosure summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .post-result-disclosure-body {
+            padding: 0 14px 14px;
+            border-top: 1px solid rgba(214, 209, 200, 0.7);
+        }
+
+        .post-result-research-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .post-result-research-item {
+            padding: 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(219, 224, 232, 0.92);
+            background: rgba(255, 255, 255, 0.88);
+        }
+
+        .post-result-research-item-title {
+            margin: 0;
+            font-size: 0.95rem;
+            line-height: 1.35;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .post-result-research-item-title a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .post-result-research-item-title a:hover,
+        .post-result-research-item-title a:focus-visible {
+            text-decoration: underline;
+        }
+
+        .post-result-research-item-summary,
+        .post-result-research-item-points {
+            margin: 8px 0 0;
+            color: #5d697a;
+            font-size: 0.89rem;
+            line-height: 1.5;
+        }
+
+        .post-result-research-item-points {
+            padding-left: 18px;
+        }
+
+        .post-result-recovery-card {
+            background: rgba(255, 252, 247, 0.9);
+        }
+
+        .post-result-recovery-actions {
+            display: grid;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .post-result-secondary-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            border-radius: 14px;
+            border: 1px solid rgba(208, 214, 224, 0.9);
+            background: rgba(255, 255, 255, 0.72);
+            color: #334152;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .post-result-secondary-link:hover,
+        .post-result-secondary-link:focus-visible {
+            background: rgba(255, 255, 255, 0.9);
+            text-decoration: none;
+            outline: none;
+        }
+
+        .post-result-inline-status {
+            margin-top: 10px;
+            color: #5f6d7f;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        @media (min-width: 761px) {
+            .post-result-page {
+                padding: 30px 24px 68px;
+            }
+
+            .post-result-card {
+                padding: 42px 44px 34px;
+                border-radius: 26px;
+            }
+
+            .post-result-option-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 760px) {
+            .post-result-page {
+                padding: 18px 12px 36px;
+            }
+
+            .post-result-shell {
+                max-width: 430px;
+                gap: 16px;
+            }
+
+            .post-result-card {
+                padding: 15px 14px 14px;
+                border-radius: 20px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .post-result-page {
+                padding: 14px 10px 32px;
+            }
+
+            .post-result-card {
+                padding: 14px 13px 13px;
+                border-radius: 18px;
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                    0 10px 22px rgba(30, 41, 59, 0.045);
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="post-result-page" data-post-result-page data-page-state="{{ post_result_state }}">
+        <div class="post-result-shell">
+            <header class="post-result-header">
+                <div class="post-result-header__brand">
+                    <svg class="post-result-header__logo" viewBox="0 0 72 72" aria-hidden="true">
+                        <defs>
+                            <linearGradient id="postResultFrontPage" x1="13" y1="6" x2="46" y2="57" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#121A31"></stop>
+                                <stop offset="1" stop-color="#20243A"></stop>
+                            </linearGradient>
+                            <linearGradient id="postResultBackPageA" x1="38" y1="10" x2="61" y2="58" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#DADDE4"></stop>
+                                <stop offset="1" stop-color="#BFC2CA"></stop>
+                            </linearGradient>
+                            <linearGradient id="postResultBackPageB" x1="30" y1="8" x2="55" y2="61" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#F4F1EA"></stop>
+                                <stop offset="1" stop-color="#D8D5CC"></stop>
+                            </linearGradient>
+                            <linearGradient id="postResultFold" x1="25" y1="46" x2="45" y2="63" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#FFFFFF"></stop>
+                                <stop offset="0.55" stop-color="#EEEAE1"></stop>
+                                <stop offset="1" stop-color="#C9C5BC"></stop>
+                            </linearGradient>
+                        </defs>
+                        <path d="M36 12.5 57 8.4c1.6-.3 3 1 3 2.6v47.7c0 1.4-1 2.7-2.4 3L36 66V12.5Z" fill="url(#postResultBackPageA)"></path>
+                        <path d="M28.5 9.8 51.5 5.2c1.7-.3 3.2 1 3.2 2.7v48.6c0 1.5-1.1 2.8-2.6 3.1L28.5 64V9.8Z" fill="url(#postResultBackPageB)"></path>
+                        <path d="M12 7.6 43.5 1.8c1.4-.3 2.7.8 2.7 2.3v39.2c0 2.3-.9 4.6-2.5 6.3L30.6 64H12V7.6Z" fill="url(#postResultFrontPage)"></path>
+                        <path d="M30.6 64c.9-8.5 5.9-13.8 15.1-16L30.6 64Z" fill="url(#postResultFold)"></path>
+                        <path d="M13.2 63.1h16.4c1-7.5 5.7-12.3 14.2-14.4" fill="none" stroke="#F9F5EC" stroke-width="1.5" opacity="0.9"></path>
+                        <path d="M20 18.5h17" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.94"></path>
+                        <path d="M20 27.5h15.5" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.84"></path>
+                        <path d="M20 36.5h17.5" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" opacity="0.76"></path>
+                    </svg>
+                    <div>
+                        <div class="post-result-header__title">PostFlow</div>
+                        <div class="post-result-header__subtitle">from idea to final post</div>
+                    </div>
+                </div>
+                <button type="button" class="post-result-header__utility" aria-disabled="true" title="Login is not available yet">Log in</button>
+            </header>
+
+            <section class="post-result-card" data-testid="post-result-card">
+                <a href="{{ back_to_direction_url }}" class="post-result-back-link" data-testid="post-result-back-link">&larr; Back to direction</a>
+                <h1 class="post-result-title" data-testid="post-result-title">{{ post_result_heading }}</h1>
+                <p class="post-result-subcopy">{{ post_result_subcopy }}</p>
+                <p class="post-result-context"><strong>Post idea:</strong> {{ topic.name }}</p>
+
+                {% if post_result_state == "loading" %}
+                    <div class="post-result-stack">
+                        <section class="post-result-stage-card" data-testid="post-result-stage-card">
+                            <h2 class="post-result-stage-title">{{ current_stage_title }}</h2>
+                            <p class="post-result-helper">{{ current_stage_copy }}</p>
+                            <div class="post-result-stage-line" aria-label="Post creation stages">
+                                {% for item in stage_line_items %}
+                                    <span class="post-result-stage-line__item post-result-stage-line__item--{{ item.state }}">{{ item.label }}</span>
+                                    {% if not forloop.last %}
+                                        <span class="post-result-stage-line__separator" aria-hidden="true">&rarr;</span>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            <p class="post-result-note">Usually takes about 2 minutes. Keep this page open - your post will appear here.</p>
+                        </section>
+                    </div>
+
+                    {% if can_auto_start %}
+                        <form method="post" action="{{ start_generation_url }}" data-post-start-form class="sr-only">
+                            {% csrf_token %}
+                        </form>
+                        <p class="post-result-inline-status" data-post-start-status>Starting now...</p>
+                    {% endif %}
+                {% elif post_result_state == "ready" %}
+                    <div class="post-result-stack">
+                        <section class="post-result-preview-card" data-testid="post-result-final-post-card">
+                            <h2 class="post-result-preview-title">Final post</h2>
+                            <p class="post-result-preview-copy" data-post-preview>
+<span data-preview-opening>{{ selected_opening }}</span>{% if selected_opening and final_post_text %}<br><br>{% endif %}<span data-preview-body>{{ final_post_text }}</span>{% if final_post_text and selected_closing %}<br><br>{% endif %}<span data-preview-closing>{{ selected_closing }}</span>{% if hashtags_text %}<br><br><span data-preview-hashtags>{{ hashtags_text }}</span>{% endif %}
+                            </p>
+                            {% if show_copy_button %}
+                                <div class="post-result-preview-actions">
+                                    <button type="button" class="post-result-primary-button" data-copy-full-post data-testid="copy-full-post-button">Copy full post</button>
+                                    <p class="post-result-copy-hint post-result-helper">Copy includes the selected opening, post body, closing, and hashtags.</p>
+                                </div>
+                            {% endif %}
+                        </section>
+
+                        {% if has_opening_options or has_closing_options %}
+                            <section class="post-result-panel" data-testid="post-result-options-panel">
+                                <h2 class="post-result-panel-title">Choose opening and closing</h2>
+                                <p class="post-result-helper">Choose how the post starts and ends. The final post updates automatically.</p>
+                                <div class="post-result-option-grid">
+                                    {% if has_opening_options %}
+                                        <section>
+                                            <h3 class="post-result-option-group-title">Opening</h3>
+                                            <p class="post-result-option-group-hint">Choose how the post starts</p>
+                                            <div class="post-result-option-list" data-opening-options>
+                                                {% for option in opening_options %}
+                                                    <label class="post-result-option">
+                                                        <input
+                                                            type="radio"
+                                                            name="opening_option"
+                                                            value="{{ option }}"
+                                                            {% if forloop.first %}checked{% endif %}
+                                                            data-opening-option
+                                                        >
+                                                        <span class="post-result-option__text">{{ option }}</span>
+                                                    </label>
+                                                {% endfor %}
+                                            </div>
+                                        </section>
+                                    {% endif %}
+
+                                    {% if has_closing_options %}
+                                        <section>
+                                            <h3 class="post-result-option-group-title">Closing</h3>
+                                            <p class="post-result-option-group-hint">Choose how the post ends</p>
+                                            <div class="post-result-option-list" data-closing-options>
+                                                {% for option in closing_options %}
+                                                    <label class="post-result-option">
+                                                        <input
+                                                            type="radio"
+                                                            name="closing_option"
+                                                            value="{{ option }}"
+                                                            {% if forloop.first %}checked{% endif %}
+                                                            data-closing-option
+                                                        >
+                                                        <span class="post-result-option__text">{{ option }}</span>
+                                                    </label>
+                                                {% endfor %}
+                                            </div>
+                                        </section>
+                                    {% endif %}
+                                </div>
+                            </section>
+                        {% endif %}
+
+                        <details class="post-result-disclosure" data-testid="post-result-research-disclosure">
+                            <summary>View research behind this post</summary>
+                            <div class="post-result-disclosure-body">
+                                <p class="post-result-disclosure-copy">See the sources and summaries that shaped this post.</p>
+                                {% if has_research_items %}
+                                    <div class="post-result-research-list">
+                                        {% for item in research_items %}
+                                            <article class="post-result-research-item">
+                                                <h3 class="post-result-research-item-title">
+                                                    {% if item.url %}
+                                                        <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+                                                    {% else %}
+                                                        {{ item.title }}
+                                                    {% endif %}
+                                                </h3>
+                                                {% if item.summary %}
+                                                    <p class="post-result-research-item-summary">{{ item.summary }}</p>
+                                                {% endif %}
+                                                {% if item.key_points %}
+                                                    <ul class="post-result-research-item-points">
+                                                        {% for point in item.key_points %}
+                                                            <li>{{ point }}</li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                {% endif %}
+                                            </article>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <p class="post-result-disclosure-copy">Research details will appear here when they are available.</p>
+                                {% endif %}
+                            </div>
+                        </details>
+                    </div>
+                {% elif post_result_state == "needs_sources" %}
+                    <div class="post-result-stack">
+                        <section class="post-result-recovery-card" data-testid="post-result-needs-sources-card">
+                            <h2 class="post-result-recovery-title">Review sources first, then create the post again.</h2>
+                            <p class="post-result-recovery-copy">{{ post_result_subcopy }}</p>
+                            <div class="post-result-recovery-actions">
+                                <a href="{{ review_sources_url }}" class="post-result-retry-button" data-testid="post-result-review-sources-button">Review sources first</a>
+                                <a href="{{ back_to_direction_url }}" class="post-result-secondary-link" data-testid="post-result-back-to-direction-link">Back to direction</a>
+                            </div>
+                        </section>
+                    </div>
+                {% else %}
+                    <div class="post-result-stack">
+                        <section class="post-result-recovery-card" data-testid="post-result-failed-card">
+                            <h2 class="post-result-recovery-title">Try again or adjust the direction</h2>
+                            <p class="post-result-recovery-copy">You can retry with the same settings, or go back and change the focus areas before creating the post again.</p>
+                            {% if post_result_detail %}
+                                <p class="post-result-inline-status">{{ post_result_detail }}</p>
+                            {% endif %}
+                            <div class="post-result-recovery-actions">
+                                <form method="post" action="{{ retry_post_url }}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="post-result-retry-button" data-testid="post-result-retry-button">Try again</button>
+                                </form>
+                                <a href="{{ back_to_direction_url }}" class="post-result-secondary-link" data-testid="post-result-back-to-direction-link">Back to direction</a>
+                            </div>
+                        </section>
+                    </div>
+                {% endif %}
+            </section>
+        </div>
+    </main>
+    <script>
+(() => {
+    const root = document.querySelector("[data-post-result-page]");
+    if (!root) {
+        return;
+    }
+
+    const pageState = root.getAttribute("data-page-state") || "";
+    const previewOpening = root.querySelector("[data-preview-opening]");
+    const previewBody = root.querySelector("[data-preview-body]");
+    const previewClosing = root.querySelector("[data-preview-closing]");
+    const previewHashtags = root.querySelector("[data-preview-hashtags]");
+    const copyButton = root.querySelector("[data-copy-full-post]");
+    const openingInputs = Array.from(root.querySelectorAll("[data-opening-option]"));
+    const closingInputs = Array.from(root.querySelectorAll("[data-closing-option]"));
+
+    function getCheckedValue(inputs) {
+        const checked = inputs.find((input) => input.checked);
+        return checked ? checked.value.trim() : "";
+    }
+
+    function assemblePostText() {
+        const parts = [
+            getCheckedValue(openingInputs),
+            previewBody ? previewBody.textContent.trim() : "",
+            getCheckedValue(closingInputs),
+            previewHashtags ? previewHashtags.textContent.trim() : "",
+        ].filter(Boolean);
+        return parts.join("\n\n");
+    }
+
+    function updatePreview() {
+        if (previewOpening) {
+            previewOpening.textContent = getCheckedValue(openingInputs);
+        }
+        if (previewClosing) {
+            previewClosing.textContent = getCheckedValue(closingInputs);
+        }
+    }
+
+    async function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+
+        const fallback = document.createElement("textarea");
+        fallback.value = text;
+        fallback.setAttribute("readonly", "readonly");
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        fallback.style.pointerEvents = "none";
+        document.body.appendChild(fallback);
+        fallback.focus();
+        fallback.select();
+        document.execCommand("copy");
+        document.body.removeChild(fallback);
+    }
+
+    for (const input of [...openingInputs, ...closingInputs]) {
+        input.addEventListener("change", updatePreview);
+    }
+
+    if (copyButton) {
+        const defaultLabel = copyButton.textContent;
+        copyButton.addEventListener("click", async () => {
+            const assembled = assemblePostText();
+            if (!assembled) {
+                return;
+            }
+
+            try {
+                await copyText(assembled);
+                copyButton.textContent = "Copied";
+            } catch (error) {
+                copyButton.textContent = "Copy failed";
+            }
+
+            window.setTimeout(() => {
+                copyButton.textContent = defaultLabel;
+            }, 1800);
+        });
+    }
+
+    updatePreview();
+
+    if (pageState !== "loading") {
+        return;
+    }
+
+    const startForm = root.querySelector("[data-post-start-form]");
+    const startStatus = root.querySelector("[data-post-start-status]");
+    if (!startForm) {
+        return;
+    }
+
+    (async () => {
+        try {
+            const response = await fetch(startForm.action, {
+                method: "POST",
+                body: new FormData(startForm),
+                credentials: "same-origin",
+            });
+            if (!response.ok) {
+                throw new Error("start failed");
+            }
+            if (startStatus) {
+                startStatus.textContent = "Refreshing your post...";
+            }
+            window.location.reload();
+        } catch (error) {
+            if (startStatus) {
+                startStatus.textContent = "Refresh the page to check again.";
+            }
+        }
+    })();
+})();
+    </script>
+</body>
+</html>

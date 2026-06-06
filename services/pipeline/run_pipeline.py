@@ -212,6 +212,10 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         run.status = DigestRun.STATUS_PACKAGING
         run.metrics = make_json_safe({
             **run.metrics,
+            "digest_stage": {
+                **run.metrics.get("digest_stage", {}),
+                "fallback_reason": digest_debug.get("fallback_reason", ""),
+            },
             "packaging_stage": {"status": "started"},
         })
         run.save(update_fields=["status", "metrics", "updated_at"])
@@ -258,6 +262,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                 "content_package_id": content_package.id,
                 "provider": packaging_debug["provider"],
                 "is_mock": packaging_debug["is_mock"],
+                "fallback_reason": packaging_debug.get("fallback_reason", ""),
                 "tokens": {
                     "prompt": packaging_debug["tokens"]["prompt_tokens"]
                     if packaging_debug.get("tokens")

@@ -134,6 +134,10 @@
             font-size: 11.5px;
             color: #718096;
         }
+        .history-item__ready-posts {
+            color: #5d697a;
+            font-weight: 600;
+        }
         .status-pill {
             display: inline-flex;
             align-items: center;
@@ -237,6 +241,7 @@
                             <div class="history-item__meta">
                                 <span class="status-pill status-pill--{{ status.tone }}" data-testid="idea-history-status-pill">{{ status.label }}</span>
                                 <span>{{ history_topic.latest_activity_display }}</span>
+                                <span class="history-item__ready-posts">{{ history_topic.ready_post_count_label }}</span>
                                 <span>{{ topic.active_source_count|default:0 }} source{% if topic.active_source_count|default:0 != 1 %}s{% endif %}</span>
                             </div>
                         </a>

@@ -14,7 +14,8 @@ from django.utils import timezone
 
 from apps.digests.forms import TOPIC_NAME_REQUIRED_MESSAGE, TopicInputForm
 from apps.digests import result_messages
-from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
+from apps.digests.models import Digest, DigestRun, SourceDiscoveryHistory, SourceDiscoveryRun
+from apps.packaging.models import ContentPackage
 from apps.digests.views import (
     _build_curated_source_seeds,
     _build_source_discovery_run_diagnostics,
@@ -341,6 +342,7 @@ class TopicRssSourceTests(TestCase):
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Continue from setup",
+            source_url="https://example.com/feed.xml",
             keywords=["initial angle"],
             excluded_keywords=[],
             focus_initialized=True,
@@ -348,7 +350,197 @@ class TopicRssSourceTests(TestCase):
 
         response = self.client.post(reverse("continue-topic-setup", args=[topic.id]))
 
-        self.assertRedirects(response, reverse("topic-workspace", args=[topic.id]), fetch_redirect_response=False)
+        run = DigestRun.objects.get(topic=topic)
+        self.assertRedirects(response, reverse("post-result", args=[run.id]), fetch_redirect_response=False)
+
+    def test_topic_setup_page_shows_generated_post_history_for_ready_posts(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Generated post history",
+            keywords=["automation angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+        older_run = self._create_ready_post_run(
+            topic,
+            post_text="Older ready post preview body with enough words to show in history.",
+            created_at=timezone.now() - timedelta(days=3),
+        )
+        newer_run = self._create_ready_post_run(
+            topic,
+            post_text="Newer ready post preview body that should appear first in the list.",
+            created_at=timezone.now() - timedelta(days=1),
+        )
+
+        response = self.client.get(reverse("topic-setup", args=[topic.id]))
+        html = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Post history")
+        self.assertContains(response, "Ready posts generated from this idea.")
+        self.assertContains(response, 'data-testid="setup-post-history"', html=False)
+        self.assertContains(response, 'data-testid="setup-post-history-item"', html=False)
+        self.assertContains(response, "Ready post")
+        self.assertContains(response, "Older ready post preview body")
+        self.assertContains(response, "Newer ready post preview body")
+        self.assertContains(response, f'href="{reverse("post-result", args=[older_run.id])}"', html=False)
+        self.assertContains(response, f'href="{reverse("post-result", args=[newer_run.id])}"', html=False)
+        self.assertLess(html.index("Newer ready post preview body"), html.index("Older ready post preview body"))
+
+    def test_topic_setup_page_does_not_show_failed_or_empty_runs_as_ready_posts(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Filtered post history",
+            keywords=["automation angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+        failed_run = DigestRun.objects.create(
+            topic=topic,
+            source_mode=topic.source_mode,
+            status=DigestRun.STATUS_FAILED,
+        )
+        empty_completed_run = DigestRun.objects.create(
+            topic=topic,
+            source_mode=topic.source_mode,
+            status=DigestRun.STATUS_COMPLETED,
+        )
+        Digest.objects.create(
+            run=empty_completed_run,
+            title=topic.name,
+            payload={"title": topic.name, "articles": []},
+        )
+        ready_run = self._create_ready_post_run(
+            topic,
+            post_text="Visible ready post from this idea.",
+        )
+
+        response = self.client.get(reverse("topic-setup", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Visible ready post from this idea.")
+        self.assertContains(response, f'href="{reverse("post-result", args=[ready_run.id])}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[failed_run.id])}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[empty_completed_run.id])}"', html=False)
+
+    def test_topic_setup_page_shows_empty_post_history_state_when_no_ready_posts_exist(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="No ready posts topic",
+            keywords=["automation angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.get(reverse("topic-setup", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Post history")
+        self.assertContains(response, "No ready posts yet. Generate a post when the idea is ready.")
+        self.assertNotContains(response, 'data-testid="setup-post-history-item"', html=False)
+
+    def test_topic_workspace_page_shows_post_history_empty_state(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Workspace no posts topic",
+            keywords=["automation angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Post history")
+        self.assertContains(response, "Ready posts generated from this idea are saved here.")
+        self.assertContains(response, "No ready posts yet. Generate a post when the idea is ready.")
+        self.assertContains(response, 'data-testid="topic-post-history-region"', html=False)
+        self.assertNotContains(response, 'data-testid="topic-post-history-item"', html=False)
+
+    def test_topic_workspace_page_shows_ready_generated_posts(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Workspace generated posts topic",
+            keywords=["automation angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+        older_run = self._create_ready_post_run(
+            topic,
+            post_text="Older workspace ready post preview body with enough text to show.",
+            created_at=timezone.now() - timedelta(days=2),
+        )
+        newer_run = self._create_ready_post_run(
+            topic,
+            post_text="Newer workspace ready post preview body that should be first.",
+            created_at=timezone.now() - timedelta(days=1),
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+        html = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Post history")
+        self.assertContains(response, "Ready posts generated from this idea are saved here.")
+        self.assertContains(response, 'data-testid="topic-post-history-item"', html=False)
+        self.assertContains(response, "Ready post")
+        self.assertContains(response, "Open post")
+        self.assertContains(response, "Older workspace ready post preview body")
+        self.assertContains(response, "Newer workspace ready post preview body")
+        self.assertContains(response, f'href="{reverse("post-result", args=[older_run.id])}"', html=False)
+        self.assertContains(response, f'href="{reverse("post-result", args=[newer_run.id])}"', html=False)
+        self.assertLess(html.index("Newer workspace ready post preview body"), html.index("Older workspace ready post preview body"))
+
+    def test_topic_workspace_page_excludes_failed_or_empty_runs_from_post_history(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Workspace filtered posts topic",
+            keywords=["automation angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+        failed_run = DigestRun.objects.create(
+            topic=topic,
+            source_mode=topic.source_mode,
+            status=DigestRun.STATUS_FAILED,
+        )
+        empty_completed_run = DigestRun.objects.create(
+            topic=topic,
+            source_mode=topic.source_mode,
+            status=DigestRun.STATUS_COMPLETED,
+        )
+        Digest.objects.create(
+            run=empty_completed_run,
+            title=topic.name,
+            payload={"title": topic.name, "articles": []},
+        )
+        ready_run = self._create_ready_post_run(
+            topic,
+            post_text="Visible workspace ready post body.",
+        )
+
+        response = self.client.get(reverse("topic-workspace", args=[topic.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Visible workspace ready post body.")
+        self.assertContains(response, f'href="{reverse("post-result", args=[ready_run.id])}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[failed_run.id])}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[empty_completed_run.id])}"', html=False)
+
+    def test_setup_create_post_without_real_sources_goes_to_post_result(self) -> None:
+        topic = Topic.objects.create(
+            user=self._get_ui_user(),
+            name="Needs real sources",
+            keywords=["initial angle"],
+            excluded_keywords=[],
+            focus_initialized=True,
+        )
+
+        response = self.client.post(reverse("continue-topic-setup", args=[topic.id]))
+
+        run = DigestRun.objects.get(topic=topic)
+        self.assertRedirects(response, reverse("post-result", args=[run.id]), fetch_redirect_response=False)
+        self.assertEqual(Topic.objects.count(), 1)
 
     def test_back_to_ideas_edit_route_prefills_existing_topic_name(self) -> None:
         topic = Topic.objects.create(
@@ -455,6 +647,7 @@ class TopicRssSourceTests(TestCase):
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="committed by create",
+            source_url="https://example.com/feed.xml",
             keywords=["angle"],
             excluded_keywords=[],
             focus_initialized=True,
@@ -462,9 +655,11 @@ class TopicRssSourceTests(TestCase):
 
         response = self.client.post(reverse("continue-topic-setup", args=[topic.id]))
 
-        self.assertRedirects(response, reverse("topic-workspace", args=[topic.id]), fetch_redirect_response=False)
+        run = DigestRun.objects.get(topic=topic)
+        self.assertRedirects(response, reverse("post-result", args=[run.id]), fetch_redirect_response=False)
         topic.refresh_from_db()
         self.assertIsNotNone(topic.committed_at)
+        self.assertEqual(Topic.objects.count(), 1)
 
         workspace_response = self.client.get(reverse("topic-list"))
         history_response = self.client.get(reverse("idea-history"))
@@ -1752,6 +1947,54 @@ class TopicRssSourceTests(TestCase):
         self.assertNotContains(response, "draft")
         self.assertNotContains(response, "find sources")
 
+    def test_idea_history_page_shows_ready_post_count_labels(self) -> None:
+        user = self._get_ui_user()
+        no_posts_topic = Topic.objects.create(
+            user=user,
+            name="No posts idea",
+            keywords=["No posts idea"],
+            excluded_keywords=[],
+            committed_at=timezone.now(),
+        )
+        one_post_topic = Topic.objects.create(
+            user=user,
+            name="One post idea",
+            keywords=["One post idea"],
+            excluded_keywords=[],
+            committed_at=timezone.now(),
+        )
+        two_posts_topic = Topic.objects.create(
+            user=user,
+            name="Two posts idea",
+            keywords=["Two posts idea"],
+            excluded_keywords=[],
+            committed_at=timezone.now(),
+        )
+
+        self._create_ready_post_run(one_post_topic, post_text="One ready post body")
+        self._create_ready_post_run(two_posts_topic, post_text="First ready post body")
+        self._create_ready_post_run(two_posts_topic, post_text="Second ready post body")
+        ignored_completed_run = DigestRun.objects.create(
+            topic=no_posts_topic,
+            source_mode=no_posts_topic.source_mode,
+            status=DigestRun.STATUS_COMPLETED,
+        )
+        Digest.objects.create(
+            run=ignored_completed_run,
+            title=no_posts_topic.name,
+            payload={"title": no_posts_topic.name, "articles": []},
+        )
+
+        response = self.client.get(reverse("idea-history"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No ready posts")
+        self.assertContains(response, "1 ready post")
+        self.assertContains(response, "2 ready posts")
+        self.assertContains(response, "No posts idea")
+        self.assertContains(response, "One post idea")
+        self.assertContains(response, "Two posts idea")
+
     def test_newly_created_topic_updates_display_order_before_commit(self) -> None:
         user = self._get_ui_user()
         older = Topic.objects.create(
@@ -1892,6 +2135,7 @@ class TopicRssSourceTests(TestCase):
             display_order=2,
             keywords=["Alpha"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         second = Topic.objects.create(
             user=user,
@@ -1899,6 +2143,7 @@ class TopicRssSourceTests(TestCase):
             display_order=1,
             keywords=["Beta"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         third = Topic.objects.create(
             user=user,
@@ -1906,6 +2151,7 @@ class TopicRssSourceTests(TestCase):
             display_order=3,
             keywords=["Gamma"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.post(reverse("delete-topic", args=[first.id]))
@@ -2045,7 +2291,7 @@ class TopicRssSourceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Back to workspace")
+        self.assertContains(response, "Back to ideas")
         self.assertContains(response, "AI agents")
         self.assertNotContains(response, '<label for="id_topic_name">Topic</label>', html=False)
         self.assertNotContains(response, '<label for="id_source_mode">Where to look</label>', html=False)
@@ -9658,6 +9904,30 @@ A safe sleeping area — along with how you lay your baby down to sleep — can 
     def _get_ui_user(self):
         user_model = Topic._meta.get_field("user").remote_field.model
         return user_model.objects.create_user(username="tester")
+
+    def _create_ready_post_run(self, topic: Topic, *, post_text: str, created_at=None) -> DigestRun:
+        run = DigestRun.objects.create(
+            topic=topic,
+            source_mode=topic.source_mode,
+            status=DigestRun.STATUS_COMPLETED,
+        )
+        if created_at is not None:
+            DigestRun.objects.filter(pk=run.pk).update(created_at=created_at)
+            run.refresh_from_db()
+        digest = Digest.objects.create(
+            run=run,
+            title=topic.name,
+            payload={"title": topic.name, "articles": [{"title": "Source", "url": "https://example.com/source"}]},
+        )
+        ContentPackage.objects.create(
+            digest=digest,
+            post_text=post_text,
+            hook_variants=["Opening line"],
+            cta_variants=["Closing line"],
+            hashtags=["#AI"],
+            validation_report={"status": "valid"},
+        )
+        return run
 
 
 from datetime import timedelta

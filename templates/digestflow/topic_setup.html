@@ -418,6 +418,100 @@
             margin: 18px 0 0;
         }
 
+        .setup-post-history {
+            margin-top: 22px;
+            padding-top: 18px;
+            border-top: 1px solid rgba(226, 232, 240, 0.82);
+        }
+
+        .setup-post-history__title {
+            margin: 0;
+            font-size: 1rem;
+            line-height: 1.3;
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        .setup-post-history__copy {
+            margin: 6px 0 0;
+            color: #586577;
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+
+        .setup-post-history__list {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .setup-post-history__item {
+            padding: 12px;
+            border-radius: 16px;
+            border: 1px solid rgba(226, 232, 240, 0.82);
+            background: rgba(255, 255, 255, 0.7);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+        }
+
+        .setup-post-history__meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            align-items: center;
+            color: #718096;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .setup-post-history__status {
+            display: inline-flex;
+            align-items: center;
+            min-height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: rgba(238, 248, 241, 0.96);
+            color: #2d7a4c;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+        }
+
+        .setup-post-history__preview {
+            margin: 8px 0 0;
+            color: #1f2937;
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
+
+        .setup-post-history__link {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 10px;
+            color: #334152;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .setup-post-history__link:hover,
+        .setup-post-history__link:focus-visible {
+            color: #1f2937;
+            text-decoration: underline;
+            text-decoration-color: rgba(31, 41, 55, 0.36);
+            outline: none;
+        }
+
+        .setup-post-history__empty {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(226, 232, 240, 0.74);
+            background: rgba(255, 255, 255, 0.56);
+            color: #5a6878;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
         .continue-button {
             width: 100%;
             min-height: 48px;
@@ -778,6 +872,30 @@
                     {% csrf_token %}
                     <button type="submit" class="continue-button" data-testid="new-topic-continue-button">Create post</button>
                 </form>
+
+                <section class="setup-post-history" data-testid="setup-post-history">
+                    <h2 class="setup-post-history__title">Post history</h2>
+                    <p class="setup-post-history__copy">Ready posts generated from this idea.</p>
+
+                    {% if ready_post_history %}
+                        <div class="setup-post-history__list">
+                            {% for ready_post in ready_post_history %}
+                                <article class="setup-post-history__item" data-testid="setup-post-history-item">
+                                    <div class="setup-post-history__meta">
+                                        <span class="setup-post-history__status">{{ ready_post.status_label }}</span>
+                                        {% if ready_post.created_display %}
+                                            <span>{{ ready_post.created_display }}</span>
+                                        {% endif %}
+                                    </div>
+                                    <p class="setup-post-history__preview">{{ ready_post.preview }}</p>
+                                    <a href="{{ ready_post.open_url }}" class="setup-post-history__link">Open post &rarr;</a>
+                                </article>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="setup-post-history__empty">No ready posts yet. Generate a post when the idea is ready.</p>
+                    {% endif %}
+                </section>
             </section>
         </div>
     </main>

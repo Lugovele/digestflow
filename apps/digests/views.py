@@ -99,6 +99,7 @@ VISIBLE_NEW_SOURCE_LIMIT = 12
 DISCOVERY_CONTEXT_PARAM = "discovery_context"
 SHOW_ALL_NEW_SUGGESTIONS_PARAM = "show_all_suggestions"
 ONBOARDING_COMPLETED_SESSION_KEY = "onboarding_completed"
+AUTOMATIC_CREATE_POST_SOURCE_TARGET = 6
 
 
 @require_GET
@@ -178,7 +179,8 @@ def topic_setup_view(request: HttpRequest, topic_id: int) -> HttpResponse:
 def continue_topic_setup_view(request: HttpRequest, topic_id: int) -> HttpResponse:
     topic = get_object_or_404(Topic, pk=topic_id)
     _mark_topic_committed(topic)
-    return redirect("topic-workspace", topic_id=topic.id)
+    run = _create_ui_digest_run(topic, source="setup_auto")
+    return redirect("post-result", run_id=run.id)
 
 
 @require_GET
@@ -305,6 +307,138 @@ def create_topic_and_run_view(request: HttpRequest) -> HttpResponse:
 
     _start_topic_run(run, topic, default_source="web_ui_form")
     return redirect("run-detail", run_id=run.id)
+
+
+@require_GET
+def post_result_view(request: HttpRequest, run_id: int) -> HttpResponse:
+    run = get_object_or_404(DigestRun.objects.select_related("topic"), pk=run_id)
+    topic = run.topic
+    digest = getattr(run, "digest", None)
+    content_package = getattr(digest, "content_package", None) if digest else None
+    provenance = _build_post_result_provenance(run, digest, content_package)
+
+    opening_options = _normalize_post_result_options(
+        content_package.hook_variants if content_package else [],
+        fallback=[content_package.primary_hook()] if content_package and content_package.primary_hook() else [],
+    )
+    closing_options = _normalize_post_result_options(
+        content_package.cta_variants if content_package else [],
+        fallback=[content_package.primary_cta()] if content_package and content_package.primary_cta() else [],
+    )
+    final_post_text = str(getattr(content_package, "post_text", "") or "").strip()
+    hashtags_text = str(content_package.hashtags_text() if content_package else "").strip()
+    research_items = _build_post_result_research_items(digest)
+    state = _resolve_post_result_state(run, content_package, provenance)
+    stage = _build_post_result_stage(run)
+
+    opening_default = opening_options[0] if opening_options else ""
+    closing_default = closing_options[0] if closing_options else ""
+    assembled_post_default = _assemble_post_result_text(
+        opening_text=opening_default,
+        body_text=final_post_text,
+        closing_text=closing_default,
+        hashtags_text=hashtags_text,
+    )
+
+    return render(
+        request,
+        "digestflow/post_result.html",
+        {
+            "topic": topic,
+            "post_result_state": state,
+            "post_result_heading": _build_post_result_heading(state),
+            "post_result_subcopy": _build_post_result_subcopy(state),
+            "post_result_detail": _build_post_result_detail(run, state),
+            "stage_line_items": _build_post_result_stage_line_items(run),
+            "current_stage_title": stage["title"],
+            "current_stage_copy": stage["copy"],
+            "start_generation_url": reverse("start-post-result", args=[run.id]),
+            "retry_post_url": reverse("retry-post-result", args=[run.id]),
+            "back_to_direction_url": reverse("topic-setup", args=[topic.id]),
+            "review_sources_url": reverse("topic-workspace", args=[topic.id]),
+            "opening_options": opening_options,
+            "closing_options": closing_options,
+            "selected_opening": opening_default,
+            "selected_closing": closing_default,
+            "final_post_text": final_post_text,
+            "hashtags_text": hashtags_text,
+            "assembled_post_default": assembled_post_default,
+            "research_items": research_items,
+            "has_research_items": bool(research_items),
+            "has_opening_options": bool(opening_options),
+            "has_closing_options": bool(closing_options),
+            "can_auto_start": run.status == DigestRun.STATUS_PENDING,
+            "show_copy_button": state == "ready" and bool(final_post_text),
+        },
+    )
+
+
+@require_POST
+def start_post_result_view(request: HttpRequest, run_id: int) -> JsonResponse:
+    run = get_object_or_404(DigestRun.objects.select_related("topic"), pk=run_id)
+    topic = run.topic
+
+    if run.status == DigestRun.STATUS_PENDING:
+        discovery_outcome = _run_automatic_create_post_discovery(topic)
+        if discovery_outcome["usable_source_count"] < AUTOMATIC_CREATE_POST_SOURCE_TARGET:
+            run.input_snapshot = {
+                **(run.input_snapshot if isinstance(run.input_snapshot, dict) else {}),
+                "needs_sources": True,
+                "automatic_source_discovery_attempted": discovery_outcome["attempted"],
+                "usable_source_count": discovery_outcome["usable_source_count"],
+                "usable_source_target": AUTOMATIC_CREATE_POST_SOURCE_TARGET,
+            }
+            run.save(update_fields=["input_snapshot", "updated_at"])
+            return JsonResponse(
+                {
+                    "status": run.status,
+                    "redirect_url": reverse("post-result", args=[run.id]),
+                    "needs_sources": True,
+                }
+            )
+
+        claimed = DigestRun.objects.filter(pk=run.id, status=DigestRun.STATUS_PENDING).update(
+            status=DigestRun.STATUS_COLLECTING,
+            started_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        if claimed:
+            run.refresh_from_db()
+            run.input_snapshot = {
+                **(run.input_snapshot if isinstance(run.input_snapshot, dict) else {}),
+                "needs_sources": False,
+                "automatic_source_discovery_attempted": discovery_outcome["attempted"],
+                "usable_source_count": discovery_outcome["usable_source_count"],
+                "usable_source_target": AUTOMATIC_CREATE_POST_SOURCE_TARGET,
+            }
+            run.save(update_fields=["input_snapshot", "updated_at"])
+            _start_topic_run(run, topic, default_source="setup_auto", allow_demo_fallback=False)
+            run.refresh_from_db()
+
+    return JsonResponse(
+        {
+            "status": run.status,
+            "redirect_url": reverse("post-result", args=[run.id]),
+        }
+    )
+
+
+@require_POST
+def retry_post_result_view(request: HttpRequest, run_id: int) -> HttpResponse:
+    existing_run = get_object_or_404(DigestRun.objects.select_related("topic"), pk=run_id)
+    topic = existing_run.topic
+    _mark_topic_committed(topic)
+    if _count_usable_real_sources(topic) < AUTOMATIC_CREATE_POST_SOURCE_TARGET:
+        existing_run.input_snapshot = {
+            **(existing_run.input_snapshot if isinstance(existing_run.input_snapshot, dict) else {}),
+            "needs_sources": True,
+            "usable_source_count": _count_usable_real_sources(topic),
+            "usable_source_target": AUTOMATIC_CREATE_POST_SOURCE_TARGET,
+        }
+        existing_run.save(update_fields=["input_snapshot", "updated_at"])
+        return redirect("post-result", run_id=existing_run.id)
+    retry_run = _create_ui_digest_run(topic, source="post_result_retry")
+    return redirect("post-result", run_id=retry_run.id)
 
 
 @require_POST
@@ -458,6 +592,212 @@ def run_with_selected_sources_view(request: HttpRequest, topic_id: int) -> HttpR
     )
     _start_selected_source_run(run, topic, selected_candidates, default_source="selected_sources_web_ui")
     return redirect("run-detail", run_id=run.id)
+
+
+def _resolve_post_result_state(
+    run: DigestRun,
+    content_package,
+    provenance: dict[str, object] | None = None,
+) -> str:
+    input_snapshot = run.input_snapshot if isinstance(run.input_snapshot, dict) else {}
+    if input_snapshot.get("needs_sources"):
+        return "needs_sources"
+    if run.status == DigestRun.STATUS_COMPLETED and content_package and str(getattr(content_package, "post_text", "") or "").strip():
+        if provenance and not provenance.get("is_safe", True):
+            logger.info(
+                "[DigestRun %s] post result downgraded to source recovery due to provenance: %s",
+                run.id,
+                ", ".join(provenance.get("reasons", [])),
+            )
+            return "needs_sources"
+        return "ready"
+    if run.status in {
+        DigestRun.STATUS_FAILED,
+        DigestRun.STATUS_INSUFFICIENT_QUALITY,
+        DigestRun.STATUS_PARTIAL_FAILED,
+    }:
+        return "failed"
+    return "loading"
+
+
+def _build_post_result_heading(state: str) -> str:
+    if state == "ready":
+        return "Your post is ready"
+    if state == "needs_sources":
+        return "We need real sources first"
+    if state == "failed":
+        return "We couldn't create the post"
+    return "Creating your post"
+
+
+def _build_post_result_subcopy(state: str) -> str:
+    if state == "ready":
+        return "Pick the opening and closing you like. The preview updates automatically."
+    if state == "needs_sources":
+        return "PostFlow could not find enough reliable sources automatically."
+    if state == "failed":
+        return "Something interrupted the generation process."
+    return "PostFlow is preparing your final version."
+
+
+def _build_post_result_detail(run: DigestRun, state: str) -> str:
+    if state == "needs_sources":
+        return "Review sources first, then create the post again."
+    if state != "failed":
+        return ""
+    if run.status == DigestRun.STATUS_INSUFFICIENT_QUALITY:
+        return "There wasn't enough strong material to create the post this time."
+    return ""
+
+
+def _build_post_result_stage(run: DigestRun) -> dict[str, str]:
+    if run.status in {DigestRun.STATUS_PENDING, DigestRun.STATUS_COLLECTING}:
+        return {
+            "title": "Researching sources",
+            "copy": "PostFlow is collecting useful material for your post.",
+        }
+    if run.status == DigestRun.STATUS_PROCESSING:
+        return {
+            "title": "Selecting insights",
+            "copy": "PostFlow is picking the most useful ideas for your post.",
+        }
+    if run.status in {DigestRun.STATUS_GENERATING_DIGEST, DigestRun.STATUS_PACKAGING}:
+        return {
+            "title": "Writing your post",
+            "copy": "PostFlow is turning selected insights into a ready-to-use post.",
+        }
+    if run.status == DigestRun.STATUS_COMPLETED:
+        return {
+            "title": "Your post is ready",
+            "copy": "Your final post is ready to review and copy.",
+        }
+    return {
+        "title": "Checking your post",
+        "copy": "PostFlow is preparing the next step.",
+    }
+
+
+def _build_post_result_stage_line_items(run: DigestRun) -> list[dict[str, str]]:
+    current_step = "research"
+    if run.status == DigestRun.STATUS_PROCESSING:
+        current_step = "select"
+    elif run.status in {DigestRun.STATUS_GENERATING_DIGEST, DigestRun.STATUS_PACKAGING}:
+        current_step = "write"
+    elif run.status == DigestRun.STATUS_COMPLETED:
+        current_step = "ready"
+
+    ordered_steps = [
+        ("research", "Research"),
+        ("select", "Select"),
+        ("write", "Write"),
+        ("ready", "Ready"),
+    ]
+    current_index = next((index for index, (key, _) in enumerate(ordered_steps) if key == current_step), 0)
+    items: list[dict[str, str]] = []
+    for index, (key, label) in enumerate(ordered_steps):
+        state = "upcoming"
+        if index < current_index:
+            state = "complete"
+        elif index == current_index:
+            state = "active"
+        items.append({"key": key, "label": label, "state": state})
+    return items
+
+
+def _normalize_post_result_options(values, *, fallback: list[str] | None = None) -> list[str]:
+    normalized: list[str] = []
+    for value in list(values or []) + list(fallback or []):
+        text = str(value or "").strip()
+        if not text or text in normalized:
+            continue
+        normalized.append(text)
+    return normalized
+
+
+def _assemble_post_result_text(*, opening_text: str, body_text: str, closing_text: str, hashtags_text: str) -> str:
+    lines = [part for part in [opening_text.strip(), body_text.strip(), closing_text.strip(), hashtags_text.strip()] if part]
+    return "\n\n".join(lines)
+
+
+def _build_post_result_research_items(digest) -> list[dict[str, object]]:
+    if digest is None:
+        return []
+
+    items: list[dict[str, object]] = []
+    for article in digest.get_articles():
+        key_points = article.get("key_points") if isinstance(article.get("key_points"), list) else []
+        items.append(
+            {
+                "title": str(article.get("title") or "").strip() or "Research source",
+                "summary": str(article.get("summary") or "").strip(),
+                "url": str(article.get("url") or "").strip(),
+                "key_points": [str(point).strip() for point in key_points if str(point).strip()],
+            }
+        )
+    return items
+
+
+def _build_post_result_provenance(run: DigestRun, digest, content_package) -> dict[str, object]:
+    input_snapshot = run.input_snapshot if isinstance(run.input_snapshot, dict) else {}
+    metrics = run.metrics if isinstance(run.metrics, dict) else {}
+    digest_stage = metrics.get("digest_stage") if isinstance(metrics.get("digest_stage"), dict) else {}
+    packaging_stage = metrics.get("packaging_stage") if isinstance(metrics.get("packaging_stage"), dict) else {}
+
+    reasons: list[str] = []
+    if input_snapshot.get("used_demo_source"):
+        reasons.append("demo_source")
+    if digest_stage.get("is_mock"):
+        reasons.append("digest_mock")
+    if packaging_stage.get("is_mock"):
+        reasons.append("packaging_mock")
+    if str(packaging_stage.get("fallback_reason") or "").strip():
+        reasons.append("packaging_fallback")
+    if _content_package_uses_safe_fallback(digest, content_package):
+        reasons.append("safe_fallback_package")
+
+    return {
+        "is_safe": not reasons,
+        "reasons": reasons,
+    }
+
+
+def _content_package_uses_safe_fallback(digest, content_package) -> bool:
+    if digest is None or content_package is None:
+        return False
+    expected_text = f"{digest.title}\n\nNo post draft articles were available."
+    return str(getattr(content_package, "post_text", "") or "").strip() == expected_text.strip()
+
+
+def _run_automatic_create_post_discovery(topic: Topic) -> dict[str, int | bool]:
+    usable_source_count = _count_usable_real_sources(topic)
+    if usable_source_count >= AUTOMATIC_CREATE_POST_SOURCE_TARGET:
+        return {
+            "attempted": False,
+            "usable_source_count": usable_source_count,
+        }
+
+    provider_resolution = resolve_configured_search_provider(topic)
+    provider_diagnostics = provider_resolution.diagnostics
+    provider_status = str(provider_diagnostics.get("search_provider_status") or "").strip().lower()
+    provider_name = str(provider_diagnostics.get("search_provider_name") or "").strip().lower()
+
+    attempted = False
+    if (
+        provider_status == "ready"
+        and provider_name == "serpapi"
+        and _can_find_research_sources(topic)
+    ):
+        attempted = True
+        _run_provider_discovery_cycle(
+            topic=topic,
+            provider_name=provider_name,
+            provider_diagnostics=dict(provider_diagnostics),
+        )
+
+    return {
+        "attempted": attempted,
+        "usable_source_count": _count_usable_real_sources(topic),
+    }
 
 
 @require_POST
@@ -1607,6 +1947,11 @@ def _build_topic_list_context(
             discovery_context_active=True,
             show_all_new_suggestions=True,
         ) if discovered_topic is not None else "",
+        "ready_post_history": (
+            _build_ready_post_history_for_topics([discovered_topic.id]).get(discovered_topic.id, [])
+            if discovered_topic is not None
+            else []
+        ),
         "research_history_url": (
             reverse("topic-research-history", args=[discovered_topic.id])
             if discovered_topic is not None and discovered_topic.uses_source_discovery
@@ -1700,6 +2045,66 @@ def _format_recent_run_time(created_at):
     return f"{local_created_at.strftime('%b')} {local_created_at.day}"
 
 
+def _build_ready_post_history_for_topics(topic_ids: list[int]) -> dict[int, list[dict]]:
+    normalized_topic_ids = [int(topic_id) for topic_id in topic_ids if topic_id]
+    if not normalized_topic_ids:
+        return {}
+
+    ready_post_history_by_topic_id: dict[int, list[dict]] = {topic_id: [] for topic_id in normalized_topic_ids}
+    candidate_runs = (
+        DigestRun.objects.filter(topic_id__in=normalized_topic_ids, status=DigestRun.STATUS_COMPLETED)
+        .select_related("topic", "digest__content_package")
+        .order_by("-created_at")
+    )
+
+    for run in candidate_runs:
+        digest = getattr(run, "digest", None)
+        content_package = getattr(digest, "content_package", None) if digest else None
+        provenance = _build_post_result_provenance(run, digest, content_package)
+        if _resolve_post_result_state(run, content_package, provenance) != "ready":
+            continue
+
+        post_text = str(getattr(content_package, "post_text", "") or "").strip()
+        if not post_text:
+            continue
+
+        created_at = (
+            getattr(content_package, "created_at", None)
+            or getattr(digest, "generated_at", None)
+            or run.finished_at
+            or run.created_at
+        )
+        ready_post_history_by_topic_id.setdefault(run.topic_id, []).append(
+            {
+                "run_id": run.id,
+                "created_display": _format_recent_run_time(created_at) if created_at else "",
+                "preview": _build_ready_post_preview(post_text),
+                "status_label": "Ready post",
+                "open_url": reverse("post-result", args=[run.id]),
+            }
+        )
+
+    return ready_post_history_by_topic_id
+
+
+def _build_ready_post_preview(post_text: str, *, limit: int = 180) -> str:
+    normalized_text = " ".join(str(post_text or "").split())
+    if len(normalized_text) <= limit:
+        return normalized_text
+    truncated = normalized_text[:limit].rsplit(" ", 1)[0].strip()
+    if not truncated:
+        truncated = normalized_text[:limit].strip()
+    return f"{truncated}..."
+
+
+def _build_ready_post_count_label(count: int) -> str:
+    if count <= 0:
+        return "No ready posts"
+    if count == 1:
+        return "1 ready post"
+    return f"{count} ready posts"
+
+
 def _build_history_topics_for_user(user, *, topics: list[Topic] | None = None) -> list[dict]:
     topic_list = topics
     if topic_list is None:
@@ -1717,6 +2122,7 @@ def _build_history_topics_for_user(user, *, topics: list[Topic] | None = None) -
             topic.run_eligibility = _build_run_eligibility(topic)
             topic.legacy_source_display = _build_legacy_source_display(topic)
 
+    ready_post_history_by_topic_id = _build_ready_post_history_for_topics([topic.id for topic in topic_list])
     history_runs = list(
         DigestRun.objects.filter(topic__user=user)
         .select_related("topic")
@@ -1745,6 +2151,10 @@ def _build_history_topics_for_user(user, *, topics: list[Topic] | None = None) -
                 "latest_activity_at": latest_activity_at,
                 "latest_activity_display": latest_activity_display,
                 "status": _build_idea_history_status(latest_run),
+                "ready_post_count": len(ready_post_history_by_topic_id.get(topic.id, [])),
+                "ready_post_count_label": _build_ready_post_count_label(
+                    len(ready_post_history_by_topic_id.get(topic.id, []))
+                ),
             }
         )
 
@@ -1842,6 +2252,7 @@ def _render_topic_setup(
     focus_input_value: str = "",
 ) -> HttpResponse:
     focus_terms = _build_topic_focus_terms(topic)
+    ready_post_history = _build_ready_post_history_for_topics([topic.id]).get(topic.id, [])
     return render(
         request,
         "digestflow/topic_setup.html",
@@ -1854,6 +2265,7 @@ def _render_topic_setup(
             "review_sources_url": reverse("topic-workspace", args=[topic.id]),
             "continue_setup_url": reverse("continue-topic-setup", args=[topic.id]),
             "update_focus_url": reverse("update-topic-focus", args=[topic.id]),
+            "ready_post_history": ready_post_history,
         },
         status=status,
     )
@@ -3027,6 +3439,24 @@ def _get_mode_active_sources(topic: Topic) -> list[TopicSource]:
     return active_sources
 
 
+def _count_usable_real_sources(topic: Topic) -> int:
+    usable_sources = _get_mode_active_sources(topic)
+    normalized_urls = {
+        str(source.normalized_url or "").strip()
+        for source in usable_sources
+        if str(source.normalized_url or "").strip()
+    }
+    if str(topic.source_url or "").strip():
+        normalized_legacy_source = classify_source_url(str(topic.source_url or "").strip()).normalized_url
+        if normalized_legacy_source and normalized_legacy_source not in normalized_urls:
+            normalized_urls.add(normalized_legacy_source)
+    return len(normalized_urls)
+
+
+def _topic_has_real_generation_inputs(topic: Topic) -> bool:
+    return _count_usable_real_sources(topic) > 0
+
+
 def _build_run_eligibility(topic: Topic | None) -> dict:
     if topic is None:
         return {
@@ -3871,7 +4301,7 @@ def _create_ui_digest_run(topic: Topic, source: str, selected_source_urls: list[
     )
 
 
-def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
+def _start_topic_run(run: DigestRun, topic: Topic, default_source: str, *, allow_demo_fallback: bool = True) -> None:
     active_sources = _get_mode_active_sources(topic)
     if active_sources:
         raw_items = []
@@ -3926,12 +4356,17 @@ def _start_topic_run(run: DigestRun, topic: Topic, default_source: str) -> None:
         run_digest_pipeline(run.id, raw_items=raw_items)
         return
 
+    if not allow_demo_fallback:
+        _mark_run_failed_for_empty_selected_sources(run, [])
+        return
+
     raw_items = get_demo_articles_for_topic(topic.name)
     run.input_snapshot = {
         **run.input_snapshot,
         "source": default_source,
         "source_url": "",
         "raw_items_count": len(raw_items),
+        "used_demo_source": True,
     }
     run.save(update_fields=["input_snapshot", "updated_at"])
     run_digest_pipeline(run.id, raw_items=raw_items)

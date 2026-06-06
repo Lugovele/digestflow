@@ -716,6 +716,74 @@
             font-size: 15px;
             font-weight: 500;
         }
+        .post-history-section {
+            margin-top: 16px;
+        }
+        .post-history-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .post-history-item {
+            padding: 12px;
+            border-radius: 16px;
+            border: 1px solid rgba(226, 232, 240, 0.82);
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+        }
+        .post-history-item__meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            align-items: center;
+            color: #718096;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .post-history-item__status {
+            display: inline-flex;
+            align-items: center;
+            min-height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: #eef8f1;
+            color: #2d7a4c;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+        }
+        .post-history-item__preview {
+            margin: 8px 0 0;
+            color: #1f2937;
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
+        .post-history-item__link {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 10px;
+            color: #334152;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .post-history-item__link:hover,
+        .post-history-item__link:focus-visible {
+            color: #1f2937;
+            text-decoration: underline;
+            text-decoration-color: rgba(31, 41, 55, 0.36);
+            outline: none;
+        }
+        .post-history-empty {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(226, 232, 240, 0.74);
+            background: rgba(255, 255, 255, 0.6);
+            color: #5a6878;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
         .sr-only {
             position: absolute;
             width: 1px;
@@ -1903,6 +1971,35 @@
                     </div>
                 </section>
             {% endif %}
+
+            <section class="card workflow-card post-history-section" data-testid="topic-post-history-region">
+                <div class="workflow-section">
+                    <div class="section-header section-header--stack">
+                        <div>
+                            <h3 class="section-heading">Post history</h3>
+                            <p class="section-hint">Ready posts generated from this idea are saved here.</p>
+                        </div>
+                    </div>
+                    {% if ready_post_history %}
+                        <div class="post-history-list">
+                            {% for ready_post in ready_post_history %}
+                                <article class="post-history-item" data-testid="topic-post-history-item">
+                                    <div class="post-history-item__meta">
+                                        <span class="post-history-item__status">Ready post</span>
+                                        {% if ready_post.created_display %}
+                                            <span>{{ ready_post.created_display }}</span>
+                                        {% endif %}
+                                    </div>
+                                    <p class="post-history-item__preview">{{ ready_post.preview }}</p>
+                                    <a href="{{ ready_post.open_url }}" class="post-history-item__link">Open post &rarr;</a>
+                                </article>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="post-history-empty">No ready posts yet. Generate a post when the idea is ready.</p>
+                    {% endif %}
+                </div>
+            </section>
         {% else %}
             <div class="workspace-landing">
                 <header class="workspace-app-header" aria-label="PostFlow workspace">
