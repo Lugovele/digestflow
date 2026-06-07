@@ -766,7 +766,7 @@ class DigestPipelineHappyPathTests(TestCase):
     @patch("services.pipeline.run_pipeline.generate_digest_for_run")
     @patch("services.pipeline.run_pipeline.save_articles_for_topic")
     @patch("services.pipeline.run_pipeline.rank_source_items")
-    def test_successful_digest_records_only_selected_for_prompt_articles(
+    def test_successful_digest_records_only_articles_present_in_final_digest_payload(
         self,
         mock_rank_source_items,
         mock_save_articles_for_topic,
@@ -813,7 +813,6 @@ class DigestPipelineHappyPathTests(TestCase):
                 "title": "Digest for Used article selection",
                 "articles": [
                     {"url": "https://example.com/selected-1", "title": "Selected one", "summary": "Summary"},
-                    {"url": "https://example.com/selected-2", "title": "Selected two", "summary": "Summary"},
                 ],
             },
             quality_score=0.8,
@@ -833,10 +832,10 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(result.id, run.id)
         self.assertEqual(run.status, DigestRun.STATUS_COMPLETED)
         used_articles = list(UsedArticle.objects.filter(topic=topic).order_by("normalized_url"))
-        self.assertEqual(len(used_articles), 2)
+        self.assertEqual(len(used_articles), 1)
         self.assertEqual(
             [article.normalized_url for article in used_articles],
-            ["https://example.com/selected-1", "https://example.com/selected-2"],
+            ["https://example.com/selected-1"],
         )
         self.assertTrue(all(article.digest_run_id == run.id for article in used_articles))
         self.assertTrue(all(article.user_id == user.id for article in used_articles))
@@ -844,7 +843,9 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertTrue(all(article.use_count == 1 for article in used_articles))
         self.assertTrue(all(article.first_used_in_run_id == run.id for article in used_articles))
         self.assertTrue(all(article.last_used_in_run_id == run.id for article in used_articles))
+        self.assertEqual(get_used_article_urls_for_topic(topic), {"https://example.com/selected-1"})
         self.assertFalse(UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/rejected-4").exists())
+        self.assertFalse(UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/selected-2").exists())
 
     @patch("services.pipeline.run_pipeline.generate_content_package_for_digest")
     @patch("services.pipeline.run_pipeline.generate_digest_for_run")
@@ -936,4 +937,8 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertEqual(topic_history.digest_run_id, second_run.id)
         self.assertEqual(topic_history.first_used_at, first_used_at)
         self.assertGreaterEqual(topic_history.last_used_at, last_used_at)
+        self.assertEqual(
+            get_used_article_urls_for_topic(topic),
+            {"https://example.com/selected-1", "https://example.com/selected-2"},
+        )
         self.assertFalse(UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/rejected-4").exists())

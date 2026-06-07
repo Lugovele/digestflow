@@ -254,7 +254,10 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
         run.finished_at = timezone.now()
         run.error_message = ""
         run.result_message = result_messages.COMPLETED
-        used_articles = record_used_articles_for_run(run, ranked_items)
+        used_articles = record_used_articles_for_run(
+            run,
+            _resolve_used_articles_from_digest_payload(ranked_items, digest.get_articles()),
+        )
         run.metrics = make_json_safe({
             **run.metrics,
             "packaging_stage": {
@@ -396,6 +399,29 @@ def _build_content_tier_counts(cleaned_items: list[dict], cleaning_rejections: l
             counts[key] += 1
 
     return counts
+
+
+def _resolve_used_articles_from_digest_payload(
+    selected_for_prompt_items: list[dict],
+    digest_articles: list[dict],
+) -> list[dict]:
+    digest_article_urls = {
+        str(article.get("url") or "").strip()
+        for article in digest_articles
+        if isinstance(article, dict) and str(article.get("url") or "").strip()
+    }
+    if not digest_article_urls:
+        return []
+
+    used_items: list[dict] = []
+    seen_urls: set[str] = set()
+    for item in selected_for_prompt_items:
+        article_url = str(item.get("url") or "").strip()
+        if not article_url or article_url not in digest_article_urls or article_url in seen_urls:
+            continue
+        seen_urls.add(article_url)
+        used_items.append(item)
+    return used_items
 
 
 def _build_source_input_metrics(raw_items: list[dict]) -> dict[str, int | str | None]:
