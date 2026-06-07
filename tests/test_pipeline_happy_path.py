@@ -10,7 +10,8 @@ from django.test import TestCase, override_settings
 from apps.digests.models import Digest, DigestRun, UsedArticle
 from apps.digests import result_messages
 from apps.sources.models import Article
-from apps.topics.models import Topic
+from apps.topics.models import Topic, TopicSource, TopicSourceOrigin
+from services.digests.used_articles import get_used_article_urls_for_topic, record_used_articles_for_run
 from services.pipeline.run_pipeline import _resolve_quality_threshold, _resolve_source_mode, run_digest_pipeline
 from services.sources import get_demo_articles_for_topic
 from services.sources.rss_adapter import fetch_rss_articles
@@ -37,6 +38,65 @@ LONG_RSS_SNIPPET_3 = (
 
 @override_settings(OPENAI_API_KEY="sk-your-key")
 class DigestPipelineHappyPathTests(TestCase):
+    def test_record_used_articles_preserves_topic_article_and_source_records(self):
+        user = get_user_model().objects.create_user(
+            username="used-article-preservation-user",
+            password="not-used-in-test",
+        )
+        topic = Topic.objects.create(
+            user=user,
+            name="Used article preservation",
+            keywords=["workflow"],
+            excluded_keywords=[],
+        )
+        topic_source = TopicSource.objects.create(
+            topic=topic,
+            name="Example feed",
+            url="https://example.com/feed",
+            normalized_url="https://example.com/feed",
+            source_type="rss_feed",
+            origin=TopicSourceOrigin.DISCOVERED,
+            is_active=True,
+        )
+        article = Article.objects.create(
+            topic=topic,
+            title="Preserved article",
+            url="https://example.com/articles/preserved",
+            source_name="Example",
+            snippet=LONG_RSS_SNIPPET_1,
+            raw_payload={"url": "https://example.com/articles/preserved"},
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            input_snapshot={"mode": "raw_items", "source": "integration_test"},
+        )
+        selected_articles = [
+            {
+                "title": "Preserved article",
+                "url": "https://example.com/articles/preserved",
+                "normalized_url": "https://example.com/articles/preserved",
+                "source_name": "Example",
+                "source_url": "https://example.com/feed",
+            }
+        ]
+
+        used_articles = record_used_articles_for_run(run, selected_articles)
+
+        self.assertEqual(len(used_articles), 1)
+        self.assertTrue(
+            UsedArticle.objects.filter(topic=topic, normalized_url="https://example.com/articles/preserved").exists()
+        )
+        self.assertTrue(Article.objects.filter(pk=article.pk, topic=topic).exists())
+        topic_source.refresh_from_db()
+        self.assertTrue(TopicSource.objects.filter(pk=topic_source.pk, topic=topic).exists())
+        self.assertTrue(topic_source.is_active)
+        self.assertEqual(
+            get_used_article_urls_for_topic(topic),
+            {"https://example.com/articles/preserved"},
+        )
+        self.assertEqual(Article.objects.filter(topic=topic).count(), 1)
+        self.assertEqual(TopicSource.objects.filter(topic=topic).count(), 1)
+
     def test_run_digest_pipeline_completes_end_to_end_with_mock_ai(self):
         user = get_user_model().objects.create_user(
             username="pipeline-user",
