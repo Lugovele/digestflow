@@ -216,6 +216,9 @@ class TopicRssSourceTests(TestCase):
         )
         self.assertContains(response, "Create post")
         self.assertContains(response, 'data-testid="new-topic-continue-button"', html=False)
+        self.assertNotContains(response, "Post history")
+        self.assertNotContains(response, "Ready posts generated from this idea.")
+        self.assertNotContains(response, "No ready posts yet. Generate a post when the idea is ready.")
         self.assertNotContains(response, "digest")
         self.assertNotContains(response, "draft")
         self.assertNotContains(response, "pipeline")
@@ -353,7 +356,7 @@ class TopicRssSourceTests(TestCase):
         run = DigestRun.objects.get(topic=topic)
         self.assertRedirects(response, reverse("post-result", args=[run.id]), fetch_redirect_response=False)
 
-    def test_topic_setup_page_shows_generated_post_history_for_ready_posts(self) -> None:
+    def test_topic_setup_page_does_not_show_post_history_even_when_ready_posts_exist(self) -> None:
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Generated post history",
@@ -373,21 +376,17 @@ class TopicRssSourceTests(TestCase):
         )
 
         response = self.client.get(reverse("topic-setup", args=[topic.id]))
-        html = response.content.decode("utf-8")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Post history")
-        self.assertContains(response, "Ready posts generated from this idea.")
-        self.assertContains(response, 'data-testid="setup-post-history"', html=False)
-        self.assertContains(response, 'data-testid="setup-post-history-item"', html=False)
-        self.assertContains(response, "Ready post")
-        self.assertContains(response, "Older ready post preview body")
-        self.assertContains(response, "Newer ready post preview body")
-        self.assertContains(response, f'href="{reverse("post-result", args=[older_run.id])}"', html=False)
-        self.assertContains(response, f'href="{reverse("post-result", args=[newer_run.id])}"', html=False)
-        self.assertLess(html.index("Newer ready post preview body"), html.index("Older ready post preview body"))
+        self.assertNotContains(response, "Post history")
+        self.assertNotContains(response, "Ready posts generated from this idea.")
+        self.assertNotContains(response, "Ready post")
+        self.assertNotContains(response, "Older ready post preview body")
+        self.assertNotContains(response, "Newer ready post preview body")
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[older_run.id])}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[newer_run.id])}"', html=False)
 
-    def test_topic_setup_page_does_not_show_failed_or_empty_runs_as_ready_posts(self) -> None:
+    def test_topic_setup_page_does_not_show_post_history_for_failed_or_empty_runs(self) -> None:
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="Filtered post history",
@@ -418,12 +417,14 @@ class TopicRssSourceTests(TestCase):
         response = self.client.get(reverse("topic-setup", args=[topic.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Visible ready post from this idea.")
-        self.assertContains(response, f'href="{reverse("post-result", args=[ready_run.id])}"', html=False)
+        self.assertNotContains(response, "Post history")
+        self.assertNotContains(response, "Ready posts generated from this idea.")
+        self.assertNotContains(response, "Visible ready post from this idea.")
         self.assertNotContains(response, f'href="{reverse("post-result", args=[failed_run.id])}"', html=False)
         self.assertNotContains(response, f'href="{reverse("post-result", args=[empty_completed_run.id])}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("post-result", args=[ready_run.id])}"', html=False)
 
-    def test_topic_setup_page_shows_empty_post_history_state_when_no_ready_posts_exist(self) -> None:
+    def test_topic_setup_page_does_not_show_post_history_empty_state(self) -> None:
         topic = Topic.objects.create(
             user=self._get_ui_user(),
             name="No ready posts topic",
@@ -435,9 +436,10 @@ class TopicRssSourceTests(TestCase):
         response = self.client.get(reverse("topic-setup", args=[topic.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Post history")
-        self.assertContains(response, "No ready posts yet. Generate a post when the idea is ready.")
-        self.assertNotContains(response, 'data-testid="setup-post-history-item"', html=False)
+        self.assertNotContains(response, "Post history")
+        self.assertNotContains(response, "Ready posts generated from this idea.")
+        self.assertNotContains(response, "No ready posts yet. Generate a post when the idea is ready.")
+        self.assertNotContains(response, 'data-testid="setup-post-history"', html=False)
 
     def test_topic_workspace_page_shows_post_history_empty_state(self) -> None:
         topic = Topic.objects.create(
@@ -1796,6 +1798,7 @@ class TopicRssSourceTests(TestCase):
             source_mode=TopicSourceMode.HYBRID,
             keywords=["AI automation", "workflow automation"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.get(reverse("topic-list"))
@@ -1820,12 +1823,14 @@ class TopicRssSourceTests(TestCase):
             name="Keep me",
             keywords=["Keep me"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         delete_topic = Topic.objects.create(
             user=user,
             name="Delete me",
             keywords=["Delete me"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         TopicSource.objects.create(
             topic=delete_topic,
@@ -1857,6 +1862,7 @@ class TopicRssSourceTests(TestCase):
             display_order=2,
             keywords=["First topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         second = Topic.objects.create(
             user=user,
@@ -1864,6 +1870,7 @@ class TopicRssSourceTests(TestCase):
             display_order=1,
             keywords=["Second topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.get(reverse("topic-list"))
@@ -2040,12 +2047,14 @@ class TopicRssSourceTests(TestCase):
             name="Visible topic",
             keywords=["Visible topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         Topic.objects.create(
             user=other_user,
             name="Hidden topic",
             keywords=["Hidden topic"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.get(reverse("topic-list"))
@@ -2060,18 +2069,21 @@ class TopicRssSourceTests(TestCase):
             name="Alpha",
             keywords=["Alpha"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         second = Topic.objects.create(
             user=user,
             name="Beta",
             keywords=["Beta"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
         third = Topic.objects.create(
             user=user,
             name="Gamma",
             keywords=["Gamma"],
             excluded_keywords=[],
+            committed_at=timezone.now(),
         )
 
         response = self.client.post(

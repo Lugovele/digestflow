@@ -2265,7 +2265,6 @@ def _render_topic_setup(
     focus_input_value: str = "",
 ) -> HttpResponse:
     focus_terms = _build_topic_focus_terms(topic)
-    ready_post_history = _build_ready_post_history_for_topics([topic.id]).get(topic.id, [])
     return render(
         request,
         "digestflow/topic_setup.html",
@@ -2278,7 +2277,6 @@ def _render_topic_setup(
             "review_sources_url": reverse("topic-workspace", args=[topic.id]),
             "continue_setup_url": reverse("continue-topic-setup", args=[topic.id]),
             "update_focus_url": reverse("update-topic-focus", args=[topic.id]),
-            "ready_post_history": ready_post_history,
         },
         status=status,
     )
