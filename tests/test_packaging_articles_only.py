@@ -6,10 +6,52 @@ from django.test import TestCase, override_settings
 from apps.topics.models import Topic
 from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
+from services.packaging.generator import PackagingGenerationResult, normalize_linkedin_hashtags
 
 
 @override_settings(OPENAI_API_KEY="sk-your-key")
 class PackagingArticlesOnlyTests(TestCase):
+    def test_normalize_linkedin_hashtags_prefixes_trailing_keyword_line(self) -> None:
+        post_text = (
+            "Share your personal branding strategies in the comments!\n\n"
+            "PersonalBranding Authority Storytelling BrandLag VisualIdentity"
+        )
+
+        normalized = normalize_linkedin_hashtags(post_text)
+
+        self.assertEqual(
+            normalized,
+            "Share your personal branding strategies in the comments!\n\n"
+            "#PersonalBranding #Authority #Storytelling #BrandLag #VisualIdentity",
+        )
+
+    def test_normalize_linkedin_hashtags_prefixes_comma_separated_keywords(self) -> None:
+        post_text = "Share your thoughts.\n\nPersonalBranding, Authority, Storytelling"
+
+        normalized = normalize_linkedin_hashtags(post_text)
+
+        self.assertEqual(
+            normalized,
+            "Share your thoughts.\n\n#PersonalBranding #Authority #Storytelling",
+        )
+
+    def test_normalize_linkedin_hashtags_preserves_existing_tags_and_deduplicates(self) -> None:
+        post_text = "Share your thoughts.\n\n#PersonalBranding Authority Storytelling #Authority"
+
+        normalized = normalize_linkedin_hashtags(post_text)
+
+        self.assertEqual(
+            normalized,
+            "Share your thoughts.\n\n#PersonalBranding #Authority #Storytelling",
+        )
+
+    def test_normalize_linkedin_hashtags_leaves_normal_prose_unchanged(self) -> None:
+        post_text = "This is a normal final sentence about personal branding."
+
+        normalized = normalize_linkedin_hashtags(post_text)
+
+        self.assertEqual(normalized, post_text)
+
     def test_packaging_uses_digest_get_articles_not_legacy_digest_fields(self) -> None:
         user = get_user_model().objects.create_user(username="packaging-user")
         topic = Topic.objects.create(
@@ -111,3 +153,59 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertFalse(digest.has_articles())
         self.assertIn("No post draft articles were available.", content_package.post_text)
+
+    @patch("services.packaging.generator._generate_packaging_payload")
+    def test_packaging_saves_normalized_linkedin_hashtags_in_post_text_and_hashtag_list(
+        self,
+        mock_generate_packaging_payload,
+    ) -> None:
+        user = get_user_model().objects.create_user(username="packaging-normalizer-user")
+        topic = Topic.objects.create(
+            user=user,
+            name="Hashtag normalization",
+            keywords=["linkedin"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_PACKAGING,
+            metrics={"digest_stage": {"status": "completed", "articles_count": 1}},
+        )
+        digest = Digest.objects.create(
+            run=run,
+            title="Digest for Hashtag normalization",
+            payload={"title": "Digest for Hashtag normalization", "articles": [{"title": "One", "summary": "Two"}]},
+            quality_score=0.0,
+        )
+        mock_generate_packaging_payload.return_value = PackagingGenerationResult(
+            prompt="prompt",
+            response_text="{}",
+            payload={
+                "post_text": "Share your thoughts.\n\n#PersonalBranding Authority Storytelling Authority",
+                "hook_variants": ["Opening one", "Opening two", "Opening three"],
+                "cta_variants": ["Closing one", "Closing two", "Closing three"],
+                "hashtags": ["PersonalBranding", "Authority", "Storytelling", "Authority"],
+                "carousel_outline": [],
+                "quality_checks": {
+                    "uses_only_provided_facts": True,
+                    "has_clear_point_of_view": True,
+                    "linkedin_ready": True,
+                },
+            },
+            provider="mock",
+            is_mock=True,
+            fallback_reason="",
+            tokens=None,
+            estimated_cost_usd=None,
+        )
+
+        content_package, _debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(
+            content_package.post_text,
+            "Share your thoughts.\n\n#PersonalBranding #Authority #Storytelling",
+        )
+        self.assertEqual(
+            content_package.hashtags,
+            ["#PersonalBranding", "#Authority", "#Storytelling"],
+        )

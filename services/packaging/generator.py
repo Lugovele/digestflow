@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,31 @@ DEFAULT_AUTHOR_PROFILE = {
         "focus on systems, not tools",
         "connect facts into insights",
     ],
+}
+
+_HASHTAG_TOKEN_RE = re.compile(r"^#?[A-Za-z0-9][A-Za-z0-9_-]*$")
+_HASHTAG_SPLIT_RE = re.compile(r"[\s,]+")
+_HASHTAG_SENTENCE_PUNCT_RE = re.compile(r"[.!?;:]")
+_HASHTAG_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "about",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "that",
+    "to",
+    "with",
+    "your",
 }
 
 
@@ -64,7 +90,7 @@ def generate_content_package_for_digest(
     if generation.estimated_cost_usd is not None:
         _debug(digest.run.id, "INFO", f"estimated cost -> ${generation.estimated_cost_usd:.6f}")
 
-    payload = generation.payload
+    payload = _normalize_linkedin_post_payload(generation.payload)
     validation_report = _build_validation_report(payload)
 
     with transaction.atomic():
@@ -280,6 +306,113 @@ def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:
         "carousel_outline_count": len(payload.get("carousel_outline", [])),
         "quality_checks": quality_checks,
     }
+
+
+def normalize_linkedin_hashtags(post_text: str) -> str:
+    lines = str(post_text or "").splitlines()
+    last_line_index = _find_last_non_empty_line_index(lines)
+    if last_line_index is None:
+        return str(post_text or "")
+
+    trailing_tags = _extract_hashtag_line_tags(lines[last_line_index])
+    if not trailing_tags:
+        return str(post_text or "")
+
+    lines[last_line_index] = " ".join(trailing_tags)
+    return "\n".join(lines).strip()
+
+
+def _normalize_linkedin_post_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_payload = dict(payload)
+    post_text = normalize_linkedin_hashtags(str(payload.get("post_text") or "").strip())
+    trailing_tags = _extract_trailing_hashtags(post_text)
+    hashtags = _normalize_hashtag_values(payload.get("hashtags", []))
+    if trailing_tags:
+        hashtags = _merge_hashtag_lists(trailing_tags, hashtags)
+    if not hashtags:
+        hashtags = [str(item).strip() for item in payload.get("hashtags", []) if str(item).strip()]
+
+    normalized_payload["post_text"] = post_text
+    normalized_payload["hashtags"] = hashtags
+    return normalized_payload
+
+
+def _find_last_non_empty_line_index(lines: list[str]) -> int | None:
+    for index in range(len(lines) - 1, -1, -1):
+        if str(lines[index]).strip():
+            return index
+    return None
+
+
+def _extract_trailing_hashtags(post_text: str) -> list[str]:
+    lines = str(post_text or "").splitlines()
+    last_line_index = _find_last_non_empty_line_index(lines)
+    if last_line_index is None:
+        return []
+    return _extract_hashtag_line_tags(lines[last_line_index])
+
+
+def _extract_hashtag_line_tags(line: str) -> list[str]:
+    raw_line = " ".join(str(line or "").strip().split())
+    if not raw_line or _HASHTAG_SENTENCE_PUNCT_RE.search(raw_line):
+        return []
+
+    raw_tokens = [token for token in _HASHTAG_SPLIT_RE.split(raw_line) if token]
+    if len(raw_tokens) < 2:
+        return []
+    if any(len(token.lstrip("#")) > 32 for token in raw_tokens):
+        return []
+
+    lowered_tokens = [token.lstrip("#").casefold() for token in raw_tokens]
+    if sum(1 for token in lowered_tokens if token in _HASHTAG_STOPWORDS) >= 2:
+        return []
+
+    normalized = _normalize_hashtag_values(raw_tokens)
+    if len(normalized) < 2:
+        return []
+    return normalized
+
+
+def _normalize_hashtag_values(values: Any) -> list[str]:
+    if isinstance(values, str):
+        raw_values = [values]
+    elif isinstance(values, list):
+        raw_values = values
+    else:
+        raw_values = []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        for token in _HASHTAG_SPLIT_RE.split(str(raw_value or "").replace(",", " ")):
+            cleaned = str(token or "").strip()
+            if not cleaned:
+                continue
+            if not _HASHTAG_TOKEN_RE.match(cleaned):
+                continue
+            hashtag = f"#{cleaned.lstrip('#')}"
+            dedupe_key = hashtag.casefold()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            normalized.append(hashtag)
+    return normalized
+
+
+def _merge_hashtag_lists(*hashtag_lists: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for hashtag_list in hashtag_lists:
+        for hashtag in hashtag_list:
+            cleaned = str(hashtag or "").strip()
+            if not cleaned:
+                continue
+            dedupe_key = cleaned.casefold()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            normalized.append(cleaned)
+    return normalized
 
 
 def _format_list_for_prompt(items: list[Any]) -> str:

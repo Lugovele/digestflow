@@ -22,6 +22,7 @@ from apps.digests.models import DigestRun, SourceDiscoveryHistory, SourceDiscove
 from apps.topics.focus import FOCUS_VALIDATION_MESSAGE, clean_focus_terms, validate_new_focus_terms
 from apps.topics.focus_suggestions import generate_focus_suggestions, should_seed_focus_terms
 from apps.topics.models import Topic, TopicSource, TopicSourceMode, TopicSourceOrigin
+from services.packaging.generator import normalize_linkedin_hashtags
 from services.pipeline.run_pipeline import run_digest_pipeline
 from services.sources import (
     build_research_review_context,
@@ -327,6 +328,8 @@ def post_result_view(request: HttpRequest, run_id: int) -> HttpResponse:
     )
     final_post_text = str(getattr(content_package, "post_text", "") or "").strip()
     hashtags_text = str(content_package.hashtags_text() if content_package else "").strip()
+    if final_post_text and hashtags_text and _post_text_already_contains_hashtags(final_post_text, hashtags_text):
+        hashtags_text = ""
     research_items = _build_post_result_research_items(digest)
     state = _resolve_post_result_state(run, content_package, provenance)
     stage = _build_post_result_stage(run)
@@ -717,6 +720,15 @@ def _normalize_post_result_options(values, *, fallback: list[str] | None = None)
 def _assemble_post_result_text(*, opening_text: str, body_text: str, closing_text: str, hashtags_text: str) -> str:
     lines = [part for part in [opening_text.strip(), body_text.strip(), closing_text.strip(), hashtags_text.strip()] if part]
     return "\n\n".join(lines)
+
+
+def _post_text_already_contains_hashtags(post_text: str, hashtags_text: str) -> bool:
+    normalized_post_text = normalize_linkedin_hashtags(post_text)
+    post_lines = [line.strip() for line in normalized_post_text.splitlines() if line.strip()]
+    hashtag_lines = [line.strip() for line in str(hashtags_text or "").splitlines() if line.strip()]
+    if not post_lines or not hashtag_lines:
+        return False
+    return post_lines[-1] == hashtag_lines[-1]
 
 
 def _build_post_result_research_items(digest) -> list[dict[str, object]]:
