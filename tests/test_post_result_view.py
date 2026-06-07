@@ -28,31 +28,30 @@ class PostResultViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Creating your post")
-        self.assertContains(response, "PostFlow is preparing your final version.")
+        self.assertContains(response, "Researching sources and writing your post")
+        self.assertContains(response, "This can take a minute. The post will appear here automatically.")
+        self.assertContains(response, "&larr; Edit direction", html=False)
+        self.assertContains(response, "Back to workspace")
+        self.assertContains(response, reverse("topic-setup", args=[topic.id]))
+        self.assertContains(response, reverse("topic-list"))
         self.assertContains(
             response,
             f'<form method="post" action="{reverse("start-post-result", args=[run.id])}" data-post-start-form class="sr-only">',
             html=False,
         )
         self.assertContains(response, reverse("start-post-result", args=[run.id]))
-        self.assertContains(
-            response,
-            '<p class="post-result-inline-status" data-post-start-status>Starting now...</p>',
-            html=False,
-        )
         self.assertContains(response, "Post idea:")
         self.assertContains(response, "Creator workflow")
-        self.assertContains(response, "Research")
-        self.assertContains(response, "Select")
-        self.assertContains(response, "Write")
-        self.assertContains(response, "Ready")
-        self.assertContains(response, "Usually takes about 2 minutes. Keep this page open - your post will appear here.")
+        self.assertContains(response, 'data-testid="post-result-loading-card"', html=False)
+        self.assertContains(response, "post-result-loading-spinner")
+        self.assertNotContains(response, "Preparing your post")
+        self.assertNotContains(response, "Current status")
+        self.assertNotContains(response, "Starting now")
+        self.assertNotContains(response, "Research → Select → Write → Ready")
+        self.assertNotContains(response, "Research → Sources → Writing → Ready")
         self.assertNotContains(response, "digest")
         self.assertNotContains(response, "pipeline")
-        self.assertNotContains(response, "payload")
-        self.assertNotContains(response, "provider")
-        self.assertNotContains(response, "tokens")
-        self.assertNotContains(response, "metrics")
+        self.assertNotContains(response, "draft")
 
     def test_completed_post_result_page_shows_final_post_before_controls(self) -> None:
         topic = Topic.objects.create(
@@ -96,6 +95,10 @@ class PostResultViewTests(TestCase):
         self.assertContains(response, "Choose opening and closing")
         self.assertContains(response, "Opening")
         self.assertContains(response, "Closing")
+        self.assertContains(response, "&larr; Edit direction", html=False)
+        self.assertContains(response, "Back to workspace")
+        self.assertContains(response, reverse("topic-setup", args=[topic.id]))
+        self.assertContains(response, reverse("topic-list"))
         self.assertContains(response, "Copy full post")
         self.assertContains(response, "Copy includes the selected opening, post body, closing, and hashtags.")
         self.assertContains(response, "Opening one")
@@ -110,6 +113,46 @@ class PostResultViewTests(TestCase):
         self.assertIn("Here is the core post body.", html)
         self.assertIn("Closing one", html)
         self.assertIn("#AI #Workflows", html)
+
+    def test_completed_post_result_page_does_not_repeat_hashtags_when_body_already_ends_with_them(self) -> None:
+        topic = Topic.objects.create(
+            user=self._create_user(),
+            name="Hashtag display",
+            source_url="https://example.com/feed.xml",
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(topic=topic, status=DigestRun.STATUS_COMPLETED)
+        digest = Digest.objects.create(
+            run=run,
+            title="Hashtag display",
+            payload={
+                "title": "Hashtag display",
+                "articles": [
+                    {
+                        "url": "https://example.com/one",
+                        "title": "Research one",
+                        "summary": "First summary",
+                        "key_points": ["Point one"],
+                    }
+                ],
+            },
+        )
+        ContentPackage.objects.create(
+            digest=digest,
+            post_text="Here is the core post body.\n\n#PersonalBranding #Authority #Storytelling",
+            hook_variants=["Opening one", "Opening two"],
+            cta_variants=["Closing one", "Closing two"],
+            hashtags=["#PersonalBranding", "#Authority", "#Storytelling"],
+            validation_report={"status": "valid"},
+        )
+
+        response = self.client.get(reverse("post-result", args=[run.id]))
+        html = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "#PersonalBranding #Authority #Storytelling")
+        self.assertEqual(html.count("#PersonalBranding #Authority #Storytelling"), 1)
 
     def test_completed_mock_package_renders_source_recovery_instead_of_ready_state(self) -> None:
         topic = Topic.objects.create(
@@ -145,6 +188,8 @@ class PostResultViewTests(TestCase):
         self.assertContains(response, "PostFlow could not find enough reliable sources automatically.")
         self.assertContains(response, "Review sources first, then create the post again.")
         self.assertContains(response, "Review sources first")
+        self.assertContains(response, "&larr; Edit direction", html=False)
+        self.assertContains(response, "Back to workspace")
         self.assertContains(response, "Back to direction")
         self.assertNotContains(response, "Your post is ready")
         self.assertNotContains(response, "Final post")
@@ -202,11 +247,16 @@ class PostResultViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Creating your post")
-        self.assertContains(response, "PostFlow is preparing your final version.")
-        self.assertContains(response, "Research")
-        self.assertContains(response, "Select")
-        self.assertContains(response, "Write")
-        self.assertContains(response, "Ready")
+        self.assertContains(response, "Researching sources and writing your post")
+        self.assertContains(response, "This can take a minute. The post will appear here automatically.")
+        self.assertContains(
+            response,
+            f'<form method="post" action="{reverse("start-post-result", args=[run.id])}" data-post-start-form class="sr-only">',
+            html=False,
+        )
+        self.assertNotContains(response, "Preparing your post")
+        self.assertNotContains(response, "Current status")
+        self.assertNotContains(response, "Starting now")
         self.assertNotContains(response, "We need real sources first")
         self.assertNotContains(response, "Your post is ready")
         self.assertNotContains(response, "Final post")
@@ -235,6 +285,8 @@ class PostResultViewTests(TestCase):
         self.assertContains(response, "We need real sources first")
         self.assertContains(response, "PostFlow could not find enough reliable sources automatically.")
         self.assertContains(response, "Review sources first")
+        self.assertContains(response, "&larr; Edit direction", html=False)
+        self.assertContains(response, "Back to workspace")
         self.assertContains(response, "Back to direction")
         self.assertNotContains(
             response,
@@ -243,9 +295,11 @@ class PostResultViewTests(TestCase):
         )
         self.assertNotContains(
             response,
-            '<p class="post-result-inline-status" data-post-start-status>Starting now...</p>',
+            f'<form method="post" action="{reverse("start-post-result", args=[run.id])}" data-post-start-form class="sr-only">',
             html=False,
         )
+        self.assertNotContains(response, "Researching sources and writing your post")
+        self.assertNotContains(response, "This can take a minute. The post will appear here automatically.")
         self.assertNotContains(response, "Your post is ready")
         self.assertNotContains(response, "Final post")
         self.assertNotContains(response, "None")
@@ -358,6 +412,8 @@ class PostResultViewTests(TestCase):
         self.assertContains(response, "Something interrupted the generation process.")
         self.assertContains(response, "Try again or adjust the direction")
         self.assertContains(response, "Try again")
+        self.assertContains(response, "&larr; Edit direction", html=False)
+        self.assertContains(response, "Back to workspace")
         self.assertContains(response, "Back to direction")
         self.assertNotContains(response, "diagnostics")
         self.assertNotContains(response, "provider")

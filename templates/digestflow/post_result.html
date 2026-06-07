@@ -135,20 +135,27 @@
             background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9), transparent);
         }
 
-        .post-result-back-link {
+        .post-result-nav-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin: 0 0 6px;
+        }
+
+        .post-result-nav-link {
             display: inline-flex;
             align-items: center;
             min-height: 2.1rem;
-            margin: 0 0 6px;
-            padding-right: 0.2rem;
             color: #637081;
             font-size: 0.88rem;
             font-weight: 500;
             text-decoration: none;
         }
 
-        .post-result-back-link:hover,
-        .post-result-back-link:focus-visible {
+        .post-result-nav-link:hover,
+        .post-result-nav-link:focus-visible {
             color: #243041;
             text-decoration: underline;
             text-decoration-color: rgba(36, 48, 65, 0.38);
@@ -192,7 +199,7 @@
             margin-top: 18px;
         }
 
-        .post-result-stage-card,
+        .post-result-loading-card,
         .post-result-panel,
         .post-result-preview-card,
         .post-result-recovery-card {
@@ -201,13 +208,13 @@
             background: var(--soft-bg);
         }
 
-        .post-result-stage-card,
+        .post-result-loading-card,
         .post-result-panel,
         .post-result-recovery-card {
             padding: 14px;
         }
 
-        .post-result-stage-title,
+        .post-result-loading-title,
         .post-result-panel-title,
         .post-result-preview-title,
         .post-result-recovery-title {
@@ -218,32 +225,52 @@
             font-weight: 600;
         }
 
-        .post-result-stage-line {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            align-items: center;
-            margin-top: 14px;
-            color: #667487;
-            font-size: 13px;
-            font-weight: 600;
+        .post-result-loading-card {
+            padding: 22px 18px;
+            border-color: rgba(226, 232, 240, 0.88);
+            background: rgba(255, 255, 255, 0.78);
+            display: grid;
+            justify-items: center;
+            text-align: center;
+            gap: 14px;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.9),
+                0 8px 18px rgba(15, 23, 42, 0.03);
         }
 
-        .post-result-stage-line__item {
-            color: #7b8797;
+        .post-result-loading-spinner {
+            width: 58px;
+            height: 58px;
+            border-radius: 999px;
+            border: 4px solid rgba(34, 81, 204, 0.14);
+            border-top-color: #2251cc;
+            animation: post-result-spin 900ms linear infinite;
         }
 
-        .post-result-stage-line__item--complete,
-        .post-result-stage-line__item--active {
-            color: #243041;
+        .post-result-loading-copy {
+            display: grid;
+            gap: 8px;
+            max-width: 28rem;
         }
 
-        .post-result-stage-line__separator {
-            color: #9aa6b7;
+        .post-result-loading-title {
+            margin: 0;
         }
 
-        .post-result-note {
-            margin-top: 14px;
+        .post-result-loading-helper {
+            margin: 0;
+            color: #64748b;
+            font-size: 0.93rem;
+            line-height: 1.5;
+        }
+
+        @keyframes post-result-spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         .post-result-preview-card {
@@ -508,6 +535,12 @@
                 padding: 15px 14px 14px;
                 border-radius: 20px;
             }
+
+            .post-result-nav-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 2px;
+            }
         }
 
         @media (max-width: 480px) {
@@ -568,25 +601,22 @@
             </header>
 
             <section class="post-result-card" data-testid="post-result-card">
-                <a href="{{ back_to_direction_url }}" class="post-result-back-link" data-testid="post-result-back-link">&larr; Back to direction</a>
+                <div class="post-result-nav-row" data-testid="post-result-nav-row">
+                    <a href="{{ back_to_direction_url }}" class="post-result-nav-link" data-testid="post-result-back-link">&larr; Edit direction</a>
+                    <a href="{{ workspace_url }}" class="post-result-nav-link" data-testid="post-result-workspace-link">Back to workspace</a>
+                </div>
                 <h1 class="post-result-title" data-testid="post-result-title">{{ post_result_heading }}</h1>
                 <p class="post-result-subcopy">{{ post_result_subcopy }}</p>
                 <p class="post-result-context"><strong>Post idea:</strong> {{ topic.name }}</p>
 
                 {% if post_result_state == "loading" %}
                     <div class="post-result-stack">
-                        <section class="post-result-stage-card" data-testid="post-result-stage-card">
-                            <h2 class="post-result-stage-title">{{ current_stage_title }}</h2>
-                            <p class="post-result-helper">{{ current_stage_copy }}</p>
-                            <div class="post-result-stage-line" aria-label="Post creation stages">
-                                {% for item in stage_line_items %}
-                                    <span class="post-result-stage-line__item post-result-stage-line__item--{{ item.state }}">{{ item.label }}</span>
-                                    {% if not forloop.last %}
-                                        <span class="post-result-stage-line__separator" aria-hidden="true">&rarr;</span>
-                                    {% endif %}
-                                {% endfor %}
+                        <section class="post-result-loading-card" data-testid="post-result-loading-card">
+                            <div class="post-result-loading-spinner" aria-hidden="true"></div>
+                            <div class="post-result-loading-copy">
+                                <h2 class="post-result-loading-title">Researching sources and writing your post</h2>
+                                <p class="post-result-loading-helper">This can take a minute. The post will appear here automatically.</p>
                             </div>
-                            <p class="post-result-note">Usually takes about 2 minutes. Keep this page open - your post will appear here.</p>
                         </section>
                     </div>
 
@@ -594,7 +624,6 @@
                         <form method="post" action="{{ start_generation_url }}" data-post-start-form class="sr-only">
                             {% csrf_token %}
                         </form>
-                        <p class="post-result-inline-status" data-post-start-status>Starting now...</p>
                     {% endif %}
                 {% elif post_result_state == "ready" %}
                     <div class="post-result-stack">

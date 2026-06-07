@@ -358,6 +358,7 @@ def post_result_view(request: HttpRequest, run_id: int) -> HttpResponse:
             "start_generation_url": reverse("start-post-result", args=[run.id]),
             "retry_post_url": reverse("retry-post-result", args=[run.id]),
             "back_to_direction_url": reverse("topic-setup", args=[topic.id]),
+            "workspace_url": reverse("topic-list"),
             "review_sources_url": reverse("topic-workspace", args=[topic.id]),
             "opening_options": opening_options,
             "closing_options": closing_options,
