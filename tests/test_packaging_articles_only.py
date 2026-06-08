@@ -209,3 +209,60 @@ class PackagingArticlesOnlyTests(TestCase):
             content_package.hashtags,
             ["#PersonalBranding", "#Authority", "#Storytelling"],
         )
+
+    @patch("services.packaging.generator._generate_packaging_payload")
+    def test_packaging_strips_extra_model_keys_before_saving(
+        self,
+        mock_generate_packaging_payload,
+    ) -> None:
+        user = get_user_model().objects.create_user(username="packaging-extra-keys-user")
+        topic = Topic.objects.create(
+            user=user,
+            name="Extra key normalization",
+            keywords=["linkedin"],
+            excluded_keywords=[],
+        )
+        run = DigestRun.objects.create(
+            topic=topic,
+            status=DigestRun.STATUS_PACKAGING,
+            metrics={"digest_stage": {"status": "completed", "articles_count": 1}},
+        )
+        digest = Digest.objects.create(
+            run=run,
+            title="Digest for Extra key normalization",
+            payload={"title": "Digest for Extra key normalization", "articles": [{"title": "One", "summary": "Two"}]},
+            quality_score=0.0,
+        )
+        mock_generate_packaging_payload.return_value = PackagingGenerationResult(
+            prompt="prompt",
+            response_text="{}",
+            payload={
+                "post_text": "A useful post body.",
+                "hook_variants": ["Opening one", "Opening two", "Opening three"],
+                "cta_variants": ["Closing one", "Closing two", "Closing three"],
+                "hashtags": ["#Workflow"],
+                "quality_checks": {
+                    "uses_only_provided_facts": True,
+                    "has_clear_point_of_view": True,
+                    "linkedin_ready": True,
+                },
+                "carousel_outline": [{"slide": 1, "title": "Extra", "bullets": ["Drop me"]}],
+                "title": "Extra title",
+                "metadata": {"source": "model"},
+                "slides": [{"title": "Slide"}],
+            },
+            provider="openai",
+            is_mock=False,
+            fallback_reason="",
+            tokens=None,
+            estimated_cost_usd=None,
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, "A useful post body.")
+        self.assertEqual(content_package.hook_variants, ["Opening one", "Opening two", "Opening three"])
+        self.assertEqual(content_package.cta_variants, ["Closing one", "Closing two", "Closing three"])
+        self.assertEqual(content_package.hashtags, ["#Workflow"])
+        self.assertEqual(content_package.carousel_outline, [])
+        self.assertEqual(debug_info["validation_report"]["carousel_outline_count"], 0)

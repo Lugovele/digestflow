@@ -323,7 +323,6 @@ def normalize_linkedin_hashtags(post_text: str) -> str:
 
 
 def _normalize_linkedin_post_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized_payload = dict(payload)
     post_text = normalize_linkedin_hashtags(str(payload.get("post_text") or "").strip())
     trailing_tags = _extract_trailing_hashtags(post_text)
     hashtags = _normalize_hashtag_values(payload.get("hashtags", []))
@@ -332,9 +331,13 @@ def _normalize_linkedin_post_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not hashtags:
         hashtags = [str(item).strip() for item in payload.get("hashtags", []) if str(item).strip()]
 
-    normalized_payload["post_text"] = post_text
-    normalized_payload["hashtags"] = hashtags
-    return normalized_payload
+    return {
+        "post_text": post_text,
+        "hook_variants": payload.get("hook_variants", []),
+        "cta_variants": payload.get("cta_variants", []),
+        "hashtags": hashtags,
+        "quality_checks": payload.get("quality_checks", {}),
+    }
 
 
 def _find_last_non_empty_line_index(lines: list[str]) -> int | None:
