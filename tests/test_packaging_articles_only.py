@@ -97,6 +97,15 @@ class PackagingArticlesOnlyTests(TestCase):
             ],
         }
 
+    def _brief_generation_result(self) -> tuple[dict, str, str, dict]:
+        post_brief = self._post_brief_payload()
+        return (
+            post_brief,
+            "brief prompt",
+            json.dumps(post_brief),
+            {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+
     def test_validate_post_brief_payload_accepts_valid_brief(self) -> None:
         payload = self._post_brief_payload()
 
@@ -581,10 +590,129 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_packaging_generates_brief_before_final_post_generation(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-flow-order-user")
+        call_order = []
+
+        def brief_side_effect(*_args, **_kwargs):
+            call_order.append("brief")
+            return self._brief_generation_result()
+
+        def payload_side_effect(*_args, **_kwargs):
+            call_order.append("payload")
+            return (
+                self._package_payload(
+                    "A personal brand works when it proves current judgment.\n\n"
+                    "If people can see decisions and tradeoffs, they know what to trust you with."
+                ),
+                "final prompt",
+                "final response",
+                None,
+            )
+
+        mock_generate_brief.side_effect = brief_side_effect
+        mock_generate_payload.side_effect = payload_side_effect
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(call_order, ["brief", "payload"])
+        self.assertEqual(debug_info["post_brief"], self._post_brief_payload())
+        self.assertEqual(debug_info["post_brief_prompt"], "brief prompt")
+        mock_repair_payload.assert_not_called()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_packaging_passes_validated_brief_to_final_post_generation(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-passed-user")
+        post_brief = self._post_brief_payload()
+        mock_generate_brief.return_value = (post_brief, "brief prompt", json.dumps(post_brief), None)
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "A useful personal brand proves judgment before polish.\n\n"
+                "If people only see claims, they cannot tell what changed in your thinking."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        mock_generate_payload.assert_called_once()
+        self.assertEqual(mock_generate_payload.call_args.kwargs["post_brief"], post_brief)
+        self.assertEqual(debug_info["post_brief"], post_brief)
+        self.assertEqual(debug_info["post_brief_prompt"], "brief prompt")
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_packaging_keeps_final_tokens_and_reports_brief_tokens_separately(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-token-accounting-user")
+        post_brief = self._post_brief_payload()
+        brief_tokens = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        final_tokens = {"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300}
+        mock_generate_brief.return_value = (post_brief, "brief prompt", json.dumps(post_brief), brief_tokens)
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "A useful personal brand proves judgment before polish.\n\n"
+                "If people only see claims, they cannot tell what changed in your thinking."
+            ),
+            "final prompt",
+            "final response",
+            final_tokens,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["tokens"], final_tokens)
+        self.assertEqual(debug_info["post_brief_tokens"], brief_tokens)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_brief_generation_failure_falls_back_without_final_post_generation(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-failure-user")
+        mock_generate_brief.side_effect = ContentPackageValidationError("Post brief evidence_points must include at least 2 non-empty strings.")
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        mock_generate_payload.assert_not_called()
+        self.assertEqual(debug_info["provider"], "mock")
+        self.assertTrue(debug_info["is_mock"])
+        self.assertIn("LinkedIn post brief generation/validation failed", debug_info["fallback_reason"])
+        self.assertIn("Post brief evidence_points", debug_info["fallback_reason"])
+        self.assertIsNone(debug_info["post_brief"])
+        self.assertEqual(debug_info["post_brief_prompt"], "")
+        self.assertTrue(content_package.post_text)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_weak_valid_post_with_banned_phrase_triggers_repair(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-repair-user")
@@ -596,6 +724,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "A personal brand breaks when people cannot see your current judgment.\n\n"
             "Polished claims are not enough. Show the decisions, lessons, and tradeoffs that prove what you can be trusted with."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
 
@@ -608,10 +737,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_broad_opening_triggers_repair(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-broad-opening-user")
@@ -622,6 +753,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "Most personal brands fail because trust is too vague.\n\n"
             "People need evidence of current judgment, not another polished positioning line."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
 
@@ -632,10 +764,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_generic_first_line_triggers_repair(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-generic-opening-user")
@@ -647,6 +781,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "Most personal brands fail when people cannot see your current judgment.\n\n"
             "Look at your last 10 posts. If they show activity but not decisions, people get visibility without evidence."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
 
@@ -661,10 +796,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_vague_language_density_triggers_repair(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-vague-density-user")
@@ -676,6 +813,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "A personal brand weakens when people cannot name your current judgment.\n\n"
             "Check your last 10 posts. If they show updates but not decisions, your signal is too soft."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
 
@@ -686,10 +824,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_current_generic_advice_sample_triggers_repair(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-current-bad-sample-user")
@@ -701,6 +841,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "Most personal brands fail when people cannot tell what changed in your judgment.\n\n"
             "Look at your last 10 posts. If they show polish but not tradeoffs, people see activity without proof."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
 
@@ -715,10 +856,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_soft_length_limit_triggers_repair_and_saves_shorter_output(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-length-user")
@@ -729,6 +872,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "A personal brand breaks when trust is unclear.\n\n"
             "If people only see claims, they cannot tell what your judgment is worth. Show the work that proves it."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (self._package_payload(weak_text), "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (self._package_payload(repair_text), "repair prompt", "repair response", None)
 
@@ -740,10 +884,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_strong_valid_post_saves_without_repair(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-pass-user")
@@ -752,6 +898,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "A logo can signal care, but evidence does the heavier work. Build in public gives people a current record of your judgment.\n\n"
             "If your last ten posts only describe expertise, they are not building trust. They are asking for it."
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (self._package_payload(strong_text), "initial prompt", "initial response", None)
 
         content_package, debug_info = generate_content_package_for_digest(digest)
@@ -763,10 +910,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_repair_output_strips_extra_keys_before_saving(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-extra-key-user")
@@ -777,6 +926,7 @@ class PackagingArticlesOnlyTests(TestCase):
             carousel_outline=[{"slide": 1, "title": "Extra"}],
             metadata={"source": "repair"},
         )
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
 
@@ -788,10 +938,12 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_repair_output_with_only_long_paragraph_is_split_and_saved(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-long-repair-user")
@@ -806,6 +958,7 @@ class PackagingArticlesOnlyTests(TestCase):
             "That is a weak bet when trust depends on recent proof."
         )
         self.assertGreater(len(repair_text), 450)
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (self._package_payload(repair_text), "repair prompt", "repair response", None)
 
@@ -817,15 +970,18 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_repair_happens_at_most_once_and_falls_back_when_still_weak(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-repair-fail-user")
         weak_payload = self._package_payload("Your brand should resonate in a changing landscape.")
         still_weak_payload = self._package_payload("In the landscape of personal branding, cohesive signals resonate.")
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.return_value = (still_weak_payload, "repair prompt", "repair response", None)
 
@@ -839,14 +995,17 @@ class PackagingArticlesOnlyTests(TestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
     def test_repair_provider_error_uses_existing_safe_fallback(
         self,
         mock_generate_payload,
+        mock_generate_brief,
         mock_repair_payload,
     ) -> None:
         digest = self._create_digest_for_packaging("quality-repair-error-user")
         weak_payload = self._package_payload("Your brand should resonate in a changing landscape.")
+        mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
         mock_repair_payload.side_effect = RuntimeError("repair connection failed")
 

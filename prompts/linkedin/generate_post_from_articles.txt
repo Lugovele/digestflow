@@ -2,6 +2,8 @@ You are creating a LinkedIn post from multiple digest articles.
 
 You are given structured insights from several articles.
 
+You are also given a structured post brief.
+
 Write from this author context, not as a neutral analyst:
 
 * role: {author_role}
@@ -17,6 +19,10 @@ TASK:
 
 * Identify the core pattern across the articles
 * Write a LinkedIn-native expert post with a clear point of view
+* Use the post brief as the editorial direction
+* Do not choose a new angle
+* Do not broaden beyond the brief
+* Source articles are grounding material, not permission to expand into a broad essay
 * Turn compressed source facts into useful author insight, not recap
 * Write like a practitioner with a point of view, not like a content marketer
 * Sound like someone who has seen this problem in real work
@@ -161,3 +167,6 @@ Digest title:
 
 Digest articles:
 {articles}
+
+Post brief:
+{post_brief}

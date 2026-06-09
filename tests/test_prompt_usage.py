@@ -280,6 +280,62 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("leverage", rendered_prompt)
         self.assertIn("landscape", rendered_prompt)
 
+    def test_build_post_prompt_includes_post_brief_and_angle_constraints(self):
+        topic = Topic(name="Workflow topic")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Workflow topic",
+            payload={"version": 1, "title": "Digest for Workflow topic", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "Workflow speed improved after the team fixed handoffs.",
+                "key_points": ["Validation got clearer before the automation layer paid off."],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": [
+                "avoid generic AI phrasing",
+                "make the tension explicit",
+                "end with a practical takeaway",
+            ],
+        }
+        post_brief = {
+            "target_reader": "Operations leaders",
+            "reader_pain_or_mistake": "They automate before the handoff is clear.",
+            "sharp_claim": "Speed exposes unclear workflow ownership.",
+            "tension": "Automation helps only after validation is explicit.",
+            "evidence_points": [
+                "Workflow speed improved after the team fixed handoffs.",
+                "Validation got clearer before the automation layer paid off.",
+            ],
+            "practical_takeaway": "Check the handoff before adding automation.",
+            "ending_reframe": "The useful system is the one that makes ownership visible.",
+            "suggested_hook_direction": "Lead with the ownership gap.",
+            "avoid_angle": "Avoid generic AI productivity advice.",
+        }
+
+        rendered_prompt = build_post_prompt(digest, articles, author_profile, post_brief=post_brief)
+
+        self.assertIn("Post brief:", rendered_prompt)
+        self.assertIn("Operations leaders", rendered_prompt)
+        self.assertIn("Speed exposes unclear workflow ownership.", rendered_prompt)
+        self.assertIn("Avoid generic AI productivity advice.", rendered_prompt)
+        self.assertIn("Use the post brief as the editorial direction", rendered_prompt)
+        self.assertIn("Do not choose a new angle", rendered_prompt)
+        self.assertIn("Do not broaden beyond the brief", rendered_prompt)
+        self.assertIn("Source articles are grounding material, not permission to expand into a broad essay", rendered_prompt)
+        self.assertNotIn("{post_brief}", rendered_prompt)
+
     def test_build_post_repair_prompt_renders_quality_repair_contract(self):
         topic = Topic(name="Personal Branding")
         run = DigestRun(topic=topic)

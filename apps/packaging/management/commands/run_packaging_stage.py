@@ -50,6 +50,18 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"repair_quality_gate: {json.dumps(debug_info['repair_quality_gate'], ensure_ascii=False)}"
             )
+        if debug_info.get("post_brief_tokens"):
+            self.stdout.write(
+                f"post_brief_tokens: {json.dumps(debug_info['post_brief_tokens'], ensure_ascii=False)}"
+            )
+        if debug_info.get("post_brief"):
+            self.stdout.write("")
+            self.stdout.write("=== POST BRIEF ===")
+            self.stdout.write(json.dumps(debug_info["post_brief"], ensure_ascii=False, indent=2))
+        if debug_info.get("post_brief_prompt"):
+            self.stdout.write("")
+            self.stdout.write("=== POST BRIEF PROMPT ===")
+            self.stdout.write(debug_info["post_brief_prompt"])
         self.stdout.write("")
         self.stdout.write("=== PROMPT ===")
         self.stdout.write(debug_info["prompt"])

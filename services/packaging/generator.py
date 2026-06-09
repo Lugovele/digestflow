@@ -76,6 +76,9 @@ class PackagingGenerationResult:
     repair_quality_gate: dict[str, Any] | None = None
     repair_prompt: str = ""
     repair_response_text: str = ""
+    post_brief: dict[str, Any] | None = None
+    post_brief_prompt: str = ""
+    post_brief_tokens: dict[str, int | None] | None = None
 
 
 def generate_content_package_for_digest(
@@ -130,6 +133,9 @@ def generate_content_package_for_digest(
         "repair_quality_gate": generation.repair_quality_gate or {},
         "repair_prompt": generation.repair_prompt,
         "repair_response_text": generation.repair_response_text,
+        "post_brief": generation.post_brief,
+        "post_brief_prompt": generation.post_brief_prompt,
+        "post_brief_tokens": generation.post_brief_tokens,
     }
     return content_package, debug_info
 
@@ -155,17 +161,37 @@ def _generate_packaging_payload(
     repair_quality_gate: dict[str, Any] | None = None
     repair_prompt = ""
     repair_response_text = ""
+    post_brief: dict[str, Any] | None = None
+    post_brief_prompt = ""
+    post_brief_tokens: dict[str, int | None] | None = None
+    prompt = build_post_prompt(digest, articles, profile)
+    response_text = ""
 
     if _should_use_mock():
         payload = _build_mock_payload(digest, articles)
-        prompt = build_post_prompt(digest, articles, profile)
         response_text = json.dumps(payload, ensure_ascii=False, indent=2)
         provider = "mock"
         is_mock = True
         fallback_reason = "OPENAI_API_KEY не задан или содержит placeholder."
     else:
         try:
-            payload, prompt, response_text, tokens = _generate_payload_via_llm(digest, articles, profile)
+            try:
+                post_brief, post_brief_prompt, _brief_response_text, post_brief_tokens = _generate_post_brief_via_llm(
+                    digest,
+                    articles,
+                    profile,
+                )
+            except Exception as exc:
+                raise ContentPackageValidationError(
+                    f"LinkedIn post brief generation/validation failed: {exc}"
+                ) from exc
+
+            payload, prompt, response_text, tokens = _generate_payload_via_llm(
+                digest,
+                articles,
+                profile,
+                post_brief=post_brief,
+            )
             payload = _normalize_linkedin_post_payload(payload)
             estimated_cost = estimate_cost_usd(
                 tokens.get("prompt_tokens") if tokens else None,
@@ -212,10 +238,14 @@ def _generate_packaging_payload(
                 repair_quality_gate=repair_quality_gate,
                 repair_prompt=repair_prompt,
                 repair_response_text=repair_response_text,
+                post_brief=post_brief,
+                post_brief_prompt=post_brief_prompt,
+                post_brief_tokens=post_brief_tokens,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
-            prompt = build_post_prompt(digest, articles, profile)
+            if post_brief is not None:
+                prompt = build_post_prompt(digest, articles, profile, post_brief=post_brief)
             response_text = json.dumps(payload, ensure_ascii=False, indent=2)
             provider = "mock"
             is_mock = True
@@ -242,6 +272,9 @@ def _generate_packaging_payload(
         repair_quality_gate=repair_quality_gate,
         repair_prompt=repair_prompt,
         repair_response_text=repair_response_text,
+        post_brief=post_brief,
+        post_brief_prompt=post_brief_prompt,
+        post_brief_tokens=post_brief_tokens,
     )
 
 
@@ -249,9 +282,10 @@ def generate_post_from_articles(
     digest: Digest,
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
+    post_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mode 1: build one post from all article analyses."""
-    prompt = build_post_prompt(digest, articles, author_profile)
+    prompt = build_post_prompt(digest, articles, author_profile, post_brief=post_brief)
     if not articles:
         return _build_safe_fallback_post(digest)
 
@@ -294,6 +328,7 @@ def build_post_prompt(
     digest: Digest,
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
+    post_brief: dict[str, Any] | None = None,
 ) -> str:
     """Build prompt for single-post mode from digest articles."""
     return build_prompt(
@@ -301,6 +336,7 @@ def build_post_prompt(
         topic_name=digest.run.topic.name,
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
+        post_brief=_format_list_for_prompt(post_brief or {}),
         author_role=author_profile["role"],
         author_background=author_profile["background"],
         author_focus=author_profile["focus"],
@@ -433,14 +469,15 @@ def _generate_payload_via_llm(
     digest: Digest,
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
+    post_brief: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
     if not articles:
-        prompt = build_post_prompt(digest, articles, author_profile)
+        prompt = build_post_prompt(digest, articles, author_profile, post_brief=post_brief)
         payload = _build_safe_fallback_post(digest)
         response_text = json.dumps(payload, ensure_ascii=False, indent=2)
         return payload, prompt, response_text, None
 
-    post_payload = generate_post_from_articles(digest, articles, author_profile)
+    post_payload = generate_post_from_articles(digest, articles, author_profile, post_brief=post_brief)
     carousel_outline = generate_carousel_from_articles(digest, articles, author_profile)
     payload = {
         "post_text": post_payload["post_text"],
@@ -450,7 +487,7 @@ def _generate_payload_via_llm(
         "carousel_outline": carousel_outline,
         "quality_checks": post_payload["quality_checks"],
     }
-    prompt = build_post_prompt(digest, articles, author_profile)
+    prompt = build_post_prompt(digest, articles, author_profile, post_brief=post_brief)
     response_text = json.dumps(payload, ensure_ascii=False, indent=2)
     return payload, prompt, response_text, None
 
