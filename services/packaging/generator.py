@@ -820,6 +820,23 @@ _AVOID_ANGLE_LOW_SIGNAL_WORDS = {
     "generalizations",
 }
 
+_CONCRETE_DETAIL_LOW_SIGNAL_WORDS = {
+    "advice",
+    "angle",
+    "approach",
+    "brand",
+    "branding",
+    "content",
+    "effective",
+    "generic",
+    "personal",
+    "professional",
+    "professionals",
+    "strategy",
+    "strategies",
+    "useful",
+}
+
 
 def _evaluate_linkedin_post_quality(payload: dict[str, Any]) -> dict[str, Any]:
     post_text = str(payload.get("post_text") or "").strip()
@@ -920,11 +937,11 @@ def _evaluate_post_brief_alignment(
         for item in post_brief.get("concrete_details", [])
         if isinstance(item, str) and str(item).strip()
     ]
-    if concrete_details and not any(
-        _contains_meaningful_fragment(normalized_post, detail, min_words=2)
-        for detail in concrete_details
-    ):
+    concrete_detail_match = _find_concrete_detail_match(post_text, concrete_details)
+    if concrete_details and not concrete_detail_match:
         issues.append("missing_concrete_detail")
+    elif concrete_detail_match:
+        details["concrete_detail_match"] = concrete_detail_match
 
     opening = _first_third(post_text)
     normalized_opening = _normalize_alignment_text(opening)
@@ -1116,6 +1133,80 @@ def _find_avoid_angle_match(post_text: str, avoid_angle: str) -> dict[str, Any] 
     return None
 
 
+def _find_concrete_detail_match(
+    post_text: str,
+    concrete_details: list[str],
+) -> dict[str, Any] | None:
+    normalized_post = _normalize_alignment_text(post_text)
+    if not normalized_post:
+        return None
+
+    post_numbers = set(_number_like_tokens(post_text))
+    for raw_detail in concrete_details:
+        detail = str(raw_detail or "").strip()
+        normalized_detail = _normalize_alignment_text(detail)
+        if not normalized_detail:
+            continue
+
+        if normalized_detail in normalized_post:
+            return {
+                "matched": True,
+                "matched_detail": detail,
+                "matched_fragment": normalized_detail,
+                "match_type": "exact_phrase",
+            }
+
+        detail_numbers = set(_number_like_tokens(detail))
+        number_overlap = sorted(detail_numbers & post_numbers)
+        if number_overlap:
+            return {
+                "matched": True,
+                "matched_detail": detail,
+                "matched_fragment": number_overlap[0],
+                "match_type": "number_overlap",
+            }
+
+        specific_words = _concrete_detail_specific_words(detail)
+        if len(specific_words) < 2:
+            continue
+
+        for window_size in range(min(len(specific_words), 5), 1, -1):
+            for index in range(0, len(specific_words) - window_size + 1):
+                fragment = " ".join(specific_words[index : index + window_size])
+                if fragment in normalized_post:
+                    return {
+                        "matched": True,
+                        "matched_detail": detail,
+                        "matched_fragment": fragment,
+                        "match_type": "meaningful_fragment",
+                    }
+
+        post_words = set(normalized_post.split())
+        overlapping_words = [word for word in specific_words if word in post_words]
+        required_overlap = min(3, len(specific_words))
+        if len(overlapping_words) >= required_overlap:
+            return {
+                "matched": True,
+                "matched_detail": detail,
+                "matched_fragment": " ".join(overlapping_words[:required_overlap]),
+                "match_type": "meaningful_fragment",
+            }
+    return None
+
+
+def _concrete_detail_specific_words(detail: str) -> list[str]:
+    return [
+        word
+        for word in _meaningful_words(detail)
+        if word not in _AVOID_ANGLE_BROAD_TOPIC_WORDS
+        and word not in _CONCRETE_DETAIL_LOW_SIGNAL_WORDS
+    ]
+
+
+def _number_like_tokens(value: str) -> list[str]:
+    return re.findall(r"(?<!\w)\d+(?:\.\d+)?%?(?!\w)", str(value or ""))
+
+
 def _meaningful_words(value: str) -> list[str]:
     return [
         word
@@ -1158,9 +1249,13 @@ def _count_concrete_detail_signals(
     count += len(re.findall(r"\b\d+(?:\.\d+)?%?\b", str(post_text or "")))
     count += sum(1 for phrase in _SPECIFICITY_OPERATIONAL_PHRASES if phrase in normalized_post)
 
-    for detail in (post_brief or {}).get("concrete_details", []):
-        if isinstance(detail, str) and _contains_meaningful_fragment(normalized_post, detail, min_words=2):
-            count += 1
+    concrete_details = [
+        detail
+        for detail in (post_brief or {}).get("concrete_details", [])
+        if isinstance(detail, str) and detail.strip()
+    ]
+    if _find_concrete_detail_match(post_text, concrete_details):
+        count += 1
 
     return count
 

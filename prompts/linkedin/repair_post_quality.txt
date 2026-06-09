@@ -40,6 +40,8 @@ REPAIR REQUIREMENTS:
 * Preserve the validated post brief
 * Do not choose a new angle
 * Use at least one `concrete_details` item from the brief if present
+* If repair reasons include `brief_alignment:missing_concrete_detail`, insert one existing `concrete_details` item from the validated post brief into `post_text`
+* Use an existing concrete detail; do not invent a new metric, case, number, or detail
 * Use the brief's `evidence_points` as the evidence backbone
 * Use `human_angle` as the tone lens without inventing personal experience
 * Remove `avoid_angle` drift from `post_text`

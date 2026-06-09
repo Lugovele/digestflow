@@ -14,6 +14,7 @@ from services.packaging.generator import (
     _evaluate_post_brief_alignment,
     _extract_banned_phrases_from_repair_reasons,
     _find_avoid_angle_match,
+    _find_concrete_detail_match,
     _generate_post_brief_via_llm,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
@@ -145,6 +146,55 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(report["checked"])
         self.assertTrue(report["passed"])
         self.assertEqual(report["issues"], [])
+        self.assertEqual(
+            report["details"]["concrete_detail_match"]["match_type"],
+            "exact_phrase",
+        )
+
+    def test_concrete_detail_match_detects_number_overlap(self) -> None:
+        match = _find_concrete_detail_match(
+            "The useful signal is simple: 89% of professionals value aligned narratives.",
+            ["89% of professionals see value in aligning personal narratives with corporate missions."],
+        )
+
+        self.assertEqual(
+            match,
+            {
+                "matched": True,
+                "matched_detail": "89% of professionals see value in aligning personal narratives with corporate missions.",
+                "matched_fragment": "89%",
+                "match_type": "number_overlap",
+            },
+        )
+
+    def test_concrete_detail_match_detects_light_paraphrase(self) -> None:
+        match = _find_concrete_detail_match(
+            "Brand Lag is eliminated when contemporary expertise is reflected in the public signal.",
+            ["Effective strategies eliminate Brand Lag by reflecting contemporary expertise."],
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match["match_type"], "meaningful_fragment")
+        self.assertEqual(
+            match["matched_detail"],
+            "Effective strategies eliminate Brand Lag by reflecting contemporary expertise.",
+        )
+
+    def test_concrete_detail_match_ignores_generic_topic_language(self) -> None:
+        match = _find_concrete_detail_match(
+            "A useful personal brand shows current judgment and clear positioning.",
+            ["Effective strategies eliminate Brand Lag by reflecting contemporary expertise."],
+        )
+
+        self.assertIsNone(match)
+
+    def test_concrete_detail_match_ignores_unrelated_detail(self) -> None:
+        match = _find_concrete_detail_match(
+            "The post mentions a logo redesign and a clearer profile photo.",
+            ["Effective strategies eliminate Brand Lag by reflecting contemporary expertise."],
+        )
+
+        self.assertIsNone(match)
 
     def test_post_brief_alignment_fails_when_post_text_includes_url(self) -> None:
         payload = self._package_payload(
@@ -201,6 +251,7 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertFalse(report["passed"])
         self.assertIn("missing_concrete_detail", report["issues"])
+        self.assertNotIn("concrete_detail_match", report["details"])
 
     def test_post_brief_alignment_fails_when_avoid_angle_is_echoed(self) -> None:
         post_brief = self._post_brief_payload(
@@ -263,7 +314,7 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertTrue(report["passed"])
         self.assertNotIn("avoid_angle_in_post_text", report["issues"])
-        self.assertEqual(report["details"], {})
+        self.assertNotIn("avoid_angle_match", report["details"])
 
     def test_post_brief_alignment_does_not_match_grounded_automation_wording(self) -> None:
         post_brief = self._post_brief_payload(
@@ -279,7 +330,7 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertTrue(report["passed"])
         self.assertNotIn("avoid_angle_in_post_text", report["issues"])
-        self.assertEqual(report["details"], {})
+        self.assertNotIn("avoid_angle_match", report["details"])
 
     def test_avoid_angle_match_detects_specific_meaningful_fragment(self) -> None:
         match = _find_avoid_angle_match(
@@ -1152,8 +1203,40 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(debug_info["repair_succeeded"])
         self.assertIn("brief_alignment:missing_concrete_detail", debug_info["repair_reasons"])
         self.assertTrue(debug_info["brief_alignment"]["passed"])
+        self.assertIn("concrete_detail_match", debug_info["brief_alignment"]["details"])
         self.assertTrue(debug_info["post_mechanics"]["passed"])
         mock_repair_payload.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_brief_alignment_still_falls_back_when_repair_misses_concrete_detail(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-alignment-repair-still-missing-user")
+        weak_payload = self._package_payload(
+            "A useful personal brand proves judgment before polish.\n\n"
+            "The body stays broad and never uses the grounded concrete detail."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand proves judgment before polish.\n\n"
+            "The body still stays broad and avoids the specific proof from the brief."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        mock_repair_payload.assert_called_once()
+        self.assertEqual(debug_info["provider"], "mock")
+        self.assertTrue(debug_info["is_mock"])
+        self.assertIn("brief_alignment:missing_concrete_detail", debug_info["fallback_reason"])
+        self.assertTrue(content_package.post_text)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")

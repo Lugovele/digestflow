@@ -280,6 +280,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Use `pattern_interrupt` in the first third of `post_text`", rendered_prompt)
         self.assertIn("Use `credibility_basis` to decide how strongly the claim can be stated", rendered_prompt)
         self.assertIn("Use `concrete_details` only when they are present in the brief", rendered_prompt)
+        self.assertIn(
+            "If `post_brief.concrete_details` is non-empty, use at least one concrete detail in `post_text`",
+            rendered_prompt,
+        )
+        self.assertIn("Preserve concrete details as evidence; do not smooth them into generic wording", rendered_prompt)
         self.assertIn("Use `human_angle` as the tone lens without inventing personal experience", rendered_prompt)
         self.assertIn("BRIEF ALIGNMENT RULES", rendered_prompt)
         self.assertIn("The final post must be a transformation of the brief, not a new interpretation.", rendered_prompt)
@@ -319,6 +324,7 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Do not fabricate numbers, names, examples, or conclusions not grounded in the inputs", rendered_prompt)
         self.assertIn("Do not invent personal experience", rendered_prompt)
         self.assertIn("Do not invent numbers or cases", rendered_prompt)
+        self.assertIn("Do not invent new numbers, cases, metrics, or concrete details", rendered_prompt)
         self.assertIn("Do not include URLs in `post_text`", rendered_prompt)
 
     def test_build_post_prompt_includes_post_brief_and_angle_constraints(self):
@@ -479,6 +485,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Preserve the validated post brief", rendered_prompt)
         self.assertIn("Do not choose a new angle", rendered_prompt)
         self.assertIn("Use at least one `concrete_details` item from the brief if present", rendered_prompt)
+        self.assertIn(
+            "If repair reasons include `brief_alignment:missing_concrete_detail`, insert one existing `concrete_details` item from the validated post brief into `post_text`",
+            rendered_prompt,
+        )
+        self.assertIn("Use an existing concrete detail; do not invent a new metric, case, number, or detail", rendered_prompt)
         self.assertIn("Use the brief's `evidence_points` as the evidence backbone", rendered_prompt)
         self.assertIn("Use `human_angle` as the tone lens without inventing personal experience", rendered_prompt)
         self.assertIn("Remove `avoid_angle` drift from `post_text`", rendered_prompt)

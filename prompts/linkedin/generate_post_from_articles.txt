@@ -27,6 +27,8 @@ TASK:
 * Use `pattern_interrupt` in the first third of `post_text`
 * Use `credibility_basis` to decide how strongly the claim can be stated
 * Use `concrete_details` only when they are present in the brief
+* If `post_brief.concrete_details` is non-empty, use at least one concrete detail in `post_text`
+* Preserve concrete details as evidence; do not smooth them into generic wording
 * Use `human_angle` as the tone lens without inventing personal experience
 * Source articles are grounding material, not permission to expand into a broad essay
 * Turn compressed source facts into useful author insight, not recap
@@ -159,6 +161,7 @@ GROUNDING RULES:
 * Do not fabricate numbers, names, examples, or conclusions not grounded in the inputs
 * Do not invent personal experience
 * Do not invent numbers or cases
+* Do not invent new numbers, cases, metrics, or concrete details
 * Do not include URLs in `post_text`
 * Source facts are evidence; author insight is interpretation based on that evidence
 * If the articles are loosely connected, keep the point narrow and specific
