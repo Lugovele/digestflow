@@ -17,7 +17,7 @@ TASK:
 
 Create a structured post brief that helps generate a human expert LinkedIn post.
 
-The brief is an editorial decision, not a summary.
+The brief is an editorial LinkedIn-quality brief, not a summary.
 
 BRIEF REQUIREMENTS:
 
@@ -26,11 +26,21 @@ BRIEF REQUIREMENTS:
 * Do not recap articles.
 * Do not produce generic advice.
 * Choose one angle only.
+* Choose exactly one `hook_type` from: `personal_action`, `reader_pain`, `counterintuitive_fact`.
+* Design the hook direction for the first 8-12 words of the final post.
+* Include a pattern interrupt for the first third of the final post.
 * Use source facts as evidence.
 * Evidence points must be grounded in article summaries/key_points.
 * Prefer 2-4 concise evidence points.
 * Each evidence point should be short and specific.
+* `credibility_basis` must explain what the claim is based on: source data, comparison, observed pattern, practitioner lens, user-provided experience, or grounded evidence.
+* Extract `concrete_details` only when grounded in article evidence or the author profile.
+* `concrete_details` can include numbers, names, timeframes, mechanisms, examples, comparisons, percentages, or specific observed facts.
+* Do not invent numbers, names, cases, personal experiences, results, or metrics.
+* If there are few concrete details, use grounded mechanisms or comparisons rather than fabricated metrics.
+* `human_angle` must be non-fabricated: practitioner observation, honest doubt, reflection, or grounded human perspective.
 * `avoid_angle` must explicitly name the generic angle to avoid.
+* Avoid broad generic angles.
 * Make the brief useful for a human expert LinkedIn post with a clear point of view.
 
 Return valid JSON only.
@@ -38,9 +48,14 @@ Return exactly this JSON shape:
 {{
   "target_reader": "string",
   "reader_pain_or_mistake": "string",
+  "hook_type": "personal_action | reader_pain | counterintuitive_fact",
   "sharp_claim": "string",
+  "credibility_basis": "string",
   "tension": "string",
+  "pattern_interrupt": "string",
   "evidence_points": ["string", "string"],
+  "concrete_details": ["string"],
+  "human_angle": "string",
   "practical_takeaway": "string",
   "ending_reframe": "string",
   "suggested_hook_direction": "string",

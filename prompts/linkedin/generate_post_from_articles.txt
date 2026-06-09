@@ -20,8 +20,14 @@ TASK:
 * Identify the core pattern across the articles
 * Write a LinkedIn-native expert post with a clear point of view
 * Use the post brief as the editorial direction
+* Use `hook_type`, `pattern_interrupt`, `credibility_basis`, `concrete_details`, and `human_angle` from the post brief
 * Do not choose a new angle
 * Do not broaden beyond the brief
+* The first line must follow the brief's `hook_type` and reflect `sharp_claim` or `tension`
+* Use `pattern_interrupt` in the first third of `post_text`
+* Use `credibility_basis` to decide how strongly the claim can be stated
+* Use `concrete_details` only when they are present in the brief
+* Use `human_angle` as the tone lens without inventing personal experience
 * Source articles are grounding material, not permission to expand into a broad essay
 * Turn compressed source facts into useful author insight, not recap
 * Write like a practitioner with a point of view, not like a content marketer
@@ -53,6 +59,7 @@ POST REQUIREMENTS:
 * `post_text` must not end with a question or CTA
 * `post_text` should end with a final insight, practical check, or sharp takeaway
 * CTA questions belong only in `cta_variants`
+* Do not put CTA questions inside `post_text`
 * Keep `post_text` concise, high-signal, and compressed
 * Include one concrete reader pain, mistake, wrong optimization, missing signal, or cost
 * Convert source facts into one practical interpretation
@@ -137,6 +144,9 @@ GROUNDING RULES:
 * Stay close to the selected digest articles
 * Make claims only when the articles support them
 * Do not fabricate numbers, names, examples, or conclusions not grounded in the inputs
+* Do not invent personal experience
+* Do not invent numbers or cases
+* Do not include URLs in `post_text`
 * Source facts are evidence; author insight is interpretation based on that evidence
 * If the articles are loosely connected, keep the point narrow and specific
 

@@ -119,9 +119,14 @@ class PromptUsageTests(SimpleTestCase):
         for field_name in [
             "target_reader",
             "reader_pain_or_mistake",
+            "hook_type",
             "sharp_claim",
+            "credibility_basis",
             "tension",
+            "pattern_interrupt",
             "evidence_points",
+            "concrete_details",
+            "human_angle",
             "practical_takeaway",
             "ending_reframe",
             "suggested_hook_direction",
@@ -129,13 +134,23 @@ class PromptUsageTests(SimpleTestCase):
         ]:
             self.assertIn(f'"{field_name}"', brief_prompt)
 
-        self.assertIn("The brief is an editorial decision, not a summary.", brief_prompt)
+        self.assertIn("The brief is an editorial LinkedIn-quality brief, not a summary.", brief_prompt)
         self.assertIn("Do not write the final post.", brief_prompt)
         self.assertIn("Do not write final post prose.", brief_prompt)
         self.assertIn("Choose one angle only.", brief_prompt)
+        self.assertIn(
+            "Choose exactly one `hook_type` from: `personal_action`, `reader_pain`, `counterintuitive_fact`.",
+            brief_prompt,
+        )
+        self.assertIn("Design the hook direction for the first 8-12 words of the final post.", brief_prompt)
+        self.assertIn("Include a pattern interrupt for the first third of the final post.", brief_prompt)
         self.assertIn("Use source facts as evidence.", brief_prompt)
         self.assertIn("Evidence points must be grounded in article summaries/key_points.", brief_prompt)
         self.assertIn("Prefer 2-4 concise evidence points.", brief_prompt)
+        self.assertIn("`credibility_basis` must explain what the claim is based on", brief_prompt)
+        self.assertIn("Extract `concrete_details` only when grounded in article evidence or the author profile.", brief_prompt)
+        self.assertIn("Do not invent numbers, names, cases, personal experiences, results, or metrics.", brief_prompt)
+        self.assertIn("`human_angle` must be non-fabricated", brief_prompt)
         self.assertIn("`avoid_angle` must explicitly name the generic angle to avoid.", brief_prompt)
         self.assertIn("human expert LinkedIn post", brief_prompt)
 
@@ -254,6 +269,18 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Write like a practitioner with a point of view, not like a content marketer", rendered_prompt)
         self.assertIn("Sound like someone who has seen this problem in real work", rendered_prompt)
         self.assertIn("Use the author profile as a lens, not as a bio", rendered_prompt)
+        self.assertIn(
+            "Use `hook_type`, `pattern_interrupt`, `credibility_basis`, `concrete_details`, and `human_angle` from the post brief",
+            rendered_prompt,
+        )
+        self.assertIn(
+            "The first line must follow the brief's `hook_type` and reflect `sharp_claim` or `tension`",
+            rendered_prompt,
+        )
+        self.assertIn("Use `pattern_interrupt` in the first third of `post_text`", rendered_prompt)
+        self.assertIn("Use `credibility_basis` to decide how strongly the claim can be stated", rendered_prompt)
+        self.assertIn("Use `concrete_details` only when they are present in the brief", rendered_prompt)
+        self.assertIn("Use `human_angle` as the tone lens without inventing personal experience", rendered_prompt)
         self.assertIn("Start `post_text` with a direct, specific claim", rendered_prompt)
         self.assertIn("Include one concrete reader pain, mistake, wrong optimization, missing signal, or cost", rendered_prompt)
         self.assertIn("Convert source facts into one practical interpretation", rendered_prompt)
@@ -263,6 +290,7 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("`post_text` must not end with a question or CTA", rendered_prompt)
         self.assertIn("End the body with a sharp takeaway, practical diagnostic, or memorable reframing", rendered_prompt)
         self.assertIn("CTA questions belong only in `cta_variants`", rendered_prompt)
+        self.assertIn("Do not put CTA questions inside `post_text`", rendered_prompt)
         self.assertIn("CTA variants should sound natural, not salesy", rendered_prompt)
         self.assertIn('"Let\'s discuss"', rendered_prompt)
         self.assertIn('"Start building today"', rendered_prompt)
@@ -279,6 +307,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("holistic", rendered_prompt)
         self.assertIn("leverage", rendered_prompt)
         self.assertIn("landscape", rendered_prompt)
+        self.assertIn("Make claims only when the articles support them", rendered_prompt)
+        self.assertIn("Do not fabricate numbers, names, examples, or conclusions not grounded in the inputs", rendered_prompt)
+        self.assertIn("Do not invent personal experience", rendered_prompt)
+        self.assertIn("Do not invent numbers or cases", rendered_prompt)
+        self.assertIn("Do not include URLs in `post_text`", rendered_prompt)
 
     def test_build_post_prompt_includes_post_brief_and_angle_constraints(self):
         topic = Topic(name="Workflow topic")
@@ -312,12 +345,20 @@ class PromptUsageTests(SimpleTestCase):
         post_brief = {
             "target_reader": "Operations leaders",
             "reader_pain_or_mistake": "They automate before the handoff is clear.",
+            "hook_type": "reader_pain",
             "sharp_claim": "Speed exposes unclear workflow ownership.",
+            "credibility_basis": "Grounded in article summaries about handoff clarity and validation.",
             "tension": "Automation helps only after validation is explicit.",
+            "pattern_interrupt": "Faster systems make unclear ownership more visible.",
             "evidence_points": [
                 "Workflow speed improved after the team fixed handoffs.",
                 "Validation got clearer before the automation layer paid off.",
             ],
+            "concrete_details": [
+                "Workflow speed improved after handoffs changed.",
+                "Validation got clearer before automation helped.",
+            ],
+            "human_angle": "A practitioner noticing the ownership gap before tool adoption.",
             "practical_takeaway": "Check the handoff before adding automation.",
             "ending_reframe": "The useful system is the one that makes ownership visible.",
             "suggested_hook_direction": "Lead with the ownership gap.",
@@ -328,9 +369,18 @@ class PromptUsageTests(SimpleTestCase):
 
         self.assertIn("Post brief:", rendered_prompt)
         self.assertIn("Operations leaders", rendered_prompt)
+        self.assertIn("reader_pain", rendered_prompt)
         self.assertIn("Speed exposes unclear workflow ownership.", rendered_prompt)
+        self.assertIn("Grounded in article summaries about handoff clarity and validation.", rendered_prompt)
+        self.assertIn("Faster systems make unclear ownership more visible.", rendered_prompt)
+        self.assertIn("Workflow speed improved after handoffs changed.", rendered_prompt)
+        self.assertIn("A practitioner noticing the ownership gap before tool adoption.", rendered_prompt)
         self.assertIn("Avoid generic AI productivity advice.", rendered_prompt)
         self.assertIn("Use the post brief as the editorial direction", rendered_prompt)
+        self.assertIn(
+            "Use `hook_type`, `pattern_interrupt`, `credibility_basis`, `concrete_details`, and `human_angle` from the post brief",
+            rendered_prompt,
+        )
         self.assertIn("Do not choose a new angle", rendered_prompt)
         self.assertIn("Do not broaden beyond the brief", rendered_prompt)
         self.assertIn("Source articles are grounding material, not permission to expand into a broad essay", rendered_prompt)

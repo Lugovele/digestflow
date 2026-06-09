@@ -70,12 +70,22 @@ class PackagingArticlesOnlyTests(TestCase):
         payload = {
             "target_reader": "Founders building visible expertise",
             "reader_pain_or_mistake": "They polish positioning before proving judgment.",
+            "hook_type": "reader_pain",
             "sharp_claim": "A useful personal brand is evidence of current judgment.",
+            "credibility_basis": (
+                "Grounded in article summaries about build in public and current evidence of expertise."
+            ),
             "tension": "Visibility helps only when people can see what to trust you with.",
+            "pattern_interrupt": "Visibility without judgment creates attention without trust.",
             "evidence_points": [
                 "Build in public gives people evidence of current judgment.",
                 "People trust current evidence of expertise more than polished claims.",
             ],
+            "concrete_details": [
+                "Build in public gives people evidence of current judgment.",
+                "People trust current evidence of expertise more than polished claims.",
+            ],
+            "human_angle": "A practitioner noticing when brand activity lacks decision evidence.",
             "practical_takeaway": "Audit whether recent posts show decisions, not just activity.",
             "ending_reframe": "A brand is a repeated signal of what problems you can solve.",
             "suggested_hook_direction": "Lead with the trust gap, not logo polish.",
@@ -116,15 +126,30 @@ class PackagingArticlesOnlyTests(TestCase):
     def test_validate_post_brief_payload_strips_surrounding_whitespace(self) -> None:
         payload = self._post_brief_payload(
             target_reader="  Founders building visible expertise  ",
+            hook_type="  reader_pain  ",
+            credibility_basis="  Grounded in article summaries.  ",
+            pattern_interrupt="  Visibility without judgment creates attention without trust.  ",
             evidence_points=[
                 "  Build in public gives people evidence.  ",
                 "  Polished claims are weaker than proof.  ",
             ],
+            concrete_details=[
+                "  Current evidence of expertise.  ",
+                "  ",
+                "  Build in public as proof.  ",
+            ],
+            human_angle="  A practitioner observation.  ",
         )
 
         normalized = _validate_post_brief_payload(payload)
 
         self.assertEqual(normalized["target_reader"], "Founders building visible expertise")
+        self.assertEqual(normalized["hook_type"], "reader_pain")
+        self.assertEqual(normalized["credibility_basis"], "Grounded in article summaries.")
+        self.assertEqual(
+            normalized["pattern_interrupt"],
+            "Visibility without judgment creates attention without trust.",
+        )
         self.assertEqual(
             normalized["evidence_points"],
             [
@@ -132,6 +157,11 @@ class PackagingArticlesOnlyTests(TestCase):
                 "Polished claims are weaker than proof.",
             ],
         )
+        self.assertEqual(
+            normalized["concrete_details"],
+            ["Current evidence of expertise.", "Build in public as proof."],
+        )
+        self.assertEqual(normalized["human_angle"], "A practitioner observation.")
 
     def test_validate_post_brief_payload_missing_required_field_fails(self) -> None:
         payload = self._post_brief_payload()
@@ -142,6 +172,40 @@ class PackagingArticlesOnlyTests(TestCase):
 
     def test_validate_post_brief_payload_empty_string_field_fails(self) -> None:
         payload = self._post_brief_payload(sharp_claim="   ")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_missing_hook_type_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("hook_type")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_invalid_hook_type_fails(self) -> None:
+        payload = self._post_brief_payload(hook_type="generic_advice")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_missing_credibility_basis_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("credibility_basis")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_missing_pattern_interrupt_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("pattern_interrupt")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_missing_human_angle_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("human_angle")
 
         with self.assertRaises(ContentPackageValidationError):
             _validate_post_brief_payload(payload)
@@ -183,6 +247,53 @@ class PackagingArticlesOnlyTests(TestCase):
             ["Point one.", "Point two.", "Point three.", "Point four."],
         )
 
+    def test_validate_post_brief_payload_missing_concrete_details_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("concrete_details")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_non_list_concrete_details_fails(self) -> None:
+        payload = self._post_brief_payload(concrete_details="One detail. Another detail.")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_allows_empty_concrete_details(self) -> None:
+        payload = self._post_brief_payload(concrete_details=["   ", 123, None])
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertEqual(normalized["concrete_details"], [])
+
+    def test_validate_post_brief_payload_trims_concrete_details_to_six(self) -> None:
+        payload = self._post_brief_payload(
+            concrete_details=[
+                "Detail one.",
+                "Detail two.",
+                "Detail three.",
+                "Detail four.",
+                "Detail five.",
+                "Detail six.",
+                "Detail seven.",
+            ],
+        )
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertEqual(
+            normalized["concrete_details"],
+            [
+                "Detail one.",
+                "Detail two.",
+                "Detail three.",
+                "Detail four.",
+                "Detail five.",
+                "Detail six.",
+            ],
+        )
+
     def test_validate_post_brief_payload_strips_extra_keys(self) -> None:
         payload = self._post_brief_payload(extra_key="remove me", metadata={"debug": True})
 
@@ -195,9 +306,14 @@ class PackagingArticlesOnlyTests(TestCase):
             [
                 "target_reader",
                 "reader_pain_or_mistake",
+                "hook_type",
                 "sharp_claim",
+                "credibility_basis",
                 "tension",
+                "pattern_interrupt",
                 "evidence_points",
+                "concrete_details",
+                "human_angle",
                 "practical_takeaway",
                 "ending_reframe",
                 "suggested_hook_direction",

@@ -371,13 +371,19 @@ def build_post_brief_prompt(
 _POST_BRIEF_STRING_FIELDS = [
     "target_reader",
     "reader_pain_or_mistake",
+    "hook_type",
     "sharp_claim",
+    "credibility_basis",
     "tension",
+    "pattern_interrupt",
+    "human_angle",
     "practical_takeaway",
     "ending_reframe",
     "suggested_hook_direction",
     "avoid_angle",
 ]
+
+_POST_BRIEF_HOOK_TYPES = {"personal_action", "reader_pain", "counterintuitive_fact"}
 
 
 def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -394,6 +400,11 @@ def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
             raise ContentPackageValidationError(f"Post brief field must be a non-empty string: {field_name}")
         normalized[field_name] = value
 
+    if normalized["hook_type"] not in _POST_BRIEF_HOOK_TYPES:
+        raise ContentPackageValidationError(
+            "Post brief hook_type must be one of: personal_action, reader_pain, counterintuitive_fact."
+        )
+
     if "evidence_points" not in payload:
         raise ContentPackageValidationError("Post brief payload is missing required field: evidence_points")
 
@@ -409,12 +420,30 @@ def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if len(evidence_points) < 2:
         raise ContentPackageValidationError("Post brief evidence_points must include at least 2 non-empty strings.")
 
+    if "concrete_details" not in payload:
+        raise ContentPackageValidationError("Post brief payload is missing required field: concrete_details")
+
+    raw_concrete_details = payload.get("concrete_details")
+    if not isinstance(raw_concrete_details, list):
+        raise ContentPackageValidationError("Post brief concrete_details must be a list.")
+
+    concrete_details = [
+        str(item).strip()
+        for item in raw_concrete_details
+        if isinstance(item, str) and str(item).strip()
+    ]
+
     return {
         "target_reader": normalized["target_reader"],
         "reader_pain_or_mistake": normalized["reader_pain_or_mistake"],
+        "hook_type": normalized["hook_type"],
         "sharp_claim": normalized["sharp_claim"],
+        "credibility_basis": normalized["credibility_basis"],
         "tension": normalized["tension"],
+        "pattern_interrupt": normalized["pattern_interrupt"],
         "evidence_points": evidence_points[:4],
+        "concrete_details": concrete_details[:6],
+        "human_angle": normalized["human_angle"],
         "practical_takeaway": normalized["practical_takeaway"],
         "ending_reframe": normalized["ending_reframe"],
         "suggested_hook_direction": normalized["suggested_hook_direction"],
