@@ -507,6 +507,20 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Keep CTA questions only in `cta_variants`", rendered_prompt)
         self.assertIn("Remove CTA phrases from `post_text`", rendered_prompt)
         self.assertIn("Replace generic openings with a specific first line", rendered_prompt)
+        self.assertIn("If repair reasons include `post_mechanics:generic_opening`, replace the first line completely", rendered_prompt)
+        self.assertIn("Do not reuse the weak opening structure", rendered_prompt)
+        self.assertIn(
+            "start from the brief's `sharp_claim`, `tension`, `reader_pain_or_mistake`, or `suggested_hook_direction`",
+            rendered_prompt,
+        )
+        self.assertIn("Keep the first line under 18 words", rendered_prompt)
+        self.assertIn("The first line must be specific enough to stand alone", rendered_prompt)
+        self.assertIn("In today's world", rendered_prompt)
+        self.assertIn("In the digital landscape", rendered_prompt)
+        self.assertIn("Many professionals", rendered_prompt)
+        self.assertIn("Personal branding is essential", rendered_prompt)
+        self.assertIn("Building a personal brand", rendered_prompt)
+        self.assertIn("Effective personal branding", rendered_prompt)
         self.assertIn("Keep the first line compact", rendered_prompt)
         self.assertIn("Include a concrete detail when available", rendered_prompt)
         self.assertIn("`post_text` must be under 1150 characters", rendered_prompt)

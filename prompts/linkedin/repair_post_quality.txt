@@ -59,6 +59,12 @@ REPAIR REQUIREMENTS:
 * Keep CTA questions only in `cta_variants`
 * Remove CTA phrases from `post_text`
 * Replace generic openings with a specific first line
+* If repair reasons include `post_mechanics:generic_opening`, replace the first line completely
+* Do not reuse the weak opening structure
+* For `post_mechanics:generic_opening`, start from the brief's `sharp_claim`, `tension`, `reader_pain_or_mistake`, or `suggested_hook_direction`
+* Do not start with "In today's world", "In the digital landscape", "Many professionals", "Personal branding is essential", "Building a personal brand", or "Effective personal branding"
+* Keep the first line under 18 words
+* The first line must be specific enough to stand alone
 * Keep the first line compact
 * Include a concrete detail when available
 * Keep factual claims grounded in the provided source facts

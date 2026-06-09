@@ -1462,6 +1462,75 @@ class PackagingArticlesOnlyTests(TestCase):
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
     @patch("services.packaging.generator._generate_post_brief_via_llm")
     @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_post_mechanics_generic_opening_triggers_repair_and_saves_specific_opening(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("mechanics-generic-opening-repair-user")
+        weak_payload = self._package_payload(
+            "Many professionals polish their personal brand before proving current judgment.\n\n"
+            "Build in public gives people evidence of current judgment, but the opening is too broad."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Visibility without judgment creates attention without trust. Build in public gives people evidence of current judgment, while polished positioning only asks people to believe you.\n\n"
+            "Audit whether recent posts show decisions, not just activity. A brand is a repeated signal of what problems you can solve."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertIn("post_mechanics:generic_opening", debug_info["repair_reasons"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
+        self.assertTrue(debug_info["repair_delta"]["passed"])
+        mock_repair_payload.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_post_mechanics_generic_opening_still_falls_back_when_repair_keeps_generic_opening(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("mechanics-generic-opening-still-generic-user")
+        weak_payload = self._package_payload(
+            "Many professionals need a stronger personal brand to stand out.\n\n"
+            "Build in public gives people evidence of current judgment, but this opening stays generic."
+        )
+        repair_payload = self._package_payload(
+            "Many professionals polish their personal brand before proving current judgment.\n\n"
+            "Visibility without judgment creates attention without trust. Build in public gives people evidence of current judgment, while polished positioning only asks people to believe you.\n\n"
+            "Audit whether recent posts show decisions, not just activity. A brand is a repeated signal of what problems you can solve."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        mock_repair_payload.assert_called_once()
+        self.assertEqual(debug_info["provider"], "mock")
+        self.assertTrue(debug_info["is_mock"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertIn("post_mechanics:generic_opening", debug_info["repair_reasons"])
+        self.assertIn("post_mechanics:generic_opening", debug_info["fallback_reason"])
+        self.assertEqual(mock_repair_payload.call_count, 1)
+        self.assertTrue(content_package.post_text)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
     def test_post_mechanics_warnings_do_not_trigger_repair_by_themselves(
         self,
         mock_generate_payload,
