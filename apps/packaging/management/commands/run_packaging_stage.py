@@ -42,9 +42,25 @@ class Command(BaseCommand):
         self.stdout.write(
             f"validation_report: {json.dumps(debug_info['validation_report'], ensure_ascii=False)}"
         )
+        self.stdout.write(f"quality_gate: {json.dumps(debug_info.get('quality_gate', {}), ensure_ascii=False)}")
+        self.stdout.write(f"repair_attempted: {debug_info.get('repair_attempted', False)}")
+        self.stdout.write(f"repair_succeeded: {debug_info.get('repair_succeeded', False)}")
+        self.stdout.write(f"repair_reasons: {json.dumps(debug_info.get('repair_reasons', []), ensure_ascii=False)}")
+        if debug_info.get("repair_quality_gate"):
+            self.stdout.write(
+                f"repair_quality_gate: {json.dumps(debug_info['repair_quality_gate'], ensure_ascii=False)}"
+            )
         self.stdout.write("")
         self.stdout.write("=== PROMPT ===")
         self.stdout.write(debug_info["prompt"])
+        if debug_info.get("repair_prompt"):
+            self.stdout.write("")
+            self.stdout.write("=== REPAIR PROMPT ===")
+            self.stdout.write(debug_info["repair_prompt"])
         self.stdout.write("")
         self.stdout.write("=== RESPONSE TEXT ===")
         self.stdout.write(debug_info["response_text"])
+        if debug_info.get("repair_response_text"):
+            self.stdout.write("")
+            self.stdout.write("=== REPAIR RESPONSE TEXT ===")
+            self.stdout.write(debug_info["repair_response_text"])

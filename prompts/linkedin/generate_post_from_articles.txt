@@ -2,40 +2,143 @@ You are creating a LinkedIn post from multiple digest articles.
 
 You are given structured insights from several articles.
 
+Write from this author context, not as a neutral analyst:
+
+* role: {author_role}
+* background: {author_background}
+* focus: {author_focus}
+* voice: {author_voice}
+* style constraints:
+  * {style_constraint_1}
+  * {style_constraint_2}
+  * {style_constraint_3}
+
 TASK:
 
-* Identify the core pattern across them
-* Write a strong opinionated post
+* Identify the core pattern across the articles
+* Write a LinkedIn-native expert post with a clear point of view
+* Turn compressed source facts into useful author insight, not recap
+* Write like a practitioner with a point of view, not like a content marketer
+* Sound like someone who has seen this problem in real work
+* Use the author profile as a lens, not as a bio
+
+POST REQUIREMENTS:
+
+* Write for one specific target reader, even if you do not name them directly
+* Make one sharp claim or useful insight
+* Start `post_text` with a direct, specific claim
+* Strong first-line patterns:
+  * "Most personal brands do not fail because the logo is weak."
+  * "The real problem is not visibility. It is unclear trust."
+  * "A personal brand breaks when people cannot tell what to trust you with."
+* Do not start `post_text` with broad scene-setting phrases like:
+  * "In the landscape of..."
+  * "In today's world..."
+  * "As businesses..."
+  * "In the age of..."
+  * "The future of..."
+  * "In the digital landscape..."
+  * "Many professionals mistakenly..."
+  * "Effective personal branding is..."
+* `post_text` must be no more than 1300 characters
+* Prefer 900-1200 characters for `post_text` to leave validation buffer
+* This limit applies only to `post_text`, not to the full JSON response
+* `hook_variants`, `cta_variants`, and `hashtags` are separate fields and should not be duplicated inside `post_text`
+* `post_text` must not end with a question or CTA
+* `post_text` should end with a final insight, practical check, or sharp takeaway
+* CTA questions belong only in `cta_variants`
+* Keep `post_text` concise, high-signal, and compressed
+* Include one concrete reader pain, mistake, wrong optimization, missing signal, or cost
+* Convert source facts into one practical interpretation
+* Prefer clear, slightly opinionated, grounded sentences
+* Do not over-polish the prose
+* Include one real tension or contrast, for example:
+  * most people think X, but Y is the real issue
+  * the old playbook says X, but the current pattern points to Y
+  * this looks like a tooling problem, but it is actually a workflow or design problem
+* Use concrete examples, numbers, patterns, or operational details when the articles support them
+* Use source facts as evidence, not as the structure of the post
+* Use source facts in compressed form, not as long article summaries
+* One short reference to the source pattern is enough
+* Make the body text carry momentum even though hook_variants and cta_variants are returned separately
+* End the body with a sharp takeaway, practical diagnostic, or memorable reframing
+* Give the reader a practical takeaway: what to rethink, stop doing, start doing, or check
+* Use short and medium sentences
+* No paragraph should exceed 3 short sentences
+* Use one short standalone sentence for emphasis if useful
+* Use 3-5 hashtags that match the actual topic
 
 DO NOT:
 
 * repeat summaries
 * list articles
+* recap article by article
+* explain the articles
+* structure the post as "one article says" or "another article says"
+* write "case studies show" unless the selected articles directly support that claim
+* use phrases like "this article highlights" or "the sources suggest" as the main structure
+* write like a report, digest, or research memo
+* list facts without interpretation
 * use generic hype language
+* use vague consultant prose
+* use motivational, inspirational, or brand-strategy fluff
+* write a bland trend summary
+* use vague consultant or AI phrasing unless it is directly grounded
 * force a big trend if the connection is weak
 * invent agreement between unrelated articles
-
-FOCUS:
-
-* insight
-* tension
-* pattern
-* one clear point of view grounded in the article set
-* concrete mechanisms, tools, workflows, or examples from the articles
+* write long multi-clause consultant sentences
+* use em dashes heavily
+* sound like a corporate blog
+* default hashtags to AI or workflow unless the post is truly about those topics
 
 AVOID PHRASES LIKE:
 
+* resonate
+* compelling story
+* authentic self
+* elevate your brand
+* unlock potential
+* game changer
+* leverage
+* landscape
+* holistic
+* systemic alignment
+* professional authority
+* vibrant presence
+* cohesive
+* seamless
+* paramount
+* thought leader
+* thought leadership
+* in today's digital world
+* it's not about X, it's about Y
 * dawn of an AI revolution
 * fundamentally alters the landscape
 * new order
+
+CTA VARIANT RULES:
+
+* CTA variants may ask questions
+* CTA variants should sound natural, not salesy
+* Do not use CTA phrases like:
+  * "Let's discuss"
+  * "Start building today"
+  * "Transform your brand"
+  * "Are you ready"
 
 GROUNDING RULES:
 
 * Stay close to the selected digest articles
 * Make claims only when the articles support them
+* Do not fabricate numbers, names, examples, or conclusions not grounded in the inputs
+* Source facts are evidence; author insight is interpretation based on that evidence
 * If the articles are loosely connected, keep the point narrow and specific
 
 Return valid JSON only.
+Return exactly the keys shown in the schema below.
+Do not return `carousel_outline`.
+Do not return any extra keys.
+If tempted to include carousel content, omit it.
 
 Return this exact JSON shape:
 {{

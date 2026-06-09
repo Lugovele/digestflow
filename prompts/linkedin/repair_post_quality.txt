@@ -1,0 +1,127 @@
+You are repairing a structurally valid LinkedIn post package.
+
+The current package is valid JSON, but the writing quality gate found problems.
+
+Use the same source facts and author lens. Improve the writing without adding unsupported claims.
+
+Author context:
+
+* role: {author_role}
+* background: {author_background}
+* focus: {author_focus}
+* voice: {author_voice}
+* style constraints:
+  * {style_constraint_1}
+  * {style_constraint_2}
+  * {style_constraint_3}
+
+Repair reasons:
+{quality_reasons}
+
+Weak payload:
+{weak_payload}
+
+Source facts:
+{articles}
+
+REPAIR REQUIREMENTS:
+
+* The repaired payload must remove every retry reason listed above
+* Keep factual claims grounded in the provided source facts
+* Return the same JSON schema only
+* `post_text` must be under 1150 characters
+* Remove banned generic wording and article recap phrasing from `post_text`
+* Do not use any phrase from the AVOID list anywhere in `post_text`
+* Avoid vague abstract terms unless the source fact requires the exact word
+* Do not write general advice
+* Replace abstract claims with a concrete diagnostic
+* Include one practical test the reader can apply immediately
+* Include one concrete mistake, missing signal, or cost
+* Show what the reader is optimizing for incorrectly, what becomes unclear to others, or what the weak signal costs them
+* Write as a practitioner pointing out a pattern, not as a content marketer
+* Start `post_text` with a direct, specific claim
+* Do not start with an "authentic storytelling is essential" style opening
+* End `post_text` with an insight, diagnostic, or practical takeaway, not a question
+* End with a sharp diagnostic or reframing
+* Keep `hook_variants`, `cta_variants`, and `hashtags` as separate fields
+* CTA questions belong only in `cta_variants`
+* Use 3-5 hashtags that match the actual topic
+* Do not include `carousel_outline`
+* Do not return extra keys
+
+AVOID:
+
+* resonate
+* cohesive
+* holistic
+* systemic alignment
+* professional authority
+* elevate your brand
+* unlock potential
+* leverage
+* landscape
+* seamless
+* paramount
+* game changer
+* one article
+* another article
+* this article highlights
+* the sources suggest
+* authentic storytelling is essential
+* effective personal branding
+* personal branding is essential
+* many professionals struggle
+* success in personal branding
+* building a personal brand
+* a strong personal brand
+* authentic
+* authenticity
+* storytelling
+* visibility
+* growth
+* journey
+* narrative
+* resilience
+* trust
+* engagement
+* audience
+* outcomes
+* development
+* personal brand
+* brand to thrive
+* polished outcomes
+* true experiences
+* open narrative
+
+TARGET STYLE:
+
+Most personal brands do not fail because the logo is weak.
+
+They fail because people cannot tell what to trust you with now.
+
+Look at your last 10 posts. If they show activity but not judgment, your audience gets visibility without evidence.
+
+That is why build-in-public works only when it shows decisions, tradeoffs, and lessons. Not just progress.
+
+A useful personal brand is not a polished image. It is a repeated signal of what problems you can be trusted to solve.
+
+Return valid JSON only.
+If the old payload used a banned phrase, replace the idea with plainer wording instead of reusing the phrase.
+Return exactly this JSON shape:
+{{
+  "post_text": "string",
+  "hook_variants": ["string", "string", "string"],
+  "cta_variants": ["string", "string", "string"],
+  "hashtags": ["string"],
+  "quality_checks": {{
+    "uses_only_provided_facts": true,
+    "has_clear_point_of_view": true,
+    "linkedin_ready": true
+  }}
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}

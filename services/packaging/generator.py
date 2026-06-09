@@ -69,6 +69,13 @@ class PackagingGenerationResult:
     fallback_reason: str
     tokens: dict[str, int | None] | None
     estimated_cost_usd: float | None
+    quality_gate: dict[str, Any] | None = None
+    repair_attempted: bool = False
+    repair_succeeded: bool = False
+    repair_reasons: list[str] | None = None
+    repair_quality_gate: dict[str, Any] | None = None
+    repair_prompt: str = ""
+    repair_response_text: str = ""
 
 
 def generate_content_package_for_digest(
@@ -116,6 +123,13 @@ def generate_content_package_for_digest(
         "validation_report": validation_report,
         "tokens": generation.tokens,
         "estimated_cost_usd": generation.estimated_cost_usd,
+        "quality_gate": generation.quality_gate or {},
+        "repair_attempted": generation.repair_attempted,
+        "repair_succeeded": generation.repair_succeeded,
+        "repair_reasons": generation.repair_reasons or [],
+        "repair_quality_gate": generation.repair_quality_gate or {},
+        "repair_prompt": generation.repair_prompt,
+        "repair_response_text": generation.repair_response_text,
     }
     return content_package, debug_info
 
@@ -134,6 +148,13 @@ def _generate_packaging_payload(
     is_mock = False
     tokens: dict[str, int | None] | None = None
     estimated_cost: float | None = None
+    quality_gate: dict[str, Any] | None = None
+    repair_attempted = False
+    repair_succeeded = False
+    repair_reasons: list[str] = []
+    repair_quality_gate: dict[str, Any] | None = None
+    repair_prompt = ""
+    repair_response_text = ""
 
     if _should_use_mock():
         payload = _build_mock_payload(digest, articles)
@@ -145,11 +166,36 @@ def _generate_packaging_payload(
     else:
         try:
             payload, prompt, response_text, tokens = _generate_payload_via_llm(digest, articles, profile)
+            payload = _normalize_linkedin_post_payload(payload)
             estimated_cost = estimate_cost_usd(
                 tokens.get("prompt_tokens") if tokens else None,
                 tokens.get("completion_tokens") if tokens else None,
             )
             validate_content_package_payload(payload)
+            quality_gate = _evaluate_linkedin_post_quality(payload)
+            repair_reasons = list(quality_gate.get("reasons", []))
+
+            if _quality_gate_requires_repair(quality_gate):
+                repair_attempted = True
+                repaired_payload, repair_prompt, repair_response_text, _repair_tokens = _repair_packaging_payload_via_llm(
+                    digest,
+                    articles,
+                    profile,
+                    weak_payload=payload,
+                    quality_report=quality_gate,
+                )
+                repaired_payload = _normalize_linkedin_post_payload(repaired_payload)
+                repaired_payload["post_text"] = _split_long_post_paragraphs(repaired_payload["post_text"])
+                validate_content_package_payload(repaired_payload)
+                repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
+                if _quality_gate_requires_repair(repair_quality_gate):
+                    raise ContentPackageValidationError(
+                        "LinkedIn post quality repair did not resolve retry-trigger issues: "
+                        f"{repair_quality_gate.get('reasons', [])}"
+                    )
+                payload = repaired_payload
+                response_text = repair_response_text
+                repair_succeeded = True
             return PackagingGenerationResult(
                 prompt=prompt,
                 response_text=response_text,
@@ -159,6 +205,13 @@ def _generate_packaging_payload(
                 fallback_reason=fallback_reason,
                 tokens=tokens,
                 estimated_cost_usd=estimated_cost,
+                quality_gate=quality_gate,
+                repair_attempted=repair_attempted,
+                repair_succeeded=repair_succeeded,
+                repair_reasons=repair_reasons,
+                repair_quality_gate=repair_quality_gate,
+                repair_prompt=repair_prompt,
+                repair_response_text=repair_response_text,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -182,6 +235,13 @@ def _generate_packaging_payload(
         fallback_reason=fallback_reason,
         tokens=tokens,
         estimated_cost_usd=estimated_cost,
+        quality_gate=quality_gate,
+        repair_attempted=repair_attempted,
+        repair_succeeded=repair_succeeded,
+        repair_reasons=repair_reasons,
+        repair_quality_gate=repair_quality_gate,
+        repair_prompt=repair_prompt,
+        repair_response_text=repair_response_text,
     )
 
 
@@ -269,6 +329,31 @@ def build_carousel_prompt(
     )
 
 
+def build_post_repair_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    weak_payload: dict[str, Any],
+    quality_report: dict[str, Any],
+) -> str:
+    """Build prompt for one-pass quality repair of a structurally valid post payload."""
+    return build_prompt(
+        "linkedin/repair_post_quality.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        weak_payload=_format_list_for_prompt(weak_payload),
+        quality_reasons=_format_list_for_prompt(quality_report.get("reasons", [])),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+        style_constraint_1=author_profile["style_constraints"][0],
+        style_constraint_2=author_profile["style_constraints"][1],
+        style_constraint_3=author_profile["style_constraints"][2],
+    )
+
+
 def _generate_payload_via_llm(
     digest: Digest,
     articles: list[dict[str, Any]],
@@ -295,6 +380,24 @@ def _generate_payload_via_llm(
     return payload, prompt, response_text, None
 
 
+def _repair_packaging_payload_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    *,
+    weak_payload: dict[str, Any],
+    quality_report: dict[str, Any],
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_post_repair_prompt(digest, articles, author_profile, weak_payload, quality_report)
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=900,
+        json_mode=True,
+    )
+    payload = _parse_json_response(response.text.strip())
+    return payload, prompt, response.text.strip(), response.usage
+
+
 def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:
     quality_checks = payload.get("quality_checks", {})
     return {
@@ -306,6 +409,180 @@ def _build_validation_report(payload: dict[str, Any]) -> dict[str, Any]:
         "carousel_outline_count": len(payload.get("carousel_outline", [])),
         "quality_checks": quality_checks,
     }
+
+
+_BROAD_OPENING_PHRASES = [
+    "in the landscape of",
+    "in today's world",
+    "as businesses",
+    "the future of",
+    "in the digital landscape",
+]
+
+_WEAK_GENERIC_OPENING_PHRASES = [
+    "authentic storytelling is essential",
+    "effective personal branding",
+    "personal branding is essential",
+    "many professionals struggle",
+    "success in personal branding",
+    "building a personal brand",
+    "a strong personal brand",
+]
+
+_BANNED_LINKEDIN_PHRASES = [
+    "resonate",
+    "cohesive",
+    "holistic",
+    "systemic alignment",
+    "professional authority",
+    "elevate your brand",
+    "unlock potential",
+    "leverage",
+    "landscape",
+    "seamless",
+    "paramount",
+    "game changer",
+]
+
+_ARTICLE_RECAP_PHRASES = [
+    "one article",
+    "another article",
+    "this article highlights",
+    "the sources suggest",
+]
+
+_VAGUE_ABSTRACT_TERMS = [
+    "authentic",
+    "authenticity",
+    "storytelling",
+    "visibility",
+    "growth",
+    "journey",
+    "narrative",
+    "resilience",
+    "trust",
+    "engagement",
+    "audience",
+    "outcomes",
+    "development",
+    "personal brand",
+    "brand to thrive",
+    "polished outcomes",
+    "true experiences",
+    "open narrative",
+]
+
+_DIAGNOSTIC_PATTERNS = [
+    "if your",
+    "if people",
+    "look at",
+    "the test is",
+    "a useful check",
+    "check whether",
+    "ask yourself",
+]
+
+
+def _evaluate_linkedin_post_quality(payload: dict[str, Any]) -> dict[str, Any]:
+    post_text = str(payload.get("post_text") or "").strip()
+    folded_text = post_text.casefold()
+    first_line = _first_non_empty_line(post_text).casefold()
+    reasons: list[str] = []
+    warnings: list[str] = []
+
+    for phrase in _BROAD_OPENING_PHRASES:
+        if first_line.startswith(phrase):
+            reasons.append(f"broad_opening:{phrase}")
+
+    for phrase in _WEAK_GENERIC_OPENING_PHRASES:
+        if first_line.startswith(phrase):
+            reasons.append(f"weak_generic_opening:{phrase}")
+
+    for phrase in _BANNED_LINKEDIN_PHRASES:
+        if phrase in folded_text:
+            reasons.append(f"banned_phrase:{phrase}")
+
+    for phrase in _ARTICLE_RECAP_PHRASES:
+        if phrase in folded_text:
+            reasons.append(f"article_recap:{phrase}")
+
+    diagnostic_patterns = _matching_phrases(folded_text, _DIAGNOSTIC_PATTERNS)
+    vague_terms = _matching_phrases(folded_text, _VAGUE_ABSTRACT_TERMS)
+    if len(vague_terms) >= 5:
+        if diagnostic_patterns:
+            warnings.append("vague_language_density")
+        else:
+            reasons.append("vague_language_density")
+
+    if not diagnostic_patterns:
+        warnings.append("missing_concrete_diagnostic")
+
+    if post_text.endswith("?"):
+        reasons.append("cta_question_ending")
+
+    if 1200 < len(post_text) <= 1300:
+        reasons.append("soft_length_limit")
+
+    long_paragraphs = [
+        index
+        for index, paragraph in enumerate(_split_non_empty_paragraphs(post_text), start=1)
+        if len(paragraph) > 450
+    ]
+    if long_paragraphs:
+        reasons.append("long_paragraph")
+
+    return {
+        "status": "retry" if reasons else "pass",
+        "reasons": reasons,
+        "warnings": warnings,
+    }
+
+
+def _matching_phrases(text: str, phrases: list[str]) -> list[str]:
+    return [phrase for phrase in phrases if phrase in text]
+
+
+def _quality_gate_requires_repair(report: dict[str, Any]) -> bool:
+    return str(report.get("status") or "") == "retry" and bool(report.get("reasons"))
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _split_non_empty_paragraphs(text: str) -> list[str]:
+    return [
+        " ".join(paragraph.split())
+        for paragraph in re.split(r"\n\s*\n", str(text or ""))
+        if paragraph.strip()
+    ]
+
+
+def _split_long_post_paragraphs(post_text: str, max_chars: int = 450) -> str:
+    paragraphs = _split_non_empty_paragraphs(post_text)
+    normalized_paragraphs: list[str] = []
+    for paragraph in paragraphs:
+        if len(paragraph) <= max_chars:
+            normalized_paragraphs.append(paragraph)
+            continue
+
+        current = ""
+        sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", paragraph) if sentence.strip()]
+        for sentence in sentences or [paragraph]:
+            candidate = f"{current} {sentence}".strip()
+            if current and len(candidate) > max_chars:
+                normalized_paragraphs.append(current)
+                current = sentence
+            else:
+                current = candidate
+        if current:
+            normalized_paragraphs.append(current)
+
+    return "\n\n".join(normalized_paragraphs).strip()
 
 
 def normalize_linkedin_hashtags(post_text: str) -> str:
