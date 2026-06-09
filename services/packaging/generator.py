@@ -88,6 +88,7 @@ class PackagingGenerationResult:
     editorial_review_tokens: dict[str, int | None] | None = None
     editorial_review_error: str = ""
     editorial_review_used_for_repair: bool = False
+    concrete_detail_diagnostics: dict[str, Any] | None = None
 
 
 def generate_content_package_for_digest(
@@ -154,6 +155,7 @@ def generate_content_package_for_digest(
         "editorial_review_tokens": generation.editorial_review_tokens,
         "editorial_review_error": generation.editorial_review_error,
         "editorial_review_used_for_repair": generation.editorial_review_used_for_repair,
+        "concrete_detail_diagnostics": generation.concrete_detail_diagnostics or {},
     }
     return content_package, debug_info
 
@@ -191,6 +193,7 @@ def _generate_packaging_payload(
     editorial_review_tokens: dict[str, int | None] | None = None
     editorial_review_error = ""
     editorial_review_used_for_repair = False
+    concrete_detail_diagnostics: dict[str, Any] | None = None
     prompt = build_post_prompt(digest, articles, profile)
     response_text = ""
 
@@ -230,6 +233,11 @@ def _generate_packaging_payload(
             quality_gate = _evaluate_linkedin_post_quality(payload)
             brief_alignment = _evaluate_post_brief_alignment(payload, post_brief)
             post_mechanics = _evaluate_linkedin_post_mechanics(payload, post_brief)
+            concrete_detail_diagnostics = _build_concrete_detail_diagnostics(
+                post_brief,
+                payload,
+                initial_alignment=brief_alignment,
+            )
             repair_reasons = repairable_payload_issues + _combined_repair_reasons(
                 quality_gate,
                 brief_alignment,
@@ -288,6 +296,14 @@ def _generate_packaging_payload(
                 repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
                 repair_post_mechanics = _evaluate_linkedin_post_mechanics(repaired_payload, post_brief)
                 repair_delta = _evaluate_repair_rewrite_delta(payload, repaired_payload, repair_reasons)
+                concrete_detail_diagnostics = _build_concrete_detail_diagnostics(
+                    post_brief,
+                    payload,
+                    initial_alignment=brief_alignment,
+                    repaired_payload=repaired_payload,
+                    repair_alignment=repair_brief_alignment,
+                    repair_attempted=True,
+                )
                 if (
                     _quality_gate_requires_repair(repair_quality_gate)
                     or _brief_alignment_requires_repair(repair_brief_alignment)
@@ -360,6 +376,7 @@ def _generate_packaging_payload(
                 editorial_review_tokens=editorial_review_tokens,
                 editorial_review_error=editorial_review_error,
                 editorial_review_used_for_repair=editorial_review_used_for_repair,
+                concrete_detail_diagnostics=concrete_detail_diagnostics,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -403,6 +420,7 @@ def _generate_packaging_payload(
         editorial_review_tokens=editorial_review_tokens,
         editorial_review_error=editorial_review_error,
         editorial_review_used_for_repair=editorial_review_used_for_repair,
+        concrete_detail_diagnostics=concrete_detail_diagnostics,
     )
 
 
@@ -1209,6 +1227,62 @@ def _evaluate_post_brief_alignment(
         "warnings": warnings,
         "details": details,
     }
+
+
+def _build_concrete_detail_diagnostics(
+    post_brief: dict[str, Any] | None,
+    initial_payload: dict[str, Any] | None,
+    *,
+    initial_alignment: dict[str, Any] | None = None,
+    repaired_payload: dict[str, Any] | None = None,
+    repair_alignment: dict[str, Any] | None = None,
+    repair_attempted: bool = False,
+) -> dict[str, Any]:
+    """Build debug-only diagnostics for concrete detail matching."""
+    if not post_brief:
+        return {}
+
+    required_details = [
+        str(item).strip()
+        for item in post_brief.get("concrete_details", [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if not required_details:
+        return {
+            "required_details": [],
+            "initial_match": None,
+            "repair_match": None,
+            "missing_after_repair": False,
+        }
+
+    initial_text = str((initial_payload or {}).get("post_text") or "").strip()
+    repair_text = str((repaired_payload or {}).get("post_text") or "").strip()
+    initial_match = _find_concrete_detail_match(initial_text, required_details)
+    repair_match = _find_concrete_detail_match(repair_text, required_details) if repaired_payload else None
+
+    missing_after_repair = False
+    if repair_attempted:
+        if repair_alignment is not None:
+            missing_after_repair = "missing_concrete_detail" in repair_alignment.get("issues", [])
+        else:
+            missing_after_repair = repair_match is None
+
+    return {
+        "required_details": required_details,
+        "initial_match": initial_match,
+        "repair_match": repair_match,
+        "missing_after_repair": missing_after_repair,
+        "initial_missing": "missing_concrete_detail" in (initial_alignment or {}).get("issues", []),
+        "post_text_excerpt": _debug_text_excerpt(initial_text),
+        "repair_text_excerpt": _debug_text_excerpt(repair_text) if repaired_payload else "",
+    }
+
+
+def _debug_text_excerpt(text: str, limit: int = 240) -> str:
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit].rstrip()}..."
 
 
 def _evaluate_linkedin_post_mechanics(

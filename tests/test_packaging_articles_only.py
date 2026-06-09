@@ -1718,6 +1718,20 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(debug_info["post_mechanics"]["passed"])
         self.assertTrue(debug_info["repair_delta"]["passed"])
         self.assertIn("shared_bigram_ratio", debug_info["repair_delta"]["signals"])
+        diagnostics = debug_info["concrete_detail_diagnostics"]
+        self.assertEqual(
+            diagnostics["required_details"],
+            [
+                "Build in public gives people evidence of current judgment.",
+                "People trust current evidence of expertise more than polished claims.",
+            ],
+        )
+        self.assertTrue(diagnostics["initial_missing"])
+        self.assertIsNone(diagnostics["initial_match"])
+        self.assertFalse(diagnostics["missing_after_repair"])
+        self.assertEqual(diagnostics["repair_match"]["match_type"], "exact_phrase")
+        self.assertIn("The body stays broad", diagnostics["post_text_excerpt"])
+        self.assertIn("Build in public gives people evidence", diagnostics["repair_text_excerpt"])
         mock_repair_payload.assert_called_once()
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -1749,6 +1763,13 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["provider"], "mock")
         self.assertTrue(debug_info["is_mock"])
         self.assertIn("brief_alignment:missing_concrete_detail", debug_info["fallback_reason"])
+        diagnostics = debug_info["concrete_detail_diagnostics"]
+        self.assertTrue(diagnostics["initial_missing"])
+        self.assertIsNone(diagnostics["initial_match"])
+        self.assertIsNone(diagnostics["repair_match"])
+        self.assertTrue(diagnostics["missing_after_repair"])
+        self.assertIn("The body still stays broad", diagnostics["repair_text_excerpt"])
+        self.assertEqual(mock_repair_payload.call_count, 1)
         self.assertTrue(content_package.post_text)
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -2120,7 +2141,7 @@ class PackagingArticlesOnlyTests(TestCase):
         digest = self._create_digest_for_packaging("quality-pass-user")
         strong_text = (
             "A personal brand breaks when people cannot tell what to trust you with.\n\n"
-            "A logo can signal care, but evidence does the heavier work. Build in public gives people a current record of your judgment.\n\n"
+            "A logo can signal care, but evidence does the heavier work. Build in public gives people evidence of current judgment.\n\n"
             "If your last ten posts only describe expertise, they are not building trust. They are asking for it."
         )
         mock_generate_brief.return_value = self._brief_generation_result()
@@ -2131,6 +2152,11 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(content_package.post_text, strong_text)
         self.assertFalse(debug_info["repair_attempted"])
         self.assertEqual(debug_info["quality_gate"]["status"], "pass")
+        diagnostics = debug_info["concrete_detail_diagnostics"]
+        self.assertFalse(diagnostics["initial_missing"])
+        self.assertEqual(diagnostics["initial_match"]["match_type"], "exact_phrase")
+        self.assertIsNone(diagnostics["repair_match"])
+        self.assertFalse(diagnostics["missing_after_repair"])
         mock_repair_payload.assert_not_called()
 
     @override_settings(OPENAI_API_KEY="sk-test")
