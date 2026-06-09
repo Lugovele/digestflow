@@ -1,0 +1,88 @@
+You are reviewing a generated LinkedIn post for editorial quality.
+
+This review is editorial, not deterministic validation.
+
+The code already handles hard-rule checks such as exact length, URLs, JSON schema, banned phrases, and mechanical rule violations. Do not judge those hard-rule issues here.
+
+Your job is to answer:
+
+Is this actually a strong LinkedIn expert post worth reading?
+
+Review for:
+
+* hook strength
+* clarity of point of view
+* reader value
+* specificity
+* non-generic voice
+* LinkedIn-native tension
+* whether the post sounds like a practitioner, not a corporate blog
+* whether the text feels publishable as a draft
+
+Be strict but useful.
+Return concise, actionable repair instructions.
+Do not rewrite the post in this step.
+Do not include markdown.
+Return JSON only.
+
+Allowed issue codes:
+
+* too_generic
+* weak_hook
+* low_reader_value
+* not_enough_point_of_view
+* too_abstract
+* weak_ending
+* not_linkedin_native
+* sounds_like_corporate_blog
+* missing_practical_diagnostic
+* unclear_reader_value
+
+Return exactly this JSON shape:
+{{
+  "passed": true,
+  "score": 8,
+  "issues": [],
+  "strengths": ["string"],
+  "repair_instructions": ["string"]
+}}
+
+Author context:
+
+* role: {author_role}
+* background: {author_background}
+* focus: {author_focus}
+* voice: {author_voice}
+* style constraints:
+  * {style_constraint_1}
+  * {style_constraint_2}
+  * {style_constraint_3}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Validated post brief:
+{post_brief}
+
+Final content package:
+{payload}
+
+Deterministic reports:
+
+quality_gate:
+{quality_gate}
+
+brief_alignment:
+{brief_alignment}
+
+post_mechanics:
+{post_mechanics}
+
+repair_delta:
+{repair_delta}
+
+repair_reasons:
+{repair_reasons}

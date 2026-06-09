@@ -10,6 +10,7 @@ from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
 from services.packaging.generator import (
     PackagingGenerationResult,
+    build_editorial_review_prompt,
     _collect_repairable_payload_issues,
     _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
@@ -17,14 +18,16 @@ from services.packaging.generator import (
     _extract_banned_phrases_from_repair_reasons,
     _find_avoid_angle_match,
     _find_concrete_detail_match,
+    _generate_editorial_review_via_llm,
     _generate_post_brief_via_llm,
+    _validate_editorial_review_payload,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
 )
 from services.packaging.validators import ContentPackageValidationError
 
 
-@override_settings(OPENAI_API_KEY="sk-your-key")
+@override_settings(OPENAI_API_KEY="sk-your-key", PACKAGING_EDITORIAL_REVIEW_ENABLED=False)
 class PackagingArticlesOnlyTests(TestCase):
     def _create_digest_for_packaging(self, username: str = "packaging-test-user") -> Digest:
         user = get_user_model().objects.create_user(username=username)
@@ -122,6 +125,17 @@ class PackagingArticlesOnlyTests(TestCase):
             json.dumps(post_brief),
             {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
         )
+
+    def _editorial_review_payload(self, **overrides) -> dict:
+        payload = {
+            "passed": False,
+            "score": 6,
+            "issues": ["too_generic", "weak_hook"],
+            "strengths": ["Uses one grounded detail."],
+            "repair_instructions": ["Make the opening more specific and practitioner-led."],
+        }
+        payload.update(overrides)
+        return payload
 
     def test_extract_banned_phrases_from_repair_reasons(self) -> None:
         phrases = _extract_banned_phrases_from_repair_reasons(
@@ -776,6 +790,52 @@ class PackagingArticlesOnlyTests(TestCase):
             ],
         )
 
+    def test_validate_editorial_review_payload_accepts_valid_review(self) -> None:
+        review = _validate_editorial_review_payload(
+            self._editorial_review_payload(
+                issues=["too_generic", "unknown_issue", "weak_hook"],
+                strengths=[" Uses one grounded detail. ", ""],
+                repair_instructions=[" Replace generic advice. ", ""],
+                extra_field="ignored",
+            )
+        )
+
+        self.assertEqual(
+            review,
+            {
+                "passed": False,
+                "score": 6,
+                "issues": ["too_generic", "weak_hook"],
+                "strengths": ["Uses one grounded detail."],
+                "repair_instructions": ["Replace generic advice."],
+            },
+        )
+        self.assertNotIn("extra_field", review)
+
+    def test_validate_editorial_review_payload_invalid_score_fails(self) -> None:
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_editorial_review_payload(self._editorial_review_payload(score=11))
+
+    def test_validate_editorial_review_payload_missing_required_field_fails(self) -> None:
+        payload = self._editorial_review_payload()
+        payload.pop("strengths")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_editorial_review_payload(payload)
+
+    def test_validate_editorial_review_payload_non_bool_passed_fails(self) -> None:
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_editorial_review_payload(self._editorial_review_payload(passed="false"))
+
+    def test_validate_editorial_review_payload_non_list_fields_fail(self) -> None:
+        for field_name in ["issues", "strengths", "repair_instructions"]:
+            payload = self._editorial_review_payload()
+            payload[field_name] = "not a list"
+
+            with self.subTest(field_name=field_name):
+                with self.assertRaises(ContentPackageValidationError):
+                    _validate_editorial_review_payload(payload)
+
     @patch("services.packaging.generator.OpenAIClient")
     def test_generate_post_brief_via_llm_returns_normalized_brief(self, mock_openai_client) -> None:
         digest = self._create_digest_for_packaging("brief-llm-user")
@@ -902,6 +962,110 @@ class PackagingArticlesOnlyTests(TestCase):
 
         mock_generate_payload.assert_not_called()
         mock_openai_client.return_value.generate_text.assert_called_once()
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_editorial_review_via_llm_returns_normalized_review(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-llm-user")
+        response_payload = self._editorial_review_payload(
+            score=7.5,
+            issues=["too_generic", "unknown_issue"],
+            strengths=[" Uses a concrete detail. "],
+            repair_instructions=[" Make the hook sharper. "],
+            extra_key="remove me",
+        )
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(response_payload),
+            usage={"prompt_tokens": 12, "completion_tokens": 13, "total_tokens": 25},
+        )
+
+        review, _prompt, _response_text, _usage = _generate_editorial_review_via_llm(
+            digest,
+            self._package_payload("A useful personal brand is evidence of current judgment."),
+            self._author_profile(),
+            self._post_brief_payload(),
+            {"status": "pass"},
+            {"passed": True},
+            {"passed": True},
+            repair_delta={"passed": True},
+            repair_reasons=[],
+        )
+
+        self.assertEqual(review["score"], 7.5)
+        self.assertEqual(review["issues"], ["too_generic"])
+        self.assertEqual(review["strengths"], ["Uses a concrete detail."])
+        self.assertNotIn("extra_key", review)
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_editorial_review_via_llm_invalid_json_fails(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-invalid-json-user")
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text="not json",
+            usage=None,
+        )
+
+        with self.assertRaises(ContentPackageValidationError):
+            _generate_editorial_review_via_llm(
+                digest,
+                self._package_payload("A useful personal brand is evidence of current judgment."),
+                self._author_profile(),
+                self._post_brief_payload(),
+                {"status": "pass"},
+                {"passed": True},
+                {"passed": True},
+            )
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_editorial_review_via_llm_structurally_invalid_review_fails(
+        self,
+        mock_openai_client,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-invalid-shape-user")
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(self._editorial_review_payload(score=0)),
+            usage=None,
+        )
+
+        with self.assertRaises(ContentPackageValidationError):
+            _generate_editorial_review_via_llm(
+                digest,
+                self._package_payload("A useful personal brand is evidence of current judgment."),
+                self._author_profile(),
+                self._post_brief_payload(),
+                {"status": "pass"},
+                {"passed": True},
+                {"passed": True},
+            )
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_editorial_review_via_llm_prompt_includes_deterministic_context(
+        self,
+        mock_openai_client,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-context-user")
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(self._editorial_review_payload()),
+            usage={"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        )
+
+        _review, prompt, response_text, usage = _generate_editorial_review_via_llm(
+            digest,
+            self._package_payload("A useful personal brand is evidence of current judgment."),
+            self._author_profile(),
+            self._post_brief_payload(),
+            {"status": "retry", "reasons": ["vague_language_density"]},
+            {"passed": True, "details": {"concrete_detail_match": {"matched": True}}},
+            {"passed": True, "warnings": ["hook_may_be_too_long"]},
+            repair_delta={"passed": True},
+            repair_reasons=["vague_language_density"],
+        )
+
+        self.assertIn("Digest for Personal Branding", prompt)
+        self.assertIn("A useful personal brand is evidence of current judgment.", prompt)
+        self.assertIn("vague_language_density", prompt)
+        self.assertIn("hook_may_be_too_long", prompt)
+        self.assertEqual(response_text, json.dumps(self._editorial_review_payload()))
+        self.assertEqual(usage, {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11})
+        self.assertTrue(mock_openai_client.return_value.generate_text.call_args.kwargs["json_mode"])
 
     def test_normalize_linkedin_hashtags_prefixes_trailing_keyword_line(self) -> None:
         post_text = (
@@ -1260,6 +1424,98 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["post_brief_tokens"], brief_tokens)
         self.assertTrue(debug_info["brief_alignment"]["passed"])
         self.assertTrue(debug_info["post_mechanics"]["passed"])
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
+    @patch("services.packaging.generator._generate_editorial_review_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_packaging_debug_info_includes_editorial_review_on_real_path(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_generate_review,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-debug-user")
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Visibility without judgment creates attention without trust. Build in public gives people evidence of current judgment.\n\n"
+            "Audit whether recent posts show decisions, not just activity."
+        )
+        review = self._editorial_review_payload(passed=False, score=5, issues=["too_generic"])
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (payload, "final prompt", "final response", None)
+        mock_generate_review.return_value = (
+            review,
+            "review prompt",
+            json.dumps(review),
+            {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, payload["post_text"])
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertEqual(debug_info["editorial_review"], review)
+        self.assertEqual(debug_info["editorial_review_prompt"], "review prompt")
+        self.assertEqual(debug_info["editorial_review_response_text"], json.dumps(review))
+        self.assertEqual(
+            debug_info["editorial_review_tokens"],
+            {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        )
+        mock_generate_review.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
+    @patch("services.packaging.generator._generate_editorial_review_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_editorial_review_failure_does_not_cause_mock_fallback(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_generate_review,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-error-user")
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Visibility without judgment creates attention without trust. Build in public gives people evidence of current judgment.\n\n"
+            "Audit whether recent posts show decisions, not just activity."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (payload, "final prompt", "final response", None)
+        mock_generate_review.side_effect = RuntimeError("review unavailable")
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, payload["post_text"])
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertEqual(debug_info["editorial_review"], {})
+        self.assertEqual(debug_info["editorial_review_error"], "review unavailable")
+        mock_generate_review.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
+    @patch("services.packaging.generator._generate_editorial_review_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    def test_mock_fallback_path_keeps_empty_editorial_review_fields(
+        self,
+        mock_generate_brief,
+        mock_generate_review,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-fallback-user")
+        mock_generate_brief.side_effect = ContentPackageValidationError("brief failed")
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["provider"], "mock")
+        self.assertTrue(debug_info["is_mock"])
+        self.assertEqual(debug_info["editorial_review"], {})
+        self.assertEqual(debug_info["editorial_review_prompt"], "")
+        self.assertEqual(debug_info["editorial_review_response_text"], "")
+        self.assertIsNone(debug_info["editorial_review_tokens"])
+        self.assertEqual(debug_info["editorial_review_error"], "")
+        mock_generate_review.assert_not_called()
+        self.assertTrue(content_package.post_text)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")

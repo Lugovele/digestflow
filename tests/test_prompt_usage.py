@@ -8,6 +8,7 @@ from apps.digests.models import Digest, DigestRun
 from apps.topics.models import Topic
 from services.ai.digest_smoke_test import build_prompt as build_article_prompt
 from services.packaging.generator import (
+    build_editorial_review_prompt,
     build_carousel_prompt,
     build_post_brief_prompt,
     build_post_prompt,
@@ -61,6 +62,15 @@ class PromptUsageTests(SimpleTestCase):
             build_post_brief_prompt(digest, articles, author_profile)
             build_post_prompt(digest, articles, author_profile)
             build_carousel_prompt(digest, articles, author_profile)
+            build_editorial_review_prompt(
+                digest,
+                {"post_text": "Post text"},
+                author_profile,
+                {"sharp_claim": "Claim"},
+                {"status": "pass"},
+                {"passed": True},
+                {"passed": True},
+            )
 
         used_templates = [call.args[0] for call in mock_build.call_args_list]
         self.assertEqual(
@@ -69,6 +79,7 @@ class PromptUsageTests(SimpleTestCase):
                 "linkedin/generate_post_brief_from_articles.txt",
                 "linkedin/generate_post_from_articles.txt",
                 "linkedin/generate_carousel_from_articles.txt",
+                "linkedin/review_post_editorial_quality.txt",
             ],
         )
 
@@ -563,3 +574,64 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("End `post_text` with an insight, diagnostic, or practical takeaway, not a question", rendered_prompt)
         self.assertIn("replace the idea with plainer wording instead of reusing the phrase", rendered_prompt)
         self.assertIn("In the landscape of personal branding", rendered_prompt)
+
+    def test_build_editorial_review_prompt_renders_review_contract_and_context(self):
+        topic = Topic(name="Personal Branding")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Personal Branding",
+            payload={"version": 1, "title": "Digest for Personal Branding", "articles": []},
+        )
+        author_profile = {
+            "role": "AI Automation Specialist",
+            "background": "Builds workflow systems.",
+            "focus": "workflow design",
+            "voice": "analytical",
+            "style_constraints": ["one", "two", "three"],
+        }
+        payload = {
+            "post_text": "A useful personal brand is evidence of current judgment.",
+            "hook_variants": ["Opening"],
+            "cta_variants": ["Closing"],
+            "hashtags": ["#PersonalBranding"],
+        }
+        post_brief = {
+            "sharp_claim": "A useful personal brand is evidence of current judgment.",
+            "reader_pain_or_mistake": "People polish before proving judgment.",
+        }
+
+        rendered_prompt = build_editorial_review_prompt(
+            digest,
+            payload,
+            author_profile,
+            post_brief,
+            {"status": "pass"},
+            {"passed": True, "details": {"concrete_detail_match": {"matched": True}}},
+            {"passed": True, "warnings": ["hook_may_be_too_long"]},
+            repair_delta={"passed": True},
+            repair_reasons=["vague_language_density"],
+        )
+
+        self.assertTrue((Path(settings.BASE_DIR) / "prompts" / "linkedin" / "review_post_editorial_quality.txt").exists())
+        self.assertIn('"passed": true', rendered_prompt)
+        self.assertIn('"score": 8', rendered_prompt)
+        self.assertIn('"issues": []', rendered_prompt)
+        self.assertIn('"strengths": ["string"]', rendered_prompt)
+        self.assertIn('"repair_instructions": ["string"]', rendered_prompt)
+        self.assertIn("too_generic", rendered_prompt)
+        self.assertIn("weak_hook", rendered_prompt)
+        self.assertIn("low_reader_value", rendered_prompt)
+        self.assertIn("not_enough_point_of_view", rendered_prompt)
+        self.assertIn("too_abstract", rendered_prompt)
+        self.assertIn("weak_ending", rendered_prompt)
+        self.assertIn("not_linkedin_native", rendered_prompt)
+        self.assertIn("sounds_like_corporate_blog", rendered_prompt)
+        self.assertIn("missing_practical_diagnostic", rendered_prompt)
+        self.assertIn("unclear_reader_value", rendered_prompt)
+        self.assertIn("Do not judge those hard-rule issues here", rendered_prompt)
+        self.assertIn("Do not rewrite the post in this step", rendered_prompt)
+        self.assertIn("A useful personal brand is evidence of current judgment.", rendered_prompt)
+        self.assertIn("vague_language_density", rendered_prompt)
+        self.assertIn("hook_may_be_too_long", rendered_prompt)
+        self.assertIn("concrete_detail_match", rendered_prompt)

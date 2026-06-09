@@ -66,6 +66,16 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"post_brief_tokens: {json.dumps(debug_info['post_brief_tokens'], ensure_ascii=False)}"
             )
+        if debug_info.get("editorial_review"):
+            self.stdout.write(
+                f"editorial_review: {json.dumps(debug_info['editorial_review'], ensure_ascii=False)}"
+            )
+        if debug_info.get("editorial_review_tokens"):
+            self.stdout.write(
+                f"editorial_review_tokens: {json.dumps(debug_info['editorial_review_tokens'], ensure_ascii=False)}"
+            )
+        if debug_info.get("editorial_review_error"):
+            self.stdout.write(f"editorial_review_error: {debug_info['editorial_review_error']}")
         if debug_info.get("post_brief"):
             self.stdout.write("")
             self.stdout.write("=== POST BRIEF ===")

@@ -82,6 +82,11 @@ class PackagingGenerationResult:
     post_brief_tokens: dict[str, int | None] | None = None
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
+    editorial_review: dict[str, Any] | None = None
+    editorial_review_prompt: str = ""
+    editorial_review_response_text: str = ""
+    editorial_review_tokens: dict[str, int | None] | None = None
+    editorial_review_error: str = ""
 
 
 def generate_content_package_for_digest(
@@ -142,6 +147,11 @@ def generate_content_package_for_digest(
         "post_brief_tokens": generation.post_brief_tokens,
         "brief_alignment": generation.brief_alignment or {},
         "post_mechanics": generation.post_mechanics or {},
+        "editorial_review": generation.editorial_review or {},
+        "editorial_review_prompt": generation.editorial_review_prompt,
+        "editorial_review_response_text": generation.editorial_review_response_text,
+        "editorial_review_tokens": generation.editorial_review_tokens,
+        "editorial_review_error": generation.editorial_review_error,
     }
     return content_package, debug_info
 
@@ -173,6 +183,11 @@ def _generate_packaging_payload(
     post_brief_tokens: dict[str, int | None] | None = None
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
+    editorial_review: dict[str, Any] | None = None
+    editorial_review_prompt = ""
+    editorial_review_response_text = ""
+    editorial_review_tokens: dict[str, int | None] | None = None
+    editorial_review_error = ""
     prompt = build_post_prompt(digest, articles, profile)
     response_text = ""
 
@@ -271,6 +286,26 @@ def _generate_packaging_payload(
                 post_mechanics = repair_post_mechanics
                 response_text = repair_response_text
                 repair_succeeded = True
+            if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True):
+                try:
+                    (
+                        editorial_review,
+                        editorial_review_prompt,
+                        editorial_review_response_text,
+                        editorial_review_tokens,
+                    ) = _generate_editorial_review_via_llm(
+                        digest,
+                        payload,
+                        profile,
+                        post_brief,
+                        quality_gate,
+                        brief_alignment,
+                        post_mechanics,
+                        repair_delta=repair_delta,
+                        repair_reasons=repair_reasons,
+                    )
+                except Exception as exc:  # noqa: BLE001 - diagnostic-only review must not block saving
+                    editorial_review_error = str(exc)
             return PackagingGenerationResult(
                 prompt=prompt,
                 response_text=response_text,
@@ -293,6 +328,11 @@ def _generate_packaging_payload(
                 post_brief_tokens=post_brief_tokens,
                 brief_alignment=brief_alignment,
                 post_mechanics=post_mechanics,
+                editorial_review=editorial_review,
+                editorial_review_prompt=editorial_review_prompt,
+                editorial_review_response_text=editorial_review_response_text,
+                editorial_review_tokens=editorial_review_tokens,
+                editorial_review_error=editorial_review_error,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -330,6 +370,11 @@ def _generate_packaging_payload(
         post_brief_tokens=post_brief_tokens,
         brief_alignment=brief_alignment,
         post_mechanics=post_mechanics,
+        editorial_review=editorial_review,
+        editorial_review_prompt=editorial_review_prompt,
+        editorial_review_response_text=editorial_review_response_text,
+        editorial_review_tokens=editorial_review_tokens,
+        editorial_review_error=editorial_review_error,
     )
 
 
@@ -554,6 +599,101 @@ def build_post_repair_prompt(
     )
 
 
+def build_editorial_review_prompt(
+    digest: Digest,
+    payload: dict[str, Any],
+    author_profile: dict[str, Any],
+    post_brief: dict[str, Any] | None,
+    quality_gate: dict[str, Any] | None,
+    brief_alignment: dict[str, Any] | None,
+    post_mechanics: dict[str, Any] | None,
+    repair_delta: dict[str, Any] | None = None,
+    repair_reasons: list[str] | None = None,
+) -> str:
+    """Build prompt for diagnostic-only editorial review of the final post package."""
+    return build_prompt(
+        "linkedin/review_post_editorial_quality.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        payload=_format_list_for_prompt(payload),
+        post_brief=_format_list_for_prompt(post_brief or {}),
+        quality_gate=_format_list_for_prompt(quality_gate or {}),
+        brief_alignment=_format_list_for_prompt(brief_alignment or {}),
+        post_mechanics=_format_list_for_prompt(post_mechanics or {}),
+        repair_delta=_format_list_for_prompt(repair_delta or {}),
+        repair_reasons=_format_list_for_prompt(repair_reasons or []),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+        style_constraint_1=author_profile["style_constraints"][0],
+        style_constraint_2=author_profile["style_constraints"][1],
+        style_constraint_3=author_profile["style_constraints"][2],
+    )
+
+
+_EDITORIAL_REVIEW_ALLOWED_ISSUES = {
+    "too_generic",
+    "weak_hook",
+    "low_reader_value",
+    "not_enough_point_of_view",
+    "too_abstract",
+    "weak_ending",
+    "not_linkedin_native",
+    "sounds_like_corporate_blog",
+    "missing_practical_diagnostic",
+    "unclear_reader_value",
+}
+
+
+def _validate_editorial_review_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize diagnostic-only editorial review payload."""
+    if not isinstance(payload, dict):
+        raise ContentPackageValidationError("Editorial review payload must be a JSON object.")
+
+    if "passed" not in payload:
+        raise ContentPackageValidationError("Editorial review payload is missing required field: passed")
+    if not isinstance(payload.get("passed"), bool):
+        raise ContentPackageValidationError("Editorial review passed must be a boolean.")
+
+    if "score" not in payload:
+        raise ContentPackageValidationError("Editorial review payload is missing required field: score")
+    score = payload.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise ContentPackageValidationError("Editorial review score must be a number from 1 to 10.")
+    if score < 1 or score > 10:
+        raise ContentPackageValidationError("Editorial review score must be from 1 to 10.")
+
+    normalized_lists: dict[str, list[str]] = {}
+    for field_name in ["issues", "strengths", "repair_instructions"]:
+        if field_name not in payload:
+            raise ContentPackageValidationError(
+                f"Editorial review payload is missing required field: {field_name}"
+            )
+        raw_items = payload.get(field_name)
+        if not isinstance(raw_items, list):
+            raise ContentPackageValidationError(f"Editorial review {field_name} must be a list.")
+        normalized_lists[field_name] = [
+            str(item).strip()
+            for item in raw_items
+            if isinstance(item, str) and str(item).strip()
+        ]
+
+    normalized_lists["issues"] = [
+        issue
+        for issue in normalized_lists["issues"]
+        if issue in _EDITORIAL_REVIEW_ALLOWED_ISSUES
+    ]
+
+    return {
+        "passed": payload["passed"],
+        "score": score,
+        "issues": normalized_lists["issues"],
+        "strengths": normalized_lists["strengths"],
+        "repair_instructions": normalized_lists["repair_instructions"],
+    }
+
+
 def _generate_payload_via_llm(
     digest: Digest,
     articles: list[dict[str, Any]],
@@ -596,6 +736,39 @@ def _generate_post_brief_via_llm(
     payload = _parse_json_response(response_text)
     post_brief = _validate_post_brief_payload(payload)
     return post_brief, prompt, response_text, response.usage
+
+
+def _generate_editorial_review_via_llm(
+    digest: Digest,
+    payload: dict[str, Any],
+    author_profile: dict[str, Any],
+    post_brief: dict[str, Any] | None,
+    quality_gate: dict[str, Any] | None,
+    brief_alignment: dict[str, Any] | None,
+    post_mechanics: dict[str, Any] | None,
+    repair_delta: dict[str, Any] | None = None,
+    repair_reasons: list[str] | None = None,
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_editorial_review_prompt(
+        digest,
+        payload,
+        author_profile,
+        post_brief,
+        quality_gate,
+        brief_alignment,
+        post_mechanics,
+        repair_delta=repair_delta,
+        repair_reasons=repair_reasons,
+    )
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=500,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    review_payload = _parse_json_response(response_text)
+    editorial_review = _validate_editorial_review_payload(review_payload)
+    return editorial_review, prompt, response_text, response.usage
 
 
 def _repair_packaging_payload_via_llm(
