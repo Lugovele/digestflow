@@ -10,6 +10,7 @@ from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
 from services.packaging.generator import (
     PackagingGenerationResult,
+    _collect_repairable_payload_issues,
     _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
     _evaluate_repair_rewrite_delta,
@@ -134,6 +135,24 @@ class PackagingArticlesOnlyTests(TestCase):
         )
 
         self.assertEqual(phrases, ["resonate", "landscape"])
+
+    def test_collect_repairable_payload_issues_flags_overlength_post_text(self) -> None:
+        issues = _collect_repairable_payload_issues(self._package_payload("x" * 1301))
+
+        self.assertEqual(issues, ["post_text_too_long"])
+
+    def test_collect_repairable_payload_issues_ignores_valid_length_post_text(self) -> None:
+        issues = _collect_repairable_payload_issues(self._package_payload("x" * 1300))
+
+        self.assertEqual(issues, [])
+
+    def test_collect_repairable_payload_issues_ignores_missing_post_text(self) -> None:
+        payload = self._package_payload("A useful post has text.")
+        payload.pop("post_text")
+
+        issues = _collect_repairable_payload_issues(payload)
+
+        self.assertEqual(issues, [])
 
     def test_repair_rewrite_delta_fails_exact_same_post_text(self) -> None:
         payload = self._package_payload(
@@ -1241,6 +1260,74 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["post_brief_tokens"], brief_tokens)
         self.assertTrue(debug_info["brief_alignment"]["passed"])
         self.assertTrue(debug_info["post_mechanics"]["passed"])
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_overlength_initial_post_text_triggers_repair_and_saves_real_result(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("overlength-repair-user")
+        overlength_text = (
+            "A useful personal brand is evidence of current judgment.\n\n"
+            + ("Build in public gives people evidence of current judgment, but polished claims only ask for trust. " * 18)
+            + "\n\nA brand is a repeated signal of what problems you can solve."
+        )
+        self.assertGreater(len(overlength_text), 1300)
+        repair_text = (
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people a current proof trail: decisions, tradeoffs, and lessons, not polish.\n\n"
+            "A brand is a repeated signal of what problems you can solve."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (self._package_payload(overlength_text), "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (self._package_payload(repair_text), "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertIn("post_text_too_long", debug_info["repair_reasons"])
+        self.assertLessEqual(len(content_package.post_text), 1300)
+        self.assertTrue(debug_info["brief_alignment"]["passed"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
+        self.assertTrue(debug_info["repair_delta"]["passed"])
+        mock_repair_payload.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_overlength_repair_still_overlength_falls_back_with_length_reason(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("overlength-repair-still-long-user")
+        overlength_text = (
+            "A useful personal brand is evidence of current judgment.\n\n"
+            + ("Build in public gives people evidence of current judgment, but polished claims only ask for trust. " * 18)
+            + "\n\nA brand is a repeated signal of what problems you can solve."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (self._package_payload(overlength_text), "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (self._package_payload(overlength_text), "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        mock_repair_payload.assert_called_once()
+        self.assertEqual(debug_info["provider"], "mock")
+        self.assertTrue(debug_info["is_mock"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertIn("1300", debug_info["fallback_reason"])
+        self.assertTrue(content_package.post_text)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")

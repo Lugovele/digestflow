@@ -206,14 +206,21 @@ def _generate_packaging_payload(
                 tokens.get("prompt_tokens") if tokens else None,
                 tokens.get("completion_tokens") if tokens else None,
             )
-            validate_content_package_payload(payload)
+            repairable_payload_issues = _collect_repairable_payload_issues(payload)
+            if not repairable_payload_issues:
+                validate_content_package_payload(payload)
             quality_gate = _evaluate_linkedin_post_quality(payload)
             brief_alignment = _evaluate_post_brief_alignment(payload, post_brief)
             post_mechanics = _evaluate_linkedin_post_mechanics(payload, post_brief)
-            repair_reasons = _combined_repair_reasons(quality_gate, brief_alignment, post_mechanics)
+            repair_reasons = repairable_payload_issues + _combined_repair_reasons(
+                quality_gate,
+                brief_alignment,
+                post_mechanics,
+            )
 
             if (
-                _quality_gate_requires_repair(quality_gate)
+                repairable_payload_issues
+                or _quality_gate_requires_repair(quality_gate)
                 or _brief_alignment_requires_repair(brief_alignment)
                 or _post_mechanics_requires_repair(post_mechanics)
             ):
@@ -907,6 +914,13 @@ def _evaluate_linkedin_post_quality(payload: dict[str, Any]) -> dict[str, Any]:
         "reasons": reasons,
         "warnings": warnings,
     }
+
+
+def _collect_repairable_payload_issues(payload: dict[str, Any]) -> list[str]:
+    post_text = (payload or {}).get("post_text")
+    if isinstance(post_text, str) and len(post_text) > 1300:
+        return ["post_text_too_long"]
+    return []
 
 
 def _evaluate_post_brief_alignment(

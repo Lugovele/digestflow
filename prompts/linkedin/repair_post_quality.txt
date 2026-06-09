@@ -38,6 +38,11 @@ REPAIR REQUIREMENTS:
 * Keep source facts and brief alignment, but change the structure
 * Do not reuse the weak post's paragraph structure
 * Do not reuse more than a small amount of the weak post's sentence wording
+* If repair reasons include `post_text_too_long`, compress `post_text` below 1150 characters
+* For overlength posts, preserve the brief's core claim, one concrete detail, and the ending takeaway
+* Cut repeated framing, generic explanation, and long setup first
+* Do not move body text into `hook_variants` or `cta_variants`
+* Keep `post_text` under the hard 1300 character limit
 * Remove every exact phrase named in the repair reasons
 * If a reason is `banned_phrase:<phrase>`, the repaired `post_text`, `hook_variants`, `cta_variants`, and `hashtags` must not contain `<phrase>`
 * Do not replace a banned phrase with another banned or generic phrase

@@ -476,6 +476,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Keep source facts and brief alignment, but change the structure", rendered_prompt)
         self.assertIn("Do not reuse the weak post's paragraph structure", rendered_prompt)
         self.assertIn("Do not reuse more than a small amount of the weak post's sentence wording", rendered_prompt)
+        self.assertIn("If repair reasons include `post_text_too_long`, compress `post_text` below 1150 characters", rendered_prompt)
+        self.assertIn("preserve the brief's core claim, one concrete detail, and the ending takeaway", rendered_prompt)
+        self.assertIn("Cut repeated framing, generic explanation, and long setup first", rendered_prompt)
+        self.assertIn("Do not move body text into `hook_variants` or `cta_variants`", rendered_prompt)
+        self.assertIn("Keep `post_text` under the hard 1300 character limit", rendered_prompt)
         self.assertIn("Blocked phrases from repair reasons:", rendered_prompt)
         self.assertIn("Remove every exact phrase named in the repair reasons", rendered_prompt)
         self.assertIn(
