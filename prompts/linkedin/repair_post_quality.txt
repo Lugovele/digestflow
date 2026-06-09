@@ -33,6 +33,11 @@ Source facts:
 REPAIR REQUIREMENTS:
 
 * The repaired payload must remove every retry reason listed above
+* Do not lightly edit the weak post
+* Rebuild `post_text` from the validated post brief
+* Keep source facts and brief alignment, but change the structure
+* Do not reuse the weak post's paragraph structure
+* Do not reuse more than a small amount of the weak post's sentence wording
 * Remove every exact phrase named in the repair reasons
 * If a reason is `banned_phrase:<phrase>`, the repaired `post_text`, `hook_variants`, `cta_variants`, and `hashtags` must not contain `<phrase>`
 * Do not replace a banned phrase with another banned or generic phrase
@@ -58,6 +63,7 @@ REPAIR REQUIREMENTS:
 * Do not use any phrase from the AVOID list anywhere in `post_text`
 * Avoid vague abstract terms unless the source fact requires the exact word
 * Do not write general advice
+* If repair reasons include `vague_language_density`, rewrite the body around one concrete mistake, one visible cost, and one practical diagnostic/check
 * Replace abstract claims with a concrete diagnostic
 * Include one practical test the reader can apply immediately
 * Include one concrete mistake, missing signal, or cost
@@ -65,6 +71,7 @@ REPAIR REQUIREMENTS:
 * Write as a practitioner pointing out a pattern, not as a content marketer
 * Start `post_text` with a direct, specific claim
 * Do not start with an "authentic storytelling is essential" style opening
+* If repair reasons include `long_paragraph`, split `post_text` into shorter paragraphs
 * End `post_text` with an insight, diagnostic, or practical takeaway, not a question
 * End with a sharp diagnostic or reframing
 * Keep `hook_variants`, `cta_variants`, and `hashtags` as separate fields

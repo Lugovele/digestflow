@@ -58,6 +58,10 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"repair_quality_gate: {json.dumps(debug_info['repair_quality_gate'], ensure_ascii=False)}"
             )
+        if debug_info.get("repair_delta"):
+            self.stdout.write(
+                f"repair_delta: {json.dumps(debug_info['repair_delta'], ensure_ascii=False)}"
+            )
         if debug_info.get("post_brief_tokens"):
             self.stdout.write(
                 f"post_brief_tokens: {json.dumps(debug_info['post_brief_tokens'], ensure_ascii=False)}"

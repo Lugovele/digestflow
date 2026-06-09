@@ -12,6 +12,7 @@ from services.packaging.generator import (
     PackagingGenerationResult,
     _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
+    _evaluate_repair_rewrite_delta,
     _extract_banned_phrases_from_repair_reasons,
     _find_avoid_angle_match,
     _find_concrete_detail_match,
@@ -133,6 +134,75 @@ class PackagingArticlesOnlyTests(TestCase):
         )
 
         self.assertEqual(phrases, ["resonate", "landscape"])
+
+    def test_repair_rewrite_delta_fails_exact_same_post_text(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand proves judgment before polish. "
+            "Build in public gives people evidence of current judgment."
+        )
+
+        report = _evaluate_repair_rewrite_delta(payload, payload, ["vague_language_density"])
+
+        self.assertFalse(report["passed"])
+        self.assertIn("repair_text_too_similar", report["issues"])
+        self.assertIn("shared_sentence_ratio", report["signals"])
+        self.assertIn("shared_bigram_ratio", report["signals"])
+        self.assertIn("weak_word_count", report["signals"])
+        self.assertIn("repaired_word_count", report["signals"])
+
+    def test_repair_rewrite_delta_fails_when_most_sentences_are_shared(self) -> None:
+        weak_payload = self._package_payload(
+            "A useful personal brand proves judgment before polish. "
+            "Build in public gives people evidence of current judgment. "
+            "If your posts only describe expertise, they are asking for trust."
+        )
+        repaired_payload = self._package_payload(
+            "A useful personal brand proves judgment before polish. "
+            "Build in public gives people evidence of current judgment. "
+            "Check whether your latest posts show decisions, not just claims."
+        )
+
+        report = _evaluate_repair_rewrite_delta(weak_payload, repaired_payload, ["long_paragraph"])
+
+        self.assertFalse(report["passed"])
+        self.assertIn("repair_text_too_similar", report["issues"])
+        self.assertGreaterEqual(report["signals"]["shared_sentence_ratio"], 0.6)
+
+    def test_repair_rewrite_delta_passes_for_material_rewrite(self) -> None:
+        weak_payload = self._package_payload(
+            "In the landscape of personal branding, your message should resonate with your audience. "
+            "Authentic storytelling is essential for professional growth and meaningful engagement."
+        )
+        repaired_payload = self._package_payload(
+            "A personal brand breaks when people cannot see current judgment.\n\n"
+            "Build in public works only when it shows decisions, tradeoffs, and lessons.\n\n"
+            "Check your last post: does it prove what people can trust you with now?"
+        )
+
+        report = _evaluate_repair_rewrite_delta(weak_payload, repaired_payload, ["banned_phrase:resonate"])
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["issues"], [])
+
+    def test_repair_rewrite_delta_fails_missing_repair_text(self) -> None:
+        report = _evaluate_repair_rewrite_delta(
+            self._package_payload("A useful post has text."),
+            self._package_payload(""),
+            ["post_mechanics:missing_post_text"],
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertIn("missing_repair_text", report["issues"])
+
+    def test_repair_rewrite_delta_does_not_false_fail_short_overlap(self) -> None:
+        report = _evaluate_repair_rewrite_delta(
+            self._package_payload("Brand Lag hurts."),
+            self._package_payload("Brand Lag shows the gap."),
+            ["brief_alignment:missing_concrete_detail"],
+        )
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["issues"], [])
 
     def test_post_brief_alignment_passes_when_post_uses_concrete_detail(self) -> None:
         payload = self._package_payload(
@@ -1205,6 +1275,8 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(debug_info["brief_alignment"]["passed"])
         self.assertIn("concrete_detail_match", debug_info["brief_alignment"]["details"])
         self.assertTrue(debug_info["post_mechanics"]["passed"])
+        self.assertTrue(debug_info["repair_delta"]["passed"])
+        self.assertIn("shared_bigram_ratio", debug_info["repair_delta"]["signals"])
         mock_repair_payload.assert_called_once()
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -1236,6 +1308,34 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["provider"], "mock")
         self.assertTrue(debug_info["is_mock"])
         self.assertIn("brief_alignment:missing_concrete_detail", debug_info["fallback_reason"])
+        self.assertTrue(content_package.post_text)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_repair_near_identical_text_falls_back_with_repair_delta_reason(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("repair-delta-too-similar-user")
+        weak_payload = self._package_payload(
+            "A useful personal brand proves judgment before polish.\n\n"
+            "The body stays broad and never uses the grounded concrete detail."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (weak_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        mock_repair_payload.assert_called_once()
+        self.assertEqual(debug_info["provider"], "mock")
+        self.assertTrue(debug_info["is_mock"])
+        self.assertIn("repair_delta:repair_text_too_similar", debug_info["fallback_reason"])
+        self.assertEqual(mock_repair_payload.call_count, 1)
         self.assertTrue(content_package.post_text)
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -1293,6 +1393,7 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertEqual(content_package.post_text, payload["post_text"])
         self.assertFalse(debug_info["repair_attempted"])
+        self.assertEqual(debug_info["repair_delta"], {})
         self.assertTrue(debug_info["post_mechanics"]["passed"])
         self.assertIn("missing_pattern_interrupt_signal", debug_info["post_mechanics"]["warnings"])
         mock_repair_payload.assert_not_called()

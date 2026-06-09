@@ -74,6 +74,7 @@ class PackagingGenerationResult:
     repair_succeeded: bool = False
     repair_reasons: list[str] | None = None
     repair_quality_gate: dict[str, Any] | None = None
+    repair_delta: dict[str, Any] | None = None
     repair_prompt: str = ""
     repair_response_text: str = ""
     post_brief: dict[str, Any] | None = None
@@ -133,6 +134,7 @@ def generate_content_package_for_digest(
         "repair_succeeded": generation.repair_succeeded,
         "repair_reasons": generation.repair_reasons or [],
         "repair_quality_gate": generation.repair_quality_gate or {},
+        "repair_delta": generation.repair_delta or {},
         "repair_prompt": generation.repair_prompt,
         "repair_response_text": generation.repair_response_text,
         "post_brief": generation.post_brief,
@@ -163,6 +165,7 @@ def _generate_packaging_payload(
     repair_succeeded = False
     repair_reasons: list[str] = []
     repair_quality_gate: dict[str, Any] | None = None
+    repair_delta: dict[str, Any] | None = None
     repair_prompt = ""
     repair_response_text = ""
     post_brief: dict[str, Any] | None = None
@@ -236,14 +239,25 @@ def _generate_packaging_payload(
                 repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
                 repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
                 repair_post_mechanics = _evaluate_linkedin_post_mechanics(repaired_payload, post_brief)
+                repair_delta = _evaluate_repair_rewrite_delta(payload, repaired_payload, repair_reasons)
                 if (
                     _quality_gate_requires_repair(repair_quality_gate)
                     or _brief_alignment_requires_repair(repair_brief_alignment)
                     or _post_mechanics_requires_repair(repair_post_mechanics)
+                    or _repair_delta_requires_failure(repair_delta)
                 ):
+                    unresolved_reasons = _combined_repair_reasons(
+                        repair_quality_gate,
+                        repair_brief_alignment,
+                        repair_post_mechanics,
+                    )
+                    unresolved_reasons.extend(
+                        f"repair_delta:{issue}"
+                        for issue in repair_delta.get("issues", [])
+                    )
                     raise ContentPackageValidationError(
                         "LinkedIn post quality repair did not resolve retry-trigger issues: "
-                        f"{_combined_repair_reasons(repair_quality_gate, repair_brief_alignment, repair_post_mechanics)}"
+                        f"{unresolved_reasons}"
                     )
                 payload = repaired_payload
                 brief_alignment = repair_brief_alignment
@@ -264,6 +278,7 @@ def _generate_packaging_payload(
                 repair_succeeded=repair_succeeded,
                 repair_reasons=repair_reasons,
                 repair_quality_gate=repair_quality_gate,
+                repair_delta=repair_delta,
                 repair_prompt=repair_prompt,
                 repair_response_text=repair_response_text,
                 post_brief=post_brief,
@@ -300,6 +315,7 @@ def _generate_packaging_payload(
         repair_succeeded=repair_succeeded,
         repair_reasons=repair_reasons,
         repair_quality_gate=repair_quality_gate,
+        repair_delta=repair_delta,
         repair_prompt=repair_prompt,
         repair_response_text=repair_response_text,
         post_brief=post_brief,
@@ -1043,6 +1059,10 @@ def _post_mechanics_requires_repair(report: dict[str, Any] | None) -> bool:
     return bool(report and report.get("checked") and report.get("issues"))
 
 
+def _repair_delta_requires_failure(report: dict[str, Any] | None) -> bool:
+    return bool(report and report.get("checked") and report.get("issues"))
+
+
 def _combined_repair_reasons(
     quality_report: dict[str, Any] | None,
     brief_alignment: dict[str, Any] | None,
@@ -1058,6 +1078,87 @@ def _combined_repair_reasons(
         for issue in (post_mechanics or {}).get("issues", [])
     )
     return reasons
+
+
+def _evaluate_repair_rewrite_delta(
+    weak_payload: dict[str, Any],
+    repaired_payload: dict[str, Any],
+    repair_reasons: list[str],
+) -> dict[str, Any]:
+    weak_text = str((weak_payload or {}).get("post_text") or "").strip()
+    repaired_text = str((repaired_payload or {}).get("post_text") or "").strip()
+    weak_tokens = _rewrite_delta_tokens(weak_text)
+    repaired_tokens = _rewrite_delta_tokens(repaired_text)
+    weak_sentences = _rewrite_delta_sentences(weak_text)
+    repaired_sentences = _rewrite_delta_sentences(repaired_text)
+    weak_sentence_count = len(weak_sentences)
+    repaired_sentence_count = len(repaired_sentences)
+    shared_sentence_count = len(set(weak_sentences) & set(repaired_sentences))
+    shared_sentence_ratio = (
+        shared_sentence_count / weak_sentence_count if weak_sentence_count else 0.0
+    )
+    shared_bigram_ratio = _shared_bigram_ratio(weak_tokens, repaired_tokens)
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    if not weak_text or not repaired_text:
+        issues.append("missing_repair_text")
+    elif _normalize_rewrite_delta_text(weak_text) == _normalize_rewrite_delta_text(repaired_text):
+        issues.append("repair_text_too_similar")
+    elif weak_sentence_count >= 3 and shared_sentence_ratio >= 0.6:
+        issues.append("repair_text_too_similar")
+    elif len(weak_tokens) >= 40 and shared_bigram_ratio >= 0.75:
+        issues.append("repair_text_too_similar")
+    elif len(weak_tokens) >= 25 and shared_bigram_ratio >= 0.6:
+        warnings.append("repair_text_overlap_high")
+
+    return {
+        "checked": True,
+        "passed": not issues,
+        "issues": issues,
+        "warnings": warnings,
+        "signals": {
+            "weak_word_count": len(weak_tokens),
+            "repaired_word_count": len(repaired_tokens),
+            "shared_sentence_count": shared_sentence_count,
+            "weak_sentence_count": weak_sentence_count,
+            "repaired_sentence_count": repaired_sentence_count,
+            "shared_sentence_ratio": round(shared_sentence_ratio, 4),
+            "shared_bigram_ratio": round(shared_bigram_ratio, 4),
+            "repair_reasons_count": len(repair_reasons or []),
+        },
+    }
+
+
+def _normalize_rewrite_delta_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value).casefold())).strip()
+
+
+def _rewrite_delta_tokens(value: str) -> list[str]:
+    normalized = _normalize_rewrite_delta_text(value)
+    return normalized.split() if normalized else []
+
+
+def _rewrite_delta_sentences(value: str) -> list[str]:
+    chunks = [
+        _normalize_rewrite_delta_text(chunk)
+        for chunk in re.split(r"(?<=[.!?])\s+|\n+", str(value or ""))
+    ]
+    return [chunk for chunk in chunks if chunk]
+
+
+def _shared_bigram_ratio(weak_tokens: list[str], repaired_tokens: list[str]) -> float:
+    weak_bigrams = _token_bigrams(weak_tokens)
+    if not weak_bigrams:
+        return 0.0
+    repaired_bigrams = _token_bigrams(repaired_tokens)
+    if not repaired_bigrams:
+        return 0.0
+    return len(weak_bigrams & repaired_bigrams) / len(weak_bigrams)
+
+
+def _token_bigrams(tokens: list[str]) -> set[tuple[str, str]]:
+    return set(zip(tokens, tokens[1:]))
 
 
 def _extract_banned_phrases_from_repair_reasons(reasons: list[str]) -> list[str]:

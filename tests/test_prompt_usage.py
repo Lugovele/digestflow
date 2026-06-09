@@ -471,6 +471,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Return exactly this JSON shape", rendered_prompt)
         self.assertIn('"post_text": "string"', rendered_prompt)
         self.assertIn("The repaired payload must remove every retry reason listed above", rendered_prompt)
+        self.assertIn("Do not lightly edit the weak post", rendered_prompt)
+        self.assertIn("Rebuild `post_text` from the validated post brief", rendered_prompt)
+        self.assertIn("Keep source facts and brief alignment, but change the structure", rendered_prompt)
+        self.assertIn("Do not reuse the weak post's paragraph structure", rendered_prompt)
+        self.assertIn("Do not reuse more than a small amount of the weak post's sentence wording", rendered_prompt)
         self.assertIn("Blocked phrases from repair reasons:", rendered_prompt)
         self.assertIn("Remove every exact phrase named in the repair reasons", rendered_prompt)
         self.assertIn(
@@ -515,11 +520,16 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("meaningful", rendered_prompt)
         self.assertIn("Avoid vague abstract terms unless the source fact requires the exact word", rendered_prompt)
         self.assertIn("Do not write general advice", rendered_prompt)
+        self.assertIn(
+            "If repair reasons include `vague_language_density`, rewrite the body around one concrete mistake, one visible cost, and one practical diagnostic/check",
+            rendered_prompt,
+        )
         self.assertIn("Replace abstract claims with a concrete diagnostic", rendered_prompt)
         self.assertIn("Include one practical test the reader can apply immediately", rendered_prompt)
         self.assertIn("Include one concrete mistake, missing signal, or cost", rendered_prompt)
         self.assertIn("Write as a practitioner pointing out a pattern, not as a content marketer", rendered_prompt)
         self.assertIn("Do not start with an \"authentic storytelling is essential\" style opening", rendered_prompt)
+        self.assertIn("If repair reasons include `long_paragraph`, split `post_text` into shorter paragraphs", rendered_prompt)
         self.assertIn("End with a sharp diagnostic or reframing", rendered_prompt)
         self.assertIn("Look at your last 10 posts", rendered_prompt)
         self.assertIn("storytelling", rendered_prompt)
