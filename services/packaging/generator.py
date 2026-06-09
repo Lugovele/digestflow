@@ -311,6 +311,81 @@ def build_post_prompt(
     )
 
 
+def build_post_brief_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> str:
+    """Build prompt for an internal editorial brief from digest articles."""
+    return build_prompt(
+        "linkedin/generate_post_brief_from_articles.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+        style_constraint_1=author_profile["style_constraints"][0],
+        style_constraint_2=author_profile["style_constraints"][1],
+        style_constraint_3=author_profile["style_constraints"][2],
+    )
+
+
+_POST_BRIEF_STRING_FIELDS = [
+    "target_reader",
+    "reader_pain_or_mistake",
+    "sharp_claim",
+    "tension",
+    "practical_takeaway",
+    "ending_reframe",
+    "suggested_hook_direction",
+    "avoid_angle",
+]
+
+
+def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize an internal LinkedIn post brief payload."""
+    if not isinstance(payload, dict):
+        raise ContentPackageValidationError("Post brief payload must be a JSON object.")
+
+    normalized: dict[str, Any] = {}
+    for field_name in _POST_BRIEF_STRING_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Post brief payload is missing required field: {field_name}")
+        value = str(payload.get(field_name) or "").strip()
+        if not value:
+            raise ContentPackageValidationError(f"Post brief field must be a non-empty string: {field_name}")
+        normalized[field_name] = value
+
+    if "evidence_points" not in payload:
+        raise ContentPackageValidationError("Post brief payload is missing required field: evidence_points")
+
+    raw_evidence_points = payload.get("evidence_points")
+    if not isinstance(raw_evidence_points, list):
+        raise ContentPackageValidationError("Post brief evidence_points must be a list.")
+
+    evidence_points = [
+        str(item).strip()
+        for item in raw_evidence_points
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if len(evidence_points) < 2:
+        raise ContentPackageValidationError("Post brief evidence_points must include at least 2 non-empty strings.")
+
+    return {
+        "target_reader": normalized["target_reader"],
+        "reader_pain_or_mistake": normalized["reader_pain_or_mistake"],
+        "sharp_claim": normalized["sharp_claim"],
+        "tension": normalized["tension"],
+        "evidence_points": evidence_points[:4],
+        "practical_takeaway": normalized["practical_takeaway"],
+        "ending_reframe": normalized["ending_reframe"],
+        "suggested_hook_direction": normalized["suggested_hook_direction"],
+        "avoid_angle": normalized["avoid_angle"],
+    }
+
+
 def build_carousel_prompt(
     digest: Digest,
     articles: list[dict[str, Any]],
@@ -378,6 +453,23 @@ def _generate_payload_via_llm(
     prompt = build_post_prompt(digest, articles, author_profile)
     response_text = json.dumps(payload, ensure_ascii=False, indent=2)
     return payload, prompt, response_text, None
+
+
+def _generate_post_brief_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_post_brief_prompt(digest, articles, author_profile)
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=700,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    payload = _parse_json_response(response_text)
+    post_brief = _validate_post_brief_payload(payload)
+    return post_brief, prompt, response_text, response.usage
 
 
 def _repair_packaging_payload_via_llm(

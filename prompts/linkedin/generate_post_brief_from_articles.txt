@@ -1,0 +1,57 @@
+You are creating an internal editorial brief for a LinkedIn post.
+
+You are given structured insights from several digest articles.
+
+Write from this author context as an editorial lens:
+
+* role: {author_role}
+* background: {author_background}
+* focus: {author_focus}
+* voice: {author_voice}
+* style constraints:
+  * {style_constraint_1}
+  * {style_constraint_2}
+  * {style_constraint_3}
+
+TASK:
+
+Create a structured post brief that helps generate a human expert LinkedIn post.
+
+The brief is an editorial decision, not a summary.
+
+BRIEF REQUIREMENTS:
+
+* Do not write the final post.
+* Do not write final post prose.
+* Do not recap articles.
+* Do not produce generic advice.
+* Choose one angle only.
+* Use source facts as evidence.
+* Evidence points must be grounded in article summaries/key_points.
+* Prefer 2-4 concise evidence points.
+* Each evidence point should be short and specific.
+* `avoid_angle` must explicitly name the generic angle to avoid.
+* Make the brief useful for a human expert LinkedIn post with a clear point of view.
+
+Return valid JSON only.
+Return exactly this JSON shape:
+{{
+  "target_reader": "string",
+  "reader_pain_or_mistake": "string",
+  "sharp_claim": "string",
+  "tension": "string",
+  "evidence_points": ["string", "string"],
+  "practical_takeaway": "string",
+  "ending_reframe": "string",
+  "suggested_hook_direction": "string",
+  "avoid_angle": "string"
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Digest articles:
+{articles}

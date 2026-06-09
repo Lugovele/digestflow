@@ -7,7 +7,12 @@ from django.test import SimpleTestCase
 from apps.digests.models import Digest, DigestRun
 from apps.topics.models import Topic
 from services.ai.digest_smoke_test import build_prompt as build_article_prompt
-from services.packaging.generator import build_carousel_prompt, build_post_prompt, build_post_repair_prompt
+from services.packaging.generator import (
+    build_carousel_prompt,
+    build_post_brief_prompt,
+    build_post_prompt,
+    build_post_repair_prompt,
+)
 
 
 class PromptUsageTests(SimpleTestCase):
@@ -53,6 +58,7 @@ class PromptUsageTests(SimpleTestCase):
         }
 
         with patch("services.packaging.generator.build_prompt", return_value="PROMPT") as mock_build:
+            build_post_brief_prompt(digest, articles, author_profile)
             build_post_prompt(digest, articles, author_profile)
             build_carousel_prompt(digest, articles, author_profile)
 
@@ -60,6 +66,7 @@ class PromptUsageTests(SimpleTestCase):
         self.assertEqual(
             used_templates,
             [
+                "linkedin/generate_post_brief_from_articles.txt",
                 "linkedin/generate_post_from_articles.txt",
                 "linkedin/generate_carousel_from_articles.txt",
             ],
@@ -100,6 +107,94 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Use source facts as evidence, not as the structure of the post", post_prompt)
         self.assertIn('structure the post as "one article says" or "another article says"', post_prompt)
         self.assertIn("write like a report, digest, or research memo", post_prompt)
+
+    def test_linkedin_post_brief_prompt_declares_editorial_contract(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts"
+        brief_prompt_path = prompts_root / "linkedin" / "generate_post_brief_from_articles.txt"
+
+        self.assertTrue(brief_prompt_path.exists())
+
+        brief_prompt = brief_prompt_path.read_text(encoding="utf-8")
+
+        for field_name in [
+            "target_reader",
+            "reader_pain_or_mistake",
+            "sharp_claim",
+            "tension",
+            "evidence_points",
+            "practical_takeaway",
+            "ending_reframe",
+            "suggested_hook_direction",
+            "avoid_angle",
+        ]:
+            self.assertIn(f'"{field_name}"', brief_prompt)
+
+        self.assertIn("The brief is an editorial decision, not a summary.", brief_prompt)
+        self.assertIn("Do not write the final post.", brief_prompt)
+        self.assertIn("Do not write final post prose.", brief_prompt)
+        self.assertIn("Choose one angle only.", brief_prompt)
+        self.assertIn("Use source facts as evidence.", brief_prompt)
+        self.assertIn("Evidence points must be grounded in article summaries/key_points.", brief_prompt)
+        self.assertIn("Prefer 2-4 concise evidence points.", brief_prompt)
+        self.assertIn("`avoid_angle` must explicitly name the generic angle to avoid.", brief_prompt)
+        self.assertIn("human expert LinkedIn post", brief_prompt)
+
+    def test_build_post_brief_prompt_renders_author_profile_and_article_evidence_without_placeholders(self):
+        topic = Topic(name="Workflow topic")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Workflow topic",
+            payload={"version": 1, "title": "Digest for Workflow topic", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "Workflow speed improved after the team fixed handoffs.",
+                "key_points": ["Validation got clearer before the automation layer paid off."],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": [
+                "avoid generic AI phrasing",
+                "make the tension explicit",
+                "end with a practical takeaway",
+            ],
+        }
+
+        rendered_prompt = build_post_brief_prompt(digest, articles, author_profile)
+
+        self.assertIn("Operations strategist", rendered_prompt)
+        self.assertIn("Leads editorial workflow redesign.", rendered_prompt)
+        self.assertIn("handoffs, validation, and repeatable systems", rendered_prompt)
+        self.assertIn("sharp and practical", rendered_prompt)
+        self.assertIn("avoid generic AI phrasing", rendered_prompt)
+        self.assertIn("make the tension explicit", rendered_prompt)
+        self.assertIn("end with a practical takeaway", rendered_prompt)
+        self.assertIn("Workflow speed improved after the team fixed handoffs.", rendered_prompt)
+        self.assertIn("Validation got clearer before the automation layer paid off.", rendered_prompt)
+        self.assertIn("Prompt article title", rendered_prompt)
+
+        for placeholder in [
+            "{author_role}",
+            "{author_background}",
+            "{author_focus}",
+            "{author_voice}",
+            "{style_constraint_1}",
+            "{style_constraint_2}",
+            "{style_constraint_3}",
+            "{articles}",
+            "{topic_name}",
+            "{digest_title}",
+        ]:
+            self.assertNotIn(placeholder, rendered_prompt)
 
     def test_build_post_prompt_renders_author_profile_values_without_unresolved_placeholders_and_length_rules(self):
         topic = Topic(name="Workflow topic")

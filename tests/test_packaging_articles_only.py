@@ -1,3 +1,5 @@
+import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -6,7 +8,13 @@ from django.test import TestCase, override_settings
 from apps.topics.models import Topic
 from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
-from services.packaging.generator import PackagingGenerationResult, normalize_linkedin_hashtags
+from services.packaging.generator import (
+    PackagingGenerationResult,
+    _generate_post_brief_via_llm,
+    _validate_post_brief_payload,
+    normalize_linkedin_hashtags,
+)
+from services.packaging.validators import ContentPackageValidationError
 
 
 @override_settings(OPENAI_API_KEY="sk-your-key")
@@ -57,6 +65,263 @@ class PackagingArticlesOnlyTests(TestCase):
         }
         payload.update(extra_fields)
         return payload
+
+    def _post_brief_payload(self, **overrides) -> dict:
+        payload = {
+            "target_reader": "Founders building visible expertise",
+            "reader_pain_or_mistake": "They polish positioning before proving judgment.",
+            "sharp_claim": "A useful personal brand is evidence of current judgment.",
+            "tension": "Visibility helps only when people can see what to trust you with.",
+            "evidence_points": [
+                "Build in public gives people evidence of current judgment.",
+                "People trust current evidence of expertise more than polished claims.",
+            ],
+            "practical_takeaway": "Audit whether recent posts show decisions, not just activity.",
+            "ending_reframe": "A brand is a repeated signal of what problems you can solve.",
+            "suggested_hook_direction": "Lead with the trust gap, not logo polish.",
+            "avoid_angle": "Avoid generic advice about authentic storytelling.",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _author_profile(self) -> dict:
+        return {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": [
+                "avoid generic AI phrasing",
+                "make the tension explicit",
+                "end with a practical takeaway",
+            ],
+        }
+
+    def test_validate_post_brief_payload_accepts_valid_brief(self) -> None:
+        payload = self._post_brief_payload()
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertEqual(normalized, payload)
+
+    def test_validate_post_brief_payload_strips_surrounding_whitespace(self) -> None:
+        payload = self._post_brief_payload(
+            target_reader="  Founders building visible expertise  ",
+            evidence_points=[
+                "  Build in public gives people evidence.  ",
+                "  Polished claims are weaker than proof.  ",
+            ],
+        )
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertEqual(normalized["target_reader"], "Founders building visible expertise")
+        self.assertEqual(
+            normalized["evidence_points"],
+            [
+                "Build in public gives people evidence.",
+                "Polished claims are weaker than proof.",
+            ],
+        )
+
+    def test_validate_post_brief_payload_missing_required_field_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("sharp_claim")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_empty_string_field_fails(self) -> None:
+        payload = self._post_brief_payload(sharp_claim="   ")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_missing_evidence_points_fails(self) -> None:
+        payload = self._post_brief_payload()
+        payload.pop("evidence_points")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_non_list_evidence_points_fails(self) -> None:
+        payload = self._post_brief_payload(evidence_points="One point. Another point.")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_requires_two_non_empty_evidence_points(self) -> None:
+        payload = self._post_brief_payload(evidence_points=["One grounded point.", "   ", 123])
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_post_brief_payload(payload)
+
+    def test_validate_post_brief_payload_trims_evidence_points_to_four(self) -> None:
+        payload = self._post_brief_payload(
+            evidence_points=[
+                "Point one.",
+                "Point two.",
+                "Point three.",
+                "Point four.",
+                "Point five.",
+            ],
+        )
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertEqual(
+            normalized["evidence_points"],
+            ["Point one.", "Point two.", "Point three.", "Point four."],
+        )
+
+    def test_validate_post_brief_payload_strips_extra_keys(self) -> None:
+        payload = self._post_brief_payload(extra_key="remove me", metadata={"debug": True})
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertNotIn("extra_key", normalized)
+        self.assertNotIn("metadata", normalized)
+        self.assertEqual(
+            list(normalized.keys()),
+            [
+                "target_reader",
+                "reader_pain_or_mistake",
+                "sharp_claim",
+                "tension",
+                "evidence_points",
+                "practical_takeaway",
+                "ending_reframe",
+                "suggested_hook_direction",
+                "avoid_angle",
+            ],
+        )
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_returns_normalized_brief(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("brief-llm-user")
+        response_payload = self._post_brief_payload(
+            target_reader="  Founders building visible expertise  ",
+            evidence_points=[
+                "  Build in public gives people evidence.  ",
+                "Polished claims are weaker than proof.",
+                "Extra evidence is kept.",
+                "Fourth evidence point is kept.",
+                "Fifth evidence point is trimmed.",
+            ],
+            extra_key="remove me",
+        )
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(response_payload),
+            usage={"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46},
+        )
+
+        post_brief, _prompt, _response_text, _usage = _generate_post_brief_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+        )
+
+        self.assertEqual(post_brief["target_reader"], "Founders building visible expertise")
+        self.assertEqual(len(post_brief["evidence_points"]), 4)
+        self.assertNotIn("extra_key", post_brief)
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_returns_prompt_and_raw_response_text(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("brief-prompt-response-user")
+        response_text = json.dumps(self._post_brief_payload())
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=response_text,
+            usage=None,
+        )
+
+        _post_brief, prompt, raw_response_text, _usage = _generate_post_brief_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+        )
+
+        self.assertIn("Digest for Personal Branding", prompt)
+        self.assertIn("People trust current evidence of expertise more than polished claims.", prompt)
+        self.assertEqual(raw_response_text, response_text)
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_returns_token_usage(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("brief-token-user")
+        usage = {"prompt_tokens": 21, "completion_tokens": 43, "total_tokens": 64}
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(self._post_brief_payload()),
+            usage=usage,
+        )
+
+        _post_brief, _prompt, _response_text, returned_usage = _generate_post_brief_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+        )
+
+        self.assertEqual(returned_usage, usage)
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_invalid_json_fails(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("brief-invalid-json-user")
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text="not json",
+            usage=None,
+        )
+
+        with self.assertRaises(ContentPackageValidationError):
+            _generate_post_brief_via_llm(digest, digest.get_articles(), self._author_profile())
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_structurally_invalid_brief_fails(self, mock_openai_client) -> None:
+        digest = self._create_digest_for_packaging("brief-invalid-shape-user")
+        invalid_payload = self._post_brief_payload(evidence_points=["Only one point."])
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(invalid_payload),
+            usage=None,
+        )
+
+        with self.assertRaises(ContentPackageValidationError):
+            _generate_post_brief_via_llm(digest, digest.get_articles(), self._author_profile())
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_prompt_includes_article_evidence_and_author_profile(
+        self,
+        mock_openai_client,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-author-evidence-user")
+        author_profile = self._author_profile()
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(self._post_brief_payload()),
+            usage=None,
+        )
+
+        _generate_post_brief_via_llm(digest, digest.get_articles(), author_profile)
+
+        prompt = mock_openai_client.return_value.generate_text.call_args.kwargs["prompt"]
+        self.assertIn("Operations strategist", prompt)
+        self.assertIn("Leads editorial workflow redesign.", prompt)
+        self.assertIn("People trust current evidence of expertise more than polished claims.", prompt)
+        self.assertIn("Build in public gives people evidence of current judgment.", prompt)
+        self.assertTrue(mock_openai_client.return_value.generate_text.call_args.kwargs["json_mode"])
+
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_does_not_call_final_post_generation(
+        self,
+        mock_openai_client,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-no-final-post-user")
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(self._post_brief_payload()),
+            usage=None,
+        )
+
+        _generate_post_brief_via_llm(digest, digest.get_articles(), self._author_profile())
+
+        mock_generate_payload.assert_not_called()
+        mock_openai_client.return_value.generate_text.assert_called_once()
 
     def test_normalize_linkedin_hashtags_prefixes_trailing_keyword_line(self) -> None:
         post_text = (
