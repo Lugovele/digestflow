@@ -24,6 +24,21 @@ Blocked phrases from repair reasons:
 Validated post brief:
 {post_brief}
 
+Editorial review feedback:
+{editorial_review}
+
+Editorial review issues:
+{editorial_review_issues}
+
+Editorial repair instructions:
+{editorial_repair_instructions}
+
+Editorial review score:
+{editorial_review_score}
+
+Editorial review error:
+{editorial_review_error}
+
 Weak payload:
 {weak_payload}
 
@@ -33,6 +48,12 @@ Source facts:
 REPAIR REQUIREMENTS:
 
 * The repaired payload must remove every retry reason listed above
+* Deterministic repair reasons remain mandatory
+* Use editorial review feedback as guidance for improving the rewrite
+* If editorial review includes `repair_instructions`, apply them when they do not conflict with deterministic rules
+* If editorial review says `too_generic`, `weak_hook`, `low_reader_value`, `not_enough_point_of_view`, or `sounds_like_corporate_blog`, make the rewrite more specific, practitioner-led, and useful
+* Do not treat editorial review as permission to invent unsupported facts
+* Do not ignore brief alignment, mechanics, or hard validation
 * Do not lightly edit the weak post
 * Rebuild `post_text` from the validated post brief
 * Keep source facts and brief alignment, but change the structure

@@ -87,6 +87,7 @@ class PackagingGenerationResult:
     editorial_review_response_text: str = ""
     editorial_review_tokens: dict[str, int | None] | None = None
     editorial_review_error: str = ""
+    editorial_review_used_for_repair: bool = False
 
 
 def generate_content_package_for_digest(
@@ -152,6 +153,7 @@ def generate_content_package_for_digest(
         "editorial_review_response_text": generation.editorial_review_response_text,
         "editorial_review_tokens": generation.editorial_review_tokens,
         "editorial_review_error": generation.editorial_review_error,
+        "editorial_review_used_for_repair": generation.editorial_review_used_for_repair,
     }
     return content_package, debug_info
 
@@ -188,6 +190,7 @@ def _generate_packaging_payload(
     editorial_review_response_text = ""
     editorial_review_tokens: dict[str, int | None] | None = None
     editorial_review_error = ""
+    editorial_review_used_for_repair = False
     prompt = build_post_prompt(digest, articles, profile)
     response_text = ""
 
@@ -240,6 +243,27 @@ def _generate_packaging_payload(
                 or _post_mechanics_requires_repair(post_mechanics)
             ):
                 repair_attempted = True
+                if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True):
+                    try:
+                        (
+                            editorial_review,
+                            editorial_review_prompt,
+                            editorial_review_response_text,
+                            editorial_review_tokens,
+                        ) = _generate_editorial_review_via_llm(
+                            digest,
+                            payload,
+                            profile,
+                            post_brief,
+                            quality_gate,
+                            brief_alignment,
+                            post_mechanics,
+                            repair_delta=None,
+                            repair_reasons=repair_reasons,
+                        )
+                        editorial_review_used_for_repair = True
+                    except Exception as exc:  # noqa: BLE001 - editorial guidance is diagnostic-only
+                        editorial_review_error = str(exc)
                 repair_report = {
                     "status": "retry",
                     "reasons": repair_reasons,
@@ -254,6 +278,8 @@ def _generate_packaging_payload(
                     weak_payload=payload,
                     quality_report=repair_report,
                     post_brief=post_brief,
+                    editorial_review=editorial_review,
+                    editorial_review_error=editorial_review_error,
                 )
                 repaired_payload = _normalize_linkedin_post_payload(repaired_payload)
                 repaired_payload["post_text"] = _split_long_post_paragraphs(repaired_payload["post_text"])
@@ -286,7 +312,7 @@ def _generate_packaging_payload(
                 post_mechanics = repair_post_mechanics
                 response_text = repair_response_text
                 repair_succeeded = True
-            if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True):
+            if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True) and not repair_attempted:
                 try:
                     (
                         editorial_review,
@@ -333,6 +359,7 @@ def _generate_packaging_payload(
                 editorial_review_response_text=editorial_review_response_text,
                 editorial_review_tokens=editorial_review_tokens,
                 editorial_review_error=editorial_review_error,
+                editorial_review_used_for_repair=editorial_review_used_for_repair,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -375,6 +402,7 @@ def _generate_packaging_payload(
         editorial_review_response_text=editorial_review_response_text,
         editorial_review_tokens=editorial_review_tokens,
         editorial_review_error=editorial_review_error,
+        editorial_review_used_for_repair=editorial_review_used_for_repair,
     )
 
 
@@ -576,16 +604,26 @@ def build_post_repair_prompt(
     weak_payload: dict[str, Any],
     quality_report: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    editorial_review: dict[str, Any] | None = None,
+    editorial_review_error: str = "",
 ) -> str:
     """Build prompt for one-pass quality repair of a structurally valid post payload."""
     quality_reasons = list(quality_report.get("reasons", []))
     blocked_phrases = _extract_banned_phrases_from_repair_reasons(quality_reasons)
+    editorial_review_payload = editorial_review or {}
     return build_prompt(
         "linkedin/repair_post_quality.txt",
         topic_name=digest.run.topic.name,
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
         post_brief=_format_list_for_prompt(post_brief or {}),
+        editorial_review=_format_list_for_prompt(editorial_review_payload),
+        editorial_review_issues=_format_list_for_prompt(editorial_review_payload.get("issues", [])),
+        editorial_repair_instructions=_format_list_for_prompt(
+            editorial_review_payload.get("repair_instructions", [])
+        ),
+        editorial_review_score=editorial_review_payload.get("score", ""),
+        editorial_review_error=editorial_review_error,
         weak_payload=_format_list_for_prompt(weak_payload),
         quality_reasons=_format_list_for_prompt(quality_reasons),
         blocked_phrases=_format_list_for_prompt(blocked_phrases),
@@ -779,6 +817,8 @@ def _repair_packaging_payload_via_llm(
     weak_payload: dict[str, Any],
     quality_report: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    editorial_review: dict[str, Any] | None = None,
+    editorial_review_error: str = "",
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
     prompt = build_post_repair_prompt(
         digest,
@@ -787,6 +827,8 @@ def _repair_packaging_payload_via_llm(
         weak_payload,
         quality_report,
         post_brief=post_brief,
+        editorial_review=editorial_review,
+        editorial_review_error=editorial_review_error,
     )
     response = OpenAIClient().generate_text(
         prompt=prompt,

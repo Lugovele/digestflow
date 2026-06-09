@@ -1463,6 +1463,8 @@ class PackagingArticlesOnlyTests(TestCase):
             debug_info["editorial_review_tokens"],
             {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
         )
+        self.assertFalse(debug_info["repair_attempted"])
+        self.assertFalse(debug_info["editorial_review_used_for_repair"])
         mock_generate_review.assert_called_once()
 
     @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
@@ -1492,7 +1494,102 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertFalse(debug_info["is_mock"])
         self.assertEqual(debug_info["editorial_review"], {})
         self.assertEqual(debug_info["editorial_review_error"], "review unavailable")
+        self.assertFalse(debug_info["repair_attempted"])
+        self.assertFalse(debug_info["editorial_review_used_for_repair"])
         mock_generate_review.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
+    @patch("services.packaging.generator._generate_editorial_review_via_llm")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_editorial_review_is_generated_before_deterministic_repair_and_passed_to_prompt(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+        mock_generate_review,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-guides-repair-user")
+        weak_payload = self._package_payload(
+            "This draft includes a source link instead of a finished insight.\n\n"
+            "Read more at https://example.com."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Visibility without judgment creates attention without trust. Build in public gives people evidence of current judgment.\n\n"
+            "Audit whether recent posts show decisions, not just activity."
+        )
+        review = self._editorial_review_payload(
+            passed=False,
+            score=5,
+            issues=["too_generic", "weak_hook"],
+            repair_instructions=["Make the rewrite more practitioner-led."],
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "final prompt", "final response", None)
+        mock_generate_review.return_value = (
+            review,
+            "review prompt",
+            json.dumps(review),
+            {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        )
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertEqual(debug_info["editorial_review"], review)
+        self.assertTrue(debug_info["editorial_review_used_for_repair"])
+        self.assertIn("post_mechanics:url_in_post_text", debug_info["repair_reasons"])
+        self.assertEqual(mock_repair_payload.call_args.kwargs["editorial_review"], review)
+        self.assertEqual(mock_repair_payload.call_args.kwargs["editorial_review_error"], "")
+        mock_generate_review.assert_called_once()
+        mock_repair_payload.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
+    @patch("services.packaging.generator._generate_editorial_review_via_llm")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_editorial_review_failure_before_repair_does_not_block_repair(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+        mock_generate_review,
+    ) -> None:
+        digest = self._create_digest_for_packaging("editorial-review-repair-error-user")
+        weak_payload = self._package_payload(
+            "This draft includes a source link instead of a finished insight.\n\n"
+            "Read more at https://example.com."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Visibility without judgment creates attention without trust. Build in public gives people evidence of current judgment.\n\n"
+            "Audit whether recent posts show decisions, not just activity."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "final prompt", "final response", None)
+        mock_generate_review.side_effect = RuntimeError("review unavailable")
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertEqual(debug_info["editorial_review"], {})
+        self.assertEqual(debug_info["editorial_review_error"], "review unavailable")
+        self.assertFalse(debug_info["editorial_review_used_for_repair"])
+        self.assertIsNone(mock_repair_payload.call_args.kwargs["editorial_review"])
+        self.assertEqual(mock_repair_payload.call_args.kwargs["editorial_review_error"], "review unavailable")
+        mock_generate_review.assert_called_once()
+        mock_repair_payload.assert_called_once()
 
     @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_EDITORIAL_REVIEW_ENABLED=True)
     @patch("services.packaging.generator._generate_editorial_review_via_llm")
@@ -1514,6 +1611,7 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["editorial_review_response_text"], "")
         self.assertIsNone(debug_info["editorial_review_tokens"])
         self.assertEqual(debug_info["editorial_review_error"], "")
+        self.assertFalse(debug_info["editorial_review_used_for_repair"])
         mock_generate_review.assert_not_called()
         self.assertTrue(content_package.post_text)
 

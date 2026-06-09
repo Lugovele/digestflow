@@ -468,6 +468,13 @@ class PromptUsageTests(SimpleTestCase):
             "suggested_hook_direction": "Lead with the trust gap.",
             "avoid_angle": "Avoid generic advice about authentic storytelling.",
         }
+        editorial_review = {
+            "passed": False,
+            "score": 5,
+            "issues": ["too_generic", "weak_hook", "low_reader_value"],
+            "strengths": ["Uses one grounded detail."],
+            "repair_instructions": ["Make the rewrite more practitioner-led."],
+        }
 
         rendered_prompt = build_post_repair_prompt(
             digest,
@@ -476,12 +483,30 @@ class PromptUsageTests(SimpleTestCase):
             weak_payload,
             quality_report,
             post_brief=post_brief,
+            editorial_review=editorial_review,
         )
 
         self.assertTrue((Path(settings.BASE_DIR) / "prompts" / "linkedin" / "repair_post_quality.txt").exists())
         self.assertIn("Return exactly this JSON shape", rendered_prompt)
         self.assertIn('"post_text": "string"', rendered_prompt)
         self.assertIn("The repaired payload must remove every retry reason listed above", rendered_prompt)
+        self.assertIn("Editorial review feedback:", rendered_prompt)
+        self.assertIn("Editorial review issues:", rendered_prompt)
+        self.assertIn("Editorial repair instructions:", rendered_prompt)
+        self.assertIn("Editorial review score:", rendered_prompt)
+        self.assertIn("too_generic", rendered_prompt)
+        self.assertIn("weak_hook", rendered_prompt)
+        self.assertIn("low_reader_value", rendered_prompt)
+        self.assertIn("Make the rewrite more practitioner-led.", rendered_prompt)
+        self.assertIn("Deterministic repair reasons remain mandatory", rendered_prompt)
+        self.assertIn("Use editorial review feedback as guidance for improving the rewrite", rendered_prompt)
+        self.assertIn(
+            "If editorial review includes `repair_instructions`, apply them when they do not conflict with deterministic rules",
+            rendered_prompt,
+        )
+        self.assertIn("make the rewrite more specific, practitioner-led, and useful", rendered_prompt)
+        self.assertIn("Do not treat editorial review as permission to invent unsupported facts", rendered_prompt)
+        self.assertIn("Do not ignore brief alignment, mechanics, or hard validation", rendered_prompt)
         self.assertIn("Do not lightly edit the weak post", rendered_prompt)
         self.assertIn("Rebuild `post_text` from the validated post brief", rendered_prompt)
         self.assertIn("Keep source facts and brief alignment, but change the structure", rendered_prompt)
