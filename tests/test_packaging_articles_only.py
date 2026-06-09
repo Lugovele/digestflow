@@ -10,6 +10,7 @@ from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
 from services.packaging.generator import (
     PackagingGenerationResult,
+    _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
     _generate_post_brief_via_llm,
     _validate_post_brief_payload,
@@ -226,6 +227,122 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(report["issues"], [])
         self.assertEqual(report["warnings"], [])
         self.assertEqual(report["reason"], "missing_post_brief")
+
+    def test_linkedin_post_mechanics_passes_for_mechanically_strong_post(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "Build in public gives people evidence of current judgment, but polish alone only asks for trust.\n\n"
+            "Check whether your last post shows a decision, not just a claim."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertTrue(report["checked"])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["issues"], [])
+        self.assertIn("first_line_word_count", report["signals"])
+        self.assertTrue(report["signals"]["has_pattern_interrupt_signal"])
+        self.assertGreater(report["signals"]["concrete_detail_count"], 0)
+        self.assertGreaterEqual(report["signals"]["generic_language_count"], 0)
+
+    def test_linkedin_post_mechanics_fails_on_url_in_post_text(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "Build in public gives people evidence of current judgment, but read more at www.example.com."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("url_in_post_text", report["issues"])
+
+    def test_linkedin_post_mechanics_fails_on_cta_in_post_text(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "Build in public gives people evidence of current judgment, but comment below with your view."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("cta_in_post_text", report["issues"])
+
+    def test_linkedin_post_mechanics_fails_on_generic_opening(self) -> None:
+        payload = self._package_payload(
+            "In today's world, personal branding matters more than ever.\n\n"
+            "Build in public gives people evidence of current judgment, but proof still matters."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("generic_opening", report["issues"])
+
+    def test_linkedin_post_mechanics_fails_when_post_text_ends_with_question(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "Build in public gives people evidence of current judgment, but will your audience see it?"
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("post_text_ends_with_question", report["issues"])
+
+    def test_linkedin_post_mechanics_warns_when_first_line_is_too_long(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when people see polished claims without enough current evidence of judgment in public today.\n\n"
+            "Build in public gives people evidence of current judgment, but polish alone only asks for trust."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertTrue(report["passed"])
+        self.assertIn("hook_may_be_too_long", report["warnings"])
+
+    def test_linkedin_post_mechanics_warns_when_first_line_is_too_short(self) -> None:
+        payload = self._package_payload(
+            "Proof matters.\n\n"
+            "Build in public gives people evidence of current judgment, but polish alone only asks for trust."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertTrue(report["passed"])
+        self.assertIn("hook_may_be_too_short", report["warnings"])
+
+    def test_linkedin_post_mechanics_warns_when_pattern_interrupt_is_missing(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "Build in public gives people evidence of current judgment. Decisions make trust easier to evaluate."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertTrue(report["passed"])
+        self.assertIn("missing_pattern_interrupt_signal", report["warnings"])
+
+    def test_linkedin_post_mechanics_warns_when_specificity_is_low(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "The point is clear, but the writing remains broad and general."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload(concrete_details=[]))
+
+        self.assertTrue(report["passed"])
+        self.assertIn("low_specificity", report["warnings"])
+
+    def test_linkedin_post_mechanics_warns_when_ending_is_weak(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand breaks when proof is missing.\n\n"
+            "Build in public gives people evidence of current judgment, but polish alone only asks for trust. Start today."
+        )
+
+        report = _evaluate_linkedin_post_mechanics(payload, self._post_brief_payload())
+
+        self.assertTrue(report["passed"])
+        self.assertIn("weak_ending", report["warnings"])
 
     def test_validate_post_brief_payload_accepts_valid_brief(self) -> None:
         payload = self._post_brief_payload()
@@ -853,6 +970,7 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["post_brief"], self._post_brief_payload())
         self.assertEqual(debug_info["post_brief_prompt"], "brief prompt")
         self.assertTrue(debug_info["brief_alignment"]["passed"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
         mock_repair_payload.assert_not_called()
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -883,6 +1001,8 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["post_brief"], post_brief)
         self.assertEqual(debug_info["post_brief_prompt"], "brief prompt")
         self.assertTrue(debug_info["brief_alignment"]["passed"])
+        self.assertIn("post_mechanics", debug_info)
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._generate_post_brief_via_llm")
@@ -912,6 +1032,7 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(debug_info["tokens"], final_tokens)
         self.assertEqual(debug_info["post_brief_tokens"], brief_tokens)
         self.assertTrue(debug_info["brief_alignment"]["passed"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
@@ -944,7 +1065,67 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(debug_info["repair_succeeded"])
         self.assertIn("brief_alignment:missing_concrete_detail", debug_info["repair_reasons"])
         self.assertTrue(debug_info["brief_alignment"]["passed"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
         mock_repair_payload.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_post_mechanics_hard_issue_triggers_existing_repair_path(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("mechanics-repair-user")
+        weak_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment, but read more at https://example.com."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment, but polished claims only ask for trust.\n\n"
+            "Check whether your last post shows a decision, not just a claim."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertIn("post_mechanics:url_in_post_text", debug_info["repair_reasons"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
+        mock_repair_payload.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_post_mechanics_warnings_do_not_trigger_repair_by_themselves(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("mechanics-warning-user")
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. Decisions make trust easier to evaluate."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (payload, "initial prompt", "initial response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, payload["post_text"])
+        self.assertFalse(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["post_mechanics"]["passed"])
+        self.assertIn("missing_pattern_interrupt_signal", debug_info["post_mechanics"]["warnings"])
+        mock_repair_payload.assert_not_called()
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._generate_post_brief_via_llm")

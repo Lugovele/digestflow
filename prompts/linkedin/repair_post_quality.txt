@@ -38,6 +38,10 @@ REPAIR REQUIREMENTS:
 * Remove `avoid_angle` drift from `post_text`
 * Remove URLs and CTA questions from `post_text`
 * Keep CTA questions only in `cta_variants`
+* Remove CTA phrases from `post_text`
+* Replace generic openings with a specific first line
+* Keep the first line compact
+* Include a concrete detail when available
 * Keep factual claims grounded in the provided source facts
 * Return the same JSON schema only
 * `post_text` must be under 1150 characters

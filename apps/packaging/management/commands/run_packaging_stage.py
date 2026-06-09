@@ -47,6 +47,10 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"brief_alignment: {json.dumps(debug_info['brief_alignment'], ensure_ascii=False)}"
             )
+        if debug_info.get("post_mechanics"):
+            self.stdout.write(
+                f"post_mechanics: {json.dumps(debug_info['post_mechanics'], ensure_ascii=False)}"
+            )
         self.stdout.write(f"repair_attempted: {debug_info.get('repair_attempted', False)}")
         self.stdout.write(f"repair_succeeded: {debug_info.get('repair_succeeded', False)}")
         self.stdout.write(f"repair_reasons: {json.dumps(debug_info.get('repair_reasons', []), ensure_ascii=False)}")

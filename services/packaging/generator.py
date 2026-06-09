@@ -80,6 +80,7 @@ class PackagingGenerationResult:
     post_brief_prompt: str = ""
     post_brief_tokens: dict[str, int | None] | None = None
     brief_alignment: dict[str, Any] | None = None
+    post_mechanics: dict[str, Any] | None = None
 
 
 def generate_content_package_for_digest(
@@ -138,6 +139,7 @@ def generate_content_package_for_digest(
         "post_brief_prompt": generation.post_brief_prompt,
         "post_brief_tokens": generation.post_brief_tokens,
         "brief_alignment": generation.brief_alignment or {},
+        "post_mechanics": generation.post_mechanics or {},
     }
     return content_package, debug_info
 
@@ -167,6 +169,7 @@ def _generate_packaging_payload(
     post_brief_prompt = ""
     post_brief_tokens: dict[str, int | None] | None = None
     brief_alignment: dict[str, Any] | None = None
+    post_mechanics: dict[str, Any] | None = None
     prompt = build_post_prompt(digest, articles, profile)
     response_text = ""
 
@@ -203,15 +206,21 @@ def _generate_packaging_payload(
             validate_content_package_payload(payload)
             quality_gate = _evaluate_linkedin_post_quality(payload)
             brief_alignment = _evaluate_post_brief_alignment(payload, post_brief)
-            repair_reasons = _combined_repair_reasons(quality_gate, brief_alignment)
+            post_mechanics = _evaluate_linkedin_post_mechanics(payload, post_brief)
+            repair_reasons = _combined_repair_reasons(quality_gate, brief_alignment, post_mechanics)
 
-            if _quality_gate_requires_repair(quality_gate) or _brief_alignment_requires_repair(brief_alignment):
+            if (
+                _quality_gate_requires_repair(quality_gate)
+                or _brief_alignment_requires_repair(brief_alignment)
+                or _post_mechanics_requires_repair(post_mechanics)
+            ):
                 repair_attempted = True
                 repair_report = {
                     "status": "retry",
                     "reasons": repair_reasons,
                     "quality_gate": quality_gate,
                     "brief_alignment": brief_alignment,
+                    "post_mechanics": post_mechanics,
                 }
                 repaired_payload, repair_prompt, repair_response_text, _repair_tokens = _repair_packaging_payload_via_llm(
                     digest,
@@ -226,13 +235,19 @@ def _generate_packaging_payload(
                 validate_content_package_payload(repaired_payload)
                 repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
                 repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
-                if _quality_gate_requires_repair(repair_quality_gate) or _brief_alignment_requires_repair(repair_brief_alignment):
+                repair_post_mechanics = _evaluate_linkedin_post_mechanics(repaired_payload, post_brief)
+                if (
+                    _quality_gate_requires_repair(repair_quality_gate)
+                    or _brief_alignment_requires_repair(repair_brief_alignment)
+                    or _post_mechanics_requires_repair(repair_post_mechanics)
+                ):
                     raise ContentPackageValidationError(
                         "LinkedIn post quality repair did not resolve retry-trigger issues: "
-                        f"{_combined_repair_reasons(repair_quality_gate, repair_brief_alignment)}"
+                        f"{_combined_repair_reasons(repair_quality_gate, repair_brief_alignment, repair_post_mechanics)}"
                     )
                 payload = repaired_payload
                 brief_alignment = repair_brief_alignment
+                post_mechanics = repair_post_mechanics
                 response_text = repair_response_text
                 repair_succeeded = True
             return PackagingGenerationResult(
@@ -255,6 +270,7 @@ def _generate_packaging_payload(
                 post_brief_prompt=post_brief_prompt,
                 post_brief_tokens=post_brief_tokens,
                 brief_alignment=brief_alignment,
+                post_mechanics=post_mechanics,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -290,6 +306,7 @@ def _generate_packaging_payload(
         post_brief_prompt=post_brief_prompt,
         post_brief_tokens=post_brief_tokens,
         brief_alignment=brief_alignment,
+        post_mechanics=post_mechanics,
     )
 
 
@@ -679,6 +696,65 @@ _POST_TEXT_CTA_PHRASES = [
     "subscribe",
 ]
 
+_MECHANICS_GENERIC_OPENINGS = [
+    "in today's world",
+    "in the digital landscape",
+    "as businesses",
+    "many professionals",
+    "personal branding is essential",
+    "building a personal brand",
+    "effective personal branding",
+]
+
+_PATTERN_INTERRUPT_SIGNALS = [
+    "but",
+    "except",
+    "the problem is",
+    "the mistake is",
+    "the real issue",
+    "what changes",
+    "what most people miss",
+    "the counterintuitive part",
+    "the uncomfortable part",
+    "not because",
+]
+
+_SPECIFICITY_OPERATIONAL_PHRASES = [
+    "handoff",
+    "workflow",
+    "validation",
+    "source",
+    "metric",
+    "review",
+    "decision",
+    "constraint",
+    "cost",
+]
+
+_MECHANICS_GENERIC_TERMS = [
+    "authentic",
+    "resonate",
+    "elevate",
+    "leverage",
+    "holistic",
+    "seamless",
+    "landscape",
+    "essential",
+    "unlock",
+    "potential",
+    "powerful",
+    "meaningful",
+]
+
+_WEAK_ENDING_PHRASES = [
+    "start today",
+    "take action",
+    "build your brand",
+    "unlock your potential",
+    "elevate your brand",
+    "make it happen",
+]
+
 _ALIGNMENT_STOPWORDS = {
     "a",
     "an",
@@ -835,18 +911,96 @@ def _evaluate_post_brief_alignment(
     }
 
 
+def _evaluate_linkedin_post_mechanics(
+    payload: dict[str, Any],
+    post_brief: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate deterministic LinkedIn-native mechanics without judging strategy."""
+    post_text = str(payload.get("post_text") or "").strip()
+    normalized_post = _normalize_alignment_text(post_text)
+    first_line = _first_non_empty_line(post_text)
+    normalized_first_line = _normalize_alignment_text(first_line)
+    first_line_word_count = len(first_line.split())
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    if not post_text:
+        issues.append("missing_post_text")
+
+    if _POST_TEXT_URL_RE.search(post_text):
+        issues.append("url_in_post_text")
+
+    if post_text.endswith("?"):
+        issues.append("post_text_ends_with_question")
+
+    if any(phrase in normalized_post for phrase in _POST_TEXT_CTA_PHRASES):
+        issues.append("cta_in_post_text")
+
+    if any(
+        normalized_first_line.startswith(_normalize_alignment_text(phrase))
+        for phrase in _MECHANICS_GENERIC_OPENINGS
+    ):
+        issues.append("generic_opening")
+
+    if post_text and first_line_word_count < 5:
+        warnings.append("hook_may_be_too_short")
+    if first_line_word_count > 18:
+        warnings.append("hook_may_be_too_long")
+
+    has_pattern_interrupt_signal = any(
+        signal in normalized_post for signal in _PATTERN_INTERRUPT_SIGNALS
+    )
+    if not has_pattern_interrupt_signal:
+        warnings.append("missing_pattern_interrupt_signal")
+
+    concrete_detail_count = _count_concrete_detail_signals(post_text, post_brief)
+    if concrete_detail_count == 0:
+        warnings.append("low_specificity")
+
+    if _has_weak_ending(post_text):
+        warnings.append("weak_ending")
+
+    generic_language_count = sum(
+        1 for term in _MECHANICS_GENERIC_TERMS if term in normalized_post
+    )
+    if generic_language_count >= 3:
+        warnings.append("high_generic_language_density")
+
+    return {
+        "checked": True,
+        "passed": not issues,
+        "issues": issues,
+        "warnings": warnings,
+        "signals": {
+            "first_line_word_count": first_line_word_count,
+            "has_pattern_interrupt_signal": has_pattern_interrupt_signal,
+            "concrete_detail_count": concrete_detail_count,
+            "generic_language_count": generic_language_count,
+        },
+    }
+
+
 def _brief_alignment_requires_repair(report: dict[str, Any] | None) -> bool:
+    return bool(report and report.get("checked") and report.get("issues"))
+
+
+def _post_mechanics_requires_repair(report: dict[str, Any] | None) -> bool:
     return bool(report and report.get("checked") and report.get("issues"))
 
 
 def _combined_repair_reasons(
     quality_report: dict[str, Any] | None,
     brief_alignment: dict[str, Any] | None,
+    post_mechanics: dict[str, Any] | None = None,
 ) -> list[str]:
     reasons = list((quality_report or {}).get("reasons", []))
     reasons.extend(
         f"brief_alignment:{issue}"
         for issue in (brief_alignment or {}).get("issues", [])
+    )
+    reasons.extend(
+        f"post_mechanics:{issue}"
+        for issue in (post_mechanics or {}).get("issues", [])
     )
     return reasons
 
@@ -886,6 +1040,35 @@ def _first_third(text: str) -> str:
         return ""
     end = max(1, len(words) // 3)
     return " ".join(words[:end])
+
+
+def _count_concrete_detail_signals(
+    post_text: str,
+    post_brief: dict[str, Any] | None = None,
+) -> int:
+    count = 0
+    normalized_post = _normalize_alignment_text(post_text)
+    count += len(re.findall(r"\b\d+(?:\.\d+)?%?\b", str(post_text or "")))
+    count += sum(1 for phrase in _SPECIFICITY_OPERATIONAL_PHRASES if phrase in normalized_post)
+
+    for detail in (post_brief or {}).get("concrete_details", []):
+        if isinstance(detail, str) and _contains_meaningful_fragment(normalized_post, detail, min_words=2):
+            count += 1
+
+    return count
+
+
+def _has_weak_ending(post_text: str) -> bool:
+    last_sentence = _last_sentence(post_text)
+    if not last_sentence:
+        return False
+    normalized_last_sentence = _normalize_alignment_text(last_sentence)
+    return any(phrase in normalized_last_sentence for phrase in _WEAK_ENDING_PHRASES)
+
+
+def _last_sentence(text: str) -> str:
+    sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", str(text or "")) if sentence.strip()]
+    return sentences[-1] if sentences else _first_non_empty_line(text)
 
 
 def _matching_phrases(text: str, phrases: list[str]) -> list[str]:
