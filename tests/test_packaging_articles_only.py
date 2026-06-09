@@ -10,6 +10,7 @@ from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
 from services.packaging.generator import (
     PackagingGenerationResult,
+    _evaluate_post_brief_alignment,
     _generate_post_brief_via_llm,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
@@ -115,6 +116,116 @@ class PackagingArticlesOnlyTests(TestCase):
             json.dumps(post_brief),
             {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
         )
+
+    def test_post_brief_alignment_passes_when_post_uses_concrete_detail(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. That matters because polish alone is weaker proof.\n\n"
+            "A brand is a repeated signal of what problems you can solve."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, self._post_brief_payload())
+
+        self.assertTrue(report["checked"])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["issues"], [])
+
+    def test_post_brief_alignment_fails_when_post_text_includes_url(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. Read more at https://example.com."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("url_in_post_text", report["issues"])
+
+    def test_post_brief_alignment_fails_when_post_text_contains_cta_phrase(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. What do you think?"
+        )
+
+        report = _evaluate_post_brief_alignment(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("post_text_ends_with_question", report["issues"])
+        self.assertIn("cta_phrase_in_post_text:what do you think?", report["issues"])
+
+    def test_post_brief_alignment_does_not_flag_normal_follow_wording_as_cta(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. Follow the workflow from claim to proof."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, self._post_brief_payload())
+
+        self.assertTrue(report["passed"])
+        self.assertNotIn("cta_phrase_in_post_text:follow", report["issues"])
+
+    def test_post_brief_alignment_flags_precise_follow_cta(self) -> None:
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. Follow me for more."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("cta_phrase_in_post_text:follow me", report["issues"])
+
+    def test_post_brief_alignment_fails_when_concrete_details_are_missing(self) -> None:
+        payload = self._package_payload(
+            "The post stays on angle, but it avoids the specific proof from the brief.\n\n"
+            "It talks around the idea instead of using the grounded detail."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, self._post_brief_payload())
+
+        self.assertFalse(report["passed"])
+        self.assertIn("missing_concrete_detail", report["issues"])
+
+    def test_post_brief_alignment_fails_when_avoid_angle_is_echoed(self) -> None:
+        post_brief = self._post_brief_payload(
+            avoid_angle="Avoid generic advice about authentic storytelling.",
+            concrete_details=["Build in public gives people evidence of current judgment."],
+        )
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. Authentic storytelling is still treated as the answer."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, post_brief)
+
+        self.assertFalse(report["passed"])
+        self.assertIn("avoid_angle_in_post_text", report["issues"])
+
+    def test_post_brief_alignment_does_not_treat_topic_words_as_avoid_angle_drift(self) -> None:
+        post_brief = self._post_brief_payload(
+            avoid_angle="Avoid broad generalizations about personal branding without acknowledging its nuances.",
+            concrete_details=["Effective strategies eliminate Brand Lag by reflecting contemporary expertise."],
+        )
+        payload = self._package_payload(
+            "A useful personal brand reflects current expertise.\n\n"
+            "Effective strategies eliminate Brand Lag by reflecting contemporary expertise. Personal branding still needs a narrow signal."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, post_brief)
+
+        self.assertTrue(report["passed"])
+        self.assertNotIn("avoid_angle_in_post_text", report["issues"])
+
+    def test_post_brief_alignment_skips_when_post_brief_is_missing(self) -> None:
+        payload = self._package_payload("A useful personal brand is evidence of current judgment.")
+
+        report = _evaluate_post_brief_alignment(payload, None)
+
+        self.assertFalse(report["checked"])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(report["warnings"], [])
+        self.assertEqual(report["reason"], "missing_post_brief")
 
     def test_validate_post_brief_payload_accepts_valid_brief(self) -> None:
         payload = self._post_brief_payload()
@@ -726,7 +837,7 @@ class PackagingArticlesOnlyTests(TestCase):
             return (
                 self._package_payload(
                     "A personal brand works when it proves current judgment.\n\n"
-                    "If people can see decisions and tradeoffs, they know what to trust you with."
+                    "Build in public gives people evidence of current judgment. If people can see decisions and tradeoffs, they know what to trust you with."
                 ),
                 "final prompt",
                 "final response",
@@ -741,6 +852,7 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(call_order, ["brief", "payload"])
         self.assertEqual(debug_info["post_brief"], self._post_brief_payload())
         self.assertEqual(debug_info["post_brief_prompt"], "brief prompt")
+        self.assertTrue(debug_info["brief_alignment"]["passed"])
         mock_repair_payload.assert_not_called()
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -757,7 +869,7 @@ class PackagingArticlesOnlyTests(TestCase):
         mock_generate_payload.return_value = (
             self._package_payload(
                 "A useful personal brand proves judgment before polish.\n\n"
-                "If people only see claims, they cannot tell what changed in your thinking."
+                "Build in public gives people evidence of current judgment. If people only see claims, they cannot tell what changed in your thinking."
             ),
             "final prompt",
             "final response",
@@ -770,6 +882,7 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(mock_generate_payload.call_args.kwargs["post_brief"], post_brief)
         self.assertEqual(debug_info["post_brief"], post_brief)
         self.assertEqual(debug_info["post_brief_prompt"], "brief prompt")
+        self.assertTrue(debug_info["brief_alignment"]["passed"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._generate_post_brief_via_llm")
@@ -787,7 +900,7 @@ class PackagingArticlesOnlyTests(TestCase):
         mock_generate_payload.return_value = (
             self._package_payload(
                 "A useful personal brand proves judgment before polish.\n\n"
-                "If people only see claims, they cannot tell what changed in your thinking."
+                "Build in public gives people evidence of current judgment. If people only see claims, they cannot tell what changed in your thinking."
             ),
             "final prompt",
             "final response",
@@ -798,6 +911,40 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertEqual(debug_info["tokens"], final_tokens)
         self.assertEqual(debug_info["post_brief_tokens"], brief_tokens)
+        self.assertTrue(debug_info["brief_alignment"]["passed"])
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_brief_alignment_failure_triggers_existing_repair_path(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-alignment-repair-user")
+        weak_payload = self._package_payload(
+            "A useful personal brand proves judgment before polish.\n\n"
+            "The body stays broad and never uses the grounded concrete detail."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. That matters because polished claims are weaker than proof.\n\n"
+            "A brand is a repeated signal of what problems you can solve."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertIn("brief_alignment:missing_concrete_detail", debug_info["repair_reasons"])
+        self.assertTrue(debug_info["brief_alignment"]["passed"])
+        mock_repair_payload.assert_called_once()
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._generate_post_brief_via_llm")
@@ -986,7 +1133,7 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertLessEqual(len(weak_text), 1300)
         repair_text = (
             "A personal brand breaks when trust is unclear.\n\n"
-            "If people only see claims, they cannot tell what your judgment is worth. Show the work that proves it."
+            "Build in public gives people evidence of current judgment. If people only see claims, they cannot tell what your judgment is worth."
         )
         mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (self._package_payload(weak_text), "initial prompt", "initial response", None)
@@ -1038,7 +1185,7 @@ class PackagingArticlesOnlyTests(TestCase):
         weak_payload = self._package_payload("Your brand should resonate with a cohesive audience.")
         repair_payload = self._package_payload(
             "A personal brand fails when evidence is missing.\n\n"
-            "Show the work that proves your judgment is current.",
+            "Build in public gives people evidence of current judgment. Show the work that proves your judgment is current.",
             carousel_outline=[{"slide": 1, "title": "Extra"}],
             metadata={"source": "repair"},
         )

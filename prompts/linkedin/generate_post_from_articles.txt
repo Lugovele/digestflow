@@ -34,6 +34,19 @@ TASK:
 * Sound like someone who has seen this problem in real work
 * Use the author profile as a lens, not as a bio
 
+BRIEF ALIGNMENT RULES:
+
+* The final post must be a transformation of the brief, not a new interpretation.
+* First line must follow `hook_type` and reflect `sharp_claim` or `tension`.
+* The first third of `post_text` must include `pattern_interrupt`.
+* Use `credibility_basis` to justify how strongly the claim is stated.
+* Use at least one `concrete_details` item if available.
+* Use `evidence_points` as the evidence backbone.
+* Use `human_angle` as the tone lens without inventing personal experience.
+* End from `ending_reframe` or `practical_takeaway`.
+* Do not use the `avoid_angle`.
+* Do not introduce a broader topic than the brief.
+
 POST REQUIREMENTS:
 
 * Write for one specific target reader, even if you do not name them directly

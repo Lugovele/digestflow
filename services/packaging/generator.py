@@ -79,6 +79,7 @@ class PackagingGenerationResult:
     post_brief: dict[str, Any] | None = None
     post_brief_prompt: str = ""
     post_brief_tokens: dict[str, int | None] | None = None
+    brief_alignment: dict[str, Any] | None = None
 
 
 def generate_content_package_for_digest(
@@ -136,6 +137,7 @@ def generate_content_package_for_digest(
         "post_brief": generation.post_brief,
         "post_brief_prompt": generation.post_brief_prompt,
         "post_brief_tokens": generation.post_brief_tokens,
+        "brief_alignment": generation.brief_alignment or {},
     }
     return content_package, debug_info
 
@@ -164,6 +166,7 @@ def _generate_packaging_payload(
     post_brief: dict[str, Any] | None = None
     post_brief_prompt = ""
     post_brief_tokens: dict[str, int | None] | None = None
+    brief_alignment: dict[str, Any] | None = None
     prompt = build_post_prompt(digest, articles, profile)
     response_text = ""
 
@@ -199,27 +202,37 @@ def _generate_packaging_payload(
             )
             validate_content_package_payload(payload)
             quality_gate = _evaluate_linkedin_post_quality(payload)
-            repair_reasons = list(quality_gate.get("reasons", []))
+            brief_alignment = _evaluate_post_brief_alignment(payload, post_brief)
+            repair_reasons = _combined_repair_reasons(quality_gate, brief_alignment)
 
-            if _quality_gate_requires_repair(quality_gate):
+            if _quality_gate_requires_repair(quality_gate) or _brief_alignment_requires_repair(brief_alignment):
                 repair_attempted = True
+                repair_report = {
+                    "status": "retry",
+                    "reasons": repair_reasons,
+                    "quality_gate": quality_gate,
+                    "brief_alignment": brief_alignment,
+                }
                 repaired_payload, repair_prompt, repair_response_text, _repair_tokens = _repair_packaging_payload_via_llm(
                     digest,
                     articles,
                     profile,
                     weak_payload=payload,
-                    quality_report=quality_gate,
+                    quality_report=repair_report,
+                    post_brief=post_brief,
                 )
                 repaired_payload = _normalize_linkedin_post_payload(repaired_payload)
                 repaired_payload["post_text"] = _split_long_post_paragraphs(repaired_payload["post_text"])
                 validate_content_package_payload(repaired_payload)
                 repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
-                if _quality_gate_requires_repair(repair_quality_gate):
+                repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
+                if _quality_gate_requires_repair(repair_quality_gate) or _brief_alignment_requires_repair(repair_brief_alignment):
                     raise ContentPackageValidationError(
                         "LinkedIn post quality repair did not resolve retry-trigger issues: "
-                        f"{repair_quality_gate.get('reasons', [])}"
+                        f"{_combined_repair_reasons(repair_quality_gate, repair_brief_alignment)}"
                     )
                 payload = repaired_payload
+                brief_alignment = repair_brief_alignment
                 response_text = repair_response_text
                 repair_succeeded = True
             return PackagingGenerationResult(
@@ -241,6 +254,7 @@ def _generate_packaging_payload(
                 post_brief=post_brief,
                 post_brief_prompt=post_brief_prompt,
                 post_brief_tokens=post_brief_tokens,
+                brief_alignment=brief_alignment,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -275,6 +289,7 @@ def _generate_packaging_payload(
         post_brief=post_brief,
         post_brief_prompt=post_brief_prompt,
         post_brief_tokens=post_brief_tokens,
+        brief_alignment=brief_alignment,
     )
 
 
@@ -475,6 +490,7 @@ def build_post_repair_prompt(
     author_profile: dict[str, Any],
     weak_payload: dict[str, Any],
     quality_report: dict[str, Any],
+    post_brief: dict[str, Any] | None = None,
 ) -> str:
     """Build prompt for one-pass quality repair of a structurally valid post payload."""
     return build_prompt(
@@ -482,6 +498,7 @@ def build_post_repair_prompt(
         topic_name=digest.run.topic.name,
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
+        post_brief=_format_list_for_prompt(post_brief or {}),
         weak_payload=_format_list_for_prompt(weak_payload),
         quality_reasons=_format_list_for_prompt(quality_report.get("reasons", [])),
         author_role=author_profile["role"],
@@ -545,8 +562,16 @@ def _repair_packaging_payload_via_llm(
     *,
     weak_payload: dict[str, Any],
     quality_report: dict[str, Any],
+    post_brief: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
-    prompt = build_post_repair_prompt(digest, articles, author_profile, weak_payload, quality_report)
+    prompt = build_post_repair_prompt(
+        digest,
+        articles,
+        author_profile,
+        weak_payload,
+        quality_report,
+        post_brief=post_brief,
+    )
     response = OpenAIClient().generate_text(
         prompt=prompt,
         max_output_tokens=900,
@@ -640,6 +665,51 @@ _DIAGNOSTIC_PATTERNS = [
     "ask yourself",
 ]
 
+_POST_TEXT_URL_RE = re.compile(r"(https?://|www\.)", re.IGNORECASE)
+
+_POST_TEXT_CTA_PHRASES = [
+    "what do you think?",
+    "comment below",
+    "let me know",
+    "share your thoughts",
+    "follow me",
+    "follow for",
+    "follow my",
+    "follow this page",
+    "subscribe",
+]
+
+_ALIGNMENT_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "angle",
+    "avoid",
+    "about",
+    "as",
+    "acknowledging",
+    "brand",
+    "branding",
+    "broad",
+    "for",
+    "from",
+    "generalizations",
+    "generic",
+    "in",
+    "is",
+    "it",
+    "not",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "to",
+    "with",
+    "without",
+    "write",
+}
+
 
 def _evaluate_linkedin_post_quality(payload: dict[str, Any]) -> dict[str, Any]:
     post_text = str(payload.get("post_text") or "").strip()
@@ -694,6 +764,128 @@ def _evaluate_linkedin_post_quality(payload: dict[str, Any]) -> dict[str, Any]:
         "reasons": reasons,
         "warnings": warnings,
     }
+
+
+def _evaluate_post_brief_alignment(
+    payload: dict[str, Any],
+    post_brief: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Conservative deterministic checks that final post text follows the validated brief."""
+    if not post_brief:
+        return {
+            "checked": False,
+            "passed": True,
+            "issues": [],
+            "warnings": [],
+            "reason": "missing_post_brief",
+        }
+
+    post_text = str(payload.get("post_text") or "").strip()
+    normalized_post = _normalize_alignment_text(post_text)
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    if not post_text:
+        issues.append("missing_post_text")
+
+    if _POST_TEXT_URL_RE.search(post_text):
+        issues.append("url_in_post_text")
+
+    if post_text.endswith("?"):
+        issues.append("post_text_ends_with_question")
+
+    for phrase in _POST_TEXT_CTA_PHRASES:
+        if phrase in normalized_post:
+            issues.append(f"cta_phrase_in_post_text:{phrase}")
+
+    avoid_angle = str(post_brief.get("avoid_angle") or "")
+    if _contains_meaningful_fragment(normalized_post, avoid_angle, min_words=2):
+        issues.append("avoid_angle_in_post_text")
+
+    concrete_details = [
+        str(item).strip()
+        for item in post_brief.get("concrete_details", [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if concrete_details and not any(
+        _contains_meaningful_fragment(normalized_post, detail, min_words=2)
+        for detail in concrete_details
+    ):
+        issues.append("missing_concrete_detail")
+
+    opening = _first_third(post_text)
+    normalized_opening = _normalize_alignment_text(opening)
+    if not any(
+        _contains_meaningful_fragment(normalized_opening, post_brief.get(field_name, ""), min_words=3)
+        for field_name in ["sharp_claim", "tension"]
+    ):
+        warnings.append("opening_may_not_reflect_brief")
+
+    if not any(
+        _contains_meaningful_fragment(normalized_post, post_brief.get(field_name, ""), min_words=3)
+        for field_name in ["ending_reframe", "practical_takeaway"]
+    ):
+        warnings.append("ending_may_not_reflect_brief")
+
+    return {
+        "checked": True,
+        "passed": not issues,
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def _brief_alignment_requires_repair(report: dict[str, Any] | None) -> bool:
+    return bool(report and report.get("checked") and report.get("issues"))
+
+
+def _combined_repair_reasons(
+    quality_report: dict[str, Any] | None,
+    brief_alignment: dict[str, Any] | None,
+) -> list[str]:
+    reasons = list((quality_report or {}).get("reasons", []))
+    reasons.extend(
+        f"brief_alignment:{issue}"
+        for issue in (brief_alignment or {}).get("issues", [])
+    )
+    return reasons
+
+
+def _normalize_alignment_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9#?]+", " ", str(value).casefold())).strip()
+
+
+def _meaningful_words(value: str) -> list[str]:
+    return [
+        word
+        for word in _normalize_alignment_text(value).split()
+        if len(word) > 2 and word not in _ALIGNMENT_STOPWORDS
+    ]
+
+
+def _contains_meaningful_fragment(text: str, value: Any, *, min_words: int = 3) -> bool:
+    words = _meaningful_words(str(value or ""))
+    if len(words) < min_words:
+        return False
+
+    normalized_value = " ".join(words)
+    if normalized_value and normalized_value in text:
+        return True
+
+    window_size = min(len(words), max(min_words, 2))
+    for index in range(0, len(words) - window_size + 1):
+        fragment = " ".join(words[index : index + window_size])
+        if fragment in text:
+            return True
+    return False
+
+
+def _first_third(text: str) -> str:
+    words = str(text or "").split()
+    if not words:
+        return ""
+    end = max(1, len(words) // 3)
+    return " ".join(words[:end])
 
 
 def _matching_phrases(text: str, phrases: list[str]) -> list[str]:

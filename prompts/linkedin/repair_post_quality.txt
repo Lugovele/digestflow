@@ -18,6 +18,9 @@ Author context:
 Repair reasons:
 {quality_reasons}
 
+Validated post brief:
+{post_brief}
+
 Weak payload:
 {weak_payload}
 
@@ -27,6 +30,14 @@ Source facts:
 REPAIR REQUIREMENTS:
 
 * The repaired payload must remove every retry reason listed above
+* Preserve the validated post brief
+* Do not choose a new angle
+* Use at least one `concrete_details` item from the brief if present
+* Use the brief's `evidence_points` as the evidence backbone
+* Use `human_angle` as the tone lens without inventing personal experience
+* Remove `avoid_angle` drift from `post_text`
+* Remove URLs and CTA questions from `post_text`
+* Keep CTA questions only in `cta_variants`
 * Keep factual claims grounded in the provided source facts
 * Return the same JSON schema only
 * `post_text` must be under 1150 characters

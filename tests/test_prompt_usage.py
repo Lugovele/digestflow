@@ -281,6 +281,14 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Use `credibility_basis` to decide how strongly the claim can be stated", rendered_prompt)
         self.assertIn("Use `concrete_details` only when they are present in the brief", rendered_prompt)
         self.assertIn("Use `human_angle` as the tone lens without inventing personal experience", rendered_prompt)
+        self.assertIn("BRIEF ALIGNMENT RULES", rendered_prompt)
+        self.assertIn("The final post must be a transformation of the brief, not a new interpretation.", rendered_prompt)
+        self.assertIn("First line must follow `hook_type` and reflect `sharp_claim` or `tension`.", rendered_prompt)
+        self.assertIn("The first third of `post_text` must include `pattern_interrupt`.", rendered_prompt)
+        self.assertIn("Use at least one `concrete_details` item if available.", rendered_prompt)
+        self.assertIn("Use `evidence_points` as the evidence backbone.", rendered_prompt)
+        self.assertIn("Do not use the `avoid_angle`.", rendered_prompt)
+        self.assertIn("Do not introduce a broader topic than the brief.", rendered_prompt)
         self.assertIn("Start `post_text` with a direct, specific claim", rendered_prompt)
         self.assertIn("Include one concrete reader pain, mistake, wrong optimization, missing signal, or cost", rendered_prompt)
         self.assertIn("Convert source facts into one practical interpretation", rendered_prompt)
@@ -427,13 +435,46 @@ class PromptUsageTests(SimpleTestCase):
             },
         }
         quality_report = {"status": "retry", "reasons": ["banned_phrase:resonate"]}
+        post_brief = {
+            "target_reader": "Founders building visible expertise",
+            "reader_pain_or_mistake": "They polish positioning before proving judgment.",
+            "hook_type": "reader_pain",
+            "sharp_claim": "A useful personal brand is evidence of current judgment.",
+            "credibility_basis": "Grounded in article summaries about build in public.",
+            "tension": "Visibility helps only when people can see what to trust you with.",
+            "pattern_interrupt": "Visibility without judgment creates attention without trust.",
+            "evidence_points": ["Build in public gives people current evidence of expertise."],
+            "concrete_details": ["Build in public gives people current evidence of expertise."],
+            "human_angle": "A practitioner noticing weak proof signals.",
+            "practical_takeaway": "Audit whether recent posts show decisions.",
+            "ending_reframe": "A brand is a repeated signal of what problems you can solve.",
+            "suggested_hook_direction": "Lead with the trust gap.",
+            "avoid_angle": "Avoid generic advice about authentic storytelling.",
+        }
 
-        rendered_prompt = build_post_repair_prompt(digest, articles, author_profile, weak_payload, quality_report)
+        rendered_prompt = build_post_repair_prompt(
+            digest,
+            articles,
+            author_profile,
+            weak_payload,
+            quality_report,
+            post_brief=post_brief,
+        )
 
         self.assertTrue((Path(settings.BASE_DIR) / "prompts" / "linkedin" / "repair_post_quality.txt").exists())
         self.assertIn("Return exactly this JSON shape", rendered_prompt)
         self.assertIn('"post_text": "string"', rendered_prompt)
         self.assertIn("The repaired payload must remove every retry reason listed above", rendered_prompt)
+        self.assertIn("Validated post brief:", rendered_prompt)
+        self.assertIn("A useful personal brand is evidence of current judgment.", rendered_prompt)
+        self.assertIn("Preserve the validated post brief", rendered_prompt)
+        self.assertIn("Do not choose a new angle", rendered_prompt)
+        self.assertIn("Use at least one `concrete_details` item from the brief if present", rendered_prompt)
+        self.assertIn("Use the brief's `evidence_points` as the evidence backbone", rendered_prompt)
+        self.assertIn("Use `human_angle` as the tone lens without inventing personal experience", rendered_prompt)
+        self.assertIn("Remove `avoid_angle` drift from `post_text`", rendered_prompt)
+        self.assertIn("Remove URLs and CTA questions from `post_text`", rendered_prompt)
+        self.assertIn("Keep CTA questions only in `cta_variants`", rendered_prompt)
         self.assertIn("`post_text` must be under 1150 characters", rendered_prompt)
         self.assertIn("banned_phrase:resonate", rendered_prompt)
         self.assertIn("Do not use any phrase from the AVOID list anywhere in `post_text`", rendered_prompt)
