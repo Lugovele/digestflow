@@ -789,6 +789,37 @@ _ALIGNMENT_STOPWORDS = {
     "write",
 }
 
+_AVOID_ANGLE_BROAD_TOPIC_WORDS = {
+    "ai",
+    "automation",
+    "workflow",
+    "linkedin",
+    "content",
+    "strategy",
+    "personal",
+    "branding",
+    "brand",
+    "post",
+    "posts",
+    "audience",
+    "business",
+    "professional",
+    "professionals",
+    "system",
+    "systems",
+    "tool",
+    "tools",
+}
+
+_AVOID_ANGLE_LOW_SIGNAL_WORDS = {
+    "advice",
+    "angle",
+    "avoid",
+    "broad",
+    "generic",
+    "generalizations",
+}
+
 
 def _evaluate_linkedin_post_quality(payload: dict[str, Any]) -> dict[str, Any]:
     post_text = str(payload.get("post_text") or "").strip()
@@ -878,8 +909,11 @@ def _evaluate_post_brief_alignment(
             issues.append(f"cta_phrase_in_post_text:{phrase}")
 
     avoid_angle = str(post_brief.get("avoid_angle") or "")
-    if _contains_meaningful_fragment(normalized_post, avoid_angle, min_words=2):
+    avoid_angle_match = _find_avoid_angle_match(post_text, avoid_angle)
+    details: dict[str, Any] = {}
+    if avoid_angle_match:
         issues.append("avoid_angle_in_post_text")
+        details["avoid_angle_match"] = avoid_angle_match
 
     concrete_details = [
         str(item).strip()
@@ -911,6 +945,7 @@ def _evaluate_post_brief_alignment(
         "passed": not issues,
         "issues": issues,
         "warnings": warnings,
+        "details": details,
     }
 
 
@@ -1028,6 +1063,57 @@ def _extract_banned_phrases_from_repair_reasons(reasons: list[str]) -> list[str]
 
 def _normalize_alignment_text(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9#?]+", " ", str(value).casefold())).strip()
+
+
+def _find_avoid_angle_match(post_text: str, avoid_angle: str) -> dict[str, Any] | None:
+    normalized_post = _normalize_alignment_text(post_text)
+    normalized_avoid_angle = _normalize_alignment_text(avoid_angle)
+    if not normalized_post or not normalized_avoid_angle:
+        return None
+
+    candidate_words = [
+        word
+        for word in normalized_avoid_angle.split()
+        if len(word) > 2 and word not in _ALIGNMENT_STOPWORDS
+    ]
+    specific_words = [
+        word
+        for word in candidate_words
+        if word not in _AVOID_ANGLE_BROAD_TOPIC_WORDS
+        and word not in _AVOID_ANGLE_LOW_SIGNAL_WORDS
+    ]
+    if len(specific_words) < 2:
+        return None
+
+    if normalized_avoid_angle in normalized_post:
+        return {
+            "matched": True,
+            "matched_fragment": normalized_avoid_angle,
+            "match_type": "exact_phrase",
+        }
+
+    generic_terms = set(_BANNED_LINKEDIN_PHRASES) | set(_VAGUE_ABSTRACT_TERMS)
+    for window_size in range(min(len(candidate_words), 5), 1, -1):
+        for index in range(0, len(candidate_words) - window_size + 1):
+            window = candidate_words[index : index + window_size]
+            window_specific_words = [
+                word
+                for word in window
+                if word not in _AVOID_ANGLE_BROAD_TOPIC_WORDS
+                and word not in _AVOID_ANGLE_LOW_SIGNAL_WORDS
+            ]
+            if len(window_specific_words) < 2:
+                continue
+            if window_size == 2 and not any(word in generic_terms for word in window):
+                continue
+            fragment = " ".join(window)
+            if fragment in normalized_post:
+                return {
+                    "matched": True,
+                    "matched_fragment": fragment,
+                    "match_type": "meaningful_fragment",
+                }
+    return None
 
 
 def _meaningful_words(value: str) -> list[str]:

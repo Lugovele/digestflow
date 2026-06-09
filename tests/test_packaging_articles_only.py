@@ -13,6 +13,7 @@ from services.packaging.generator import (
     _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
     _extract_banned_phrases_from_repair_reasons,
+    _find_avoid_angle_match,
     _generate_post_brief_via_llm,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
@@ -215,6 +216,38 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertFalse(report["passed"])
         self.assertIn("avoid_angle_in_post_text", report["issues"])
+        self.assertEqual(
+            report["details"]["avoid_angle_match"]["matched_fragment"],
+            "authentic storytelling",
+        )
+        self.assertEqual(
+            report["details"]["avoid_angle_match"]["match_type"],
+            "meaningful_fragment",
+        )
+
+    def test_post_brief_alignment_fails_when_specific_avoid_angle_is_repeated(self) -> None:
+        post_brief = self._post_brief_payload(
+            avoid_angle="personal branding is about looking polished",
+            concrete_details=["Build in public gives people evidence of current judgment."],
+        )
+        payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public gives people evidence of current judgment. "
+            "The weak version says personal branding is about looking polished."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, post_brief)
+
+        self.assertFalse(report["passed"])
+        self.assertIn("avoid_angle_in_post_text", report["issues"])
+        self.assertEqual(
+            report["details"]["avoid_angle_match"],
+            {
+                "matched": True,
+                "matched_fragment": "personal branding is about looking polished",
+                "match_type": "exact_phrase",
+            },
+        )
 
     def test_post_brief_alignment_does_not_treat_topic_words_as_avoid_angle_drift(self) -> None:
         post_brief = self._post_brief_payload(
@@ -230,6 +263,46 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertTrue(report["passed"])
         self.assertNotIn("avoid_angle_in_post_text", report["issues"])
+        self.assertEqual(report["details"], {})
+
+    def test_post_brief_alignment_does_not_match_grounded_automation_wording(self) -> None:
+        post_brief = self._post_brief_payload(
+            avoid_angle="Avoid generic automation strategy advice.",
+            concrete_details=["Workflow automation reduces manual review when validation is explicit."],
+        )
+        payload = self._package_payload(
+            "A useful workflow system breaks when validation is unclear.\n\n"
+            "Workflow automation reduces manual review when validation is explicit."
+        )
+
+        report = _evaluate_post_brief_alignment(payload, post_brief)
+
+        self.assertTrue(report["passed"])
+        self.assertNotIn("avoid_angle_in_post_text", report["issues"])
+        self.assertEqual(report["details"], {})
+
+    def test_avoid_angle_match_detects_specific_meaningful_fragment(self) -> None:
+        match = _find_avoid_angle_match(
+            "The lazy answer is to build a personal brand by posting more often.",
+            "build a personal brand by posting more often",
+        )
+
+        self.assertEqual(
+            match,
+            {
+                "matched": True,
+                "matched_fragment": "build a personal brand by posting more often",
+                "match_type": "exact_phrase",
+            },
+        )
+
+    def test_avoid_angle_match_ignores_broad_topic_only_angle(self) -> None:
+        match = _find_avoid_angle_match(
+            "A useful personal brand shows current judgment.",
+            "generic personal branding advice",
+        )
+
+        self.assertIsNone(match)
 
     def test_post_brief_alignment_skips_when_post_brief_is_missing(self) -> None:
         payload = self._package_payload("A useful personal brand is evidence of current judgment.")
