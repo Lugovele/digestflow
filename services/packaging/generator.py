@@ -510,6 +510,8 @@ def build_post_repair_prompt(
     post_brief: dict[str, Any] | None = None,
 ) -> str:
     """Build prompt for one-pass quality repair of a structurally valid post payload."""
+    quality_reasons = list(quality_report.get("reasons", []))
+    blocked_phrases = _extract_banned_phrases_from_repair_reasons(quality_reasons)
     return build_prompt(
         "linkedin/repair_post_quality.txt",
         topic_name=digest.run.topic.name,
@@ -517,7 +519,8 @@ def build_post_repair_prompt(
         articles=_format_list_for_prompt(articles),
         post_brief=_format_list_for_prompt(post_brief or {}),
         weak_payload=_format_list_for_prompt(weak_payload),
-        quality_reasons=_format_list_for_prompt(quality_report.get("reasons", [])),
+        quality_reasons=_format_list_for_prompt(quality_reasons),
+        blocked_phrases=_format_list_for_prompt(blocked_phrases),
         author_role=author_profile["role"],
         author_background=author_profile["background"],
         author_focus=author_profile["focus"],
@@ -1003,6 +1006,24 @@ def _combined_repair_reasons(
         for issue in (post_mechanics or {}).get("issues", [])
     )
     return reasons
+
+
+def _extract_banned_phrases_from_repair_reasons(reasons: list[str]) -> list[str]:
+    blocked_phrases: list[str] = []
+    seen: set[str] = set()
+    prefix = "banned_phrase:"
+    for reason in reasons:
+        if not isinstance(reason, str) or not reason.startswith(prefix):
+            continue
+        phrase = reason.removeprefix(prefix).strip()
+        if not phrase:
+            continue
+        key = phrase.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        blocked_phrases.append(phrase)
+    return blocked_phrases
 
 
 def _normalize_alignment_text(value: str) -> str:

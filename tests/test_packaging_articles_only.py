@@ -12,6 +12,7 @@ from services.packaging.generator import (
     PackagingGenerationResult,
     _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
+    _extract_banned_phrases_from_repair_reasons,
     _generate_post_brief_via_llm,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
@@ -117,6 +118,19 @@ class PackagingArticlesOnlyTests(TestCase):
             json.dumps(post_brief),
             {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
         )
+
+    def test_extract_banned_phrases_from_repair_reasons(self) -> None:
+        phrases = _extract_banned_phrases_from_repair_reasons(
+            [
+                "banned_phrase:resonate",
+                "brief_alignment:missing_concrete_detail",
+                "banned_phrase:landscape",
+                "banned_phrase:resonate",
+                "post_mechanics:generic_opening",
+            ]
+        )
+
+        self.assertEqual(phrases, ["resonate", "landscape"])
 
     def test_post_brief_alignment_passes_when_post_uses_concrete_detail(self) -> None:
         payload = self._package_payload(
@@ -1436,6 +1450,8 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(debug_info["is_mock"])
         self.assertTrue(content_package.post_text)
         self.assertIn("One article points to:", content_package.post_text)
+        self.assertIn("banned_phrase:resonate", debug_info["fallback_reason"])
+        self.assertEqual(mock_repair_payload.call_count, 1)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")

@@ -18,6 +18,9 @@ Author context:
 Repair reasons:
 {quality_reasons}
 
+Blocked phrases from repair reasons:
+{blocked_phrases}
+
 Validated post brief:
 {post_brief}
 
@@ -30,6 +33,10 @@ Source facts:
 REPAIR REQUIREMENTS:
 
 * The repaired payload must remove every retry reason listed above
+* Remove every exact phrase named in the repair reasons
+* If a reason is `banned_phrase:<phrase>`, the repaired `post_text`, `hook_variants`, `cta_variants`, and `hashtags` must not contain `<phrase>`
+* Do not replace a banned phrase with another banned or generic phrase
+* Prefer specific operational language instead of vague substitutes
 * Preserve the validated post brief
 * Do not choose a new angle
 * Use at least one `concrete_details` item from the brief if present
@@ -67,15 +74,21 @@ REPAIR REQUIREMENTS:
 AVOID:
 
 * resonate
-* cohesive
+* elevate
+* leverage
 * holistic
+* seamless
+* landscape
+* unlock
+* potential
+* authentic
+* powerful
+* meaningful
+* cohesive
 * systemic alignment
 * professional authority
 * elevate your brand
 * unlock potential
-* leverage
-* landscape
-* seamless
 * paramount
 * game changer
 * one article
