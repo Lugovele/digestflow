@@ -8,6 +8,7 @@ from apps.digests.models import Digest, DigestRun
 from apps.topics.models import Topic
 from services.ai.digest_smoke_test import build_prompt as build_article_prompt
 from services.packaging.generator import (
+    build_author_take_prompt,
     build_editorial_review_prompt,
     build_carousel_prompt,
     build_post_brief_prompt,
@@ -61,6 +62,7 @@ class PromptUsageTests(SimpleTestCase):
 
         with patch("services.packaging.generator.build_prompt", return_value="PROMPT") as mock_build:
             build_source_evidence_prompt(digest, articles)
+            build_author_take_prompt(digest, articles, author_profile)
             build_post_brief_prompt(digest, articles, author_profile)
             build_post_prompt(digest, articles, author_profile)
             build_carousel_prompt(digest, articles, author_profile)
@@ -79,6 +81,7 @@ class PromptUsageTests(SimpleTestCase):
             used_templates,
             [
                 "linkedin/extract_source_evidence_for_post.txt",
+                "linkedin/generate_author_take_from_evidence.txt",
                 "linkedin/generate_post_brief_from_articles.txt",
                 "linkedin/generate_post_from_articles.txt",
                 "linkedin/generate_carousel_from_articles.txt",
@@ -129,6 +132,34 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Use digest summaries and key_points only as fallback context", evidence_prompt)
         self.assertIn("Do not invent facts, metrics, names, cases, examples, or causal claims", evidence_prompt)
         self.assertIn("generic/corporate source wording", evidence_prompt)
+
+    def test_author_take_prompt_declares_exact_json_contract(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts"
+        author_take_prompt = (
+            prompts_root / "linkedin" / "generate_author_take_from_evidence.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Return exactly this JSON shape", author_take_prompt)
+        for field_name in [
+            "core_opinion",
+            "tension",
+            "reader_mistake",
+            "reader_check",
+            "practical_point",
+            "tone",
+            "do_not_say",
+        ]:
+            self.assertIn(f'"{field_name}"', author_take_prompt)
+        self.assertIn("Do not write the final post.", author_take_prompt)
+        self.assertIn("Do not write a post brief.", author_take_prompt)
+        self.assertIn("Produce one human author position.", author_take_prompt)
+        self.assertIn("Make it sound like a real person choosing what to say", author_take_prompt)
+        self.assertIn("Use `source_evidence_pack` as grounding.", author_take_prompt)
+        self.assertIn("Use digest summaries only as fallback/context.", author_take_prompt)
+        self.assertIn("Do not invent personal experience.", author_take_prompt)
+        self.assertIn("Avoid words from `source_evidence_pack.avoid_terms_from_sources`.", author_take_prompt)
+        self.assertIn("`core_opinion` must be a claim, not a question.", author_take_prompt)
+        self.assertIn("`reader_check` may be a diagnostic instruction, but not a CTA.", author_take_prompt)
 
     def test_linkedin_post_prompt_uses_author_profile_and_anti_recap_constraints(self):
         prompts_root = Path(settings.BASE_DIR) / "prompts"
@@ -333,6 +364,62 @@ class PromptUsageTests(SimpleTestCase):
         self.assertNotIn("{topic_name}", rendered_prompt)
         self.assertNotIn("{digest_title}", rendered_prompt)
 
+    def test_build_author_take_prompt_renders_author_profile_and_source_evidence_without_placeholders(self):
+        topic = Topic(name="Workflow topic")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Workflow topic",
+            payload={"version": 1, "title": "Digest for Workflow topic", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "Workflow speed improved after the team fixed handoffs.",
+                "key_points": ["Validation got clearer before the automation layer paid off."],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": [
+                "avoid generic AI phrasing",
+                "make the tension explicit",
+                "end with a practical takeaway",
+            ],
+        }
+        source_evidence_pack = {
+            "source_phrases": ["Brand Lag"],
+            "specific_claims": ["Reputation can trail current work."],
+            "mechanisms": ["Public work creates evidence of judgment."],
+            "contrasts": ["Polished positioning vs current proof."],
+            "examples": [],
+            "usable_terms": ["build in public"],
+            "avoid_terms_from_sources": ["authenticity"],
+            "tensions": ["Visibility without evidence does not create trust."],
+        }
+
+        rendered_prompt = build_author_take_prompt(
+            digest,
+            articles,
+            author_profile,
+            source_evidence_pack=source_evidence_pack,
+        )
+
+        self.assertIn("Operations strategist", rendered_prompt)
+        self.assertIn("handoffs, validation, and repeatable systems", rendered_prompt)
+        self.assertIn("Brand Lag", rendered_prompt)
+        self.assertIn("build in public", rendered_prompt)
+        self.assertIn("Prompt article title", rendered_prompt)
+        self.assertNotIn("{source_evidence_pack}", rendered_prompt)
+        self.assertNotIn("{articles}", rendered_prompt)
+        self.assertNotIn("{author_role}", rendered_prompt)
+
     def test_build_post_prompt_renders_author_profile_values_without_unresolved_placeholders_and_length_rules(self):
         topic = Topic(name="Workflow topic")
         run = DigestRun(topic=topic)
@@ -389,7 +476,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Prefer 900-1200 characters for `post_text` to leave validation buffer", rendered_prompt)
         self.assertIn("This limit applies only to `post_text`, not to the full JSON response", rendered_prompt)
         self.assertIn("Write like a practitioner with a point of view, not like a content marketer", rendered_prompt)
-        self.assertIn("Sound like someone who has seen this problem in real work", rendered_prompt)
+        self.assertIn(
+            "Sound like someone with practical judgment about the pattern, without claiming personal experience.",
+            rendered_prompt,
+        )
+        self.assertNotIn("Sound like someone who has seen this problem in real work", rendered_prompt)
         self.assertIn("Use the author profile as a lens, not as a bio", rendered_prompt)
         self.assertIn(
             "Use `hook_type`, `pattern_interrupt`, `credibility_basis`, `concrete_details`, and `human_angle` from the post brief",
@@ -584,6 +675,69 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("build in public", post_prompt)
         self.assertNotIn("{source_evidence_pack}", brief_prompt)
         self.assertNotIn("{source_evidence_pack}", post_prompt)
+
+    def test_brief_and_final_post_prompts_include_author_take_when_provided(self):
+        topic = Topic(name="Workflow topic")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Workflow topic",
+            payload={"version": 1, "title": "Digest for Workflow topic", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "Summary",
+                "key_points": ["Point"],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": [
+                "avoid generic AI phrasing",
+                "make the tension explicit",
+                "end with a practical takeaway",
+            ],
+        }
+        author_take = {
+            "core_opinion": "Current proof beats polished claims.",
+            "tension": "Visibility helps only when people can see judgment.",
+            "reader_mistake": "They polish the brand before showing decisions.",
+            "reader_check": "Look at whether the last posts show tradeoffs.",
+            "practical_point": "Show decisions before asking people to trust positioning.",
+            "tone": "skeptical and practical",
+            "do_not_say": ["authenticity", "elevate your brand"],
+        }
+
+        brief_prompt = build_post_brief_prompt(
+            digest,
+            articles,
+            author_profile,
+            author_take=author_take,
+        )
+        post_prompt = build_post_prompt(
+            digest,
+            articles,
+            author_profile,
+            post_brief={"sharp_claim": "Current proof beats polished claims."},
+            author_take=author_take,
+        )
+
+        self.assertIn("Author take:", brief_prompt)
+        self.assertIn("use it to choose the editorial angle", brief_prompt)
+        self.assertIn("Current proof beats polished claims.", brief_prompt)
+        self.assertIn("Author take:", post_prompt)
+        self.assertIn("write from `author_take` first", post_prompt)
+        self.assertIn("final post should develop the author_take", post_prompt)
+        self.assertIn("elevate your brand", post_prompt)
+        self.assertNotIn("{author_take}", brief_prompt)
+        self.assertNotIn("{author_take}", post_prompt)
 
     def test_build_post_repair_prompt_renders_quality_repair_contract(self):
         topic = Topic(name="Personal Branding")

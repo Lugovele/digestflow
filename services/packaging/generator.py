@@ -84,6 +84,9 @@ class PackagingGenerationResult:
     source_evidence_pack: dict[str, Any] | None = None
     source_evidence_tokens: dict[str, int | None] | None = None
     source_evidence_error: str = ""
+    author_take: dict[str, Any] | None = None
+    author_take_tokens: dict[str, int | None] | None = None
+    author_take_error: str = ""
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -157,6 +160,9 @@ def generate_content_package_for_digest(
         "source_evidence_pack": generation.source_evidence_pack or {},
         "source_evidence_tokens": generation.source_evidence_tokens,
         "source_evidence_error": generation.source_evidence_error,
+        "author_take": generation.author_take or {},
+        "author_take_tokens": generation.author_take_tokens,
+        "author_take_error": generation.author_take_error,
         "brief_alignment": generation.brief_alignment or {},
         "post_mechanics": generation.post_mechanics or {},
         "editorial_review": generation.editorial_review or {},
@@ -202,6 +208,9 @@ def _generate_packaging_payload(
     source_evidence_pack: dict[str, Any] | None = None
     source_evidence_tokens: dict[str, int | None] | None = None
     source_evidence_error = ""
+    author_take: dict[str, Any] | None = None
+    author_take_tokens: dict[str, int | None] | None = None
+    author_take_error = ""
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -237,12 +246,27 @@ def _generate_packaging_payload(
                     source_evidence_error = str(exc)
                     source_evidence_pack = None
 
+            if getattr(settings, "PACKAGING_AUTHOR_TAKE_ENABLED", True):
+                try:
+                    author_take, _author_take_prompt, _author_take_response, author_take_tokens = (
+                        _generate_author_take_via_llm(
+                            digest,
+                            articles,
+                            profile,
+                            source_evidence_pack=source_evidence_pack,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - author take is best-effort
+                    author_take_error = str(exc)
+                    author_take = None
+
             try:
                 post_brief, post_brief_prompt, _brief_response_text, post_brief_tokens = _generate_post_brief_via_llm(
                     digest,
                     articles,
                     profile,
                     source_evidence_pack=source_evidence_pack,
+                    author_take=author_take,
                 )
             except Exception as exc:
                 raise ContentPackageValidationError(
@@ -255,6 +279,7 @@ def _generate_packaging_payload(
                 profile,
                 post_brief=post_brief,
                 source_evidence_pack=source_evidence_pack,
+                author_take=author_take,
             )
             payload = _normalize_linkedin_post_payload(payload)
             estimated_cost = estimate_cost_usd(
@@ -485,6 +510,9 @@ def _generate_packaging_payload(
                 source_evidence_pack=source_evidence_pack,
                 source_evidence_tokens=source_evidence_tokens,
                 source_evidence_error=source_evidence_error,
+                author_take=author_take,
+                author_take_tokens=author_take_tokens,
+                author_take_error=author_take_error,
                 brief_alignment=brief_alignment,
                 post_mechanics=post_mechanics,
                 editorial_review=editorial_review,
@@ -507,6 +535,7 @@ def _generate_packaging_payload(
                     profile,
                     post_brief=post_brief,
                     source_evidence_pack=source_evidence_pack,
+                    author_take=author_take,
                 )
             response_text = json.dumps(payload, ensure_ascii=False, indent=2)
             provider = "mock"
@@ -541,6 +570,9 @@ def _generate_packaging_payload(
         source_evidence_pack=source_evidence_pack,
         source_evidence_tokens=source_evidence_tokens,
         source_evidence_error=source_evidence_error,
+        author_take=author_take,
+        author_take_tokens=author_take_tokens,
+        author_take_error=author_take_error,
         brief_alignment=brief_alignment,
         post_mechanics=post_mechanics,
         editorial_review=editorial_review,
@@ -562,6 +594,7 @@ def generate_post_from_articles(
     author_profile: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
     source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mode 1: build one post from all article analyses."""
     prompt = build_post_prompt(
@@ -570,6 +603,7 @@ def generate_post_from_articles(
         author_profile,
         post_brief=post_brief,
         source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
     )
     if not articles:
         return _build_safe_fallback_post(digest)
@@ -615,6 +649,7 @@ def build_post_prompt(
     author_profile: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
     source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
 ) -> str:
     """Build prompt for single-post mode from digest articles."""
     return build_prompt(
@@ -624,6 +659,7 @@ def build_post_prompt(
         articles=_format_list_for_prompt(articles),
         post_brief=_format_list_for_prompt(post_brief or {}),
         source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_take=_format_list_for_prompt(author_take or {}),
         author_role=author_profile["role"],
         author_background=author_profile["background"],
         author_focus=author_profile["focus"],
@@ -639,6 +675,7 @@ def build_post_brief_prompt(
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
     source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
 ) -> str:
     """Build prompt for an internal editorial brief from digest articles."""
     return build_prompt(
@@ -647,6 +684,7 @@ def build_post_brief_prompt(
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
         source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_take=_format_list_for_prompt(author_take or {}),
         author_role=author_profile["role"],
         author_background=author_profile["background"],
         author_focus=author_profile["focus"],
@@ -685,6 +723,38 @@ _SOURCE_EVIDENCE_FIELDS = [
 ]
 _SOURCE_EVIDENCE_TEXT_LIMIT = 3000
 _SOURCE_EVIDENCE_FIELD_LIMIT = 12
+_AUTHOR_TAKE_STRING_FIELDS = [
+    "core_opinion",
+    "tension",
+    "reader_mistake",
+    "reader_check",
+    "practical_point",
+    "tone",
+]
+_AUTHOR_TAKE_DO_NOT_SAY_LIMIT = 12
+
+
+def build_author_take_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    source_evidence_pack: dict[str, Any] | None = None,
+) -> str:
+    """Build prompt for a human author position from extracted source evidence."""
+    return build_prompt(
+        "linkedin/generate_author_take_from_evidence.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+        style_constraint_1=author_profile["style_constraints"][0],
+        style_constraint_2=author_profile["style_constraints"][1],
+        style_constraint_3=author_profile["style_constraints"][2],
+    )
 
 
 def build_source_evidence_prompt(digest: Digest, articles: list[dict[str, Any]]) -> str:
@@ -784,6 +854,32 @@ def _validate_source_evidence_pack_payload(payload: dict[str, Any]) -> dict[str,
             for item in raw_items
             if isinstance(item, str) and str(item).strip()
         ][:_SOURCE_EVIDENCE_FIELD_LIMIT]
+    return normalized
+
+
+def _validate_author_take_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ContentPackageValidationError("Author take payload must be a JSON object.")
+
+    normalized: dict[str, Any] = {}
+    for field_name in _AUTHOR_TAKE_STRING_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Author take payload is missing required field: {field_name}")
+        value = str(payload.get(field_name) or "").strip()
+        if not value:
+            raise ContentPackageValidationError(f"Author take field must be a non-empty string: {field_name}")
+        normalized[field_name] = value
+
+    if "do_not_say" not in payload:
+        raise ContentPackageValidationError("Author take payload is missing required field: do_not_say")
+    raw_do_not_say = payload.get("do_not_say")
+    if not isinstance(raw_do_not_say, list):
+        raise ContentPackageValidationError("Author take do_not_say must be a list.")
+    normalized["do_not_say"] = [
+        str(item).strip()
+        for item in raw_do_not_say
+        if isinstance(item, str) and str(item).strip()
+    ][:_AUTHOR_TAKE_DO_NOT_SAY_LIMIT]
     return normalized
 
 
@@ -1011,6 +1107,7 @@ def _generate_payload_via_llm(
     author_profile: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
     source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
     if not articles:
         prompt = build_post_prompt(
@@ -1019,6 +1116,7 @@ def _generate_payload_via_llm(
             author_profile,
             post_brief=post_brief,
             source_evidence_pack=source_evidence_pack,
+            author_take=author_take,
         )
         payload = _build_safe_fallback_post(digest)
         response_text = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -1030,6 +1128,7 @@ def _generate_payload_via_llm(
         author_profile,
         post_brief=post_brief,
         source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
     )
     carousel_outline = generate_carousel_from_articles(digest, articles, author_profile)
     payload = {
@@ -1046,6 +1145,7 @@ def _generate_payload_via_llm(
         author_profile,
         post_brief=post_brief,
         source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
     )
     response_text = json.dumps(payload, ensure_ascii=False, indent=2)
     return payload, prompt, response_text, None
@@ -1056,12 +1156,14 @@ def _generate_post_brief_via_llm(
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
     source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
     prompt = build_post_brief_prompt(
         digest,
         articles,
         author_profile,
         source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
     )
     response = OpenAIClient().generate_text(
         prompt=prompt,
@@ -1072,6 +1174,29 @@ def _generate_post_brief_via_llm(
     payload = _parse_json_response(response_text)
     post_brief = _validate_post_brief_payload(payload)
     return post_brief, prompt, response_text, response.usage
+
+
+def _generate_author_take_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    source_evidence_pack: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_author_take_prompt(
+        digest,
+        articles,
+        author_profile,
+        source_evidence_pack=source_evidence_pack,
+    )
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=500,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    payload = _parse_json_response(response_text)
+    author_take = _validate_author_take_payload(payload)
+    return author_take, prompt, response_text, response.usage
 
 
 def _generate_source_evidence_pack_via_llm(

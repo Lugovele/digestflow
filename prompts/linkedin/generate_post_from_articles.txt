@@ -33,7 +33,7 @@ TASK:
 * Source articles are grounding material, not permission to expand into a broad essay
 * Turn compressed source facts into useful author insight, not recap
 * Write like a practitioner with a point of view, not like a content marketer
-* Sound like someone who has seen this problem in real work
+* Sound like someone with practical judgment about the pattern, without claiming personal experience.
 * Use the author profile as a lens, not as a bio
 
 BRIEF ALIGNMENT RULES:
@@ -85,8 +85,12 @@ POST REQUIREMENTS:
   * the old playbook says X, but the current pattern points to Y
   * this looks like a tooling problem, but it is actually a workflow or design problem
 * Use concrete examples, numbers, patterns, or operational details when the articles support them
+* When `author_take` is present, write from `author_take` first
+* The final post should develop the author_take, not summarize the topic
+* Use source_evidence_pack only as grounding for the author_take
 * When `source_evidence_pack` is present, use it as the primary raw material
 * Do not write from summaries when the evidence pack contains mechanisms, contrasts, tensions, source terms, or source phrases
+* Do not turn evidence into article recap
 * Use source facts as evidence, not as the structure of the post
 * Use source facts in compressed form, not as long article summaries
 * One short reference to the source pattern is enough
@@ -198,6 +202,9 @@ Digest articles:
 
 Source evidence pack:
 {source_evidence_pack}
+
+Author take:
+{author_take}
 
 Post brief:
 {post_brief}

@@ -21,9 +21,11 @@ from services.packaging.generator import (
     _extract_banned_phrases_from_repair_reasons,
     _find_avoid_angle_match,
     _find_concrete_detail_match,
+    _generate_author_take_via_llm,
     _generate_editorial_review_via_llm,
     _generate_post_brief_via_llm,
     _validate_source_evidence_pack_payload,
+    _validate_author_take_payload,
     _validate_editorial_review_payload,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
@@ -35,6 +37,7 @@ from services.packaging.validators import ContentPackageValidationError
     OPENAI_API_KEY="sk-your-key",
     PACKAGING_EDITORIAL_REVIEW_ENABLED=False,
     PACKAGING_SOURCE_EVIDENCE_ENABLED=False,
+    PACKAGING_AUTHOR_TAKE_ENABLED=False,
 )
 class PackagingArticlesOnlyTests(TestCase):
     def _create_digest_for_packaging(self, username: str = "packaging-test-user") -> Digest:
@@ -155,6 +158,28 @@ class PackagingArticlesOnlyTests(TestCase):
             "source evidence prompt",
             json.dumps(source_evidence_pack),
             {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        )
+
+    def _author_take_payload(self, **overrides) -> dict:
+        payload = {
+            "core_opinion": "Current proof beats polished claims.",
+            "tension": "Visibility helps only when people can see judgment.",
+            "reader_mistake": "They polish the brand before showing decisions.",
+            "reader_check": "Look at whether the last posts show tradeoffs.",
+            "practical_point": "Show decisions before asking people to trust positioning.",
+            "tone": "skeptical and practical",
+            "do_not_say": ["authenticity", "elevate your brand"],
+        }
+        payload.update(overrides)
+        return payload
+
+    def _author_take_generation_result(self) -> tuple[dict, str, str, dict]:
+        author_take = self._author_take_payload()
+        return (
+            author_take,
+            "author take prompt",
+            json.dumps(author_take),
+            {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
         )
 
     def _editorial_review_payload(self, **overrides) -> dict:
@@ -1259,6 +1284,32 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertEqual(set(normalized.keys()), set(payload.keys()) - {"extra_field"})
         self.assertEqual(normalized["usable_terms"], ["build in public"])
 
+    def test_validate_author_take_payload_accepts_valid_payload_and_strips_do_not_say(self) -> None:
+        payload = self._author_take_payload(
+            core_opinion=" Current proof beats polished claims. ",
+            do_not_say=[" authenticity ", "", 123, "elevate your brand"],
+            extra_field="ignored",
+        )
+
+        normalized = _validate_author_take_payload(payload)
+
+        self.assertEqual(normalized["core_opinion"], "Current proof beats polished claims.")
+        self.assertEqual(normalized["do_not_say"], ["authenticity", "elevate your brand"])
+        self.assertNotIn("extra_field", normalized)
+
+    def test_validate_author_take_payload_missing_required_field_fails(self) -> None:
+        payload = self._author_take_payload()
+        del payload["core_opinion"]
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_author_take_payload(payload)
+
+    def test_validate_author_take_payload_non_list_do_not_say_fails(self) -> None:
+        payload = self._author_take_payload(do_not_say="authenticity")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_author_take_payload(payload)
+
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator.OpenAIClient")
     def test_generate_source_evidence_pack_via_llm_returns_normalized_pack(self, mock_client) -> None:
@@ -1275,6 +1326,29 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertIn("Personal branding article", prompt)
         self.assertIn("source_phrases", response_text)
         self.assertEqual(usage["total_tokens"], 7)
+        mock_client.return_value.generate_text.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_author_take_via_llm_returns_normalized_take(self, mock_client) -> None:
+        digest = self._create_digest_for_packaging("author-take-llm-user")
+        response = SimpleNamespace(
+            text=json.dumps(self._author_take_payload(core_opinion=" Current proof beats polished claims. ")),
+            usage={"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        )
+        mock_client.return_value.generate_text.return_value = response
+
+        author_take, prompt, response_text, usage = _generate_author_take_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+            source_evidence_pack=self._source_evidence_pack(),
+        )
+
+        self.assertEqual(author_take["core_opinion"], "Current proof beats polished claims.")
+        self.assertIn("Brand Lag", prompt)
+        self.assertIn("Current proof beats polished claims", response_text)
+        self.assertEqual(usage["total_tokens"], 11)
         mock_client.return_value.generate_text.assert_called_once()
 
     def test_packaging_returns_safe_fallback_when_articles_are_missing(self) -> None:
@@ -2270,6 +2344,90 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertIn("source evidence invalid", debug_info["source_evidence_error"])
         self.assertIsNone(mock_generate_brief.call_args.kwargs["source_evidence_pack"])
         self.assertIsNone(mock_generate_payload.call_args.kwargs["source_evidence_pack"])
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_author_take_success_adds_debug_and_flows_to_brief_and_final_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("author-take-debug-user")
+        source_evidence_pack = self._source_evidence_pack()
+        author_take = self._author_take_payload()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = self._author_take_generation_result()
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["author_take"], author_take)
+        self.assertEqual(debug_info["author_take_tokens"]["total_tokens"], 11)
+        self.assertEqual(debug_info["author_take_error"], "")
+        self.assertEqual(mock_generate_author_take.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(mock_generate_brief.call_args.kwargs["author_take"], author_take)
+        self.assertEqual(mock_generate_payload.call_args.kwargs["author_take"], author_take)
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_author_take_failure_does_not_block_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("author-take-failure-user")
+        source_evidence_pack = self._source_evidence_pack()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.side_effect = ContentPackageValidationError("author take invalid")
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertTrue(content_package.post_text)
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertEqual(debug_info["author_take"], {})
+        self.assertIn("author take invalid", debug_info["author_take_error"])
+        self.assertEqual(mock_generate_brief.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["author_take"])
+        self.assertEqual(mock_generate_payload.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertIsNone(mock_generate_payload.call_args.kwargs["author_take"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")

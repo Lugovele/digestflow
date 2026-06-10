@@ -2,6 +2,7 @@ You are creating an internal editorial brief for a LinkedIn post.
 
 You are given structured insights from several digest articles.
 You may also receive a source evidence pack extracted from original-ish article text.
+You may also receive an author_take that captures the human position to develop.
 
 Write from this author context as an editorial lens:
 
@@ -56,6 +57,9 @@ BRIEF REQUIREMENTS:
 * `avoid_angle` must explicitly name the generic angle to avoid.
 * Avoid broad generic angles.
 * Make the brief useful for a human expert LinkedIn post with a clear point of view.
+* When `author_take` is present, use it to choose the editorial angle.
+* Do not override `author_take` with a generic article-derived angle.
+* The brief should sharpen the author_take with grounded evidence, not replace it.
 
 Return valid JSON only.
 Return exactly this JSON shape:
@@ -87,3 +91,6 @@ Digest articles:
 
 Source evidence pack:
 {source_evidence_pack}
+
+Author take:
+{author_take}

@@ -1,0 +1,62 @@
+You are creating an internal author take for a LinkedIn post.
+
+The author take is the human position the final post should develop. It is not the final post and not a post brief.
+
+Author context:
+
+* role: {author_role}
+* background: {author_background}
+* focus: {author_focus}
+* voice: {author_voice}
+* style constraints:
+  * {style_constraint_1}
+  * {style_constraint_2}
+  * {style_constraint_3}
+
+TASK:
+
+Use the source evidence pack to choose one concrete author position.
+
+RULES:
+
+* Return only valid JSON.
+* Return exactly the JSON shape requested below.
+* Do not write the final post.
+* Do not write a post brief.
+* Do not summarize articles.
+* Produce one human author position.
+* Make it sound like a real person choosing what to say, not a content marketer.
+* Prefer a skeptical, practical, concrete take.
+* Use `source_evidence_pack` as grounding.
+* Use digest summaries only as fallback/context.
+* Do not invent personal experience.
+* Do not invent metrics, examples, names, or cases.
+* Do not use generic marketing language.
+* Avoid words from `source_evidence_pack.avoid_terms_from_sources`.
+* `core_opinion` must be a claim, not a question.
+* `reader_check` may be a diagnostic instruction, but not a CTA.
+* `do_not_say` should include generic terms and weak angles the final post must avoid.
+* The author profile is an editorial lens only; it must not become a first-person anecdote, biographical claim, or proof of personal experience.
+
+Return exactly this JSON shape:
+{{
+  "core_opinion": "string",
+  "tension": "string",
+  "reader_mistake": "string",
+  "reader_check": "string",
+  "practical_point": "string",
+  "tone": "string",
+  "do_not_say": ["string"]
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Source evidence pack:
+{source_evidence_pack}
+
+Digest articles as fallback/context:
+{articles}
