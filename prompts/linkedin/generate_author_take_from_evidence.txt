@@ -2,16 +2,13 @@ You are creating an internal author take for a LinkedIn post.
 
 The author take is the human position the final post should develop. It is not the final post and not a post brief.
 
-Author context:
+Editorial constraints:
 
-* role: {author_role}
-* background: {author_background}
-* focus: {author_focus}
-* voice: {author_voice}
-* style constraints:
-  * {style_constraint_1}
-  * {style_constraint_2}
-  * {style_constraint_3}
+* Write as a clear LinkedIn post with a concrete point of view.
+* Use source evidence, not author biography.
+* Do not mention the author role.
+* Do not write as an expert persona.
+* Do not use first person unless it is explicitly present in user-provided notes.
 
 TASK:
 
@@ -25,6 +22,7 @@ RULES:
 * Do not write a post brief.
 * Do not summarize articles.
 * Produce one human author position.
+* Produce a sharp editorial take, not marketing advice.
 * Make it sound like a real person choosing what to say, not a content marketer.
 * Prefer a skeptical, practical, concrete take.
 * Use `source_evidence_pack` as grounding.
@@ -34,9 +32,21 @@ RULES:
 * Do not use generic marketing language.
 * Avoid words from `source_evidence_pack.avoid_terms_from_sources`.
 * `core_opinion` must be a claim, not a question.
+* `core_opinion` must sound like a concrete human claim.
+* `core_opinion` must not use generic abstractions such as "authenticity", "authentic", "credibility", "visibility", "genuine connection", "delivering value", "personal branding efforts", "professional image", "enhance recognition", or "polished persona" unless the term is a necessary quoted/source term and not the main claim.
+* Prefer `core_opinion` claims shaped like:
+  * "A personal brand is not what you say you do. It is what your recent work proves."
+  * "A logo cannot fix a stale proof trail."
+  * "Build in public only works when it shows decisions, not activity."
+* Do not use question-led hooks as `core_opinion`.
+* `reader_mistake` must name a concrete wrong behavior, not a vague struggle.
 * `reader_check` may be a diagnostic instruction, but not a CTA.
+* `reader_check` must be a practical diagnostic instruction, not an engagement question or CTA.
+* `practical_point` must tell the reader what to check or change, not motivate them.
+* `tone` should be concrete, for example "skeptical, plainspoken, practical" rather than just "analytical".
 * `do_not_say` should include generic terms and weak angles the final post must avoid.
-* The author profile is an editorial lens only; it must not become a first-person anecdote, biographical claim, or proof of personal experience.
+* `do_not_say` must include generic terms and weak angles from both `source_evidence_pack.avoid_terms_from_sources` and generic marketing or branding language detected in the source evidence.
+* Do not write a motivational, inspirational, or brand-strategy-sounding take.
 
 Return exactly this JSON shape:
 {{

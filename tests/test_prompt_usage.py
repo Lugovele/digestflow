@@ -160,21 +160,60 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Avoid words from `source_evidence_pack.avoid_terms_from_sources`.", author_take_prompt)
         self.assertIn("`core_opinion` must be a claim, not a question.", author_take_prompt)
         self.assertIn("`reader_check` may be a diagnostic instruction, but not a CTA.", author_take_prompt)
+        self.assertIn("Produce a sharp editorial take, not marketing advice.", author_take_prompt)
+        self.assertIn("`core_opinion` must sound like a concrete human claim.", author_take_prompt)
+        self.assertIn('"authenticity", "authentic", "credibility", "visibility"', author_take_prompt)
+        self.assertIn("Do not use question-led hooks as `core_opinion`.", author_take_prompt)
+        self.assertIn(
+            '"A personal brand is not what you say you do. It is what your recent work proves."',
+            author_take_prompt,
+        )
+        self.assertIn('"A logo cannot fix a stale proof trail."', author_take_prompt)
+        self.assertIn('"Build in public only works when it shows decisions, not activity."', author_take_prompt)
+        self.assertIn("`reader_mistake` must name a concrete wrong behavior", author_take_prompt)
+        self.assertIn("`practical_point` must tell the reader what to check or change", author_take_prompt)
+        self.assertIn("Do not write a motivational, inspirational, or brand-strategy-sounding take.", author_take_prompt)
+        self.assertNotIn("{author_role}", author_take_prompt)
+        self.assertNotIn("{author_background}", author_take_prompt)
+        self.assertNotIn("{author_focus}", author_take_prompt)
+        self.assertNotIn("{author_voice}", author_take_prompt)
+        self.assertNotIn("{style_constraint_1}", author_take_prompt)
 
     def test_linkedin_post_prompt_uses_author_profile_and_anti_recap_constraints(self):
         prompts_root = Path(settings.BASE_DIR) / "prompts"
         post_prompt = (prompts_root / "linkedin" / "generate_post_from_articles.txt").read_text(encoding="utf-8")
 
-        self.assertIn("{author_role}", post_prompt)
-        self.assertIn("{author_background}", post_prompt)
-        self.assertIn("{author_focus}", post_prompt)
-        self.assertIn("{author_voice}", post_prompt)
-        self.assertIn("{style_constraint_1}", post_prompt)
-        self.assertIn("{style_constraint_2}", post_prompt)
-        self.assertIn("{style_constraint_3}", post_prompt)
+        self.assertNotIn("{author_role}", post_prompt)
+        self.assertNotIn("{author_background}", post_prompt)
+        self.assertNotIn("{author_focus}", post_prompt)
+        self.assertNotIn("{author_voice}", post_prompt)
+        self.assertNotIn("{style_constraint_1}", post_prompt)
+        self.assertNotIn("{style_constraint_2}", post_prompt)
+        self.assertNotIn("{style_constraint_3}", post_prompt)
+        self.assertIn("Use source evidence and author_take, not author biography.", post_prompt)
+        self.assertIn("Do not use author role or bio.", post_prompt)
         self.assertIn("Use source facts as evidence, not as the structure of the post", post_prompt)
         self.assertIn('structure the post as "one article says" or "another article says"', post_prompt)
         self.assertIn("write like a report, digest, or research memo", post_prompt)
+
+    def test_linkedin_generation_prompts_do_not_use_author_bio_personalization(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts" / "linkedin"
+        prompt_paths = [
+            prompts_root / "generate_author_take_from_evidence.txt",
+            prompts_root / "generate_post_brief_from_articles.txt",
+            prompts_root / "generate_post_from_articles.txt",
+        ]
+        unsafe_phrases = [
+            "Write from this author context",
+            "Use the author profile as a lens",
+            "as an AI Automation Specialist",
+            "Sound like someone who has seen this problem in real work",
+        ]
+
+        for prompt_path in prompt_paths:
+            prompt_text = prompt_path.read_text(encoding="utf-8")
+            for unsafe_phrase in unsafe_phrases:
+                self.assertNotIn(unsafe_phrase, prompt_text)
 
     def test_linkedin_post_brief_prompt_declares_editorial_contract(self):
         prompts_root = Path(settings.BASE_DIR) / "prompts"
@@ -258,17 +297,20 @@ class PromptUsageTests(SimpleTestCase):
             "Prefer grounded mechanisms such as documenting wins/failures/lessons, current expertise versus outdated perception, or logo as visual signal rather than the whole brand.",
             brief_prompt,
         )
-        self.assertIn(
-            "The author profile is an editorial lens only; it may influence angle and vocabulary, but it must not become a biographical claim, first-person anecdote, or proof of personal experience.",
-            brief_prompt,
-        )
         self.assertIn("Do not invent first-person professional experience.", brief_prompt)
+        self.assertIn("Use source evidence and author_take, not author biography.", brief_prompt)
+        self.assertIn("Do not mention the author role.", brief_prompt)
         self.assertIn(
-            'Do not write phrases like "As an AI Automation Specialist...", "I\'ve observed...", "I\'ve seen...", "In my work...", "With clients...", or "I help teams..." unless that exact experience is explicitly provided in user-provided author notes or source facts.',
+            "Do not write role-based claims, first-person anecdotes, client claims, or personal work stories unless that exact experience is explicitly provided in user-provided notes or source facts.",
+            brief_prompt,
+        )
+        self.assertIn("Do not use author profile to create `human_angle`.", brief_prompt)
+        self.assertIn(
+            "If `author_take` is present, `human_angle` must be derived from `author_take`, not from author role or background.",
             brief_prompt,
         )
         self.assertIn(
-            "`human_angle` must be framed as a practitioner lens, analytical concern, grounded reflection, or observed pattern from the source set.",
+            "`human_angle` must be framed as an analytical concern, grounded reflection, or observed pattern from the source set.",
             brief_prompt,
         )
         self.assertIn("`human_angle` must not claim personal experience that was not provided.", brief_prompt)
@@ -307,13 +349,13 @@ class PromptUsageTests(SimpleTestCase):
 
         rendered_prompt = build_post_brief_prompt(digest, articles, author_profile)
 
-        self.assertIn("Operations strategist", rendered_prompt)
-        self.assertIn("Leads editorial workflow redesign.", rendered_prompt)
-        self.assertIn("handoffs, validation, and repeatable systems", rendered_prompt)
-        self.assertIn("sharp and practical", rendered_prompt)
-        self.assertIn("avoid generic AI phrasing", rendered_prompt)
-        self.assertIn("make the tension explicit", rendered_prompt)
-        self.assertIn("end with a practical takeaway", rendered_prompt)
+        self.assertNotIn("Operations strategist", rendered_prompt)
+        self.assertNotIn("Leads editorial workflow redesign.", rendered_prompt)
+        self.assertNotIn("handoffs, validation, and repeatable systems", rendered_prompt)
+        self.assertNotIn("sharp and practical", rendered_prompt)
+        self.assertNotIn("avoid generic AI phrasing", rendered_prompt)
+        self.assertNotIn("make the tension explicit", rendered_prompt)
+        self.assertNotIn("end with a practical takeaway", rendered_prompt)
         self.assertIn("Workflow speed improved after the team fixed handoffs.", rendered_prompt)
         self.assertIn("Validation got clearer before the automation layer paid off.", rendered_prompt)
         self.assertIn("Prompt article title", rendered_prompt)
@@ -411,8 +453,8 @@ class PromptUsageTests(SimpleTestCase):
             source_evidence_pack=source_evidence_pack,
         )
 
-        self.assertIn("Operations strategist", rendered_prompt)
-        self.assertIn("handoffs, validation, and repeatable systems", rendered_prompt)
+        self.assertNotIn("Operations strategist", rendered_prompt)
+        self.assertNotIn("handoffs, validation, and repeatable systems", rendered_prompt)
         self.assertIn("Brand Lag", rendered_prompt)
         self.assertIn("build in public", rendered_prompt)
         self.assertIn("Prompt article title", rendered_prompt)
@@ -452,13 +494,13 @@ class PromptUsageTests(SimpleTestCase):
 
         rendered_prompt = build_post_prompt(digest, articles, author_profile)
 
-        self.assertIn("Operations strategist", rendered_prompt)
-        self.assertIn("Leads editorial workflow redesign.", rendered_prompt)
-        self.assertIn("handoffs, validation, and repeatable systems", rendered_prompt)
-        self.assertIn("sharp and practical", rendered_prompt)
-        self.assertIn("avoid generic AI phrasing", rendered_prompt)
-        self.assertIn("make the tension explicit", rendered_prompt)
-        self.assertIn("end with a practical takeaway", rendered_prompt)
+        self.assertNotIn("Operations strategist", rendered_prompt)
+        self.assertNotIn("Leads editorial workflow redesign.", rendered_prompt)
+        self.assertNotIn("handoffs, validation, and repeatable systems", rendered_prompt)
+        self.assertNotIn("sharp and practical", rendered_prompt)
+        self.assertNotIn("avoid generic AI phrasing", rendered_prompt)
+        self.assertNotIn("make the tension explicit", rendered_prompt)
+        self.assertNotIn("end with a practical takeaway", rendered_prompt)
 
         self.assertNotIn("{author_role}", rendered_prompt)
         self.assertNotIn("{author_background}", rendered_prompt)
@@ -481,7 +523,16 @@ class PromptUsageTests(SimpleTestCase):
             rendered_prompt,
         )
         self.assertNotIn("Sound like someone who has seen this problem in real work", rendered_prompt)
-        self.assertIn("Use the author profile as a lens, not as a bio", rendered_prompt)
+        self.assertIn("Use source evidence and author_take, not author biography.", rendered_prompt)
+        self.assertIn("Do not mention the author role.", rendered_prompt)
+        self.assertIn("Do not use author role or bio.", rendered_prompt)
+        self.assertIn("Do not write as an expert persona.", rendered_prompt)
+        self.assertIn("The first line should be a claim, not a question.", rendered_prompt)
+        self.assertIn("When `author_take` is present, the post must develop `author_take.core_opinion`.", rendered_prompt)
+        self.assertNotIn("Use the author profile as a lens, not as a bio", rendered_prompt)
+        self.assertIn('"Are you..."', rendered_prompt)
+        self.assertIn('"Is your..."', rendered_prompt)
+        self.assertIn('"Superficial branding..."', rendered_prompt)
         self.assertIn(
             "Use `hook_type`, `pattern_interrupt`, `credibility_basis`, `concrete_details`, and `human_angle` from the post brief",
             rendered_prompt,

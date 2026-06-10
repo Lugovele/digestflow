@@ -4,16 +4,13 @@ You are given structured insights from several digest articles.
 You may also receive a source evidence pack extracted from original-ish article text.
 You may also receive an author_take that captures the human position to develop.
 
-Write from this author context as an editorial lens:
+Editorial constraints:
 
-* role: {author_role}
-* background: {author_background}
-* focus: {author_focus}
-* voice: {author_voice}
-* style constraints:
-  * {style_constraint_1}
-  * {style_constraint_2}
-  * {style_constraint_3}
+* Write as a clear LinkedIn post brief with a concrete point of view.
+* Use source evidence and author_take, not author biography.
+* Do not mention the author role.
+* Do not write as an expert persona.
+* Do not use first person unless it is explicitly present in user-provided notes.
 
 TASK:
 
@@ -49,10 +46,11 @@ BRIEF REQUIREMENTS:
 * Extract `concrete_details` as mechanisms, named concepts, visible behaviors, or comparisons, not vague claims.
 * Prefer grounded mechanisms such as documenting wins/failures/lessons, current expertise versus outdated perception, or logo as visual signal rather than the whole brand.
 * If there are few concrete details, use grounded mechanisms or comparisons rather than fabricated metrics.
-* The author profile is an editorial lens only; it may influence angle and vocabulary, but it must not become a biographical claim, first-person anecdote, or proof of personal experience.
 * Do not invent first-person professional experience.
-* Do not write phrases like "As an AI Automation Specialist...", "I've observed...", "I've seen...", "In my work...", "With clients...", or "I help teams..." unless that exact experience is explicitly provided in user-provided author notes or source facts.
-* `human_angle` must be framed as a practitioner lens, analytical concern, grounded reflection, or observed pattern from the source set.
+* Do not write role-based claims, first-person anecdotes, client claims, or personal work stories unless that exact experience is explicitly provided in user-provided notes or source facts.
+* Do not use author profile to create `human_angle`.
+* If `author_take` is present, `human_angle` must be derived from `author_take`, not from author role or background.
+* `human_angle` must be framed as an analytical concern, grounded reflection, or observed pattern from the source set.
 * `human_angle` must not claim personal experience that was not provided.
 * `avoid_angle` must explicitly name the generic angle to avoid.
 * Avoid broad generic angles.
@@ -60,6 +58,7 @@ BRIEF REQUIREMENTS:
 * When `author_take` is present, use it to choose the editorial angle.
 * Do not override `author_take` with a generic article-derived angle.
 * The brief should sharpen the author_take with grounded evidence, not replace it.
+* Preserve author_take rather than converting it into generic branding language.
 
 Return valid JSON only.
 Return exactly this JSON shape:

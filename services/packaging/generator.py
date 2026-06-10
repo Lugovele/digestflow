@@ -87,6 +87,7 @@ class PackagingGenerationResult:
     author_take: dict[str, Any] | None = None
     author_take_tokens: dict[str, int | None] | None = None
     author_take_error: str = ""
+    author_take_quality_issues: list[str] | None = None
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -163,6 +164,7 @@ def generate_content_package_for_digest(
         "author_take": generation.author_take or {},
         "author_take_tokens": generation.author_take_tokens,
         "author_take_error": generation.author_take_error,
+        "author_take_quality_issues": generation.author_take_quality_issues or [],
         "brief_alignment": generation.brief_alignment or {},
         "post_mechanics": generation.post_mechanics or {},
         "editorial_review": generation.editorial_review or {},
@@ -211,6 +213,7 @@ def _generate_packaging_payload(
     author_take: dict[str, Any] | None = None
     author_take_tokens: dict[str, int | None] | None = None
     author_take_error = ""
+    author_take_quality_issues: list[str] = []
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -256,6 +259,10 @@ def _generate_packaging_payload(
                             source_evidence_pack=source_evidence_pack,
                         )
                     )
+                    author_take_quality_issues = _author_take_quality_issues(author_take)
+                    if _author_take_requires_rejection(author_take):
+                        author_take_error = f"author take rejected: {', '.join(author_take_quality_issues)}"
+                        author_take = None
                 except Exception as exc:  # noqa: BLE001 - author take is best-effort
                     author_take_error = str(exc)
                     author_take = None
@@ -513,6 +520,7 @@ def _generate_packaging_payload(
                 author_take=author_take,
                 author_take_tokens=author_take_tokens,
                 author_take_error=author_take_error,
+                author_take_quality_issues=author_take_quality_issues,
                 brief_alignment=brief_alignment,
                 post_mechanics=post_mechanics,
                 editorial_review=editorial_review,
@@ -573,6 +581,7 @@ def _generate_packaging_payload(
         author_take=author_take,
         author_take_tokens=author_take_tokens,
         author_take_error=author_take_error,
+        author_take_quality_issues=author_take_quality_issues,
         brief_alignment=brief_alignment,
         post_mechanics=post_mechanics,
         editorial_review=editorial_review,
@@ -732,6 +741,30 @@ _AUTHOR_TAKE_STRING_FIELDS = [
     "tone",
 ]
 _AUTHOR_TAKE_DO_NOT_SAY_LIMIT = 12
+_AUTHOR_TAKE_QUESTION_OPENINGS = ("are you", "is your", "do you", "have you")
+_AUTHOR_TAKE_GENERIC_CORE_TERMS = (
+    "authenticity",
+    "authentic",
+    "credibility",
+    "visibility",
+    "genuine connection",
+    "delivering value",
+    "personal branding efforts",
+    "professional image",
+    "enhance recognition",
+    "polished persona",
+)
+_AUTHOR_TAKE_GENERIC_CORE_OPENINGS = (
+    "personal branding is",
+    "effective personal branding",
+    "superficial branding",
+)
+_AUTHOR_TAKE_GENERIC_PRACTICAL_PHRASES = (
+    "focus on value",
+    "deliver value",
+    "build trust",
+    "authentic engagement",
+)
 
 
 def build_author_take_prompt(
@@ -881,6 +914,46 @@ def _validate_author_take_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, str) and str(item).strip()
     ][:_AUTHOR_TAKE_DO_NOT_SAY_LIMIT]
     return normalized
+
+
+def _author_take_quality_issues(author_take: dict[str, Any]) -> list[str]:
+    core_opinion = str(author_take.get("core_opinion") or "").strip()
+    reader_mistake = str(author_take.get("reader_mistake") or "").strip()
+    reader_check = str(author_take.get("reader_check") or "").strip()
+    practical_point = str(author_take.get("practical_point") or "").strip()
+    tone = str(author_take.get("tone") or "").strip()
+
+    core_opinion_lower = core_opinion.lower()
+    reader_mistake_lower = reader_mistake.lower()
+    practical_point_lower = practical_point.lower()
+    issues: list[str] = []
+
+    if core_opinion.endswith("?"):
+        issues.append("core_opinion_question")
+    if any(core_opinion_lower.startswith(opening) for opening in _AUTHOR_TAKE_QUESTION_OPENINGS):
+        issues.append("core_opinion_question_led")
+    for term in _AUTHOR_TAKE_GENERIC_CORE_TERMS:
+        if term in core_opinion_lower:
+            issues.append(f"core_opinion_generic:{term}")
+            break
+    if any(core_opinion_lower.startswith(opening) for opening in _AUTHOR_TAKE_GENERIC_CORE_OPENINGS):
+        issues.append("core_opinion_generic_opening")
+    if "many professionals" in reader_mistake_lower or "many individuals" in reader_mistake_lower:
+        issues.append("reader_mistake_generic_many_people")
+    if tone.lower() == "analytical":
+        issues.append("tone_only_analytical")
+    if reader_check.endswith("?"):
+        issues.append("reader_check_question")
+    for phrase in _AUTHOR_TAKE_GENERIC_PRACTICAL_PHRASES:
+        if phrase in practical_point_lower:
+            issues.append(f"practical_point_generic:{phrase}")
+            break
+
+    return issues
+
+
+def _author_take_requires_rejection(author_take: dict[str, Any]) -> bool:
+    return bool(_author_take_quality_issues(author_take))
 
 
 def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:

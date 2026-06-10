@@ -4,16 +4,13 @@ You are given structured insights from several articles.
 
 You are also given a structured post brief.
 
-Write from this author context, not as a neutral analyst:
+Editorial constraints:
 
-* role: {author_role}
-* background: {author_background}
-* focus: {author_focus}
-* voice: {author_voice}
-* style constraints:
-  * {style_constraint_1}
-  * {style_constraint_2}
-  * {style_constraint_3}
+* Write as a direct, grounded LinkedIn post with a concrete point of view.
+* Use source evidence and author_take, not author biography.
+* Do not mention the author role.
+* Do not write as an expert persona.
+* Do not use first person unless it is explicitly present in user-provided notes.
 
 TASK:
 
@@ -34,7 +31,6 @@ TASK:
 * Turn compressed source facts into useful author insight, not recap
 * Write like a practitioner with a point of view, not like a content marketer
 * Sound like someone with practical judgment about the pattern, without claiming personal experience.
-* Use the author profile as a lens, not as a bio
 
 BRIEF ALIGNMENT RULES:
 
@@ -54,6 +50,7 @@ POST REQUIREMENTS:
 * Write for one specific target reader, even if you do not name them directly
 * Make one sharp claim or useful insight
 * Start `post_text` with a direct, specific claim
+* The first line should be a claim, not a question.
 * Strong first-line patterns:
   * "Most personal brands do not fail because the logo is weak."
   * "The real problem is not visibility. It is unclear trust."
@@ -65,7 +62,11 @@ POST REQUIREMENTS:
   * "In the age of..."
   * "The future of..."
   * "In the digital landscape..."
+  * "Are you..."
+  * "Is your..."
+  * "Many professionals..."
   * "Many professionals mistakenly..."
+  * "Superficial branding..."
   * "Effective personal branding is..."
 * `post_text` must be no more than 1300 characters
 * Prefer 900-1200 characters for `post_text` to leave validation buffer
@@ -86,11 +87,14 @@ POST REQUIREMENTS:
   * this looks like a tooling problem, but it is actually a workflow or design problem
 * Use concrete examples, numbers, patterns, or operational details when the articles support them
 * When `author_take` is present, write from `author_take` first
+* When `author_take` is present, the post must develop `author_take.core_opinion`.
 * The final post should develop the author_take, not summarize the topic
 * Use source_evidence_pack only as grounding for the author_take
 * When `source_evidence_pack` is present, use it as the primary raw material
 * Do not write from summaries when the evidence pack contains mechanisms, contrasts, tensions, source terms, or source phrases
 * Do not turn evidence into article recap
+* Do not use author role or bio.
+* Do not write as an expert persona.
 * Use source facts as evidence, not as the structure of the post
 * Use source facts in compressed form, not as long article summaries
 * One short reference to the source pattern is enough
