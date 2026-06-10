@@ -85,6 +85,8 @@ POST REQUIREMENTS:
   * the old playbook says X, but the current pattern points to Y
   * this looks like a tooling problem, but it is actually a workflow or design problem
 * Use concrete examples, numbers, patterns, or operational details when the articles support them
+* When `source_evidence_pack` is present, use it as the primary raw material
+* Do not write from summaries when the evidence pack contains mechanisms, contrasts, tensions, source terms, or source phrases
 * Use source facts as evidence, not as the structure of the post
 * Use source facts in compressed form, not as long article summaries
 * One short reference to the source pattern is enough
@@ -193,6 +195,9 @@ Digest title:
 
 Digest articles:
 {articles}
+
+Source evidence pack:
+{source_evidence_pack}
 
 Post brief:
 {post_brief}

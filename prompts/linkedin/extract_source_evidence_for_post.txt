@@ -1,0 +1,55 @@
+You are extracting compact source evidence for a LinkedIn post.
+
+Use the provided article inputs as raw material. Prefer `source_text` when it comes from original source content or snippets. Use digest summaries and key_points only as fallback context.
+
+TASK:
+
+Extract useful, grounded raw material that can help a later brief and final post sound specific, human, and source-based.
+
+RULES:
+
+* Return only valid JSON.
+* Return exactly the JSON shape requested below.
+* Do not write the final post.
+* Do not write a post brief.
+* Do not recap articles.
+* Do not invent facts, metrics, names, cases, examples, or causal claims.
+* Preserve useful source language when it is specific.
+* Separate grounded mechanisms from broad conclusions.
+* Extract contrasts that could become one focused LinkedIn angle.
+* Include named or concrete examples only when they are actually present.
+* Put generic or corporate source wording in `avoid_terms_from_sources` so later prompts do not copy it.
+* Keep every item concise.
+* Empty arrays are allowed when the source material does not support a field.
+
+FIELD RULES:
+
+* `source_phrases`: short useful phrases copied or closely preserved from source text.
+* `specific_claims`: grounded claims directly supported by article text.
+* `mechanisms`: how something works, not broad conclusions.
+* `contrasts`: X vs Y distinctions that can become a LinkedIn angle.
+* `examples`: named or concrete examples only if actually present.
+* `usable_terms`: useful source terms, for example "Brand Lag" or "build in public".
+* `avoid_terms_from_sources`: generic/corporate source wording that should not be copied.
+* `tensions`: useful editorial tensions across selected articles.
+
+Return exactly this JSON shape:
+{{
+  "source_phrases": ["string"],
+  "specific_claims": ["string"],
+  "mechanisms": ["string"],
+  "contrasts": ["string"],
+  "examples": ["string"],
+  "usable_terms": ["string"],
+  "avoid_terms_from_sources": ["string"],
+  "tensions": ["string"]
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Article inputs:
+{articles}

@@ -1,6 +1,7 @@
 You are creating an internal editorial brief for a LinkedIn post.
 
 You are given structured insights from several digest articles.
+You may also receive a source evidence pack extracted from original-ish article text.
 
 Write from this author context as an editorial lens:
 
@@ -30,11 +31,14 @@ BRIEF REQUIREMENTS:
 * Design the hook direction for the first 8-12 words of the final post.
 * Include a pattern interrupt for the first third of the final post.
 * Use source facts as evidence.
-* Evidence points must be grounded in article summaries/key_points.
+* When `source_evidence_pack` is present, treat it as the primary editorial raw material.
+* Use digest article summaries only as fallback/context when source evidence is missing or thin.
+* Prefer mechanisms, contrasts, usable_terms, tensions, and source_phrases from `source_evidence_pack` over summary prose.
+* Evidence points must be grounded in `source_evidence_pack` when present; otherwise use article summaries/key_points as fallback.
 * Prefer 2-4 concise evidence points.
 * Each evidence point should be short and specific.
 * `credibility_basis` must explain what the claim is based on: source data, comparison, observed pattern, practitioner lens, user-provided experience, or grounded evidence.
-* Extract `concrete_details` only when grounded in article evidence or the author profile.
+* Extract `concrete_details` only when grounded in `source_evidence_pack`, article evidence, or explicitly provided author notes.
 * `concrete_details` can include numbers, names, timeframes, mechanisms, examples, comparisons, percentages, or specific observed facts.
 * Do not invent numbers, names, cases, personal experiences, results, or metrics.
 * Do not invent metrics, measurable effects, study-style claims, or causal claims unless directly present in the source facts.
@@ -80,3 +84,6 @@ Digest title:
 
 Digest articles:
 {articles}
+
+Source evidence pack:
+{source_evidence_pack}

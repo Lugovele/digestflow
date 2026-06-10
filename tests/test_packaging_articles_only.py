@@ -7,11 +7,14 @@ from django.test import TestCase, override_settings
 
 from apps.topics.models import Topic
 from apps.digests.models import Digest, DigestRun
+from apps.sources.models import Article
 from services.packaging import generate_content_package_for_digest
 from services.packaging.generator import (
     PackagingGenerationResult,
+    build_source_evidence_prompt,
     build_editorial_review_prompt,
     _collect_repairable_payload_issues,
+    _generate_source_evidence_pack_via_llm,
     _evaluate_linkedin_post_mechanics,
     _evaluate_post_brief_alignment,
     _evaluate_repair_rewrite_delta,
@@ -20,6 +23,7 @@ from services.packaging.generator import (
     _find_concrete_detail_match,
     _generate_editorial_review_via_llm,
     _generate_post_brief_via_llm,
+    _validate_source_evidence_pack_payload,
     _validate_editorial_review_payload,
     _validate_post_brief_payload,
     normalize_linkedin_hashtags,
@@ -27,7 +31,11 @@ from services.packaging.generator import (
 from services.packaging.validators import ContentPackageValidationError
 
 
-@override_settings(OPENAI_API_KEY="sk-your-key", PACKAGING_EDITORIAL_REVIEW_ENABLED=False)
+@override_settings(
+    OPENAI_API_KEY="sk-your-key",
+    PACKAGING_EDITORIAL_REVIEW_ENABLED=False,
+    PACKAGING_SOURCE_EVIDENCE_ENABLED=False,
+)
 class PackagingArticlesOnlyTests(TestCase):
     def _create_digest_for_packaging(self, username: str = "packaging-test-user") -> Digest:
         user = get_user_model().objects.create_user(username=username)
@@ -124,6 +132,29 @@ class PackagingArticlesOnlyTests(TestCase):
             "brief prompt",
             json.dumps(post_brief),
             {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+
+    def _source_evidence_pack(self, **overrides) -> dict:
+        payload = {
+            "source_phrases": ["Brand Lag"],
+            "specific_claims": ["Reputation can trail current work."],
+            "mechanisms": ["Public work creates evidence of judgment."],
+            "contrasts": ["Polished positioning vs current proof."],
+            "examples": [],
+            "usable_terms": ["build in public"],
+            "avoid_terms_from_sources": ["authenticity"],
+            "tensions": ["Visibility without evidence does not create trust."],
+        }
+        payload.update(overrides)
+        return payload
+
+    def _source_evidence_generation_result(self) -> tuple[dict, str, str, dict]:
+        source_evidence_pack = self._source_evidence_pack()
+        return (
+            source_evidence_pack,
+            "source evidence prompt",
+            json.dumps(source_evidence_pack),
+            {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
         )
 
     def _editorial_review_payload(self, **overrides) -> dict:
@@ -1185,6 +1216,67 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertIn("workflow fixes come before ai", content_package.post_text.lower())
 
+    def test_source_evidence_prompt_prefers_article_raw_payload_content(self) -> None:
+        digest = self._create_digest_for_packaging("source-evidence-raw-content-user")
+        Article.objects.create(
+            topic=digest.run.topic,
+            url="https://example.com/article",
+            title="Saved article",
+            source_name="Example",
+            snippet="Snippet should not be used when raw content exists.",
+            raw_payload={
+                "content": "Original source text says Brand Lag appears when reputation trails current work."
+            },
+        )
+
+        rendered_prompt = build_source_evidence_prompt(digest, digest.get_articles())
+
+        self.assertIn("Original source text says Brand Lag appears", rendered_prompt)
+        self.assertIn("article.raw_payload.content", rendered_prompt)
+        self.assertNotIn("Snippet should not be used", rendered_prompt)
+
+    def test_source_evidence_prompt_falls_back_to_article_snippet_when_content_missing(self) -> None:
+        digest = self._create_digest_for_packaging("source-evidence-snippet-user")
+        Article.objects.create(
+            topic=digest.run.topic,
+            url="https://example.com/article",
+            title="Saved article",
+            source_name="Example",
+            snippet="Snippet says build in public gives people evidence of current judgment.",
+            raw_payload={},
+        )
+
+        rendered_prompt = build_source_evidence_prompt(digest, digest.get_articles())
+
+        self.assertIn("Snippet says build in public", rendered_prompt)
+        self.assertIn("article.snippet", rendered_prompt)
+
+    def test_validate_source_evidence_pack_strips_unknown_keys(self) -> None:
+        payload = self._source_evidence_pack(extra_field=["ignore me"])
+
+        normalized = _validate_source_evidence_pack_payload(payload)
+
+        self.assertEqual(set(normalized.keys()), set(payload.keys()) - {"extra_field"})
+        self.assertEqual(normalized["usable_terms"], ["build in public"])
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_source_evidence_pack_via_llm_returns_normalized_pack(self, mock_client) -> None:
+        digest = self._create_digest_for_packaging("source-evidence-llm-user")
+        response = SimpleNamespace(
+            text=json.dumps(self._source_evidence_pack(source_phrases=[" Brand Lag "])),
+            usage={"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        )
+        mock_client.return_value.generate_text.return_value = response
+
+        pack, prompt, response_text, usage = _generate_source_evidence_pack_via_llm(digest, digest.get_articles())
+
+        self.assertEqual(pack["source_phrases"], ["Brand Lag"])
+        self.assertIn("Personal branding article", prompt)
+        self.assertIn("source_phrases", response_text)
+        self.assertEqual(usage["total_tokens"], 7)
+        mock_client.return_value.generate_text.assert_called_once()
+
     def test_packaging_returns_safe_fallback_when_articles_are_missing(self) -> None:
         user = get_user_model().objects.create_user(username="packaging-fallback-user")
         topic = Topic.objects.create(
@@ -2112,6 +2204,72 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertIsNone(debug_info["post_brief"])
         self.assertEqual(debug_info["post_brief_prompt"], "")
         self.assertTrue(content_package.post_text)
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_SOURCE_EVIDENCE_ENABLED=True)
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_packaging_debug_includes_source_evidence_pack_when_extraction_succeeds(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("source-evidence-debug-user")
+        source_evidence_pack = self._source_evidence_pack()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "A useful personal brand is evidence of current judgment.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(debug_info["source_evidence_tokens"]["total_tokens"], 7)
+        self.assertEqual(debug_info["source_evidence_error"], "")
+        mock_generate_brief.assert_called_once()
+        self.assertEqual(mock_generate_brief.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(mock_generate_payload.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+
+    @override_settings(OPENAI_API_KEY="sk-test", PACKAGING_SOURCE_EVIDENCE_ENABLED=True)
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_source_evidence_extraction_failure_does_not_block_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("source-evidence-failure-user")
+        mock_generate_source_evidence.side_effect = ContentPackageValidationError("source evidence invalid")
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "A useful personal brand is evidence of current judgment.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertTrue(content_package.post_text)
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertEqual(debug_info["source_evidence_pack"], {})
+        self.assertIn("source evidence invalid", debug_info["source_evidence_error"])
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["source_evidence_pack"])
+        self.assertIsNone(mock_generate_payload.call_args.kwargs["source_evidence_pack"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
