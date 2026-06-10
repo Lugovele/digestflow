@@ -88,6 +88,8 @@ class PackagingGenerationResult:
     editorial_review_tokens: dict[str, int | None] | None = None
     editorial_review_error: str = ""
     editorial_review_used_for_repair: bool = False
+    editorial_review_triggered_repair: bool = False
+    editorial_repair_reasons: list[str] | None = None
     concrete_detail_diagnostics: dict[str, Any] | None = None
     banned_phrase_diagnostics: dict[str, Any] | None = None
 
@@ -156,6 +158,9 @@ def generate_content_package_for_digest(
         "editorial_review_tokens": generation.editorial_review_tokens,
         "editorial_review_error": generation.editorial_review_error,
         "editorial_review_used_for_repair": generation.editorial_review_used_for_repair,
+        "editorial_review_triggered_repair": generation.editorial_review_triggered_repair,
+        "editorial_repair_reasons": generation.editorial_repair_reasons or [],
+        "editorial_review_repair_threshold": {"min_score": 7},
         "concrete_detail_diagnostics": generation.concrete_detail_diagnostics or {},
         "banned_phrase_diagnostics": generation.banned_phrase_diagnostics or {},
     }
@@ -195,6 +200,8 @@ def _generate_packaging_payload(
     editorial_review_tokens: dict[str, int | None] | None = None
     editorial_review_error = ""
     editorial_review_used_for_repair = False
+    editorial_review_triggered_repair = False
+    editorial_repair_reasons: list[str] = []
     concrete_detail_diagnostics: dict[str, Any] | None = None
     banned_phrase_diagnostics: dict[str, Any] | None = None
     prompt = build_post_prompt(digest, articles, profile)
@@ -251,12 +258,13 @@ def _generate_packaging_payload(
                 payload,
             )
 
-            if (
+            deterministic_repair_required = (
                 repairable_payload_issues
                 or _quality_gate_requires_repair(quality_gate)
                 or _brief_alignment_requires_repair(brief_alignment)
                 or _post_mechanics_requires_repair(post_mechanics)
-            ):
+            )
+            if deterministic_repair_required:
                 repair_attempted = True
                 if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True):
                     try:
@@ -361,6 +369,75 @@ def _generate_packaging_payload(
                     )
                 except Exception as exc:  # noqa: BLE001 - diagnostic-only review must not block saving
                     editorial_review_error = str(exc)
+                if _editorial_review_requires_repair(editorial_review):
+                    editorial_review_triggered_repair = True
+                    editorial_review_used_for_repair = True
+                    editorial_repair_reasons = _editorial_review_repair_reasons(editorial_review)
+                    repair_reasons = editorial_repair_reasons
+                    repair_attempted = True
+                    repair_report = {
+                        "status": "retry",
+                        "reasons": repair_reasons,
+                        "quality_gate": quality_gate,
+                        "brief_alignment": brief_alignment,
+                        "post_mechanics": post_mechanics,
+                        "editorial_review": editorial_review,
+                    }
+                    repaired_payload, repair_prompt, repair_response_text, _repair_tokens = _repair_packaging_payload_via_llm(
+                        digest,
+                        articles,
+                        profile,
+                        weak_payload=payload,
+                        quality_report=repair_report,
+                        post_brief=post_brief,
+                        editorial_review=editorial_review,
+                        editorial_review_error=editorial_review_error,
+                    )
+                    repaired_payload = _normalize_linkedin_post_payload(repaired_payload)
+                    repaired_payload["post_text"] = _split_long_post_paragraphs(repaired_payload["post_text"])
+                    validate_content_package_payload(repaired_payload)
+                    repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
+                    repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
+                    repair_post_mechanics = _evaluate_linkedin_post_mechanics(repaired_payload, post_brief)
+                    repair_delta = _evaluate_repair_rewrite_delta(payload, repaired_payload, repair_reasons)
+                    concrete_detail_diagnostics = _build_concrete_detail_diagnostics(
+                        post_brief,
+                        payload,
+                        initial_alignment=brief_alignment,
+                        repaired_payload=repaired_payload,
+                        repair_alignment=repair_brief_alignment,
+                        repair_attempted=True,
+                    )
+                    banned_phrase_diagnostics = _build_banned_phrase_diagnostics(
+                        repair_reasons,
+                        payload,
+                        repaired_payload=repaired_payload,
+                        repair_attempted=True,
+                    )
+                    if (
+                        _quality_gate_requires_repair(repair_quality_gate)
+                        or _brief_alignment_requires_repair(repair_brief_alignment)
+                        or _post_mechanics_requires_repair(repair_post_mechanics)
+                        or _repair_delta_requires_failure(repair_delta)
+                    ):
+                        unresolved_reasons = _combined_repair_reasons(
+                            repair_quality_gate,
+                            repair_brief_alignment,
+                            repair_post_mechanics,
+                        )
+                        unresolved_reasons.extend(
+                            f"repair_delta:{issue}"
+                            for issue in repair_delta.get("issues", [])
+                        )
+                        raise ContentPackageValidationError(
+                            "LinkedIn post editorial repair did not produce a valid package: "
+                            f"{unresolved_reasons}"
+                        )
+                    payload = repaired_payload
+                    brief_alignment = repair_brief_alignment
+                    post_mechanics = repair_post_mechanics
+                    response_text = repair_response_text
+                    repair_succeeded = True
             return PackagingGenerationResult(
                 prompt=prompt,
                 response_text=response_text,
@@ -389,6 +466,8 @@ def _generate_packaging_payload(
                 editorial_review_tokens=editorial_review_tokens,
                 editorial_review_error=editorial_review_error,
                 editorial_review_used_for_repair=editorial_review_used_for_repair,
+                editorial_review_triggered_repair=editorial_review_triggered_repair,
+                editorial_repair_reasons=editorial_repair_reasons,
                 concrete_detail_diagnostics=concrete_detail_diagnostics,
                 banned_phrase_diagnostics=banned_phrase_diagnostics,
             )
@@ -434,6 +513,8 @@ def _generate_packaging_payload(
         editorial_review_tokens=editorial_review_tokens,
         editorial_review_error=editorial_review_error,
         editorial_review_used_for_repair=editorial_review_used_for_repair,
+        editorial_review_triggered_repair=editorial_review_triggered_repair,
+        editorial_repair_reasons=editorial_repair_reasons,
         concrete_detail_diagnostics=concrete_detail_diagnostics,
         banned_phrase_diagnostics=banned_phrase_diagnostics,
     )
@@ -1758,6 +1839,46 @@ def _matching_phrases(text: str, phrases: list[str]) -> list[str]:
 
 def _quality_gate_requires_repair(report: dict[str, Any]) -> bool:
     return str(report.get("status") or "") == "retry" and bool(report.get("reasons"))
+
+
+def _editorial_review_requires_repair(editorial_review: dict[str, Any] | None) -> bool:
+    if not editorial_review:
+        return False
+    if editorial_review.get("passed") is False:
+        return True
+    return _editorial_review_score_below_threshold(editorial_review.get("score"))
+
+
+def _editorial_review_score_below_threshold(score: Any, min_score: int = 7) -> bool:
+    if isinstance(score, bool):
+        return False
+    return isinstance(score, (int, float)) and score < min_score
+
+
+def _editorial_review_repair_reasons(editorial_review: dict[str, Any] | None) -> list[str]:
+    if not editorial_review:
+        return []
+
+    reasons: list[str] = []
+    if editorial_review.get("passed") is False:
+        reasons.append("editorial_review:failed")
+
+    if _editorial_review_score_below_threshold(editorial_review.get("score")):
+        reasons.append("editorial_review:score_below_threshold")
+
+    seen = set(reasons)
+    for issue in editorial_review.get("issues", []):
+        if not isinstance(issue, str):
+            continue
+        normalized_issue = re.sub(r"[^a-z0-9_:-]+", "_", issue.strip().casefold()).strip("_")
+        if not normalized_issue:
+            continue
+        reason = f"editorial_review:{normalized_issue}"
+        if reason in seen:
+            continue
+        seen.add(reason)
+        reasons.append(reason)
+    return reasons
 
 
 def _first_non_empty_line(text: str) -> str:

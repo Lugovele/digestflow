@@ -87,6 +87,13 @@ class Command(BaseCommand):
         self.stdout.write(
             f"editorial_review_used_for_repair: {debug_info.get('editorial_review_used_for_repair', False)}"
         )
+        self.stdout.write(
+            f"editorial_review_triggered_repair: {debug_info.get('editorial_review_triggered_repair', False)}"
+        )
+        if debug_info.get("editorial_repair_reasons"):
+            self.stdout.write(
+                f"editorial_repair_reasons: {json.dumps(debug_info['editorial_repair_reasons'], ensure_ascii=False)}"
+            )
         if debug_info.get("post_brief"):
             self.stdout.write("")
             self.stdout.write("=== POST BRIEF ===")

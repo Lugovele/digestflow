@@ -501,11 +501,23 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Deterministic repair reasons remain mandatory", rendered_prompt)
         self.assertIn("Use editorial review feedback as guidance for improving the rewrite", rendered_prompt)
         self.assertIn(
+            "If repair is triggered by editorial review, treat the editorial issues and repair instructions as the primary rewrite goal",
+            rendered_prompt,
+        )
+        self.assertIn(
             "If editorial review includes `repair_instructions`, apply them when they do not conflict with deterministic rules",
             rendered_prompt,
         )
         self.assertIn("make the rewrite more specific, practitioner-led, and useful", rendered_prompt)
         self.assertIn("Do not treat editorial review as permission to invent unsupported facts", rendered_prompt)
+        self.assertIn(
+            "For editorial-triggered repair, make the rewrite more specific, useful, practitioner-led, and less generic",
+            rendered_prompt,
+        )
+        self.assertIn(
+            "Still obey hard deterministic validation, brief alignment, banned phrase, mechanics, and schema requirements",
+            rendered_prompt,
+        )
         self.assertIn("Do not ignore brief alignment, mechanics, or hard validation", rendered_prompt)
         self.assertIn("Do not lightly edit the weak post", rendered_prompt)
         self.assertIn("Rebuild `post_text` from the validated post brief", rendered_prompt)
