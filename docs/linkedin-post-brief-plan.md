@@ -1,5 +1,238 @@
 # Layer 8D: Structured LinkedIn Post Brief
 
+## Architectural Decision: Post Generation Quality Pipeline
+
+PostFlow is moving from a DigestFlow-style pipeline toward a LinkedIn post generation product.
+
+`GeneratePostService` is the orchestration layer. It coordinates source sufficiency, research when needed, top-source selection, packaging generation, saving the result, and marking selected sources as used.
+
+The quality of the final LinkedIn post must not be handled by a single "articles -> post" prompt.
+
+Direct generation from selected research articles into a final LinkedIn post has a structural failure mode:
+
+* the model summarizes the articles instead of forming a point of view;
+* the output sounds like a digest or generic AI post;
+* the post lacks one clear thesis;
+* there is no explicit author take;
+* research becomes the main subject instead of supporting evidence;
+* the post often tries to cover too much;
+* the output may mention "articles", "research", or trends mechanically.
+
+Therefore, the generation layer must not do:
+
+```text
+3 selected articles
+-> final post
+```
+
+Instead, PostFlow will use a dedicated synthesis pipeline inside the post generation/packaging layer:
+
+```text
+selected_articles
+-> EvidencePack
+-> PostBrief
+-> FinalPost
+-> ContentPackage.post_text
+```
+
+This is inserted exactly where selected articles are currently converted into `post_text`. It does not replace the research pipeline or `GeneratePostService`.
+
+### Responsibility Split
+
+```text
+GeneratePostService
+  - checks source sufficiency;
+  - triggers research if needed;
+  - selects top 3 usable sources;
+  - creates/updates ContentPackage;
+  - calls PostSynthesisPipeline;
+  - marks used sources.
+
+PostSynthesisPipeline
+  - extracts evidence from selected articles;
+  - creates an editorial post brief;
+  - writes the final LinkedIn post;
+  - optionally runs quality checks / rewrite pass;
+  - returns artifacts for storage/debugging.
+```
+
+`GeneratePostService` remains responsible for orchestration.
+`PostSynthesisPipeline` is responsible for post quality.
+
+### Intermediate Artifacts
+
+#### EvidencePack
+
+Purpose: extract useful argumentative material from selected articles.
+
+EvidencePack is not a summary. It should contain:
+
+* key claim per article;
+* specific supporting data;
+* implication for the target professional reader;
+* tension with common assumptions;
+* cross-article patterns;
+* contradictions, if real;
+* strongest evidence.
+
+#### PostBrief
+
+Purpose: make the editorial decision before writing.
+
+This is the most important quality artifact. It should contain:
+
+* one chosen angle;
+* one core thesis;
+* tension;
+* author take;
+* target reader;
+* evidence to use;
+* evidence to ignore;
+* hook direction;
+* intended post structure.
+
+The PostBrief must force focus and explicitly decide what not to include.
+
+#### FinalPost
+
+Purpose: produce the final LinkedIn post from the PostBrief.
+
+The final post should:
+
+* have one clear thesis;
+* sound like a human expert, not a summary;
+* use research as support, not as the subject;
+* avoid generic AI openings;
+* avoid "the article says" framing;
+* avoid generic CTA endings;
+* preserve the chosen angle and author take.
+
+### MVP Implementation
+
+For MVP, use three required steps:
+
+```text
+1. EvidencePack
+2. PostBrief
+3. FinalPost
+```
+
+A later optional step may be added:
+
+```text
+4. Critique / rewrite
+```
+
+The rewrite step should not be mandatory until the 3-step pipeline has been verified against real examples.
+
+### Storage And Debugging
+
+The final user-visible result remains:
+
+```text
+ContentPackage.post_text
+```
+
+Generation artifacts should be available for debugging and quality iteration. Recommended future fields on `ContentPackage`:
+
+```python
+evidence_pack = models.JSONField(null=True, blank=True)
+post_brief = models.JSONField(null=True, blank=True)
+draft_post = models.TextField(null=True, blank=True)  # optional, if rewrite step exists
+generation_meta = models.JSONField(null=True, blank=True)
+```
+
+The user should only see the final post and hashtags.
+
+The developer should be able to inspect:
+
+```text
+EvidencePack -> PostBrief -> FinalPost
+```
+
+This makes weak-output diagnosis clearer:
+
+* bad EvidencePack = extraction problem;
+* bad PostBrief = angle/thesis problem;
+* good PostBrief but bad post = writing prompt problem;
+* good draft but bad final = rewrite problem.
+
+### Integration Point
+
+Insert the synthesis pipeline where the current packaging logic turns selected articles into `post_text`.
+
+Do not rewrite the research pipeline for this.
+Do not make `GeneratePostService` responsible for writing quality.
+
+Expected integration:
+
+```python
+selected_sources = select_top_3_sources(topic)
+
+result = PostSynthesisPipeline.run(
+    topic=topic,
+    articles=[source.article for source in selected_sources],
+)
+
+package.evidence_pack = result.evidence_pack
+package.post_brief = result.post_brief
+package.post_text = result.final_post
+package.generation_meta = result.meta
+package.status = "done"
+package.save()
+```
+
+### Naming
+
+Use these names in documentation and future code unless the existing codebase strongly suggests another convention:
+
+* `GeneratePostService` for orchestration;
+* `PostSynthesisPipeline` for the quality layer;
+* `EvidencePack` for extracted research evidence;
+* `PostBrief` for editorial angle/thesis/author take;
+* `FinalPost` for the final LinkedIn post.
+
+Existing prompt files may be adapted to this structure:
+
+* `generate_author_take_from_evidence.txt`
+* `generate_post_brief_from_articles.txt`
+* `generate_post_from_articles.txt`
+
+The conceptual flow should become:
+
+```text
+generate_evidence_pack_from_articles
+generate_post_brief_from_evidence
+generate_post_from_brief
+```
+
+Do not rename prompt files yet unless it is a small, safe change.
+
+### What Not To Do Now
+
+For MVP:
+
+* do not build a full personalization/voice profile yet;
+* do not add user-facing angle selection yet;
+* do not rewrite the research pipeline;
+* do not create a complex multi-agent system;
+* do not make 4+ LLM calls mandatory from day one;
+* do not treat prompt wording as the only quality fix;
+* do not let final post generation read raw articles and decide everything in one step.
+
+### Tests And Quality Checks
+
+Validate quality with golden examples rather than exact string tests.
+
+Basic checks:
+
+* final post must not start with "In today's...";
+* final post must not mention "the article says" or "research suggests" mechanically;
+* final post must have one clear thesis;
+* final post must preserve the PostBrief angle;
+* final post must include interpretation, not just facts;
+* final post should use evidence invisibly as support.
+
 ## A. Goal
 
 Layer 8D adds one internal editorial brief step before final LinkedIn post generation so the system chooses the reader, angle, claim, evidence, takeaway, and ending before writing the final post.
