@@ -56,6 +56,13 @@ REPAIR REQUIREMENTS:
 * Do not treat editorial review as permission to invent unsupported facts
 * For editorial-triggered repair, make the rewrite more specific, useful, practitioner-led, and less generic
 * Still obey hard deterministic validation, brief alignment, banned phrase, mechanics, and schema requirements
+* For editorial-triggered repair, replace generic or corporate-blog openings with a concrete practitioner-led hook
+* Make a specific claim or useful distinction in the first two sentences
+* Include at least one concrete operational example, decision, tradeoff, or diagnostic question
+* Avoid corporate-blog framing and write like a person with hands-on judgment, not a marketing article
+* Remove unsupported authority phrases such as "studies show", "research proves", or "experts agree" unless directly grounded in the provided source facts or validated post brief
+* End with a practical takeaway, concrete diagnostic, or useful reframing, not a vague motivational line
+* Do not add unsupported statistics, named companies, studies, metrics, or authority claims
 * Do not ignore brief alignment, mechanics, or hard validation
 * Do not lightly edit the weak post
 * Rebuild `post_text` from the validated post brief

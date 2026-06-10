@@ -518,6 +518,28 @@ class PromptUsageTests(SimpleTestCase):
             "Still obey hard deterministic validation, brief alignment, banned phrase, mechanics, and schema requirements",
             rendered_prompt,
         )
+        self.assertIn(
+            "For editorial-triggered repair, replace generic or corporate-blog openings with a concrete practitioner-led hook",
+            rendered_prompt,
+        )
+        self.assertIn("Make a specific claim or useful distinction in the first two sentences", rendered_prompt)
+        self.assertIn(
+            "Include at least one concrete operational example, decision, tradeoff, or diagnostic question",
+            rendered_prompt,
+        )
+        self.assertIn(
+            "Avoid corporate-blog framing and write like a person with hands-on judgment, not a marketing article",
+            rendered_prompt,
+        )
+        self.assertIn(
+            'Remove unsupported authority phrases such as "studies show", "research proves", or "experts agree" unless directly grounded in the provided source facts or validated post brief',
+            rendered_prompt,
+        )
+        self.assertIn(
+            "End with a practical takeaway, concrete diagnostic, or useful reframing, not a vague motivational line",
+            rendered_prompt,
+        )
+        self.assertIn("Do not add unsupported statistics, named companies, studies, metrics, or authority claims", rendered_prompt)
         self.assertIn("Do not ignore brief alignment, mechanics, or hard validation", rendered_prompt)
         self.assertIn("Do not lightly edit the weak post", rendered_prompt)
         self.assertIn("Rebuild `post_text` from the validated post brief", rendered_prompt)
