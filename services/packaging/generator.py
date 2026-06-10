@@ -89,6 +89,7 @@ class PackagingGenerationResult:
     editorial_review_error: str = ""
     editorial_review_used_for_repair: bool = False
     concrete_detail_diagnostics: dict[str, Any] | None = None
+    banned_phrase_diagnostics: dict[str, Any] | None = None
 
 
 def generate_content_package_for_digest(
@@ -156,6 +157,7 @@ def generate_content_package_for_digest(
         "editorial_review_error": generation.editorial_review_error,
         "editorial_review_used_for_repair": generation.editorial_review_used_for_repair,
         "concrete_detail_diagnostics": generation.concrete_detail_diagnostics or {},
+        "banned_phrase_diagnostics": generation.banned_phrase_diagnostics or {},
     }
     return content_package, debug_info
 
@@ -194,6 +196,7 @@ def _generate_packaging_payload(
     editorial_review_error = ""
     editorial_review_used_for_repair = False
     concrete_detail_diagnostics: dict[str, Any] | None = None
+    banned_phrase_diagnostics: dict[str, Any] | None = None
     prompt = build_post_prompt(digest, articles, profile)
     response_text = ""
 
@@ -242,6 +245,10 @@ def _generate_packaging_payload(
                 quality_gate,
                 brief_alignment,
                 post_mechanics,
+            )
+            banned_phrase_diagnostics = _build_banned_phrase_diagnostics(
+                repair_reasons,
+                payload,
             )
 
             if (
@@ -302,6 +309,12 @@ def _generate_packaging_payload(
                     initial_alignment=brief_alignment,
                     repaired_payload=repaired_payload,
                     repair_alignment=repair_brief_alignment,
+                    repair_attempted=True,
+                )
+                banned_phrase_diagnostics = _build_banned_phrase_diagnostics(
+                    repair_reasons,
+                    payload,
+                    repaired_payload=repaired_payload,
                     repair_attempted=True,
                 )
                 if (
@@ -377,6 +390,7 @@ def _generate_packaging_payload(
                 editorial_review_error=editorial_review_error,
                 editorial_review_used_for_repair=editorial_review_used_for_repair,
                 concrete_detail_diagnostics=concrete_detail_diagnostics,
+                banned_phrase_diagnostics=banned_phrase_diagnostics,
             )
         except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
             payload = _build_mock_payload(digest, articles)
@@ -421,6 +435,7 @@ def _generate_packaging_payload(
         editorial_review_error=editorial_review_error,
         editorial_review_used_for_repair=editorial_review_used_for_repair,
         concrete_detail_diagnostics=concrete_detail_diagnostics,
+        banned_phrase_diagnostics=banned_phrase_diagnostics,
     )
 
 
@@ -1276,6 +1291,66 @@ def _build_concrete_detail_diagnostics(
         "post_text_excerpt": _debug_text_excerpt(initial_text),
         "repair_text_excerpt": _debug_text_excerpt(repair_text) if repaired_payload else "",
     }
+
+
+def _build_banned_phrase_diagnostics(
+    repair_reasons: list[str],
+    initial_payload: dict[str, Any] | None,
+    *,
+    repaired_payload: dict[str, Any] | None = None,
+    repair_attempted: bool = False,
+) -> dict[str, Any]:
+    """Build debug-only diagnostics for banned phrase repair regressions."""
+    banned_phrases = _extract_banned_phrases_from_repair_reasons(repair_reasons)
+    if not banned_phrases:
+        return {
+            "banned_phrases": [],
+            "initial_matches": [],
+            "repair_matches": [],
+            "regressed_after_repair": False,
+        }
+
+    initial_matches = _find_banned_phrase_payload_matches(initial_payload or {}, banned_phrases)
+    repair_matches = (
+        _find_banned_phrase_payload_matches(repaired_payload or {}, banned_phrases)
+        if repaired_payload is not None
+        else []
+    )
+
+    return {
+        "banned_phrases": banned_phrases,
+        "initial_matches": initial_matches,
+        "repair_matches": repair_matches,
+        "regressed_after_repair": bool(repair_attempted and repair_matches),
+    }
+
+
+def _find_banned_phrase_payload_matches(payload: Any, banned_phrases: list[str]) -> list[dict[str, str]]:
+    matches: list[dict[str, str]] = []
+
+    def visit(value: Any, path: str) -> None:
+        if isinstance(value, str):
+            folded_value = value.casefold()
+            for phrase in banned_phrases:
+                if phrase.casefold() in folded_value:
+                    matches.append(
+                        {
+                            "phrase": phrase,
+                            "field": path,
+                            "matched_text": phrase,
+                            "excerpt": _debug_text_excerpt(value),
+                        }
+                    )
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f"{path}[{index}]")
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                next_path = str(key) if not path else f"{path}.{key}"
+                visit(item, next_path)
+
+    visit(payload, "")
+    return matches
 
 
 def _debug_text_excerpt(text: str, limit: int = 240) -> str:

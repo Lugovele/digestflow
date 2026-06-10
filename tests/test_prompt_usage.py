@@ -524,6 +524,12 @@ class PromptUsageTests(SimpleTestCase):
             "`cta_variants`, and `hashtags` must not contain `<phrase>`",
             rendered_prompt,
         )
+        self.assertIn("Every banned phrase listed in retry reasons must be removed from every output field", rendered_prompt)
+        self.assertIn("Do not use banned phrases in `post_text`, `hashtags`, `image_prompt`, `carousel_slides`, or any other text field", rendered_prompt)
+        self.assertIn("Do not use minor casing, spacing, or plural variants of banned phrases", rendered_prompt)
+        self.assertIn("Replace the whole sentence if needed instead of swapping only the banned word", rendered_prompt)
+        self.assertIn("If a banned phrase appears in the weak payload, the repaired payload must not contain it anywhere", rendered_prompt)
+        self.assertIn("Banned phrase removal is a hard requirement, not editorial advice", rendered_prompt)
         self.assertIn("Do not replace a banned phrase with another banned or generic phrase", rendered_prompt)
         self.assertIn("Prefer specific operational language instead of vague substitutes", rendered_prompt)
         self.assertIn("Validated post brief:", rendered_prompt)

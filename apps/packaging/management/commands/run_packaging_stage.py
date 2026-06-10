@@ -66,6 +66,10 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"concrete_detail_diagnostics: {json.dumps(debug_info['concrete_detail_diagnostics'], ensure_ascii=False)}"
             )
+        if debug_info.get("banned_phrase_diagnostics"):
+            self.stdout.write(
+                f"banned_phrase_diagnostics: {json.dumps(debug_info['banned_phrase_diagnostics'], ensure_ascii=False)}"
+            )
         if debug_info.get("post_brief_tokens"):
             self.stdout.write(
                 f"post_brief_tokens: {json.dumps(debug_info['post_brief_tokens'], ensure_ascii=False)}"

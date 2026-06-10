@@ -1980,6 +1980,12 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(debug_info["repair_attempted"])
         self.assertTrue(debug_info["repair_succeeded"])
         self.assertIn("banned_phrase:resonate", debug_info["repair_reasons"])
+        diagnostics = debug_info["banned_phrase_diagnostics"]
+        self.assertEqual(diagnostics["banned_phrases"], ["resonate"])
+        self.assertEqual(diagnostics["initial_matches"][0]["phrase"], "resonate")
+        self.assertEqual(diagnostics["initial_matches"][0]["field"], "post_text")
+        self.assertEqual(diagnostics["repair_matches"], [])
+        self.assertFalse(diagnostics["regressed_after_repair"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")
@@ -2244,6 +2250,15 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertTrue(content_package.post_text)
         self.assertIn("One article points to:", content_package.post_text)
         self.assertIn("banned_phrase:resonate", debug_info["fallback_reason"])
+        diagnostics = debug_info["banned_phrase_diagnostics"]
+        self.assertEqual(diagnostics["banned_phrases"], ["resonate", "landscape"])
+        self.assertTrue(
+            any(match["phrase"] == "resonate" and match["field"] == "post_text" for match in diagnostics["initial_matches"])
+        )
+        self.assertTrue(
+            any(match["phrase"] == "resonate" and match["field"] == "post_text" for match in diagnostics["repair_matches"])
+        )
+        self.assertTrue(diagnostics["regressed_after_repair"])
         self.assertEqual(mock_repair_payload.call_count, 1)
 
     @override_settings(OPENAI_API_KEY="sk-test")

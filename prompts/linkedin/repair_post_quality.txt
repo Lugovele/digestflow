@@ -66,6 +66,12 @@ REPAIR REQUIREMENTS:
 * Keep `post_text` under the hard 1300 character limit
 * Remove every exact phrase named in the repair reasons
 * If a reason is `banned_phrase:<phrase>`, the repaired `post_text`, `hook_variants`, `cta_variants`, and `hashtags` must not contain `<phrase>`
+* Every banned phrase listed in retry reasons must be removed from every output field
+* Do not use banned phrases in `post_text`, `hashtags`, `image_prompt`, `carousel_slides`, or any other text field
+* Do not use minor casing, spacing, or plural variants of banned phrases
+* Replace the whole sentence if needed instead of swapping only the banned word
+* If a banned phrase appears in the weak payload, the repaired payload must not contain it anywhere
+* Banned phrase removal is a hard requirement, not editorial advice
 * Do not replace a banned phrase with another banned or generic phrase
 * Prefer specific operational language instead of vague substitutes
 * Preserve the validated post brief
