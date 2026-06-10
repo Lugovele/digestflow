@@ -161,7 +161,44 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("`credibility_basis` must explain what the claim is based on", brief_prompt)
         self.assertIn("Extract `concrete_details` only when grounded in article evidence or the author profile.", brief_prompt)
         self.assertIn("Do not invent numbers, names, cases, personal experiences, results, or metrics.", brief_prompt)
-        self.assertIn("`human_angle` must be non-fabricated", brief_prompt)
+        self.assertIn(
+            "Do not invent metrics, measurable effects, study-style claims, or causal claims unless directly present in the source facts.",
+            brief_prompt,
+        )
+        self.assertIn(
+            'Do not write "case studies show" unless you can name a specific case or specific extracted example from the provided articles.',
+            brief_prompt,
+        )
+        self.assertIn(
+            "Treat article titles and summaries as noisy inputs when they contain generic marketing language; do not copy that language into the brief.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "Do not introduce banned or generic LinkedIn phrases into brief fields",
+            brief_prompt,
+        )
+        self.assertIn(
+            "Extract `concrete_details` as mechanisms, named concepts, visible behaviors, or comparisons, not vague claims.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "Prefer grounded mechanisms such as documenting wins/failures/lessons, current expertise versus outdated perception, or logo as visual signal rather than the whole brand.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "The author profile is an editorial lens only; it may influence angle and vocabulary, but it must not become a biographical claim, first-person anecdote, or proof of personal experience.",
+            brief_prompt,
+        )
+        self.assertIn("Do not invent first-person professional experience.", brief_prompt)
+        self.assertIn(
+            'Do not write phrases like "As an AI Automation Specialist...", "I\'ve observed...", "I\'ve seen...", "In my work...", "With clients...", or "I help teams..." unless that exact experience is explicitly provided in user-provided author notes or source facts.',
+            brief_prompt,
+        )
+        self.assertIn(
+            "`human_angle` must be framed as a practitioner lens, analytical concern, grounded reflection, or observed pattern from the source set.",
+            brief_prompt,
+        )
+        self.assertIn("`human_angle` must not claim personal experience that was not provided.", brief_prompt)
         self.assertIn("`avoid_angle` must explicitly name the generic angle to avoid.", brief_prompt)
         self.assertIn("human expert LinkedIn post", brief_prompt)
 
