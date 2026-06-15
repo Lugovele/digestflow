@@ -10,11 +10,15 @@ from typing import Any
 from django.conf import settings
 from django.db import transaction
 
-from apps.ai.client import OpenAIClient, estimate_cost_usd
+from apps.ai.client import OpenAIClient
 from apps.digests.models import Digest
 from apps.packaging.models import ContentPackage
 from apps.sources.models import Article
 from services.ai import build_prompt
+from services.packaging.post_synthesis import (
+    PostSynthesisDependencies,
+    run_post_synthesis_pipeline,
+)
 from services.packaging.validators import (
     ContentPackageValidationError,
     validate_content_package_payload,
@@ -191,409 +195,101 @@ def _generate_packaging_payload(
     if not articles:
         logger.warning("[DigestRun %s] packaging received no digest articles", digest.run.id)
 
-    fallback_reason = ""
-    provider = "openai"
-    is_mock = False
-    tokens: dict[str, int | None] | None = None
-    estimated_cost: float | None = None
-    quality_gate: dict[str, Any] | None = None
-    repair_attempted = False
-    repair_succeeded = False
-    repair_reasons: list[str] = []
-    repair_quality_gate: dict[str, Any] | None = None
-    repair_delta: dict[str, Any] | None = None
-    repair_prompt = ""
-    repair_response_text = ""
-    post_brief: dict[str, Any] | None = None
-    post_brief_prompt = ""
-    post_brief_tokens: dict[str, int | None] | None = None
-    source_evidence_pack: dict[str, Any] | None = None
-    source_evidence_tokens: dict[str, int | None] | None = None
-    source_evidence_error = ""
-    author_take: dict[str, Any] | None = None
-    author_take_tokens: dict[str, int | None] | None = None
-    author_take_error = ""
-    author_take_quality_issues: list[str] = []
-    brief_alignment: dict[str, Any] | None = None
-    post_mechanics: dict[str, Any] | None = None
-    editorial_review: dict[str, Any] | None = None
-    editorial_review_prompt = ""
-    editorial_review_response_text = ""
-    editorial_review_tokens: dict[str, int | None] | None = None
-    editorial_review_error = ""
-    editorial_review_used_for_repair = False
-    editorial_review_triggered_repair = False
-    editorial_repair_reasons: list[str] = []
-    concrete_detail_diagnostics: dict[str, Any] | None = None
-    banned_phrase_diagnostics: dict[str, Any] | None = None
     prompt = build_post_prompt(digest, articles, profile)
-    response_text = ""
 
     if _should_use_mock():
         payload = _build_mock_payload(digest, articles)
         response_text = json.dumps(payload, ensure_ascii=False, indent=2)
-        provider = "mock"
-        is_mock = True
-        fallback_reason = "OPENAI_API_KEY не задан или содержит placeholder."
-    else:
-        try:
-            if getattr(settings, "PACKAGING_SOURCE_EVIDENCE_ENABLED", True):
-                try:
-                    (
-                        source_evidence_pack,
-                        _source_evidence_prompt,
-                        _source_evidence_response,
-                        source_evidence_tokens,
-                    ) = _generate_source_evidence_pack_via_llm(digest, articles)
-                except Exception as exc:  # noqa: BLE001 - evidence extraction is best-effort
-                    source_evidence_error = str(exc)
-                    source_evidence_pack = None
+        validate_content_package_payload(payload)
+        return PackagingGenerationResult(
+            prompt=prompt,
+            response_text=response_text,
+            payload=payload,
+            provider="mock",
+            is_mock=True,
+            fallback_reason="OPENAI_API_KEY не задан или содержит placeholder.",
+            tokens=None,
+            estimated_cost_usd=None,
+        )
 
-            if getattr(settings, "PACKAGING_AUTHOR_TAKE_ENABLED", True):
-                try:
-                    author_take, _author_take_prompt, _author_take_response, author_take_tokens = (
-                        _generate_author_take_via_llm(
-                            digest,
-                            articles,
-                            profile,
-                            source_evidence_pack=source_evidence_pack,
-                        )
-                    )
-                    author_take_quality_issues = _author_take_quality_issues(author_take)
-                    if _author_take_requires_rejection(author_take):
-                        author_take_error = f"author take rejected: {', '.join(author_take_quality_issues)}"
-                        author_take = None
-                except Exception as exc:  # noqa: BLE001 - author take is best-effort
-                    author_take_error = str(exc)
-                    author_take = None
-
-            try:
-                post_brief, post_brief_prompt, _brief_response_text, post_brief_tokens = _generate_post_brief_via_llm(
-                    digest,
-                    articles,
-                    profile,
-                    source_evidence_pack=source_evidence_pack,
-                    author_take=author_take,
-                )
-            except Exception as exc:
-                raise ContentPackageValidationError(
-                    f"LinkedIn post brief generation/validation failed: {exc}"
-                ) from exc
-
-            payload, prompt, response_text, tokens = _generate_payload_via_llm(
-                digest,
-                articles,
-                profile,
-                post_brief=post_brief,
-                source_evidence_pack=source_evidence_pack,
-                author_take=author_take,
-            )
-            payload = _normalize_linkedin_post_payload(payload)
-            estimated_cost = estimate_cost_usd(
-                tokens.get("prompt_tokens") if tokens else None,
-                tokens.get("completion_tokens") if tokens else None,
-            )
-            repairable_payload_issues = _collect_repairable_payload_issues(payload)
-            if not repairable_payload_issues:
-                validate_content_package_payload(payload)
-            quality_gate = _evaluate_linkedin_post_quality(payload)
-            brief_alignment = _evaluate_post_brief_alignment(payload, post_brief)
-            post_mechanics = _evaluate_linkedin_post_mechanics(payload, post_brief)
-            concrete_detail_diagnostics = _build_concrete_detail_diagnostics(
-                post_brief,
-                payload,
-                initial_alignment=brief_alignment,
-            )
-            repair_reasons = repairable_payload_issues + _combined_repair_reasons(
-                quality_gate,
-                brief_alignment,
-                post_mechanics,
-            )
-            banned_phrase_diagnostics = _build_banned_phrase_diagnostics(
-                repair_reasons,
-                payload,
-            )
-
-            deterministic_repair_required = (
-                repairable_payload_issues
-                or _quality_gate_requires_repair(quality_gate)
-                or _brief_alignment_requires_repair(brief_alignment)
-                or _post_mechanics_requires_repair(post_mechanics)
-            )
-            if deterministic_repair_required:
-                repair_attempted = True
-                if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True):
-                    try:
-                        (
-                            editorial_review,
-                            editorial_review_prompt,
-                            editorial_review_response_text,
-                            editorial_review_tokens,
-                        ) = _generate_editorial_review_via_llm(
-                            digest,
-                            payload,
-                            profile,
-                            post_brief,
-                            quality_gate,
-                            brief_alignment,
-                            post_mechanics,
-                            repair_delta=None,
-                            repair_reasons=repair_reasons,
-                        )
-                        editorial_review_used_for_repair = True
-                    except Exception as exc:  # noqa: BLE001 - editorial guidance is diagnostic-only
-                        editorial_review_error = str(exc)
-                repair_report = {
-                    "status": "retry",
-                    "reasons": repair_reasons,
-                    "quality_gate": quality_gate,
-                    "brief_alignment": brief_alignment,
-                    "post_mechanics": post_mechanics,
-                }
-                repaired_payload, repair_prompt, repair_response_text, _repair_tokens = _repair_packaging_payload_via_llm(
-                    digest,
-                    articles,
-                    profile,
-                    weak_payload=payload,
-                    quality_report=repair_report,
-                    post_brief=post_brief,
-                    editorial_review=editorial_review,
-                    editorial_review_error=editorial_review_error,
-                )
-                repaired_payload = _normalize_linkedin_post_payload(repaired_payload)
-                repaired_payload["post_text"] = _split_long_post_paragraphs(repaired_payload["post_text"])
-                validate_content_package_payload(repaired_payload)
-                repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
-                repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
-                repair_post_mechanics = _evaluate_linkedin_post_mechanics(repaired_payload, post_brief)
-                repair_delta = _evaluate_repair_rewrite_delta(payload, repaired_payload, repair_reasons)
-                concrete_detail_diagnostics = _build_concrete_detail_diagnostics(
-                    post_brief,
-                    payload,
-                    initial_alignment=brief_alignment,
-                    repaired_payload=repaired_payload,
-                    repair_alignment=repair_brief_alignment,
-                    repair_attempted=True,
-                )
-                banned_phrase_diagnostics = _build_banned_phrase_diagnostics(
-                    repair_reasons,
-                    payload,
-                    repaired_payload=repaired_payload,
-                    repair_attempted=True,
-                )
-                if (
-                    _quality_gate_requires_repair(repair_quality_gate)
-                    or _brief_alignment_requires_repair(repair_brief_alignment)
-                    or _post_mechanics_requires_repair(repair_post_mechanics)
-                    or _repair_delta_requires_failure(repair_delta)
-                ):
-                    unresolved_reasons = _combined_repair_reasons(
-                        repair_quality_gate,
-                        repair_brief_alignment,
-                        repair_post_mechanics,
-                    )
-                    unresolved_reasons.extend(
-                        f"repair_delta:{issue}"
-                        for issue in repair_delta.get("issues", [])
-                    )
-                    raise ContentPackageValidationError(
-                        "LinkedIn post quality repair did not resolve retry-trigger issues: "
-                        f"{unresolved_reasons}"
-                    )
-                payload = repaired_payload
-                brief_alignment = repair_brief_alignment
-                post_mechanics = repair_post_mechanics
-                response_text = repair_response_text
-                repair_succeeded = True
-            if getattr(settings, "PACKAGING_EDITORIAL_REVIEW_ENABLED", True) and not repair_attempted:
-                try:
-                    (
-                        editorial_review,
-                        editorial_review_prompt,
-                        editorial_review_response_text,
-                        editorial_review_tokens,
-                    ) = _generate_editorial_review_via_llm(
-                        digest,
-                        payload,
-                        profile,
-                        post_brief,
-                        quality_gate,
-                        brief_alignment,
-                        post_mechanics,
-                        repair_delta=repair_delta,
-                        repair_reasons=repair_reasons,
-                    )
-                except Exception as exc:  # noqa: BLE001 - diagnostic-only review must not block saving
-                    editorial_review_error = str(exc)
-                if _editorial_review_requires_repair(editorial_review):
-                    editorial_review_triggered_repair = True
-                    editorial_review_used_for_repair = True
-                    editorial_repair_reasons = _editorial_review_repair_reasons(editorial_review)
-                    repair_reasons = editorial_repair_reasons
-                    repair_attempted = True
-                    repair_report = {
-                        "status": "retry",
-                        "reasons": repair_reasons,
-                        "quality_gate": quality_gate,
-                        "brief_alignment": brief_alignment,
-                        "post_mechanics": post_mechanics,
-                        "editorial_review": editorial_review,
-                    }
-                    repaired_payload, repair_prompt, repair_response_text, _repair_tokens = _repair_packaging_payload_via_llm(
-                        digest,
-                        articles,
-                        profile,
-                        weak_payload=payload,
-                        quality_report=repair_report,
-                        post_brief=post_brief,
-                        editorial_review=editorial_review,
-                        editorial_review_error=editorial_review_error,
-                    )
-                    repaired_payload = _normalize_linkedin_post_payload(repaired_payload)
-                    repaired_payload["post_text"] = _split_long_post_paragraphs(repaired_payload["post_text"])
-                    validate_content_package_payload(repaired_payload)
-                    repair_quality_gate = _evaluate_linkedin_post_quality(repaired_payload)
-                    repair_brief_alignment = _evaluate_post_brief_alignment(repaired_payload, post_brief)
-                    repair_post_mechanics = _evaluate_linkedin_post_mechanics(repaired_payload, post_brief)
-                    repair_delta = _evaluate_repair_rewrite_delta(payload, repaired_payload, repair_reasons)
-                    concrete_detail_diagnostics = _build_concrete_detail_diagnostics(
-                        post_brief,
-                        payload,
-                        initial_alignment=brief_alignment,
-                        repaired_payload=repaired_payload,
-                        repair_alignment=repair_brief_alignment,
-                        repair_attempted=True,
-                    )
-                    banned_phrase_diagnostics = _build_banned_phrase_diagnostics(
-                        repair_reasons,
-                        payload,
-                        repaired_payload=repaired_payload,
-                        repair_attempted=True,
-                    )
-                    if (
-                        _quality_gate_requires_repair(repair_quality_gate)
-                        or _brief_alignment_requires_repair(repair_brief_alignment)
-                        or _post_mechanics_requires_repair(repair_post_mechanics)
-                        or _repair_delta_requires_failure(repair_delta)
-                    ):
-                        unresolved_reasons = _combined_repair_reasons(
-                            repair_quality_gate,
-                            repair_brief_alignment,
-                            repair_post_mechanics,
-                        )
-                        unresolved_reasons.extend(
-                            f"repair_delta:{issue}"
-                            for issue in repair_delta.get("issues", [])
-                        )
-                        raise ContentPackageValidationError(
-                            "LinkedIn post editorial repair did not produce a valid package: "
-                            f"{unresolved_reasons}"
-                        )
-                    payload = repaired_payload
-                    brief_alignment = repair_brief_alignment
-                    post_mechanics = repair_post_mechanics
-                    response_text = repair_response_text
-                    repair_succeeded = True
-            return PackagingGenerationResult(
-                prompt=prompt,
-                response_text=response_text,
-                payload=payload,
-                provider=provider,
-                is_mock=is_mock,
-                fallback_reason=fallback_reason,
-                tokens=tokens,
-                estimated_cost_usd=estimated_cost,
-                quality_gate=quality_gate,
-                repair_attempted=repair_attempted,
-                repair_succeeded=repair_succeeded,
-                repair_reasons=repair_reasons,
-                repair_quality_gate=repair_quality_gate,
-                repair_delta=repair_delta,
-                repair_prompt=repair_prompt,
-                repair_response_text=repair_response_text,
-                post_brief=post_brief,
-                post_brief_prompt=post_brief_prompt,
-                post_brief_tokens=post_brief_tokens,
-                source_evidence_pack=source_evidence_pack,
-                source_evidence_tokens=source_evidence_tokens,
-                source_evidence_error=source_evidence_error,
-                author_take=author_take,
-                author_take_tokens=author_take_tokens,
-                author_take_error=author_take_error,
-                author_take_quality_issues=author_take_quality_issues,
-                brief_alignment=brief_alignment,
-                post_mechanics=post_mechanics,
-                editorial_review=editorial_review,
-                editorial_review_prompt=editorial_review_prompt,
-                editorial_review_response_text=editorial_review_response_text,
-                editorial_review_tokens=editorial_review_tokens,
-                editorial_review_error=editorial_review_error,
-                editorial_review_used_for_repair=editorial_review_used_for_repair,
-                editorial_review_triggered_repair=editorial_review_triggered_repair,
-                editorial_repair_reasons=editorial_repair_reasons,
-                concrete_detail_diagnostics=concrete_detail_diagnostics,
-                banned_phrase_diagnostics=banned_phrase_diagnostics,
-            )
-        except Exception as exc:  # noqa: BLE001 - explicit fallback for the MVP stage
-            payload = _build_mock_payload(digest, articles)
-            if post_brief is not None:
-                prompt = build_post_prompt(
-                    digest,
-                    articles,
-                    profile,
-                    post_brief=post_brief,
-                    source_evidence_pack=source_evidence_pack,
-                    author_take=author_take,
-                )
-            response_text = json.dumps(payload, ensure_ascii=False, indent=2)
-            provider = "mock"
-            is_mock = True
-            fallback_reason = (
-                "Fallback на mock из-за ошибки реального AI call или невалидного JSON: "
-                f"{exc}. Raw response: <empty>"
-            )
-
-    validate_content_package_payload(payload)
+    synthesis = run_post_synthesis_pipeline(
+        digest,
+        articles,
+        profile,
+        _post_synthesis_dependencies(),
+    )
+    validate_content_package_payload(synthesis.payload)
 
     return PackagingGenerationResult(
-        prompt=prompt,
-        response_text=response_text,
-        payload=payload,
-        provider=provider,
-        is_mock=is_mock,
-        fallback_reason=fallback_reason,
-        tokens=tokens,
-        estimated_cost_usd=estimated_cost,
-        quality_gate=quality_gate,
-        repair_attempted=repair_attempted,
-        repair_succeeded=repair_succeeded,
-        repair_reasons=repair_reasons,
-        repair_quality_gate=repair_quality_gate,
-        repair_delta=repair_delta,
-        repair_prompt=repair_prompt,
-        repair_response_text=repair_response_text,
-        post_brief=post_brief,
-        post_brief_prompt=post_brief_prompt,
-        post_brief_tokens=post_brief_tokens,
-        source_evidence_pack=source_evidence_pack,
-        source_evidence_tokens=source_evidence_tokens,
-        source_evidence_error=source_evidence_error,
-        author_take=author_take,
-        author_take_tokens=author_take_tokens,
-        author_take_error=author_take_error,
-        author_take_quality_issues=author_take_quality_issues,
-        brief_alignment=brief_alignment,
-        post_mechanics=post_mechanics,
-        editorial_review=editorial_review,
-        editorial_review_prompt=editorial_review_prompt,
-        editorial_review_response_text=editorial_review_response_text,
-        editorial_review_tokens=editorial_review_tokens,
-        editorial_review_error=editorial_review_error,
-        editorial_review_used_for_repair=editorial_review_used_for_repair,
-        editorial_review_triggered_repair=editorial_review_triggered_repair,
-        editorial_repair_reasons=editorial_repair_reasons,
-        concrete_detail_diagnostics=concrete_detail_diagnostics,
-        banned_phrase_diagnostics=banned_phrase_diagnostics,
+        prompt=synthesis.prompt,
+        response_text=synthesis.response_text,
+        payload=synthesis.payload,
+        provider=synthesis.provider,
+        is_mock=synthesis.is_mock,
+        fallback_reason=synthesis.fallback_reason,
+        tokens=synthesis.tokens,
+        estimated_cost_usd=synthesis.estimated_cost_usd,
+        quality_gate=synthesis.quality_gate,
+        repair_attempted=synthesis.repair_attempted,
+        repair_succeeded=synthesis.repair_succeeded,
+        repair_reasons=synthesis.repair_reasons,
+        repair_quality_gate=synthesis.repair_quality_gate,
+        repair_delta=synthesis.repair_delta,
+        repair_prompt=synthesis.repair_prompt,
+        repair_response_text=synthesis.repair_response_text,
+        post_brief=synthesis.post_brief,
+        post_brief_prompt=synthesis.post_brief_prompt,
+        post_brief_tokens=synthesis.post_brief_tokens,
+        source_evidence_pack=synthesis.source_evidence_pack,
+        source_evidence_tokens=synthesis.source_evidence_tokens,
+        source_evidence_error=synthesis.source_evidence_error,
+        author_take=synthesis.author_take,
+        author_take_tokens=synthesis.author_take_tokens,
+        author_take_error=synthesis.author_take_error,
+        author_take_quality_issues=synthesis.author_take_quality_issues,
+        brief_alignment=synthesis.brief_alignment,
+        post_mechanics=synthesis.post_mechanics,
+        editorial_review=synthesis.editorial_review,
+        editorial_review_prompt=synthesis.editorial_review_prompt,
+        editorial_review_response_text=synthesis.editorial_review_response_text,
+        editorial_review_tokens=synthesis.editorial_review_tokens,
+        editorial_review_error=synthesis.editorial_review_error,
+        editorial_review_used_for_repair=synthesis.editorial_review_used_for_repair,
+        editorial_review_triggered_repair=synthesis.editorial_review_triggered_repair,
+        editorial_repair_reasons=synthesis.editorial_repair_reasons,
+        concrete_detail_diagnostics=synthesis.concrete_detail_diagnostics,
+        banned_phrase_diagnostics=synthesis.banned_phrase_diagnostics,
+    )
+
+
+def _post_synthesis_dependencies() -> PostSynthesisDependencies:
+    return PostSynthesisDependencies(
+        generate_source_evidence_pack=_generate_source_evidence_pack_via_llm,
+        generate_author_take=_generate_author_take_via_llm,
+        author_take_quality_issues=_author_take_quality_issues,
+        author_take_requires_rejection=_author_take_requires_rejection,
+        generate_post_brief=_generate_post_brief_via_llm,
+        generate_payload=_generate_payload_via_llm,
+        normalize_payload=_normalize_linkedin_post_payload,
+        collect_repairable_payload_issues=_collect_repairable_payload_issues,
+        evaluate_quality=_evaluate_linkedin_post_quality,
+        evaluate_brief_alignment=_evaluate_post_brief_alignment,
+        evaluate_post_mechanics=_evaluate_linkedin_post_mechanics,
+        build_concrete_detail_diagnostics=_build_concrete_detail_diagnostics,
+        combined_repair_reasons=_combined_repair_reasons,
+        build_banned_phrase_diagnostics=_build_banned_phrase_diagnostics,
+        quality_gate_requires_repair=_quality_gate_requires_repair,
+        brief_alignment_requires_repair=_brief_alignment_requires_repair,
+        post_mechanics_requires_repair=_post_mechanics_requires_repair,
+        generate_editorial_review=_generate_editorial_review_via_llm,
+        repair_payload=_repair_packaging_payload_via_llm,
+        split_long_post_paragraphs=_split_long_post_paragraphs,
+        evaluate_repair_rewrite_delta=_evaluate_repair_rewrite_delta,
+        repair_delta_requires_failure=_repair_delta_requires_failure,
+        editorial_review_requires_repair=_editorial_review_requires_repair,
+        editorial_review_repair_reasons=_editorial_review_repair_reasons,
+        build_mock_payload=_build_mock_payload,
+        build_post_prompt=build_post_prompt,
     )
 
 
