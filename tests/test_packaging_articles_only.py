@@ -11,7 +11,10 @@ from apps.sources.models import Article
 from services.packaging import generate_content_package_for_digest
 from services.packaging.generator import (
     PackagingGenerationResult,
+    build_angle_decision_prompt,
+    build_reader_problem_prompt,
     build_source_evidence_prompt,
+    build_writing_plan_prompt,
     build_editorial_review_prompt,
     _collect_repairable_payload_issues,
     _generate_source_evidence_pack_via_llm,
@@ -21,15 +24,22 @@ from services.packaging.generator import (
     _extract_banned_phrases_from_repair_reasons,
     _find_avoid_angle_match,
     _find_concrete_detail_match,
+    _generate_angle_decision_via_llm,
     _generate_author_take_via_llm,
     _generate_editorial_review_via_llm,
     _generate_post_brief_via_llm,
+    _generate_reader_problem_via_llm,
+    _generate_writing_plan_via_llm,
+    _repair_author_take_via_llm,
     _author_take_quality_issues,
     _author_take_requires_rejection,
+    _validate_angle_decision_payload,
     _validate_source_evidence_pack_payload,
     _validate_author_take_payload,
     _validate_editorial_review_payload,
     _validate_post_brief_payload,
+    _validate_reader_problem_payload,
+    _validate_writing_plan_payload,
     normalize_linkedin_hashtags,
 )
 from services.packaging.validators import ContentPackageValidationError
@@ -40,6 +50,9 @@ from services.packaging.validators import ContentPackageValidationError
     PACKAGING_EDITORIAL_REVIEW_ENABLED=False,
     PACKAGING_SOURCE_EVIDENCE_ENABLED=False,
     PACKAGING_AUTHOR_TAKE_ENABLED=False,
+    PACKAGING_ANGLE_DECISION_ENABLED=False,
+    PACKAGING_READER_PROBLEM_ENABLED=False,
+    PACKAGING_WRITING_PLAN_ENABLED=False,
 )
 class PackagingArticlesOnlyTests(TestCase):
     def _create_digest_for_packaging(self, username: str = "packaging-test-user") -> Digest:
@@ -139,6 +152,39 @@ class PackagingArticlesOnlyTests(TestCase):
             {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
         )
 
+    def _writing_plan_payload(self, **overrides) -> dict:
+        payload = {
+            "opening_claim": "Polished presence does not prove current judgment.",
+            "first_3_lines": [
+                "Polished presence does not prove current judgment.",
+                "It can make the profile look cleaner while the proof stays thin.",
+                "The stronger signal is recent work that shows decisions.",
+            ],
+            "body_sequence": [
+                "Contrast logo/profile polish with evidence from recent work.",
+                "Show why decisions, tradeoffs, failures, and lessons create stronger proof.",
+                "Give the reader a quick audit of their last posts.",
+            ],
+            "evidence_to_use": [
+                "Build in public gives people evidence of current judgment.",
+                "People trust current evidence of expertise more than polished claims.",
+            ],
+            "diagnostic_check": "Look at the last 10 posts and count how many show decisions or lessons.",
+            "terms_to_avoid": ["authenticity", "visibility", "enhance your brand"],
+            "ending_reframe": "A brand is a proof trail, not a polished surface.",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _writing_plan_generation_result(self) -> tuple[dict, str, str, dict]:
+        writing_plan = self._writing_plan_payload()
+        return (
+            writing_plan,
+            "writing plan prompt",
+            json.dumps(writing_plan),
+            {"prompt_tokens": 11, "completion_tokens": 12, "total_tokens": 23},
+        )
+
     def _source_evidence_pack(self, **overrides) -> dict:
         payload = {
             "source_phrases": ["Brand Lag"],
@@ -182,6 +228,48 @@ class PackagingArticlesOnlyTests(TestCase):
             "author take prompt",
             json.dumps(author_take),
             {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        )
+
+    def _angle_decision_payload(self, **overrides) -> dict:
+        payload = {
+            "controlling_angle": "Current proof beats polished claims.",
+            "angle_source": "author_take",
+            "why_this_angle": "It follows the author take and the source mechanism about current proof.",
+            "allowed_supporting_terms": ["build in public", "current proof"],
+            "do_not_make_main_angle": ["Brand Lag", "authentic storytelling"],
+            "angle_to_avoid": "Avoid making Brand Lag the main point.",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _angle_decision_generation_result(self) -> tuple[dict, str, str, dict]:
+        angle_decision = self._angle_decision_payload()
+        return (
+            angle_decision,
+            "angle decision prompt",
+            json.dumps(angle_decision),
+            {"prompt_tokens": 7, "completion_tokens": 8, "total_tokens": 15},
+        )
+
+    def _reader_problem_payload(self, **overrides) -> dict:
+        payload = {
+            "target_reader": "Founders polishing positioning before proving judgment",
+            "reader_situation": "They are trying to make the brand look clearer before the work signal is clear.",
+            "wrong_optimization": "They optimize the public image before showing recent decisions.",
+            "visible_cost": "People can see activity but cannot tell what to trust them with.",
+            "diagnostic_check": "Look at whether recent posts show decisions, tradeoffs, or lessons.",
+            "why_reader_should_care": "Without current proof, visibility creates attention without trust.",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _reader_problem_generation_result(self) -> tuple[dict, str, str, dict]:
+        reader_problem = self._reader_problem_payload()
+        return (
+            reader_problem,
+            "reader problem prompt",
+            json.dumps(reader_problem),
+            {"prompt_tokens": 9, "completion_tokens": 10, "total_tokens": 19},
         )
 
     def _editorial_review_payload(self, **overrides) -> dict:
@@ -1362,6 +1450,246 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertIn("practical_point_generic:focus on value", issues)
         self.assertTrue(_author_take_requires_rejection(author_take))
 
+    def test_validate_angle_decision_payload_accepts_valid_payload(self) -> None:
+        payload = self._angle_decision_payload(
+            controlling_angle=" Current proof beats polished claims ",
+            allowed_supporting_terms=[" build in public ", "", 123],
+            do_not_make_main_angle=[" Brand Lag ", "authentic storytelling"],
+            extra_key="ignored",
+        )
+
+        normalized = _validate_angle_decision_payload(payload)
+
+        self.assertEqual(normalized["controlling_angle"], "Current proof beats polished claims")
+        self.assertEqual(normalized["allowed_supporting_terms"], ["build in public"])
+        self.assertEqual(normalized["do_not_make_main_angle"], ["Brand Lag", "authentic storytelling"])
+        self.assertNotIn("extra_key", normalized)
+
+    def test_validate_angle_decision_payload_moves_hijack_term_to_do_not_make_main_angle(self) -> None:
+        payload = self._angle_decision_payload(
+            allowed_supporting_terms=["Brand Lag", "build in public", "reputation"],
+            do_not_make_main_angle=["visual identity"],
+        )
+        author_take = self._author_take_payload(
+            core_opinion="Current proof beats polished claims."
+        )
+
+        normalized = _validate_angle_decision_payload(payload, author_take=author_take)
+
+        self.assertEqual(normalized["allowed_supporting_terms"], ["build in public"])
+        self.assertIn("Brand Lag", normalized["do_not_make_main_angle"])
+        self.assertIn("reputation", normalized["do_not_make_main_angle"])
+
+    def test_validate_angle_decision_payload_keeps_explicit_author_take_term_allowed(self) -> None:
+        payload = self._angle_decision_payload(
+            allowed_supporting_terms=["Brand Lag", "build in public"],
+            do_not_make_main_angle=[],
+        )
+        author_take = self._author_take_payload(
+            core_opinion="Brand Lag hides current proof."
+        )
+
+        normalized = _validate_angle_decision_payload(payload, author_take=author_take)
+
+        self.assertEqual(normalized["allowed_supporting_terms"], ["Brand Lag", "build in public"])
+        self.assertNotIn("Brand Lag", normalized["do_not_make_main_angle"])
+
+    def test_validate_angle_decision_payload_keeps_overlapping_term_only_in_do_not_make_main_angle(self) -> None:
+        payload = self._angle_decision_payload(
+            allowed_supporting_terms=["Brand Lag", "build in public"],
+            do_not_make_main_angle=["Brand Lag"],
+        )
+        author_take = self._author_take_payload(
+            core_opinion="Brand Lag hides current proof."
+        )
+
+        normalized = _validate_angle_decision_payload(payload, author_take=author_take)
+
+        self.assertEqual(normalized["allowed_supporting_terms"], ["build in public"])
+        self.assertEqual(normalized["do_not_make_main_angle"], ["Brand Lag"])
+
+    def test_validate_angle_decision_payload_rejects_controlling_angle_with_blocked_term(self) -> None:
+        payload = self._angle_decision_payload(
+            controlling_angle="Brand Lag hides current proof.",
+            allowed_supporting_terms=["build in public"],
+            do_not_make_main_angle=["Brand Lag"],
+        )
+
+        with self.assertRaisesRegex(ContentPackageValidationError, "controlling_angle contains blocked term"):
+            _validate_angle_decision_payload(payload)
+
+    def test_validate_angle_decision_payload_rejects_blocked_term_case_insensitively(self) -> None:
+        payload = self._angle_decision_payload(
+            controlling_angle="Outdated perceptions hide current proof.",
+            allowed_supporting_terms=["build in public"],
+            do_not_make_main_angle=["outdated perceptions"],
+        )
+
+        with self.assertRaisesRegex(ContentPackageValidationError, "controlling_angle contains blocked term"):
+            _validate_angle_decision_payload(payload)
+
+    def test_validate_angle_decision_payload_missing_required_field_fails(self) -> None:
+        payload = self._angle_decision_payload()
+        del payload["controlling_angle"]
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_angle_decision_payload(payload)
+
+    def test_validate_angle_decision_payload_empty_string_field_fails(self) -> None:
+        payload = self._angle_decision_payload(why_this_angle="   ")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_angle_decision_payload(payload)
+
+    def test_validate_angle_decision_payload_invalid_angle_source_fails(self) -> None:
+        payload = self._angle_decision_payload(angle_source="articles")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_angle_decision_payload(payload)
+
+    def test_validate_angle_decision_payload_non_list_field_fails(self) -> None:
+        payload = self._angle_decision_payload(allowed_supporting_terms="build in public")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_angle_decision_payload(payload)
+
+    def test_validate_reader_problem_payload_accepts_valid_payload(self) -> None:
+        payload = self._reader_problem_payload(
+            target_reader=" Founders polishing positioning ",
+            extra_key="ignored",
+        )
+
+        normalized = _validate_reader_problem_payload(payload)
+
+        self.assertEqual(normalized["target_reader"], "Founders polishing positioning")
+        self.assertNotIn("extra_key", normalized)
+
+    def test_validate_reader_problem_payload_missing_required_field_fails(self) -> None:
+        payload = self._reader_problem_payload()
+        del payload["visible_cost"]
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_reader_problem_payload(payload)
+
+    def test_validate_reader_problem_payload_empty_string_field_fails(self) -> None:
+        payload = self._reader_problem_payload(diagnostic_check="   ")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_reader_problem_payload(payload)
+
+    def test_validate_writing_plan_payload_accepts_valid_payload_and_strips_extra_keys(self) -> None:
+        payload = self._writing_plan_payload(
+            opening_claim="  Polished presence does not prove current judgment.  ",
+            first_3_lines=[
+                "  Polished presence does not prove current judgment.  ",
+                "The profile can look cleaner while proof stays thin.",
+            ],
+            body_sequence=[
+                "Contrast polish with proof.",
+                "Add a diagnostic check.",
+                "Extra step kept.",
+                "Fourth step kept.",
+                "Fifth step kept.",
+                "Sixth step kept.",
+                "Seventh step trimmed.",
+            ],
+            evidence_to_use=[
+                "Build in public gives people evidence.",
+                "Second evidence kept.",
+                "Third evidence kept.",
+                "Fourth evidence kept.",
+                "Fifth evidence kept.",
+                "Sixth evidence trimmed.",
+            ],
+            terms_to_avoid=[
+                "authenticity",
+                "visibility",
+                "trust",
+                "authority",
+                "reputation",
+                "engagement",
+                "connection",
+                "landscape",
+                "leverage",
+                "resonate",
+                "extra trimmed",
+            ],
+            extra_key="ignored",
+        )
+
+        normalized = _validate_writing_plan_payload(payload)
+
+        self.assertEqual(normalized["opening_claim"], "Polished presence does not prove current judgment.")
+        self.assertEqual(len(normalized["first_3_lines"]), 2)
+        self.assertEqual(len(normalized["body_sequence"]), 6)
+        self.assertEqual(len(normalized["evidence_to_use"]), 5)
+        self.assertEqual(len(normalized["terms_to_avoid"]), 10)
+        self.assertNotIn("extra_key", normalized)
+
+    def test_validate_writing_plan_payload_missing_required_string_field_fails(self) -> None:
+        payload = self._writing_plan_payload()
+        del payload["opening_claim"]
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_writing_plan_payload(payload)
+
+    def test_validate_writing_plan_payload_empty_opening_claim_fails(self) -> None:
+        payload = self._writing_plan_payload(opening_claim="   ")
+
+        with self.assertRaises(ContentPackageValidationError):
+            _validate_writing_plan_payload(payload)
+
+    def test_validate_writing_plan_payload_non_list_fields_fail(self) -> None:
+        for field_name in ["first_3_lines", "body_sequence", "evidence_to_use"]:
+            payload = self._writing_plan_payload(**{field_name: "not a list"})
+            with self.subTest(field_name=field_name):
+                with self.assertRaises(ContentPackageValidationError):
+                    _validate_writing_plan_payload(payload)
+
+    def test_validate_writing_plan_payload_requires_minimum_list_items(self) -> None:
+        invalid_payloads = [
+            self._writing_plan_payload(first_3_lines=["Only one line."]),
+            self._writing_plan_payload(body_sequence=["Only one step."]),
+            self._writing_plan_payload(evidence_to_use=[]),
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ContentPackageValidationError):
+                    _validate_writing_plan_payload(payload)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_writing_plan_via_llm_returns_normalized_plan(self, mock_client) -> None:
+        digest = self._create_digest_for_packaging("writing-plan-llm-user")
+        response_payload = self._writing_plan_payload(
+            opening_claim="  Polished presence does not prove current judgment.  ",
+            extra_key="remove me",
+        )
+        mock_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(response_payload),
+            usage={"prompt_tokens": 9, "completion_tokens": 10, "total_tokens": 19},
+        )
+
+        writing_plan, prompt, response_text, usage = _generate_writing_plan_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+            post_brief=self._post_brief_payload(),
+            source_evidence_pack=self._source_evidence_pack(),
+            author_take=self._author_take_payload(),
+            angle_decision=self._angle_decision_payload(),
+            reader_problem=self._reader_problem_payload(),
+        )
+
+        self.assertEqual(writing_plan["opening_claim"], "Polished presence does not prove current judgment.")
+        self.assertNotIn("extra_key", writing_plan)
+        self.assertIn("Post brief:", prompt)
+        self.assertIn("Current proof beats polished claims.", prompt)
+        self.assertIn("source_evidence_pack", prompt)
+        self.assertIn("opening_claim", response_text)
+        self.assertEqual(usage["total_tokens"], 19)
+
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator.OpenAIClient")
     def test_generate_source_evidence_pack_via_llm_returns_normalized_pack(self, mock_client) -> None:
@@ -1401,6 +1729,89 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertIn("Brand Lag", prompt)
         self.assertIn("Current proof beats polished claims", response_text)
         self.assertEqual(usage["total_tokens"], 11)
+        mock_client.return_value.generate_text.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_repair_author_take_via_llm_returns_normalized_take(self, mock_client) -> None:
+        digest = self._create_digest_for_packaging("author-take-repair-llm-user")
+        rejected_author_take = self._author_take_payload(
+            core_opinion="Visibility creates professional credibility."
+        )
+        repaired_author_take = self._author_take_payload(
+            core_opinion="If recent posts show activity but not decisions, people see motion without evidence of judgment."
+        )
+        response = SimpleNamespace(
+            text=json.dumps(repaired_author_take),
+            usage={"prompt_tokens": 7, "completion_tokens": 8, "total_tokens": 15},
+        )
+        mock_client.return_value.generate_text.return_value = response
+
+        author_take, prompt, response_text, usage = _repair_author_take_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+            rejected_author_take=rejected_author_take,
+            author_take_quality_issues=["core_opinion_generic:visibility"],
+            source_evidence_pack=self._source_evidence_pack(),
+        )
+
+        self.assertEqual(author_take["core_opinion"], repaired_author_take["core_opinion"])
+        self.assertIn("Visibility creates professional credibility.", prompt)
+        self.assertIn("core_opinion_generic:visibility", prompt)
+        self.assertIn("core_opinion", response_text)
+        self.assertEqual(usage["total_tokens"], 15)
+        mock_client.return_value.generate_text.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_angle_decision_via_llm_returns_normalized_decision(self, mock_client) -> None:
+        digest = self._create_digest_for_packaging("angle-decision-llm-user")
+        response = SimpleNamespace(
+            text=json.dumps(self._angle_decision_payload(controlling_angle=" Current proof beats polished claims. ")),
+            usage={"prompt_tokens": 7, "completion_tokens": 8, "total_tokens": 15},
+        )
+        mock_client.return_value.generate_text.return_value = response
+
+        angle_decision, prompt, response_text, usage = _generate_angle_decision_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+            source_evidence_pack=self._source_evidence_pack(),
+            author_take=self._author_take_payload(),
+        )
+
+        self.assertEqual(angle_decision["controlling_angle"], "Current proof beats polished claims.")
+        self.assertIn("Brand Lag", prompt)
+        self.assertIn("Current proof beats polished claims", prompt)
+        self.assertIn("controlling_angle", response_text)
+        self.assertEqual(usage["total_tokens"], 15)
+        mock_client.return_value.generate_text.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_reader_problem_via_llm_returns_normalized_problem(self, mock_client) -> None:
+        digest = self._create_digest_for_packaging("reader-problem-llm-user")
+        response = SimpleNamespace(
+            text=json.dumps(self._reader_problem_payload(target_reader=" Founders polishing positioning ")),
+            usage={"prompt_tokens": 9, "completion_tokens": 10, "total_tokens": 19},
+        )
+        mock_client.return_value.generate_text.return_value = response
+
+        reader_problem, prompt, response_text, usage = _generate_reader_problem_via_llm(
+            digest,
+            digest.get_articles(),
+            self._author_profile(),
+            angle_decision=self._angle_decision_payload(),
+            source_evidence_pack=self._source_evidence_pack(),
+            author_take=self._author_take_payload(),
+        )
+
+        self.assertEqual(reader_problem["target_reader"], "Founders polishing positioning")
+        self.assertIn("Current proof beats polished claims.", prompt)
+        self.assertIn("Brand Lag", prompt)
+        self.assertIn("target_reader", response_text)
+        self.assertEqual(usage["total_tokens"], 19)
         mock_client.return_value.generate_text.assert_called_once()
 
     def test_packaging_returns_safe_fallback_when_articles_are_missing(self) -> None:
@@ -2446,12 +2857,14 @@ class PackagingArticlesOnlyTests(TestCase):
     )
     @patch("services.packaging.generator._generate_payload_via_llm")
     @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._repair_author_take_via_llm")
     @patch("services.packaging.generator._generate_author_take_via_llm")
     @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
     def test_rejected_author_take_does_not_block_generation_or_flow_to_prompts(
         self,
         mock_generate_source_evidence,
         mock_generate_author_take,
+        mock_repair_author_take,
         mock_generate_brief,
         mock_generate_payload,
     ) -> None:
@@ -2466,6 +2879,12 @@ class PackagingArticlesOnlyTests(TestCase):
             "author take prompt",
             json.dumps(weak_author_take),
             {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        )
+        mock_repair_author_take.return_value = (
+            weak_author_take,
+            "author take repair prompt",
+            json.dumps(weak_author_take),
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
         )
         mock_generate_brief.return_value = self._brief_generation_result()
         mock_generate_payload.return_value = (
@@ -2489,6 +2908,10 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertIn("core_opinion_question_led", debug_info["author_take_quality_issues"])
         self.assertIn("core_opinion_generic:authentic", debug_info["author_take_quality_issues"])
         self.assertIn("reader_mistake_generic_many_people", debug_info["author_take_quality_issues"])
+        self.assertTrue(debug_info["author_take_repair_attempted"])
+        self.assertFalse(debug_info["author_take_repair_succeeded"])
+        self.assertIn("core_opinion_question", debug_info["author_take_repair_quality_issues"])
+        self.assertIn("author take repair rejected", debug_info["author_take_repair_error"])
         self.assertEqual(mock_generate_brief.call_args.kwargs["source_evidence_pack"], self._source_evidence_pack())
         self.assertIsNone(mock_generate_brief.call_args.kwargs["author_take"])
         self.assertEqual(mock_generate_payload.call_args.kwargs["source_evidence_pack"], self._source_evidence_pack())
@@ -2498,15 +2921,169 @@ class PackagingArticlesOnlyTests(TestCase):
         OPENAI_API_KEY="sk-test",
         PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
         PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
     )
     @patch("services.packaging.generator._generate_payload_via_llm")
     @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._repair_author_take_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_rejected_author_take_skips_angle_and_reader_but_continues_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_repair_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("author-take-rejected-skip-user")
+        weak_author_take = self._author_take_payload(
+            core_opinion="Are you building authentic visibility?",
+            reader_mistake="Many professionals polish before proving judgment.",
+        )
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = (
+            weak_author_take,
+            "author take prompt",
+            json.dumps(weak_author_take),
+            {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        )
+        mock_repair_author_take.return_value = (
+            weak_author_take,
+            "author take repair prompt",
+            json.dumps(weak_author_take),
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertTrue(content_package.post_text)
+        self.assertEqual(debug_info["author_take"], {})
+        self.assertIn("author take rejected", debug_info["author_take_error"])
+        self.assertTrue(debug_info["author_take_repair_attempted"])
+        self.assertFalse(debug_info["author_take_repair_succeeded"])
+        self.assertEqual(debug_info["author_take_repair_tokens"]["total_tokens"], 5)
+        self.assertEqual(debug_info["angle_decision"], {})
+        self.assertEqual(debug_info["angle_decision_error"], "skipped: author_take unavailable")
+        self.assertEqual(debug_info["reader_problem"], {})
+        self.assertEqual(debug_info["reader_problem_error"], "skipped: angle_decision unavailable")
+        mock_generate_angle_decision.assert_not_called()
+        mock_generate_reader_problem.assert_not_called()
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["author_take"])
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["angle_decision"])
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["reader_problem"])
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._repair_author_take_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_repaired_author_take_flows_to_angle_and_reader(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_repair_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("author-take-repair-accepted-user")
+        source_evidence_pack = self._source_evidence_pack()
+        weak_author_take = self._author_take_payload(
+            core_opinion="Visibility makes recent work look stronger.",
+        )
+        repaired_author_take = self._author_take_payload(
+            core_opinion="If recent posts show activity but not decisions, people see motion without evidence of judgment.",
+        )
+        angle_decision = self._angle_decision_payload()
+        reader_problem = self._reader_problem_payload()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = (
+            weak_author_take,
+            "author take prompt",
+            json.dumps(weak_author_take),
+            {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        )
+        mock_repair_author_take.return_value = (
+            repaired_author_take,
+            "author take repair prompt",
+            json.dumps(repaired_author_take),
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
+        mock_generate_angle_decision.return_value = self._angle_decision_generation_result()
+        mock_generate_reader_problem.return_value = self._reader_problem_generation_result()
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["author_take"], repaired_author_take)
+        self.assertIn("core_opinion_generic:visibility", debug_info["author_take_quality_issues"])
+        self.assertTrue(debug_info["author_take_repair_attempted"])
+        self.assertTrue(debug_info["author_take_repair_succeeded"])
+        self.assertEqual(debug_info["author_take_repair_quality_issues"], [])
+        self.assertEqual(debug_info["author_take_repair_error"], "")
+        self.assertEqual(debug_info["author_take_repair_tokens"]["total_tokens"], 5)
+        self.assertEqual(debug_info["angle_decision"], angle_decision)
+        self.assertEqual(debug_info["reader_problem"], reader_problem)
+        self.assertEqual(mock_repair_author_take.call_args.kwargs["rejected_author_take"], weak_author_take)
+        self.assertEqual(
+            mock_repair_author_take.call_args.kwargs["author_take_quality_issues"],
+            ["core_opinion_generic:visibility"],
+        )
+        self.assertEqual(mock_repair_author_take.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(mock_generate_angle_decision.call_args.kwargs["author_take"], repaired_author_take)
+        self.assertEqual(mock_generate_reader_problem.call_args.kwargs["author_take"], repaired_author_take)
+        self.assertEqual(mock_generate_brief.call_args.kwargs["author_take"], repaired_author_take)
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._repair_author_take_via_llm")
     @patch("services.packaging.generator._generate_author_take_via_llm")
     @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
     def test_author_take_failure_does_not_block_generation(
         self,
         mock_generate_source_evidence,
         mock_generate_author_take,
+        mock_repair_author_take,
         mock_generate_brief,
         mock_generate_payload,
     ) -> None:
@@ -2532,10 +3109,323 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertFalse(debug_info["is_mock"])
         self.assertEqual(debug_info["author_take"], {})
         self.assertIn("author take invalid", debug_info["author_take_error"])
+        self.assertFalse(debug_info["author_take_repair_attempted"])
+        mock_repair_author_take.assert_not_called()
         self.assertEqual(mock_generate_brief.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
         self.assertIsNone(mock_generate_brief.call_args.kwargs["author_take"])
         self.assertEqual(mock_generate_payload.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
         self.assertIsNone(mock_generate_payload.call_args.kwargs["author_take"])
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_angle_and_reader_context_flow_to_post_brief(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("angle-reader-flow-user")
+        source_evidence_pack = self._source_evidence_pack()
+        author_take = self._author_take_payload()
+        angle_decision = self._angle_decision_payload()
+        reader_problem = self._reader_problem_payload()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = self._author_take_generation_result()
+        mock_generate_angle_decision.return_value = self._angle_decision_generation_result()
+        mock_generate_reader_problem.return_value = self._reader_problem_generation_result()
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["angle_decision"], angle_decision)
+        self.assertEqual(debug_info["angle_decision_tokens"]["total_tokens"], 15)
+        self.assertEqual(debug_info["angle_decision_error"], "")
+        self.assertEqual(debug_info["reader_problem"], reader_problem)
+        self.assertEqual(debug_info["reader_problem_tokens"]["total_tokens"], 19)
+        self.assertEqual(debug_info["reader_problem_error"], "")
+        self.assertEqual(mock_generate_angle_decision.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(mock_generate_angle_decision.call_args.kwargs["author_take"], author_take)
+        self.assertEqual(mock_generate_reader_problem.call_args.kwargs["angle_decision"], angle_decision)
+        self.assertEqual(mock_generate_reader_problem.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(mock_generate_reader_problem.call_args.kwargs["author_take"], author_take)
+        self.assertEqual(mock_generate_brief.call_args.kwargs["angle_decision"], angle_decision)
+        self.assertEqual(mock_generate_brief.call_args.kwargs["reader_problem"], reader_problem)
+        self.assertNotIn("angle_decision", mock_generate_payload.call_args.kwargs)
+        self.assertNotIn("reader_problem", mock_generate_payload.call_args.kwargs)
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
+        PACKAGING_WRITING_PLAN_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_writing_plan_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_writing_plan_success_adds_debug_and_flows_to_final_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_writing_plan,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("writing-plan-flow-user")
+        source_evidence_pack = self._source_evidence_pack()
+        author_take = self._author_take_payload()
+        angle_decision = self._angle_decision_payload()
+        reader_problem = self._reader_problem_payload()
+        post_brief = self._post_brief_payload()
+        writing_plan = self._writing_plan_payload()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = self._author_take_generation_result()
+        mock_generate_angle_decision.return_value = self._angle_decision_generation_result()
+        mock_generate_reader_problem.return_value = self._reader_problem_generation_result()
+        mock_generate_brief.return_value = (post_brief, "brief prompt", json.dumps(post_brief), None)
+        mock_generate_writing_plan.return_value = self._writing_plan_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Polished presence does not prove current judgment.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        _content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(debug_info["writing_plan"], writing_plan)
+        self.assertEqual(debug_info["writing_plan_tokens"]["total_tokens"], 23)
+        self.assertEqual(debug_info["writing_plan_error"], "")
+        self.assertEqual(mock_generate_writing_plan.call_args.kwargs["post_brief"], post_brief)
+        self.assertEqual(mock_generate_writing_plan.call_args.kwargs["source_evidence_pack"], source_evidence_pack)
+        self.assertEqual(mock_generate_writing_plan.call_args.kwargs["author_take"], author_take)
+        self.assertEqual(mock_generate_writing_plan.call_args.kwargs["angle_decision"], angle_decision)
+        self.assertEqual(mock_generate_writing_plan.call_args.kwargs["reader_problem"], reader_problem)
+        self.assertEqual(mock_generate_payload.call_args.kwargs["writing_plan"], writing_plan)
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
+        PACKAGING_WRITING_PLAN_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_writing_plan_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_writing_plan_failure_records_error_and_continues_final_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_writing_plan,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("writing-plan-failure-user")
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = self._author_take_generation_result()
+        mock_generate_angle_decision.return_value = self._angle_decision_generation_result()
+        mock_generate_reader_problem.return_value = self._reader_problem_generation_result()
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_writing_plan.side_effect = ContentPackageValidationError("writing plan invalid")
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertTrue(content_package.post_text)
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertEqual(debug_info["writing_plan"], {})
+        self.assertIn("writing plan invalid", debug_info["writing_plan_error"])
+        self.assertIsNone(mock_generate_payload.call_args.kwargs["writing_plan"])
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
+        PACKAGING_WRITING_PLAN_ENABLED=True,
+    )
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_writing_plan_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_repair_receives_writing_plan_when_available(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_writing_plan,
+        mock_generate_payload,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("writing-plan-repair-user")
+        writing_plan = self._writing_plan_payload()
+        weak_payload = self._package_payload(
+            "Your personal brand must resonate across every touchpoint.\n\n"
+            "That sounds smooth, but it hides the real work."
+        )
+        repair_payload = self._package_payload(
+            "Polished presence does not prove current judgment.\n\n"
+            "Build in public works when people can see decisions, tradeoffs, and lessons."
+        )
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = self._author_take_generation_result()
+        mock_generate_angle_decision.return_value = self._angle_decision_generation_result()
+        mock_generate_reader_problem.return_value = self._reader_problem_generation_result()
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_writing_plan.return_value = self._writing_plan_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertTrue(debug_info["repair_succeeded"])
+        self.assertEqual(debug_info["writing_plan"], writing_plan)
+        self.assertEqual(mock_repair_payload.call_args.kwargs["writing_plan"], writing_plan)
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_WRITING_PLAN_ENABLED=False,
+    )
+    @patch("services.packaging.generator._repair_packaging_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    def test_repair_still_receives_none_when_writing_plan_is_unavailable(
+        self,
+        mock_generate_payload,
+        mock_generate_brief,
+        mock_repair_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("writing-plan-repair-none-user")
+        weak_payload = self._package_payload(
+            "Your personal brand must resonate across every touchpoint.\n\n"
+            "That sounds smooth, but it hides the real work."
+        )
+        repair_payload = self._package_payload(
+            "A useful personal brand is evidence of current judgment.\n\n"
+            "Build in public works when people can see decisions, tradeoffs, and lessons."
+        )
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (weak_payload, "initial prompt", "initial response", None)
+        mock_repair_payload.return_value = (repair_payload, "repair prompt", "repair response", None)
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertEqual(content_package.post_text, repair_payload["post_text"])
+        self.assertTrue(debug_info["repair_attempted"])
+        self.assertEqual(debug_info["writing_plan"], {})
+        self.assertIsNone(mock_repair_payload.call_args.kwargs["writing_plan"])
+
+    @override_settings(
+        OPENAI_API_KEY="sk-test",
+        PACKAGING_SOURCE_EVIDENCE_ENABLED=True,
+        PACKAGING_AUTHOR_TAKE_ENABLED=True,
+        PACKAGING_ANGLE_DECISION_ENABLED=True,
+        PACKAGING_READER_PROBLEM_ENABLED=True,
+    )
+    @patch("services.packaging.generator._generate_payload_via_llm")
+    @patch("services.packaging.generator._generate_post_brief_via_llm")
+    @patch("services.packaging.generator._generate_reader_problem_via_llm")
+    @patch("services.packaging.generator._generate_angle_decision_via_llm")
+    @patch("services.packaging.generator._generate_author_take_via_llm")
+    @patch("services.packaging.generator._generate_source_evidence_pack_via_llm")
+    def test_angle_and_reader_failures_do_not_block_generation(
+        self,
+        mock_generate_source_evidence,
+        mock_generate_author_take,
+        mock_generate_angle_decision,
+        mock_generate_reader_problem,
+        mock_generate_brief,
+        mock_generate_payload,
+    ) -> None:
+        digest = self._create_digest_for_packaging("angle-reader-failure-user")
+        source_evidence_pack = self._source_evidence_pack()
+        author_take = self._author_take_payload()
+        mock_generate_source_evidence.return_value = self._source_evidence_generation_result()
+        mock_generate_author_take.return_value = self._author_take_generation_result()
+        mock_generate_angle_decision.side_effect = ContentPackageValidationError("angle invalid")
+        mock_generate_reader_problem.side_effect = ContentPackageValidationError("reader problem invalid")
+        mock_generate_brief.return_value = self._brief_generation_result()
+        mock_generate_payload.return_value = (
+            self._package_payload(
+                "Current proof beats polished claims.\n\n"
+                "Build in public works when people can see decisions, tradeoffs, and lessons."
+            ),
+            "final prompt",
+            "final response",
+            None,
+        )
+
+        content_package, debug_info = generate_content_package_for_digest(digest)
+
+        self.assertTrue(content_package.post_text)
+        self.assertEqual(debug_info["provider"], "openai")
+        self.assertFalse(debug_info["is_mock"])
+        self.assertEqual(debug_info["angle_decision"], {})
+        self.assertIn("angle invalid", debug_info["angle_decision_error"])
+        self.assertEqual(debug_info["reader_problem"], {})
+        self.assertEqual(debug_info["reader_problem_error"], "skipped: angle_decision unavailable")
+        mock_generate_reader_problem.assert_not_called()
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["angle_decision"])
+        self.assertIsNone(mock_generate_brief.call_args.kwargs["reader_problem"])
 
     @override_settings(OPENAI_API_KEY="sk-test")
     @patch("services.packaging.generator._repair_packaging_payload_via_llm")

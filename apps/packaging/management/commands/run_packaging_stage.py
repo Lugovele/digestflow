@@ -94,10 +94,60 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"editorial_repair_reasons: {json.dumps(debug_info['editorial_repair_reasons'], ensure_ascii=False)}"
             )
+        if debug_info.get("author_take"):
+            self.stdout.write("")
+            self.stdout.write("=== AUTHOR TAKE ===")
+            self.stdout.write(json.dumps(debug_info["author_take"], ensure_ascii=False, indent=2))
+        if debug_info.get("author_take_error"):
+            self.stdout.write("")
+            self.stdout.write("=== AUTHOR TAKE ERROR ===")
+            self.stdout.write(debug_info["author_take_error"])
+        if debug_info.get("author_take_quality_issues"):
+            self.stdout.write("")
+            self.stdout.write("=== AUTHOR TAKE QUALITY ISSUES ===")
+            self.stdout.write(json.dumps(debug_info["author_take_quality_issues"], ensure_ascii=False, indent=2))
+        self.stdout.write("")
+        self.stdout.write("=== AUTHOR TAKE REPAIR ATTEMPTED ===")
+        self.stdout.write(str(debug_info.get("author_take_repair_attempted", False)))
+        self.stdout.write("")
+        self.stdout.write("=== AUTHOR TAKE REPAIR SUCCEEDED ===")
+        self.stdout.write(str(debug_info.get("author_take_repair_succeeded", False)))
+        if debug_info.get("author_take_repair_quality_issues"):
+            self.stdout.write("")
+            self.stdout.write("=== AUTHOR TAKE REPAIR QUALITY ISSUES ===")
+            self.stdout.write(json.dumps(debug_info["author_take_repair_quality_issues"], ensure_ascii=False, indent=2))
+        if debug_info.get("author_take_repair_error"):
+            self.stdout.write("")
+            self.stdout.write("=== AUTHOR TAKE REPAIR ERROR ===")
+            self.stdout.write(debug_info["author_take_repair_error"])
+        if debug_info.get("angle_decision"):
+            self.stdout.write("")
+            self.stdout.write("=== ANGLE DECISION ===")
+            self.stdout.write(json.dumps(debug_info["angle_decision"], ensure_ascii=False, indent=2))
+        if debug_info.get("angle_decision_error"):
+            self.stdout.write("")
+            self.stdout.write("=== ANGLE DECISION ERROR ===")
+            self.stdout.write(debug_info["angle_decision_error"])
+        if debug_info.get("reader_problem"):
+            self.stdout.write("")
+            self.stdout.write("=== READER PROBLEM ===")
+            self.stdout.write(json.dumps(debug_info["reader_problem"], ensure_ascii=False, indent=2))
+        if debug_info.get("reader_problem_error"):
+            self.stdout.write("")
+            self.stdout.write("=== READER PROBLEM ERROR ===")
+            self.stdout.write(debug_info["reader_problem_error"])
         if debug_info.get("post_brief"):
             self.stdout.write("")
             self.stdout.write("=== POST BRIEF ===")
             self.stdout.write(json.dumps(debug_info["post_brief"], ensure_ascii=False, indent=2))
+        if debug_info.get("writing_plan"):
+            self.stdout.write("")
+            self.stdout.write("=== WRITING PLAN ===")
+            self.stdout.write(json.dumps(debug_info["writing_plan"], ensure_ascii=False, indent=2))
+        if debug_info.get("writing_plan_error"):
+            self.stdout.write("")
+            self.stdout.write("=== WRITING PLAN ERROR ===")
+            self.stdout.write(debug_info["writing_plan_error"])
         if debug_info.get("post_brief_prompt"):
             self.stdout.write("")
             self.stdout.write("=== POST BRIEF PROMPT ===")

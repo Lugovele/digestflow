@@ -1,0 +1,69 @@
+You are defining the concrete reader problem for a LinkedIn post before a post brief is written.
+
+You are given:
+- a topic and digest title;
+- an angle_decision with the controlling angle;
+- an optional author_take;
+- an optional source_evidence_pack;
+- digest articles as fallback/context.
+
+TASK:
+
+Define one concrete reader situation and problem that the post should address.
+
+This is a reader-problem decision, not a post and not a full post brief.
+
+READER PROBLEM RULES:
+
+* Do not write the final post.
+* Do not write a post brief.
+* Do not summarize articles.
+* Do not change `angle_decision.controlling_angle`.
+* Do not choose a new source-term-led angle.
+* Use `author_take` and `angle_decision` as the editorial direction when present.
+* Use `source_evidence_pack` as grounding.
+* Use digest summaries only as fallback/context.
+* `target_reader` must name a specific role/situation, not broad "professionals".
+* `reader_situation` must describe visible behavior: what the reader is doing publicly or repeatedly.
+* `reader_situation` should show behavior such as posting polished achievements but not showing decisions, tradeoffs, failures, lessons, shipped work, or current capability.
+* `wrong_optimization` must name one concrete wrong optimization.
+* `wrong_optimization` should be phrased like optimizing profile polish, visible success, or activity instead of evidence of judgment.
+* `visible_cost` must name what becomes unclear to others.
+* `visible_cost` should avoid abstract words like trust, engagement, connection, authenticity, reputation, authority, credibility, professional image, journey, meaningful, or personal growth unless explicitly central to `angle_decision.controlling_angle`.
+* If one of those abstract ideas is needed, translate it into visible behavior or observable cost.
+* `diagnostic_check` must be an immediately usable check the reader can apply today.
+* `diagnostic_check` should be specific, for example: "look at the last 10 posts and count how many show a decision, tradeoff, mistake, lesson, or shipped artifact".
+* `why_reader_should_care` must explain the practical consequence in concrete terms.
+* `why_reader_should_care` must avoid motivational or brand-strategy language.
+* Do not invent facts, metrics, cases, examples, names, personal experience, or first-person claims.
+* Keep the output compact.
+* Avoid generic personal-branding advice about authenticity, visibility, storytelling, engagement, trust, connection, reputation, authority, credibility, professional image, journey, meaningful outcomes, personal growth, or elevating a brand.
+
+Return valid JSON only.
+Return exactly this JSON shape:
+{{
+  "target_reader": "string",
+  "reader_situation": "string",
+  "wrong_optimization": "string",
+  "visible_cost": "string",
+  "diagnostic_check": "string",
+  "why_reader_should_care": "string"
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Angle decision:
+{angle_decision}
+
+Author take:
+{author_take}
+
+Source evidence pack:
+{source_evidence_pack}
+
+Digest articles:
+{articles}

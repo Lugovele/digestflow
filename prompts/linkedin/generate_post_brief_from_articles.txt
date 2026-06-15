@@ -3,6 +3,7 @@ You are creating an internal editorial brief for a LinkedIn post.
 You are given structured insights from several digest articles.
 You may also receive a source evidence pack extracted from original-ish article text.
 You may also receive an author_take that captures the human position to develop.
+You may also receive an angle_decision and reader_problem created before this brief.
 
 Editorial constraints:
 
@@ -59,6 +60,22 @@ BRIEF REQUIREMENTS:
 * Do not override `author_take` with a generic article-derived angle.
 * The brief should sharpen the author_take with grounded evidence, not replace it.
 * Preserve author_take rather than converting it into generic branding language.
+* When `angle_decision` is present, `angle_decision.controlling_angle` is the controlling angle for the brief.
+* Do not choose a new angle when `angle_decision` is present.
+* Terms from `angle_decision.do_not_make_main_angle` must not appear in `sharp_claim`, `tension`, `pattern_interrupt`, `evidence_points`, `concrete_details`, `human_angle`, `practical_takeaway`, `ending_reframe`, or `suggested_hook_direction`.
+* Terms from `angle_decision.do_not_make_main_angle` may be used only to shape `avoid_angle`.
+* If a blocked term appears in source evidence, translate the useful underlying mechanism into plain concrete language instead of repeating the blocked term.
+* Do not use blocked source terms as evidence labels, post themes, or credibility anchors.
+* `evidence_points` must support the controlling angle without reintroducing blocked terms.
+* `concrete_details` should prefer visible behaviors, diagnostics, mechanisms, examples, or comparisons rather than branded/source-owned terminology.
+* Use `angle_decision.allowed_supporting_terms` only as supporting language, not as a replacement angle.
+* Use `angle_decision.angle_to_avoid` to make `avoid_angle` more precise.
+* When `reader_problem` is present, use it to make the brief concrete.
+* Use `reader_problem.target_reader` to shape `target_reader`.
+* Use `reader_problem.wrong_optimization` and `reader_problem.visible_cost` to shape `reader_pain_or_mistake`.
+* Use `reader_problem.diagnostic_check` to shape `practical_takeaway`, `concrete_details`, or `ending_reframe`.
+* Do not replace `reader_problem.visible_cost` or `reader_problem.diagnostic_check` with abstract authority, reputation, or trust language unless that wording is explicitly central to `angle_decision.controlling_angle`.
+* Do not dilute `reader_problem` into broad audience advice.
 
 Return valid JSON only.
 Return exactly this JSON shape:
@@ -93,3 +110,9 @@ Source evidence pack:
 
 Author take:
 {author_take}
+
+Angle decision:
+{angle_decision}
+
+Reader problem:
+{reader_problem}

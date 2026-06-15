@@ -8,13 +8,17 @@ from apps.digests.models import Digest, DigestRun
 from apps.topics.models import Topic
 from services.ai.digest_smoke_test import build_prompt as build_article_prompt
 from services.packaging.generator import (
+    build_angle_decision_prompt,
     build_author_take_prompt,
+    build_author_take_repair_prompt,
     build_editorial_review_prompt,
     build_carousel_prompt,
     build_post_brief_prompt,
     build_post_prompt,
     build_post_repair_prompt,
+    build_reader_problem_prompt,
     build_source_evidence_prompt,
+    build_writing_plan_prompt,
 )
 
 
@@ -63,7 +67,22 @@ class PromptUsageTests(SimpleTestCase):
         with patch("services.packaging.generator.build_prompt", return_value="PROMPT") as mock_build:
             build_source_evidence_prompt(digest, articles)
             build_author_take_prompt(digest, articles, author_profile)
+            build_author_take_repair_prompt(
+                digest,
+                articles,
+                author_profile,
+                rejected_author_take={"core_opinion": "Visibility creates trust."},
+                author_take_quality_issues=["core_opinion_generic:visibility"],
+            )
+            build_angle_decision_prompt(digest, articles, author_profile)
+            build_reader_problem_prompt(digest, articles, author_profile)
             build_post_brief_prompt(digest, articles, author_profile)
+            build_writing_plan_prompt(
+                digest,
+                articles,
+                author_profile,
+                post_brief={"sharp_claim": "Proof beats polish."},
+            )
             build_post_prompt(digest, articles, author_profile)
             build_carousel_prompt(digest, articles, author_profile)
             build_editorial_review_prompt(
@@ -82,7 +101,11 @@ class PromptUsageTests(SimpleTestCase):
             [
                 "linkedin/extract_source_evidence_for_post.txt",
                 "linkedin/generate_author_take_from_evidence.txt",
+                "linkedin/repair_author_take_quality.txt",
+                "linkedin/decide_post_angle_from_evidence.txt",
+                "linkedin/define_reader_problem_from_angle.txt",
                 "linkedin/generate_post_brief_from_articles.txt",
+                "linkedin/create_writing_plan_from_context.txt",
                 "linkedin/generate_post_from_articles.txt",
                 "linkedin/generate_carousel_from_articles.txt",
                 "linkedin/review_post_editorial_quality.txt",
@@ -162,14 +185,29 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("`reader_check` may be a diagnostic instruction, but not a CTA.", author_take_prompt)
         self.assertIn("Produce a sharp editorial take, not marketing advice.", author_take_prompt)
         self.assertIn("`core_opinion` must sound like a concrete human claim.", author_take_prompt)
+        self.assertIn("`core_opinion` must not define the topic", author_take_prompt)
+        self.assertIn('"Personal branding is..."', author_take_prompt)
+        self.assertIn('"Effective personal branding..."', author_take_prompt)
+        self.assertIn('"Superficial branding..."', author_take_prompt)
+        self.assertIn("Start `core_opinion` from a reader-visible behavior", author_take_prompt)
         self.assertIn('"authenticity", "authentic", "credibility", "visibility"', author_take_prompt)
         self.assertIn("Do not use question-led hooks as `core_opinion`.", author_take_prompt)
+        self.assertIn('"Personal branding is about showing your expertise."', author_take_prompt)
+        self.assertIn('"Effective personal branding requires authenticity and consistency."', author_take_prompt)
+        self.assertIn('"Superficial branding is not enough to build trust."', author_take_prompt)
         self.assertIn(
-            '"A personal brand is not what you say you do. It is what your recent work proves."',
+            '"If your last 10 posts show wins but not decisions, people see activity without evidence of judgment."',
             author_take_prompt,
         )
         self.assertIn('"A logo cannot fix a stale proof trail."', author_take_prompt)
-        self.assertIn('"Build in public only works when it shows decisions, not activity."', author_take_prompt)
+        self.assertIn(
+            '"Build in public only works when it shows decisions, tradeoffs, and lessons, not just progress."',
+            author_take_prompt,
+        )
+        self.assertIn(
+            '"A personal brand gets weaker when the profile looks polished but the recent work does not prove current capability."',
+            author_take_prompt,
+        )
         self.assertIn("`reader_mistake` must name a concrete wrong behavior", author_take_prompt)
         self.assertIn("`practical_point` must tell the reader what to check or change", author_take_prompt)
         self.assertIn("Do not write a motivational, inspirational, or brand-strategy-sounding take.", author_take_prompt)
@@ -178,6 +216,153 @@ class PromptUsageTests(SimpleTestCase):
         self.assertNotIn("{author_focus}", author_take_prompt)
         self.assertNotIn("{author_voice}", author_take_prompt)
         self.assertNotIn("{style_constraint_1}", author_take_prompt)
+
+    def test_author_take_repair_prompt_declares_exact_json_contract(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts"
+        repair_prompt = (
+            prompts_root / "linkedin" / "repair_author_take_quality.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Return exactly this JSON shape", repair_prompt)
+        for field_name in [
+            "core_opinion",
+            "tension",
+            "reader_mistake",
+            "reader_check",
+            "practical_point",
+            "tone",
+            "do_not_say",
+        ]:
+            self.assertIn(f'"{field_name}"', repair_prompt)
+        self.assertIn("Repair only the author_take", repair_prompt)
+        self.assertIn("Do not write the final post.", repair_prompt)
+        self.assertIn("Do not write a post brief.", repair_prompt)
+        self.assertIn("Do not choose angle_decision.", repair_prompt)
+        self.assertIn("core_opinion_generic:visibility", repair_prompt)
+        self.assertIn("core_opinion_generic_opening", repair_prompt)
+        self.assertIn("Convert trust, authority, visibility, and reputation language", repair_prompt)
+        self.assertIn("visible behavior, wrong optimization, concrete diagnostic, or practical cost", repair_prompt)
+        self.assertIn("Do not invent personal experience, metrics, cases, examples, client claims, studies, or anecdotes.", repair_prompt)
+
+    def test_angle_decision_prompt_declares_exact_json_contract(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts"
+        angle_prompt = (
+            prompts_root / "linkedin" / "decide_post_angle_from_evidence.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Return exactly this JSON shape", angle_prompt)
+        for field_name in [
+            "controlling_angle",
+            "angle_source",
+            "why_this_angle",
+            "allowed_supporting_terms",
+            "do_not_make_main_angle",
+            "angle_to_avoid",
+        ]:
+            self.assertIn(f'"{field_name}"', angle_prompt)
+        self.assertIn("This is an angle decision, not a post and not a full post brief.", angle_prompt)
+        self.assertIn("Do not write the final post.", angle_prompt)
+        self.assertIn("Do not write a post brief.", angle_prompt)
+        self.assertIn("If `author_take.core_opinion` is present, it must be the primary source of `controlling_angle`.", angle_prompt)
+        self.assertIn(
+            "Prefer a controlling angle built from `author_take.core_opinion`, `author_take.reader_mistake`, `author_take.reader_check`, and `author_take.practical_point`.",
+            angle_prompt,
+        )
+        self.assertIn(
+            "`controlling_angle` must be phrased as a human/editorial claim, not as a source concept, source term, article title, or branded framework.",
+            angle_prompt,
+        )
+        self.assertIn(
+            "A source term may become the controlling angle only if `author_take.core_opinion` explicitly names that source term as central.",
+            angle_prompt,
+        )
+        self.assertIn("Use source evidence as support, not permission to choose a louder source term.", angle_prompt)
+        self.assertIn(
+            "If a source term is catchy, branded, or broad, and `author_take` does not explicitly choose it, place it in `do_not_make_main_angle`.",
+            angle_prompt,
+        )
+        self.assertIn(
+            "`allowed_supporting_terms` must contain only terms that can support the author_take without hijacking it.",
+            angle_prompt,
+        )
+        self.assertIn(
+            "`allowed_supporting_terms` must not include a term that is also the main topic of `controlling_angle`.",
+            angle_prompt,
+        )
+        self.assertIn(
+            "Do not make `Brand Lag`, outdated perceptions, professional image, authority, trust, or reputation the main angle unless `author_take` explicitly selects that framing.",
+            angle_prompt,
+        )
+        self.assertIn("Do not let a catchy source term override the human position.", angle_prompt)
+
+    def test_reader_problem_prompt_declares_exact_json_contract(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts"
+        reader_prompt = (
+            prompts_root / "linkedin" / "define_reader_problem_from_angle.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Return exactly this JSON shape", reader_prompt)
+        for field_name in [
+            "target_reader",
+            "reader_situation",
+            "wrong_optimization",
+            "visible_cost",
+            "diagnostic_check",
+            "why_reader_should_care",
+        ]:
+            self.assertIn(f'"{field_name}"', reader_prompt)
+        self.assertIn("This is a reader-problem decision, not a post and not a full post brief.", reader_prompt)
+        self.assertIn("Do not write the final post.", reader_prompt)
+        self.assertIn("Do not write a post brief.", reader_prompt)
+        self.assertIn("Do not change `angle_decision.controlling_angle`.", reader_prompt)
+        self.assertIn("Do not choose a new source-term-led angle.", reader_prompt)
+        self.assertIn(
+            '`target_reader` must name a specific role/situation, not broad "professionals".',
+            reader_prompt,
+        )
+        self.assertIn(
+            "`reader_situation` must describe visible behavior: what the reader is doing publicly or repeatedly.",
+            reader_prompt,
+        )
+        self.assertIn("`wrong_optimization` must name one concrete wrong optimization.", reader_prompt)
+        self.assertIn("`visible_cost` must name what becomes unclear to others.", reader_prompt)
+        self.assertIn(
+            "trust, engagement, connection, authenticity, reputation, authority, credibility, professional image, journey, meaningful, or personal growth",
+            reader_prompt,
+        )
+        self.assertIn(
+            "`diagnostic_check` must be an immediately usable check the reader can apply today.",
+            reader_prompt,
+        )
+        self.assertIn("look at the last 10 posts", reader_prompt)
+        self.assertIn(
+            "`why_reader_should_care` must avoid motivational or brand-strategy language.",
+            reader_prompt,
+        )
+
+    def test_writing_plan_prompt_declares_exact_json_contract(self):
+        prompts_root = Path(settings.BASE_DIR) / "prompts"
+        writing_plan_prompt = (
+            prompts_root / "linkedin" / "create_writing_plan_from_context.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Return exactly this JSON shape", writing_plan_prompt)
+        for field_name in [
+            "opening_claim",
+            "first_3_lines",
+            "body_sequence",
+            "evidence_to_use",
+            "diagnostic_check",
+            "terms_to_avoid",
+            "ending_reframe",
+        ]:
+            self.assertIn(f'"{field_name}"', writing_plan_prompt)
+        self.assertIn("Do not write the final post.", writing_plan_prompt)
+        self.assertIn("Do not create a new angle.", writing_plan_prompt)
+        self.assertIn("`diagnostic_check` must be concrete and immediately usable.", writing_plan_prompt)
+        self.assertIn("generic/corporate wording", writing_plan_prompt)
+        self.assertIn("authenticity, engagement, connection, trust, visibility", writing_plan_prompt)
+        self.assertIn("write like a practitioner, not a content marketer", writing_plan_prompt)
 
     def test_linkedin_post_prompt_uses_author_profile_and_anti_recap_constraints(self):
         prompts_root = Path(settings.BASE_DIR) / "prompts"
@@ -195,6 +380,11 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Use source facts as evidence, not as the structure of the post", post_prompt)
         self.assertIn('structure the post as "one article says" or "another article says"', post_prompt)
         self.assertIn("write like a report, digest, or research memo", post_prompt)
+        self.assertIn("When `writing_plan` is present, use it as the primary execution plan", post_prompt)
+        self.assertIn("Follow `writing_plan.opening_claim`, `writing_plan.first_3_lines`", post_prompt)
+        self.assertIn("Avoid `writing_plan.terms_to_avoid`", post_prompt)
+        self.assertIn("Use articles only for factual verification and grounding when a writing_plan is present", post_prompt)
+        self.assertIn("Writing plan:", post_prompt)
 
     def test_linkedin_generation_prompts_do_not_use_author_bio_personalization(self):
         prompts_root = Path(settings.BASE_DIR) / "prompts" / "linkedin"
@@ -315,6 +505,36 @@ class PromptUsageTests(SimpleTestCase):
         )
         self.assertIn("`human_angle` must not claim personal experience that was not provided.", brief_prompt)
         self.assertIn("`avoid_angle` must explicitly name the generic angle to avoid.", brief_prompt)
+        self.assertIn(
+            "When `angle_decision` is present, `angle_decision.controlling_angle` is the controlling angle for the brief.",
+            brief_prompt,
+        )
+        self.assertIn("Do not choose a new angle when `angle_decision` is present.", brief_prompt)
+        self.assertIn(
+            "Terms from `angle_decision.do_not_make_main_angle` must not appear in `sharp_claim`, `tension`, `pattern_interrupt`, `evidence_points`, `concrete_details`, `human_angle`, `practical_takeaway`, `ending_reframe`, or `suggested_hook_direction`.",
+            brief_prompt,
+        )
+        self.assertIn("Terms from `angle_decision.do_not_make_main_angle` may be used only to shape `avoid_angle`.", brief_prompt)
+        self.assertIn(
+            "If a blocked term appears in source evidence, translate the useful underlying mechanism into plain concrete language instead of repeating the blocked term.",
+            brief_prompt,
+        )
+        self.assertIn("Do not use blocked source terms as evidence labels, post themes, or credibility anchors.", brief_prompt)
+        self.assertIn("`evidence_points` must support the controlling angle without reintroducing blocked terms.", brief_prompt)
+        self.assertIn(
+            "`concrete_details` should prefer visible behaviors, diagnostics, mechanisms, examples, or comparisons rather than branded/source-owned terminology.",
+            brief_prompt,
+        )
+        self.assertIn("When `reader_problem` is present, use it to make the brief concrete.", brief_prompt)
+        self.assertIn(
+            "Use `reader_problem.wrong_optimization` and `reader_problem.visible_cost` to shape `reader_pain_or_mistake`.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "Do not replace `reader_problem.visible_cost` or `reader_problem.diagnostic_check` with abstract authority, reputation, or trust language unless that wording is explicitly central to `angle_decision.controlling_angle`.",
+            brief_prompt,
+        )
+        self.assertIn("Do not dilute `reader_problem` into broad audience advice.", brief_prompt)
         self.assertIn("human expert LinkedIn post", brief_prompt)
 
     def test_build_post_brief_prompt_renders_author_profile_and_article_evidence_without_placeholders(self):
@@ -347,7 +567,30 @@ class PromptUsageTests(SimpleTestCase):
             ],
         }
 
-        rendered_prompt = build_post_brief_prompt(digest, articles, author_profile)
+        angle_decision = {
+            "controlling_angle": "Automation exposes unclear handoffs.",
+            "angle_source": "author_take",
+            "why_this_angle": "It matches the workflow evidence.",
+            "allowed_supporting_terms": ["validation"],
+            "do_not_make_main_angle": ["tool adoption"],
+            "angle_to_avoid": "Avoid generic AI productivity advice.",
+        }
+        reader_problem = {
+            "target_reader": "Operations leaders automating messy handoffs",
+            "reader_situation": "They are adding automation before ownership is explicit.",
+            "wrong_optimization": "They optimize speed before validation clarity.",
+            "visible_cost": "Faster routing makes unclear ownership more visible.",
+            "diagnostic_check": "Check which handoff still needs a human explanation.",
+            "why_reader_should_care": "Automation compounds unclear workflow decisions.",
+        }
+
+        rendered_prompt = build_post_brief_prompt(
+            digest,
+            articles,
+            author_profile,
+            angle_decision=angle_decision,
+            reader_problem=reader_problem,
+        )
 
         self.assertNotIn("Operations strategist", rendered_prompt)
         self.assertNotIn("Leads editorial workflow redesign.", rendered_prompt)
@@ -359,6 +602,10 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Workflow speed improved after the team fixed handoffs.", rendered_prompt)
         self.assertIn("Validation got clearer before the automation layer paid off.", rendered_prompt)
         self.assertIn("Prompt article title", rendered_prompt)
+        self.assertIn("Angle decision:", rendered_prompt)
+        self.assertIn("Automation exposes unclear handoffs.", rendered_prompt)
+        self.assertIn("Reader problem:", rendered_prompt)
+        self.assertIn("Operations leaders automating messy handoffs", rendered_prompt)
 
         for placeholder in [
             "{author_role}",
@@ -369,6 +616,8 @@ class PromptUsageTests(SimpleTestCase):
             "{style_constraint_2}",
             "{style_constraint_3}",
             "{articles}",
+            "{angle_decision}",
+            "{reader_problem}",
             "{topic_name}",
             "{digest_title}",
         ]:
@@ -461,6 +710,160 @@ class PromptUsageTests(SimpleTestCase):
         self.assertNotIn("{source_evidence_pack}", rendered_prompt)
         self.assertNotIn("{articles}", rendered_prompt)
         self.assertNotIn("{author_role}", rendered_prompt)
+
+    def test_build_angle_decision_prompt_renders_context_without_placeholders(self):
+        topic = Topic(name="Personal Branding")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Personal Branding",
+            payload={"version": 1, "title": "Digest for Personal Branding", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "People trust current evidence more than polished positioning.",
+                "key_points": ["Brand Lag appears when reputation trails current work."],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": ["one", "two", "three"],
+        }
+        source_evidence_pack = {
+            "source_phrases": ["Brand Lag"],
+            "mechanisms": ["Public work creates evidence of judgment."],
+            "usable_terms": ["build in public"],
+        }
+        author_take = {"core_opinion": "Current proof beats polished claims."}
+
+        rendered_prompt = build_angle_decision_prompt(
+            digest,
+            articles,
+            author_profile,
+            source_evidence_pack=source_evidence_pack,
+            author_take=author_take,
+        )
+
+        self.assertIn("Personal Branding", rendered_prompt)
+        self.assertIn("Brand Lag", rendered_prompt)
+        self.assertIn("Current proof beats polished claims.", rendered_prompt)
+        self.assertIn("People trust current evidence more than polished positioning.", rendered_prompt)
+        self.assertNotIn("{source_evidence_pack}", rendered_prompt)
+        self.assertNotIn("{author_take}", rendered_prompt)
+        self.assertNotIn("{articles}", rendered_prompt)
+
+    def test_build_reader_problem_prompt_renders_context_without_placeholders(self):
+        topic = Topic(name="Personal Branding")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Personal Branding",
+            payload={"version": 1, "title": "Digest for Personal Branding", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "People trust current evidence more than polished positioning.",
+                "key_points": ["Brand Lag appears when reputation trails current work."],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": ["one", "two", "three"],
+        }
+        angle_decision = {
+            "controlling_angle": "Current proof beats polished claims.",
+            "do_not_make_main_angle": ["Brand Lag"],
+        }
+        author_take = {"core_opinion": "Current proof beats polished claims."}
+
+        rendered_prompt = build_reader_problem_prompt(
+            digest,
+            articles,
+            author_profile,
+            angle_decision=angle_decision,
+            author_take=author_take,
+        )
+
+        self.assertIn("Current proof beats polished claims.", rendered_prompt)
+        self.assertIn("Brand Lag", rendered_prompt)
+        self.assertIn("People trust current evidence more than polished positioning.", rendered_prompt)
+        self.assertNotIn("{angle_decision}", rendered_prompt)
+        self.assertNotIn("{author_take}", rendered_prompt)
+        self.assertNotIn("{articles}", rendered_prompt)
+
+    def test_build_writing_plan_prompt_renders_context_without_placeholders(self):
+        topic = Topic(name="Personal Branding")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            run=run,
+            title="Digest for Personal Branding",
+            payload={"version": 1, "title": "Digest for Personal Branding", "articles": []},
+        )
+        articles = [
+            {
+                "url": "https://example.com/article-1",
+                "title": "Prompt article title",
+                "summary": "People trust current evidence more than polished positioning.",
+                "key_points": ["Build in public shows decisions, tradeoffs, and lessons."],
+                "content_type": "opinion",
+                "confidence": 0.8,
+            }
+        ]
+        author_profile = {
+            "role": "Operations strategist",
+            "background": "Leads editorial workflow redesign.",
+            "focus": "handoffs, validation, and repeatable systems",
+            "voice": "sharp and practical",
+            "style_constraints": ["one", "two", "three"],
+        }
+        post_brief = {
+            "sharp_claim": "Current proof beats polished claims.",
+            "reader_pain_or_mistake": "They polish before proving judgment.",
+            "practical_takeaway": "Audit recent posts for decisions.",
+        }
+        source_evidence_pack = {"mechanisms": ["Public work creates evidence of judgment."]}
+        author_take = {"core_opinion": "Current proof beats polished claims."}
+        angle_decision = {"controlling_angle": "Current proof beats polished claims."}
+        reader_problem = {"diagnostic_check": "Look at the last 10 posts."}
+
+        rendered_prompt = build_writing_plan_prompt(
+            digest,
+            articles,
+            author_profile,
+            post_brief=post_brief,
+            source_evidence_pack=source_evidence_pack,
+            author_take=author_take,
+            angle_decision=angle_decision,
+            reader_problem=reader_problem,
+        )
+
+        self.assertIn("Current proof beats polished claims.", rendered_prompt)
+        self.assertIn("Public work creates evidence of judgment.", rendered_prompt)
+        self.assertIn("Look at the last 10 posts.", rendered_prompt)
+        self.assertIn("Build in public shows decisions, tradeoffs, and lessons.", rendered_prompt)
+        for placeholder in [
+            "{source_evidence_pack}",
+            "{author_take}",
+            "{angle_decision}",
+            "{reader_problem}",
+            "{post_brief}",
+            "{articles}",
+        ]:
+            self.assertNotIn(placeholder, rendered_prompt)
 
     def test_build_post_prompt_renders_author_profile_values_without_unresolved_placeholders_and_length_rules(self):
         topic = Topic(name="Workflow topic")
@@ -642,8 +1045,31 @@ class PromptUsageTests(SimpleTestCase):
             "suggested_hook_direction": "Lead with the ownership gap.",
             "avoid_angle": "Avoid generic AI productivity advice.",
         }
+        writing_plan = {
+            "opening_claim": "Speed exposes unclear workflow ownership.",
+            "first_3_lines": [
+                "Speed exposes unclear workflow ownership.",
+                "Automation only helps after the handoff is visible.",
+                "The first check is not the tool. It is the decision path.",
+            ],
+            "body_sequence": [
+                "Name the ownership gap.",
+                "Use validation evidence.",
+                "Give the reader a handoff check.",
+            ],
+            "evidence_to_use": ["Validation got clearer before automation helped."],
+            "diagnostic_check": "Check which handoff still needs a human explanation.",
+            "terms_to_avoid": ["seamless", "leverage"],
+            "ending_reframe": "The useful system is the one that makes ownership visible.",
+        }
 
-        rendered_prompt = build_post_prompt(digest, articles, author_profile, post_brief=post_brief)
+        rendered_prompt = build_post_prompt(
+            digest,
+            articles,
+            author_profile,
+            post_brief=post_brief,
+            writing_plan=writing_plan,
+        )
 
         self.assertIn("Post brief:", rendered_prompt)
         self.assertIn("Operations leaders", rendered_prompt)
@@ -662,7 +1088,13 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Do not choose a new angle", rendered_prompt)
         self.assertIn("Do not broaden beyond the brief", rendered_prompt)
         self.assertIn("Source articles are grounding material, not permission to expand into a broad essay", rendered_prompt)
+        self.assertIn("Writing plan:", rendered_prompt)
+        self.assertIn("Speed exposes unclear workflow ownership.", rendered_prompt)
+        self.assertIn("Check which handoff still needs a human explanation.", rendered_prompt)
+        self.assertIn("When `writing_plan` is present, use it as the primary execution plan", rendered_prompt)
+        self.assertIn("Avoid `writing_plan.terms_to_avoid`", rendered_prompt)
         self.assertNotIn("{post_brief}", rendered_prompt)
+        self.assertNotIn("{writing_plan}", rendered_prompt)
 
     def test_brief_and_final_post_prompts_include_source_evidence_pack_when_provided(self):
         topic = Topic(name="Workflow topic")
@@ -847,6 +1279,23 @@ class PromptUsageTests(SimpleTestCase):
             "suggested_hook_direction": "Lead with the trust gap.",
             "avoid_angle": "Avoid generic advice about authentic storytelling.",
         }
+        writing_plan = {
+            "opening_claim": "Polished presence does not prove current judgment.",
+            "first_3_lines": [
+                "Polished presence does not prove current judgment.",
+                "A cleaner profile can still leave the proof trail thin.",
+                "The stronger signal is recent work that shows decisions.",
+            ],
+            "body_sequence": [
+                "Contrast profile polish with evidence from recent work.",
+                "Show why decisions, tradeoffs, and lessons create stronger proof.",
+                "Give the reader a quick audit of their last posts.",
+            ],
+            "evidence_to_use": ["Build in public gives people current evidence of expertise."],
+            "diagnostic_check": "Look at the last 10 posts and count how many show decisions.",
+            "terms_to_avoid": ["authenticity", "visibility", "enhance your brand"],
+            "ending_reframe": "A brand is a proof trail, not a polished surface.",
+        }
         editorial_review = {
             "passed": False,
             "score": 5,
@@ -862,6 +1311,7 @@ class PromptUsageTests(SimpleTestCase):
             weak_payload,
             quality_report,
             post_brief=post_brief,
+            writing_plan=writing_plan,
             editorial_review=editorial_review,
         )
 
@@ -920,6 +1370,23 @@ class PromptUsageTests(SimpleTestCase):
         )
         self.assertIn("Do not add unsupported statistics, named companies, studies, metrics, or authority claims", rendered_prompt)
         self.assertIn("Do not ignore brief alignment, mechanics, or hard validation", rendered_prompt)
+        self.assertIn("Writing plan:", rendered_prompt)
+        self.assertIn("Polished presence does not prove current judgment.", rendered_prompt)
+        self.assertIn("A cleaner profile can still leave the proof trail thin.", rendered_prompt)
+        self.assertIn("Look at the last 10 posts and count how many show decisions.", rendered_prompt)
+        self.assertIn("A brand is a proof trail, not a polished surface.", rendered_prompt)
+        self.assertIn("When `writing_plan` is present, treat it as the primary execution plan", rendered_prompt)
+        self.assertIn("Fix the listed quality issues without choosing a new structure", rendered_prompt)
+        self.assertIn("Preserve the same angle and reader problem", rendered_prompt)
+        self.assertIn("Use `writing_plan` as execution structure", rendered_prompt)
+        self.assertIn("writing_plan.opening_claim", rendered_prompt)
+        self.assertIn("writing_plan.first_3_lines", rendered_prompt)
+        self.assertIn("writing_plan.body_sequence", rendered_prompt)
+        self.assertIn("writing_plan.diagnostic_check", rendered_prompt)
+        self.assertIn("writing_plan.ending_reframe", rendered_prompt)
+        self.assertIn("Avoid `writing_plan.terms_to_avoid`", rendered_prompt)
+        self.assertIn("rebuild from writing_plan rather than lightly editing the weak payload", rendered_prompt)
+        self.assertNotIn("{writing_plan}", rendered_prompt)
         self.assertIn("Do not lightly edit the weak post", rendered_prompt)
         self.assertIn("Rebuild `post_text` from the validated post brief", rendered_prompt)
         self.assertIn("Keep source facts and brief alignment, but change the structure", rendered_prompt)

@@ -3,6 +3,7 @@ You are creating a LinkedIn post from multiple digest articles.
 You are given structured insights from several articles.
 
 You are also given a structured post brief.
+You may also receive a writing_plan that converts the brief into an executable post structure.
 
 Editorial constraints:
 
@@ -17,6 +18,9 @@ TASK:
 * Identify the core pattern across the articles
 * Write a LinkedIn-native expert post with a clear point of view
 * Use the post brief as the editorial direction
+* When `writing_plan` is present, use it as the primary execution plan for `post_text`
+* Follow `writing_plan.opening_claim`, `writing_plan.first_3_lines`, `writing_plan.body_sequence`, `writing_plan.diagnostic_check`, and `writing_plan.ending_reframe`
+* Avoid `writing_plan.terms_to_avoid`
 * Use `hook_type`, `pattern_interrupt`, `credibility_basis`, `concrete_details`, and `human_angle` from the post brief
 * Do not choose a new angle
 * Do not broaden beyond the brief
@@ -28,6 +32,7 @@ TASK:
 * Preserve concrete details as evidence; do not smooth them into generic wording
 * Use `human_angle` as the tone lens without inventing personal experience
 * Source articles are grounding material, not permission to expand into a broad essay
+* Use articles only for factual verification and grounding when a writing_plan is present
 * Turn compressed source facts into useful author insight, not recap
 * Write like a practitioner with a point of view, not like a content marketer
 * Sound like someone with practical judgment about the pattern, without claiming personal experience.
@@ -35,6 +40,11 @@ TASK:
 BRIEF ALIGNMENT RULES:
 
 * The final post must be a transformation of the brief, not a new interpretation.
+* If `writing_plan` is present, the final post must execute the writing_plan rather than inventing a new structure.
+* The opening should follow `writing_plan.first_3_lines` as closely as natural prose allows.
+* The body should follow `writing_plan.body_sequence` in order.
+* Include `writing_plan.diagnostic_check` as a practical check when it is provided.
+* End from `writing_plan.ending_reframe`.
 * First line must follow `hook_type` and reflect `sharp_claim` or `tension`.
 * The first third of `post_text` must include `pattern_interrupt`.
 * Use `credibility_basis` to justify how strongly the claim is stated.
@@ -212,3 +222,6 @@ Author take:
 
 Post brief:
 {post_brief}
+
+Writing plan:
+{writing_plan}

@@ -24,6 +24,9 @@ Blocked phrases from repair reasons:
 Validated post brief:
 {post_brief}
 
+Writing plan:
+{writing_plan}
+
 Editorial review feedback:
 {editorial_review}
 
@@ -64,6 +67,15 @@ REPAIR REQUIREMENTS:
 * End with a practical takeaway, concrete diagnostic, or useful reframing, not a vague motivational line
 * Do not add unsupported statistics, named companies, studies, metrics, or authority claims
 * Do not ignore brief alignment, mechanics, or hard validation
+* When `writing_plan` is present, treat it as the primary execution plan for the repaired `post_text`
+* Fix the listed quality issues without choosing a new structure
+* Preserve the same angle and reader problem
+* Use `post_brief` as validated editorial direction
+* Use `writing_plan` as execution structure
+* Preserve or closely follow `writing_plan.opening_claim`, `writing_plan.first_3_lines`, `writing_plan.body_sequence`, `writing_plan.diagnostic_check`, and `writing_plan.ending_reframe`
+* Avoid `writing_plan.terms_to_avoid`
+* If the weak payload drifted away from writing_plan, rebuild from writing_plan rather than lightly editing the weak payload
+* Do not invent new facts, examples, numbers, studies, personal experience, client claims, or metrics
 * Do not lightly edit the weak post
 * Rebuild `post_text` from the validated post brief
 * Keep source facts and brief alignment, but change the structure

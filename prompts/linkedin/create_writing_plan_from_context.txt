@@ -1,0 +1,69 @@
+You are creating an internal writing_plan for a LinkedIn post.
+
+Convert the existing staged editorial context into an executable post plan.
+Do not write the final post. Do not create a new angle. Do not summarize articles.
+
+You are given:
+- topic name and digest title;
+- source_evidence_pack as grounding;
+- author_take as the human perspective;
+- angle_decision as the controlling angle;
+- reader_problem as the concrete reader situation;
+- post_brief as the editorial brief;
+- digest articles only as fallback/fact-checking context.
+
+TASK:
+
+Create a compact writing plan that makes final post generation execution-only.
+
+RULES:
+
+* Use the provided context only.
+* Preserve the `post_brief` angle, `reader_problem` diagnostic, and `author_take` perspective.
+* Do not invent facts, metrics, cases, personal experience, client claims, studies, or anecdotes.
+* `opening_claim` must be a short direct claim, not a question.
+* `first_3_lines` must be usable as the opening rhythm of the post.
+* `first_3_lines` should avoid corporate tone and avoid topic-definition openings.
+* `body_sequence` should define the order of ideas, not final prose paragraphs.
+* `evidence_to_use` should include only source-grounded evidence or details from existing artifacts.
+* `diagnostic_check` must be concrete and immediately usable.
+* `terms_to_avoid` should include generic/corporate wording from the current context, especially if present: authenticity, engagement, connection, trust, visibility, reputation, authority, professional image, meaningful, enhance your brand, unlock, leverage, resonate, landscape.
+* `ending_reframe` should be a final insight, not a CTA question.
+* The plan should make final generation write like a practitioner, not a content marketer.
+* Use digest articles only as fallback or factual verification.
+
+Return valid JSON only.
+Return exactly this JSON shape:
+{{
+  "opening_claim": "string",
+  "first_3_lines": ["string", "string", "string"],
+  "body_sequence": ["string"],
+  "evidence_to_use": ["string"],
+  "diagnostic_check": "string",
+  "terms_to_avoid": ["string"],
+  "ending_reframe": "string"
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Source evidence pack:
+{source_evidence_pack}
+
+Author take:
+{author_take}
+
+Angle decision:
+{angle_decision}
+
+Reader problem:
+{reader_problem}
+
+Post brief:
+{post_brief}
+
+Digest articles as fallback/fact-checking context:
+{articles}

@@ -1,526 +1,329 @@
-# Layer 8D: Structured LinkedIn Post Brief
+# LinkedIn Post Generation Architecture
 
 ## Architectural Decision: Post Generation Quality Pipeline
 
-PostFlow is moving from a DigestFlow-style pipeline toward a LinkedIn post generation product.
+PostFlow now uses a staged internal synthesis pipeline for LinkedIn post generation.
 
-`GeneratePostService` is the orchestration layer. It coordinates source sufficiency, research when needed, top-source selection, packaging generation, saving the result, and marking selected sources as used.
+The goal is not to make every generated post perfect in this step. The goal is to stop treating final post writing as a single direct "articles -> post" prompt and instead create inspectable editorial context before the final post is written and repaired.
 
-The quality of the final LinkedIn post must not be handled by a single "articles -> post" prompt.
-
-Direct generation from selected research articles into a final LinkedIn post has a structural failure mode:
-
-* the model summarizes the articles instead of forming a point of view;
-* the output sounds like a digest or generic AI post;
-* the post lacks one clear thesis;
-* there is no explicit author take;
-* research becomes the main subject instead of supporting evidence;
-* the post often tries to cover too much;
-* the output may mention "articles", "research", or trends mechanically.
-
-Therefore, the generation layer must not do:
-
-```text
-3 selected articles
--> final post
-```
-
-Instead, PostFlow will use a dedicated synthesis pipeline inside the post generation/packaging layer:
-
-```text
-selected_articles
--> EvidencePack
--> PostBrief
--> FinalPost
--> ContentPackage.post_text
-```
-
-This is inserted exactly where selected articles are currently converted into `post_text`. It does not replace the research pipeline or `GeneratePostService`.
-
-### Responsibility Split
-
-```text
-GeneratePostService
-  - checks source sufficiency;
-  - triggers research if needed;
-  - selects top 3 usable sources;
-  - creates/updates ContentPackage;
-  - calls PostSynthesisPipeline;
-  - marks used sources.
-
-PostSynthesisPipeline
-  - extracts evidence from selected articles;
-  - creates an editorial post brief;
-  - writes the final LinkedIn post;
-  - optionally runs quality checks / rewrite pass;
-  - returns artifacts for storage/debugging.
-```
-
-`GeneratePostService` remains responsible for orchestration.
-`PostSynthesisPipeline` is responsible for post quality.
-
-### Intermediate Artifacts
-
-#### EvidencePack
-
-Purpose: extract useful argumentative material from selected articles.
-
-EvidencePack is not a summary. It should contain:
-
-* key claim per article;
-* specific supporting data;
-* implication for the target professional reader;
-* tension with common assumptions;
-* cross-article patterns;
-* contradictions, if real;
-* strongest evidence.
-
-#### PostBrief
-
-Purpose: make the editorial decision before writing.
-
-This is the most important quality artifact. It should contain:
-
-* one chosen angle;
-* one core thesis;
-* tension;
-* author take;
-* target reader;
-* evidence to use;
-* evidence to ignore;
-* hook direction;
-* intended post structure.
-
-The PostBrief must force focus and explicitly decide what not to include.
-
-#### FinalPost
-
-Purpose: produce the final LinkedIn post from the PostBrief.
-
-The final post should:
-
-* have one clear thesis;
-* sound like a human expert, not a summary;
-* use research as support, not as the subject;
-* avoid generic AI openings;
-* avoid "the article says" framing;
-* avoid generic CTA endings;
-* preserve the chosen angle and author take.
-
-### MVP Implementation
-
-For MVP, use three required steps:
-
-```text
-1. EvidencePack
-2. PostBrief
-3. FinalPost
-```
-
-A later optional step may be added:
-
-```text
-4. Critique / rewrite
-```
-
-The rewrite step should not be mandatory until the 3-step pipeline has been verified against real examples.
-
-### Storage And Debugging
-
-The final user-visible result remains:
-
-```text
-ContentPackage.post_text
-```
-
-Generation artifacts should be available for debugging and quality iteration. Recommended future fields on `ContentPackage`:
-
-```python
-evidence_pack = models.JSONField(null=True, blank=True)
-post_brief = models.JSONField(null=True, blank=True)
-draft_post = models.TextField(null=True, blank=True)  # optional, if rewrite step exists
-generation_meta = models.JSONField(null=True, blank=True)
-```
-
-The user should only see the final post and hashtags.
-
-The developer should be able to inspect:
-
-```text
-EvidencePack -> PostBrief -> FinalPost
-```
-
-This makes weak-output diagnosis clearer:
-
-* bad EvidencePack = extraction problem;
-* bad PostBrief = angle/thesis problem;
-* good PostBrief but bad post = writing prompt problem;
-* good draft but bad final = rewrite problem.
-
-### Integration Point
-
-Insert the synthesis pipeline where the current packaging logic turns selected articles into `post_text`.
-
-Do not rewrite the research pipeline for this.
-Do not make `GeneratePostService` responsible for writing quality.
-
-Expected integration:
-
-```python
-selected_sources = select_top_3_sources(topic)
-
-result = PostSynthesisPipeline.run(
-    topic=topic,
-    articles=[source.article for source in selected_sources],
-)
-
-package.evidence_pack = result.evidence_pack
-package.post_brief = result.post_brief
-package.post_text = result.final_post
-package.generation_meta = result.meta
-package.status = "done"
-package.save()
-```
-
-### Naming
-
-Use these names in documentation and future code unless the existing codebase strongly suggests another convention:
-
-* `GeneratePostService` for orchestration;
-* `PostSynthesisPipeline` for the quality layer;
-* `EvidencePack` for extracted research evidence;
-* `PostBrief` for editorial angle/thesis/author take;
-* `FinalPost` for the final LinkedIn post.
-
-Existing prompt files may be adapted to this structure:
-
-* `generate_author_take_from_evidence.txt`
-* `generate_post_brief_from_articles.txt`
-* `generate_post_from_articles.txt`
-
-The conceptual flow should become:
-
-```text
-generate_evidence_pack_from_articles
-generate_post_brief_from_evidence
-generate_post_from_brief
-```
-
-Do not rename prompt files yet unless it is a small, safe change.
-
-### What Not To Do Now
-
-For MVP:
-
-* do not build a full personalization/voice profile yet;
-* do not add user-facing angle selection yet;
-* do not rewrite the research pipeline;
-* do not create a complex multi-agent system;
-* do not make 4+ LLM calls mandatory from day one;
-* do not treat prompt wording as the only quality fix;
-* do not let final post generation read raw articles and decide everything in one step.
-
-### Tests And Quality Checks
-
-Validate quality with golden examples rather than exact string tests.
-
-Basic checks:
-
-* final post must not start with "In today's...";
-* final post must not mention "the article says" or "research suggests" mechanically;
-* final post must have one clear thesis;
-* final post must preserve the PostBrief angle;
-* final post must include interpretation, not just facts;
-* final post should use evidence invisibly as support.
-
-## Staged Editorial-Context Hypothesis
-
-Prompt-only tightening of the existing flow improved some constraints, but manual checks showed that generic LinkedIn output can still happen.
-
-The system no longer generates directly from article summaries, but too much editorial reasoning is still concentrated in a few prompts. `author_take` can identify a useful human perspective, but `post_brief` may dilute it into broad personal-branding language. Final generation can also become generic when the writing context is incomplete, too abstract, or still dominated by compressed article summaries.
-
-Adding more constraints to the final prompt or brief prompt increases prompt complexity, but it does not guarantee context preservation. A single large `EditorialContext` would likely move the overload earlier rather than solve it.
-
-The next architecture hypothesis is to split editorial reasoning into smaller staged artifacts. Instead of:
-
-```text
-articles
--> big EditorialContext
--> final_post
-```
-
-Prefer:
+The current implemented flow is:
 
 ```text
 source_evidence_pack
 -> author_take
+-> author_take repair
 -> angle_decision
 -> reader_problem
+-> post_brief
 -> writing_plan
 -> final_post
+-> editorial_review
+-> final_post repair
+-> ContentPackage.post_text
 ```
 
-This staged pipeline is a proposed direction, not a claim that the full flow exists in production today.
+This flow is internal to the packaging layer. It does not change the user-facing post result UI, routes, models, migrations, source lifecycle, LinkedIn API integration, mock/real provider switching, or the final `ContentPackage` output schema.
 
-### Staged Artifact Responsibilities
+## Current Service Boundary
 
-`source_evidence_pack`
+`services/packaging/generator.py` remains the public packaging entry point through `generate_content_package_for_digest(...)`.
 
-Extracts source facts, mechanisms, contrasts, examples, useful terms, and risky generic source language. It should not choose the final post angle.
+`services/packaging/post_synthesis.py` contains the staged synthesis orchestration through `run_post_synthesis_pipeline(...)`.
 
-`author_take`
-
-Creates the human/editorial perspective. It should not produce the full writing plan.
-
-`angle_decision`
-
-Chooses one controlling angle from `author_take` and evidence. It should explicitly say which source terms or adjacent topics must not become the main angle. For example, `Brand Lag` may support an angle, but should not dominate unless it is central to `author_take`.
-
-`reader_problem`
-
-Defines one concrete reader situation, wrong optimization, visible cost, and practical diagnostic/check. It must not change the selected angle.
-
-`writing_plan`
-
-Creates a compact post structure: opening claim, body sequence, evidence to use, terms to avoid, and ending reframe. It must not write final prose.
-
-`final_post`
-
-Writes the LinkedIn post from the `writing_plan`. It should not choose a new angle, summarize articles, or solve upstream reasoning again.
-
-### Staging Principle
-
-Each stage should do one simple job:
-
-* evidence = what exists in sources;
-* angle_decision = what the post is really about;
-* reader_problem = why the reader should care;
-* writing_plan = how the post should unfold;
-* final_post = execution only.
-
-Later stages should receive only the context needed for their task. Full article summaries should not continue to dominate late-stage prompts unless needed for factual verification.
-
-### Debugging Benefit
-
-This staged design makes quality failures easier to diagnose:
-
-* bad angle = inspect `angle_decision`;
-* generic reader problem = inspect `reader_problem`;
-* weak structure = inspect `writing_plan`;
-* weak prose = inspect `final_post`;
-* drift during repair = inspect whether repair received the correct controlling artifacts.
-
-### MVP Boundary
-
-This is a proposed next architecture direction. Do not claim the full staged pipeline exists in production until it is implemented.
-
-Within the MVP boundary:
-
-* do not change UI, routes, templates, ranking, source lifecycle, used-article marking, LinkedIn API, mock/real switching, models, migrations, or output schema;
-* keep the current artifacts internal/debug-only unless explicitly decided otherwise;
-* evaluate the smallest safe implementation step before adding more stages.
-
-The next review should evaluate whether the smallest safe implementation step is an `angle_decision` artifact before `post_brief`, because the observed failure mode is angle drift and source-term dominance.
-
-## A. Goal
-
-Layer 8D adds one internal editorial brief step before final LinkedIn post generation so the system chooses the reader, angle, claim, evidence, takeaway, and ending before writing the final post.
-
-The quality gate remains after final post generation.
-
-`quality_gate: pass` is not enough to accept 8D.
-
-8D succeeds only when the generated `POST BRIEF` and final `post_text` are visibly aligned:
-
-* first line reflects `sharp_claim` or `tension`;
-* body uses `evidence_points`;
-* ending reflects `ending_reframe`;
-* post does not invent a different angle;
-* post does not collapse into generic advice.
-
-## B. Corrected Flow
+The split is:
 
 ```text
-digest.get_articles()
--> generate structured post brief
--> validate post brief
--> generate final post using digest articles + post brief
--> normalize payload
--> validate ContentPackage schema
--> quality gate
--> one repair retry if needed
--> save ContentPackage
+generator.py
+  - loads digest articles;
+  - builds prompt strings;
+  - calls provider helpers;
+  - validates and normalizes payloads;
+  - creates ContentPackage debug_info;
+  - saves ContentPackage.
+
+post_synthesis.py
+  - runs the staged editorial artifacts;
+  - applies best-effort stage failure behavior;
+  - triggers final generation;
+  - runs deterministic quality checks;
+  - runs editorial review;
+  - triggers the existing single final repair path;
+  - returns a structured synthesis result.
 ```
 
-There must be no silent fallback to the old direct "articles only -> final post" path.
+The final saved user-visible result remains `ContentPackage.post_text`.
 
-## C. Brief Schema And Validation
+## Implemented Stages
 
-```json
-{
-  "target_reader": "string",
-  "reader_pain_or_mistake": "string",
-  "sharp_claim": "string",
-  "tension": "string",
-  "evidence_points": ["string", "string"],
-  "practical_takeaway": "string",
-  "ending_reframe": "string",
-  "suggested_hook_direction": "string",
-  "avoid_angle": "string"
-}
-```
+### source_evidence_pack
 
-Validation requirements:
+`source_evidence_pack` extracts source phrases, specific claims, mechanisms, contrasts, examples, usable terms, avoid terms, and tensions from available source material.
 
-* all fields required;
-* all string fields must be non-empty;
-* `evidence_points` must be a list of at least 2 and preferably 2-4 non-empty concise strings;
-* evidence points must be grounded in article summaries/key points;
-* `avoid_angle` must name the generic angle to avoid;
-* the brief should be an editorial decision, not an article summary.
+It is grounding material, not the post angle.
 
-## D. Failure Behavior
+If source evidence extraction fails, the error is recorded in debug info and generation continues where safe.
 
-If brief generation fails because of provider error, invalid JSON, missing fields, invalid shape, or too few evidence points:
+### author_take
 
-* use the existing safe fallback path;
-* do not continue with old direct final-post generation;
-* do not save a fake successful package;
-* make the fallback reason visible in `debug_info`.
+`author_take` captures the human/editorial position before angle selection.
 
-## E. PackagingGenerationResult Changes
+It is intended to answer: "What is the useful point of view here?"
 
-Optional fields:
+It must not invent first-person professional experience, metrics, examples, client claims, cases, or unsupported authority.
 
-```python
-post_brief: dict[str, Any] | None = None
-post_brief_prompt: str = ""
-```
+### author_take repair
 
-All construction sites must be checked:
+Author take repair is deliberately narrow:
 
-* real OpenAI path;
-* mock path;
-* fallback path;
-* test patched return values;
-* any direct `PackagingGenerationResult(...)` construction in tests.
+* it runs only when an `author_take` is structurally valid but rejected by deterministic quality checks;
+* it runs at most once;
+* it uses the same author take JSON schema;
+* strict validation and quality rejection still apply after repair;
+* if repair fails or the repaired take is still rejected, `author_take` is discarded.
 
-## F. Final Prompt Requirements
+When `author_take` is unavailable after generation/repair, downstream staged artifacts that depend on it can be skipped. In the current flow, `angle_decision` and `reader_problem` are skipped when `author_take` is unavailable so the system does not create a generic source-evidence-led editorial chain.
 
-The final prompt must obey the brief, not merely include it.
+### angle_decision
 
-Required constraints:
+`angle_decision` chooses the controlling angle from the accepted `author_take` and source evidence.
 
-* do not choose a new angle;
-* do not broaden the post beyond the brief;
-* if the articles contain more material, ignore what does not serve the brief;
-* first line should reflect `sharp_claim` or `tension`;
-* body should use `evidence_points`;
-* ending should reflect `ending_reframe`;
-* source articles are grounding material, not permission to expand into a broad essay;
-* keep existing output JSON shape and length rules;
-* keep existing no-extra-keys and no-`carousel_outline` instruction.
+It also records:
 
-## G. Debug / Manual Verification Requirements
+* `allowed_supporting_terms`;
+* `do_not_make_main_angle`;
+* `angle_to_avoid`.
 
-`run_packaging_stage.py` should print:
+Validation normalizes hijack-prone supporting terms into `do_not_make_main_angle` when they were not explicitly selected by `author_take`. If a blocked term appears in `controlling_angle`, the angle decision is rejected and the failure is recorded in debug info.
+
+### reader_problem
+
+`reader_problem` translates the selected angle into a specific reader situation:
+
+* target reader;
+* visible behavior;
+* wrong optimization;
+* visible cost;
+* diagnostic check;
+* practical reason the reader should care.
+
+It should make the post concrete before the brief is generated.
+
+### post_brief
+
+`post_brief` is the validated editorial brief.
+
+It receives the staged context and should preserve:
+
+* the accepted author take;
+* the controlling angle;
+* the reader problem;
+* grounded evidence and concrete details;
+* the avoid angle.
+
+It is still a brief, not final prose.
+
+If post brief generation or validation fails, the system uses the existing safe fallback behavior. It does not silently continue with an old direct articles-only final generation path.
+
+### writing_plan
+
+`writing_plan` is generated after `post_brief`.
+
+It converts the brief into execution structure:
+
+* opening claim;
+* first three lines;
+* body sequence;
+* evidence to use;
+* diagnostic check;
+* terms to avoid;
+* ending reframe.
+
+`writing_plan` is best-effort. If it fails, the error is recorded and final generation can continue from the existing staged context.
+
+Both initial final post generation and final post repair receive `writing_plan` when it is available.
+
+### final_post
+
+The final post prompt treats:
+
+1. `writing_plan` as the primary execution plan when present;
+2. `post_brief` as the validated editorial direction;
+3. `author_take` as the main human perspective;
+4. `source_evidence_pack` as preferred factual grounding;
+5. digest article summaries as fallback factual reference.
+
+The final post should not choose a new angle, recap articles, or let article summaries dominate the narrative.
+
+### editorial_review
+
+AI editorial review runs after final post generation.
+
+It can trigger the existing single final repair attempt when deterministic checks pass but editorial review fails or scores below the configured threshold.
+
+Editorial review does not directly cause fallback.
+
+### final_post repair
+
+The final repair path now receives `writing_plan` when available.
+
+Repair uses:
+
+* validated `post_brief`;
+* `writing_plan`;
+* weak payload;
+* editorial review feedback;
+* source facts;
+* deterministic repair reasons.
+
+When `writing_plan` is present, the repair prompt treats it as the primary execution plan for the repaired `post_text`. Repair should fix the listed quality issues without choosing a new structure, preserve the same angle and reader problem, follow the writing plan's opening/body/diagnostic/ending, and avoid `writing_plan.terms_to_avoid`.
+
+The repair path still has exactly one attempt.
+
+## Failure And Fallback Behavior
+
+The architecture is best-effort where safe.
+
+Stage failures are recorded in `debug_info`, including errors/tokens for the relevant artifact when available.
+
+Examples:
+
+* `source_evidence_error`;
+* `author_take_error`;
+* `author_take_quality_issues`;
+* `author_take_repair_error`;
+* `angle_decision_error`;
+* `reader_problem_error`;
+* `writing_plan_error`;
+* `fallback_reason`.
+
+Safe continuation is allowed for optional staged artifacts such as source evidence, author take, angle decision, reader problem, and writing plan.
+
+Post brief failure is different: because the brief is the required editorial decision point for this architecture, brief generation/validation failure uses the existing safe fallback path rather than silently using the old direct generation flow.
+
+Fallback behavior must not create a fake successful real package. Mock/fallback provenance remains visible internally through debug fields and existing provider/is_mock signals.
+
+## Debugging And Manual Inspection
+
+`run_packaging_stage` prints the internal artifacts needed to inspect quality:
 
 ```text
+=== AUTHOR TAKE ===
+=== AUTHOR TAKE ERROR ===
+=== AUTHOR TAKE QUALITY ISSUES ===
+=== AUTHOR TAKE REPAIR ATTEMPTED ===
+=== AUTHOR TAKE REPAIR SUCCEEDED ===
+=== AUTHOR TAKE REPAIR QUALITY ISSUES ===
+=== AUTHOR TAKE REPAIR ERROR ===
+=== ANGLE DECISION ===
+=== ANGLE DECISION ERROR ===
+=== READER PROBLEM ===
+=== READER PROBLEM ERROR ===
 === POST BRIEF ===
-...
-```
-
-Optionally:
-
-```text
+=== WRITING PLAN ===
+=== WRITING PLAN ERROR ===
 === POST BRIEF PROMPT ===
-...
+=== REPAIR PROMPT ===
 ```
 
-Manual verification must inspect two levels.
+This makes quality failures easier to locate:
 
-POST BRIEF:
+* weak evidence = inspect `source_evidence_pack`;
+* missing point of view = inspect `author_take`;
+* source-term drift = inspect `angle_decision`;
+* abstract reader value = inspect `reader_problem`;
+* generic editorial direction = inspect `post_brief`;
+* weak post structure = inspect `writing_plan`;
+* repair drift = inspect `REPAIR PROMPT` and whether it includes the writing plan.
 
-* strong `sharp_claim`;
-* concrete `reader_pain_or_mistake`;
-* useful `practical_takeaway`;
-* useful `ending_reframe`;
-* specific `avoid_angle`;
-* reads like an editorial decision, not a summary.
+## Current Known Limitation
 
-FINAL POST:
+The architecture is complete enough for evaluation, but quality is not solved.
 
-* follows the brief;
-* first line reflects `sharp_claim` or `tension`;
-* body uses `evidence_points` without article recap;
-* ending reflects `ending_reframe`;
-* does not drift into a new generic angle;
-* does not collapse into generic advice.
+Manual digest 130 currently reaches the staged artifacts and the real provider path, and final post repair receives `writing_plan`. The repaired post can still contain abstract or corporate-sounding language. Recent digest 130 editorial review output still scored around 6 and included issues such as:
 
-## H. Manual Success Criteria
+* `too_generic`;
+* `weak_hook`;
+* `not_enough_point_of_view`;
+* `low_reader_value`.
 
-```powershell
-.\.venv\Scripts\python.exe manage.py run_packaging_stage --digest-id 130
-```
+This is acceptable for the architecture step. It means the next work should tune the quality of existing artifacts, not add another stage.
 
-Accept manual verification only if:
+The most likely next quality target is `writing_plan` specificity:
 
-* `provider: openai`;
-* `is_mock: False`;
-* output shows `POST BRIEF`;
-* `quality_gate` or `repair_quality_gate` passes;
-* `carousel_outline_count` remains `0`;
-* the final post visibly follows the generated brief.
+* sharper first three lines;
+* more concrete body sequence;
+* stronger diagnostic check;
+* less generic ending;
+* stricter use of `terms_to_avoid`.
 
-If `quality_gate` passes but the post ignores the brief, manual verification fails.
+Do not claim that `writing_plan` fully prevents corporate language yet.
 
-## I. Files Likely Involved
+## MVP Boundary
 
-* `services/packaging/generator.py`
-* `prompts/linkedin/generate_post_brief_from_articles.txt`
-* `prompts/linkedin/generate_post_from_articles.txt`
-* `tests/test_packaging_articles_only.py`
-* `tests/test_prompt_usage.py`
-* `apps/packaging/management/commands/run_packaging_stage.py`
+Keep this quality pipeline internal/debug-only for now.
 
-## J. Tests To Add / Update
+Do not change:
 
-Prompt tests:
+* UI;
+* routes;
+* templates;
+* models;
+* migrations;
+* `ContentPackage` schema;
+* final output JSON schema;
+* ranking;
+* source lifecycle;
+* used-article marking;
+* LinkedIn API integration;
+* mock/real provider switching.
 
-* brief prompt file exists and includes required fields;
-* rendered brief prompt includes author profile values and article evidence;
-* final post prompt includes brief values;
-* final post prompt explicitly says not to choose a new angle or broaden beyond the brief.
+Do not add more stages until the current architecture has been evaluated against real examples.
 
-Packaging tests:
+## Runtime Prompt Files
 
-* valid brief is generated before final post generation;
-* final post prompt receives/includes the validated brief;
-* invalid brief falls back safely;
-* brief failure does not call old direct final-post generation;
-* fallback reason is visible in `debug_info`;
-* `debug_info` includes `post_brief` on success;
-* `PackagingGenerationResult` defaults keep existing patched tests stable;
-* final post still strips unknown model keys;
-* existing quality gate and one repair retry still work.
+The staged LinkedIn generation path uses these prompt files:
 
-Focused test command:
+* `prompts/linkedin/extract_source_evidence_for_post.txt`;
+* `prompts/linkedin/generate_author_take_from_evidence.txt`;
+* `prompts/linkedin/repair_author_take_quality.txt`;
+* `prompts/linkedin/decide_post_angle_from_evidence.txt`;
+* `prompts/linkedin/define_reader_problem_from_angle.txt`;
+* `prompts/linkedin/generate_post_brief_from_articles.txt`;
+* `prompts/linkedin/create_writing_plan_from_context.txt`;
+* `prompts/linkedin/generate_post_from_articles.txt`;
+* `prompts/linkedin/review_post_editorial_quality.txt`;
+* `prompts/linkedin/repair_post_quality.txt`.
+
+Keep prompt names stable unless there is a separate, explicit cleanup decision.
+
+## Tests
+
+Focused tests live primarily in:
+
+* `tests/test_packaging_articles_only.py`;
+* `tests/test_prompt_usage.py`.
+
+The normal focused verification command is:
 
 ```powershell
 .\.venv\Scripts\python.exe manage.py test tests.test_packaging_articles_only tests.test_prompt_usage --verbosity 2
 ```
 
-## K. Risks / What Not To Change Yet
+Manual inspection command:
 
-* No UI changes.
-* No route changes.
-* No model/schema migration.
-* No `ContentPackage` schema changes.
-* No source lifecycle changes.
-* No LinkedIn API changes.
-* No source discovery/search.
-* No extra repair attempts.
-* Do not remove the existing quality gate.
-* Keep the brief internal/debug-only for MVP.
-* Do not add durable persistence unless explicitly decided later.
-* Do not accept 8D based on `quality_gate: pass` alone; acceptance requires visible brief-to-post alignment.
+```powershell
+.\.venv\Scripts\python.exe manage.py run_packaging_stage --digest-id 130 --verbosity 2
+```
+
+Manual acceptance for this architecture step should check:
+
+* provider reached a real path when credentials/network are available;
+* author take is generated or clearly rejected with debug reason;
+* angle decision and reader problem run only when author take is accepted;
+* post brief is generated and validated;
+* writing plan is generated when available;
+* final post prompt receives writing plan;
+* repair prompt receives writing plan when repair runs;
+* final saved package keeps the existing output schema.
+
+Do not accept this architecture based only on `quality_gate: pass`. The useful manual question is whether the artifacts explain the final post behavior and give a stable place for the next quality improvement.

@@ -1,0 +1,64 @@
+You are deciding the controlling angle for a LinkedIn post before a post brief is written.
+
+You are given:
+- a topic and digest title;
+- an optional source_evidence_pack extracted from source text;
+- an optional author_take that captures the intended human position;
+- digest articles as fallback/context.
+
+TASK:
+
+Choose one narrow editorial angle for the post.
+
+This is an angle decision, not a post and not a full post brief.
+
+ANGLE RULES:
+
+* Do not write the final post.
+* Do not write a post brief.
+* Do not summarize articles.
+* Choose one controlling angle only.
+* If `author_take.core_opinion` is present, it must be the primary source of `controlling_angle`.
+* Prefer a controlling angle built from `author_take.core_opinion`, `author_take.reader_mistake`, `author_take.reader_check`, and `author_take.practical_point`.
+* `controlling_angle` must be phrased as a human/editorial claim, not as a source concept, source term, article title, or branded framework.
+* A source term may become the controlling angle only if `author_take.core_opinion` explicitly names that source term as central.
+* Use source evidence as support, not permission to choose a louder source term.
+* Identify source terms that may support the angle.
+* Identify source terms or topics that must not become the main angle.
+* If a source term is catchy, branded, or broad, and `author_take` does not explicitly choose it, place it in `do_not_make_main_angle`.
+* `allowed_supporting_terms` must contain only terms that can support the author_take without hijacking it.
+* `allowed_supporting_terms` must not include a term that is also the main topic of `controlling_angle`.
+* `do_not_make_main_angle` should include adjacent source terms/topics that could pull the post away from the author_take.
+* `angle_to_avoid` should clearly describe the generic or source-term-led angle to avoid.
+* Do not make `Brand Lag`, outdated perceptions, professional image, authority, trust, or reputation the main angle unless `author_take` explicitly selects that framing.
+* Do not let a catchy source term override the human position.
+* Use source evidence only to support or constrain the angle.
+* Do not invent facts, metrics, cases, examples, names, personal experience, or first-person claims.
+* If the evidence is thin, choose the safest narrow angle rather than a broad generic branding angle.
+* Avoid broad generic angles about authenticity, visibility, storytelling, engagement, trust, or elevating a brand.
+
+Return valid JSON only.
+Return exactly this JSON shape:
+{{
+  "controlling_angle": "string",
+  "angle_source": "author_take | source_evidence | fallback",
+  "why_this_angle": "string",
+  "allowed_supporting_terms": ["string"],
+  "do_not_make_main_angle": ["string"],
+  "angle_to_avoid": "string"
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Source evidence pack:
+{source_evidence_pack}
+
+Author take:
+{author_take}
+
+Digest articles:
+{articles}

@@ -1,0 +1,64 @@
+You are repairing an internal author_take artifact for a LinkedIn post.
+
+Repair only the author_take. Do not write the final post. Do not write a post brief. Do not choose angle_decision.
+
+You are given:
+- topic and digest title;
+- source_evidence_pack as primary grounding;
+- digest articles as fallback/context;
+- rejected_author_take;
+- author_take_quality_issues from deterministic validation.
+
+TASK:
+
+Rewrite the rejected author_take so it satisfies the same author_take JSON schema and fixes the listed quality issues.
+
+REPAIR RULES:
+
+* Return only valid JSON.
+* Return exactly the JSON shape requested below.
+* Preserve source grounding.
+* Do not invent personal experience, metrics, cases, examples, client claims, studies, or anecdotes.
+* Do not write the final post.
+* Do not write a post brief.
+* Do not summarize articles.
+* Keep the output compact.
+* Fix deterministic quality issues directly.
+* If quality issues include `core_opinion_generic:visibility`, replace visibility framing with observable behavior, wrong optimization, diagnostic, or cost.
+* If quality issues include `core_opinion_generic_opening`, rewrite from topic definition into a concrete claim.
+* If quality issues include generic reader mistakes, name visible behavior.
+* If quality issues include generic practical points, turn advice into a concrete diagnostic/check.
+* Convert trust, authority, visibility, and reputation language into visible behavior, wrong optimization, concrete diagnostic, or practical cost.
+* `core_opinion` should start from a concrete claim, not from the topic name.
+* `core_opinion` must not be a question.
+* `reader_check` must be a diagnostic instruction, not a CTA or engagement question.
+* `practical_point` must tell the reader what to check or change, not motivate them.
+
+Return exactly this JSON shape:
+{{
+  "core_opinion": "string",
+  "tension": "string",
+  "reader_mistake": "string",
+  "reader_check": "string",
+  "practical_point": "string",
+  "tone": "string",
+  "do_not_say": ["string"]
+}}
+
+Topic:
+{topic_name}
+
+Digest title:
+{digest_title}
+
+Source evidence pack:
+{source_evidence_pack}
+
+Digest articles as fallback/context:
+{articles}
+
+Rejected author_take:
+{rejected_author_take}
+
+Author take quality issues:
+{author_take_quality_issues}

@@ -85,6 +85,9 @@ class PackagingGenerationResult:
     post_brief: dict[str, Any] | None = None
     post_brief_prompt: str = ""
     post_brief_tokens: dict[str, int | None] | None = None
+    writing_plan: dict[str, Any] | None = None
+    writing_plan_tokens: dict[str, int | None] | None = None
+    writing_plan_error: str = ""
     source_evidence_pack: dict[str, Any] | None = None
     source_evidence_tokens: dict[str, int | None] | None = None
     source_evidence_error: str = ""
@@ -92,6 +95,17 @@ class PackagingGenerationResult:
     author_take_tokens: dict[str, int | None] | None = None
     author_take_error: str = ""
     author_take_quality_issues: list[str] | None = None
+    author_take_repair_attempted: bool = False
+    author_take_repair_succeeded: bool = False
+    author_take_repair_quality_issues: list[str] | None = None
+    author_take_repair_error: str = ""
+    author_take_repair_tokens: dict[str, int | None] | None = None
+    angle_decision: dict[str, Any] | None = None
+    angle_decision_tokens: dict[str, int | None] | None = None
+    angle_decision_error: str = ""
+    reader_problem: dict[str, Any] | None = None
+    reader_problem_tokens: dict[str, int | None] | None = None
+    reader_problem_error: str = ""
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -162,6 +176,9 @@ def generate_content_package_for_digest(
         "post_brief": generation.post_brief,
         "post_brief_prompt": generation.post_brief_prompt,
         "post_brief_tokens": generation.post_brief_tokens,
+        "writing_plan": generation.writing_plan or {},
+        "writing_plan_tokens": generation.writing_plan_tokens,
+        "writing_plan_error": generation.writing_plan_error,
         "source_evidence_pack": generation.source_evidence_pack or {},
         "source_evidence_tokens": generation.source_evidence_tokens,
         "source_evidence_error": generation.source_evidence_error,
@@ -169,6 +186,17 @@ def generate_content_package_for_digest(
         "author_take_tokens": generation.author_take_tokens,
         "author_take_error": generation.author_take_error,
         "author_take_quality_issues": generation.author_take_quality_issues or [],
+        "author_take_repair_attempted": generation.author_take_repair_attempted,
+        "author_take_repair_succeeded": generation.author_take_repair_succeeded,
+        "author_take_repair_quality_issues": generation.author_take_repair_quality_issues or [],
+        "author_take_repair_error": generation.author_take_repair_error,
+        "author_take_repair_tokens": generation.author_take_repair_tokens,
+        "angle_decision": generation.angle_decision or {},
+        "angle_decision_tokens": generation.angle_decision_tokens,
+        "angle_decision_error": generation.angle_decision_error,
+        "reader_problem": generation.reader_problem or {},
+        "reader_problem_tokens": generation.reader_problem_tokens,
+        "reader_problem_error": generation.reader_problem_error,
         "brief_alignment": generation.brief_alignment or {},
         "post_mechanics": generation.post_mechanics or {},
         "editorial_review": generation.editorial_review or {},
@@ -240,6 +268,9 @@ def _generate_packaging_payload(
         post_brief=synthesis.post_brief,
         post_brief_prompt=synthesis.post_brief_prompt,
         post_brief_tokens=synthesis.post_brief_tokens,
+        writing_plan=synthesis.writing_plan,
+        writing_plan_tokens=synthesis.writing_plan_tokens,
+        writing_plan_error=synthesis.writing_plan_error,
         source_evidence_pack=synthesis.source_evidence_pack,
         source_evidence_tokens=synthesis.source_evidence_tokens,
         source_evidence_error=synthesis.source_evidence_error,
@@ -247,6 +278,17 @@ def _generate_packaging_payload(
         author_take_tokens=synthesis.author_take_tokens,
         author_take_error=synthesis.author_take_error,
         author_take_quality_issues=synthesis.author_take_quality_issues,
+        author_take_repair_attempted=synthesis.author_take_repair_attempted,
+        author_take_repair_succeeded=synthesis.author_take_repair_succeeded,
+        author_take_repair_quality_issues=synthesis.author_take_repair_quality_issues,
+        author_take_repair_error=synthesis.author_take_repair_error,
+        author_take_repair_tokens=synthesis.author_take_repair_tokens,
+        angle_decision=synthesis.angle_decision,
+        angle_decision_tokens=synthesis.angle_decision_tokens,
+        angle_decision_error=synthesis.angle_decision_error,
+        reader_problem=synthesis.reader_problem,
+        reader_problem_tokens=synthesis.reader_problem_tokens,
+        reader_problem_error=synthesis.reader_problem_error,
         brief_alignment=synthesis.brief_alignment,
         post_mechanics=synthesis.post_mechanics,
         editorial_review=synthesis.editorial_review,
@@ -266,9 +308,13 @@ def _post_synthesis_dependencies() -> PostSynthesisDependencies:
     return PostSynthesisDependencies(
         generate_source_evidence_pack=_generate_source_evidence_pack_via_llm,
         generate_author_take=_generate_author_take_via_llm,
+        repair_author_take=_repair_author_take_via_llm,
         author_take_quality_issues=_author_take_quality_issues,
         author_take_requires_rejection=_author_take_requires_rejection,
+        generate_angle_decision=_generate_angle_decision_via_llm,
+        generate_reader_problem=_generate_reader_problem_via_llm,
         generate_post_brief=_generate_post_brief_via_llm,
+        generate_writing_plan=_generate_writing_plan_via_llm,
         generate_payload=_generate_payload_via_llm,
         normalize_payload=_normalize_linkedin_post_payload,
         collect_repairable_payload_issues=_collect_repairable_payload_issues,
@@ -298,6 +344,7 @@ def generate_post_from_articles(
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    writing_plan: dict[str, Any] | None = None,
     source_evidence_pack: dict[str, Any] | None = None,
     author_take: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -307,6 +354,7 @@ def generate_post_from_articles(
         articles,
         author_profile,
         post_brief=post_brief,
+        writing_plan=writing_plan,
         source_evidence_pack=source_evidence_pack,
         author_take=author_take,
     )
@@ -353,6 +401,7 @@ def build_post_prompt(
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    writing_plan: dict[str, Any] | None = None,
     source_evidence_pack: dict[str, Any] | None = None,
     author_take: dict[str, Any] | None = None,
 ) -> str:
@@ -363,6 +412,7 @@ def build_post_prompt(
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
         post_brief=_format_list_for_prompt(post_brief or {}),
+        writing_plan=_format_list_for_prompt(writing_plan or {}),
         source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
         author_take=_format_list_for_prompt(author_take or {}),
         author_role=author_profile["role"],
@@ -381,6 +431,8 @@ def build_post_brief_prompt(
     author_profile: dict[str, Any],
     source_evidence_pack: dict[str, Any] | None = None,
     author_take: dict[str, Any] | None = None,
+    angle_decision: dict[str, Any] | None = None,
+    reader_problem: dict[str, Any] | None = None,
 ) -> str:
     """Build prompt for an internal editorial brief from digest articles."""
     return build_prompt(
@@ -390,6 +442,8 @@ def build_post_brief_prompt(
         articles=_format_list_for_prompt(articles),
         source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
         author_take=_format_list_for_prompt(author_take or {}),
+        angle_decision=_format_list_for_prompt(angle_decision or {}),
+        reader_problem=_format_list_for_prompt(reader_problem or {}),
         author_role=author_profile["role"],
         author_background=author_profile["background"],
         author_focus=author_profile["focus"],
@@ -397,6 +451,69 @@ def build_post_brief_prompt(
         style_constraint_1=author_profile["style_constraints"][0],
         style_constraint_2=author_profile["style_constraints"][1],
         style_constraint_3=author_profile["style_constraints"][2],
+    )
+
+
+def build_writing_plan_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    *,
+    post_brief: dict[str, Any],
+    source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
+    angle_decision: dict[str, Any] | None = None,
+    reader_problem: dict[str, Any] | None = None,
+) -> str:
+    """Build prompt for an internal executable LinkedIn writing plan."""
+    return build_prompt(
+        "linkedin/create_writing_plan_from_context.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_take=_format_list_for_prompt(author_take or {}),
+        angle_decision=_format_list_for_prompt(angle_decision or {}),
+        reader_problem=_format_list_for_prompt(reader_problem or {}),
+        post_brief=_format_list_for_prompt(post_brief),
+    )
+
+
+def build_angle_decision_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
+) -> str:
+    """Build prompt for the staged editorial angle decision."""
+    return build_prompt(
+        "linkedin/decide_post_angle_from_evidence.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_take=_format_list_for_prompt(author_take or {}),
+    )
+
+
+def build_reader_problem_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    angle_decision: dict[str, Any] | None = None,
+    source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
+) -> str:
+    """Build prompt for the staged reader problem decision."""
+    return build_prompt(
+        "linkedin/define_reader_problem_from_angle.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        angle_decision=_format_list_for_prompt(angle_decision or {}),
+        source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_take=_format_list_for_prompt(author_take or {}),
     )
 
 
@@ -461,6 +578,39 @@ _AUTHOR_TAKE_GENERIC_PRACTICAL_PHRASES = (
     "build trust",
     "authentic engagement",
 )
+_ANGLE_DECISION_STRING_FIELDS = [
+    "controlling_angle",
+    "angle_source",
+    "why_this_angle",
+    "angle_to_avoid",
+]
+_ANGLE_DECISION_LIST_FIELDS = ["allowed_supporting_terms", "do_not_make_main_angle"]
+_ANGLE_DECISION_ALLOWED_SOURCES = {"author_take", "source_evidence", "fallback"}
+_ANGLE_DECISION_LIST_LIMIT = 8
+_ANGLE_DECISION_HIJACK_PRONE_TERMS = (
+    "brand lag",
+    "outdated perceptions",
+    "professional image",
+    "authority",
+    "trust",
+    "reputation",
+)
+_READER_PROBLEM_STRING_FIELDS = [
+    "target_reader",
+    "reader_situation",
+    "wrong_optimization",
+    "visible_cost",
+    "diagnostic_check",
+    "why_reader_should_care",
+]
+_WRITING_PLAN_STRING_FIELDS = ["opening_claim", "diagnostic_check", "ending_reframe"]
+_WRITING_PLAN_LIST_FIELDS = ["first_3_lines", "body_sequence", "evidence_to_use", "terms_to_avoid"]
+_WRITING_PLAN_LIST_LIMITS = {
+    "first_3_lines": 3,
+    "body_sequence": 6,
+    "evidence_to_use": 5,
+    "terms_to_avoid": 10,
+}
 
 
 def build_author_take_prompt(
@@ -476,6 +626,34 @@ def build_author_take_prompt(
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
         source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        author_role=author_profile["role"],
+        author_background=author_profile["background"],
+        author_focus=author_profile["focus"],
+        author_voice=author_profile["voice"],
+        style_constraint_1=author_profile["style_constraints"][0],
+        style_constraint_2=author_profile["style_constraints"][1],
+        style_constraint_3=author_profile["style_constraints"][2],
+    )
+
+
+def build_author_take_repair_prompt(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    *,
+    rejected_author_take: dict[str, Any],
+    author_take_quality_issues: list[str],
+    source_evidence_pack: dict[str, Any] | None = None,
+) -> str:
+    """Build prompt for one focused author_take quality repair attempt."""
+    return build_prompt(
+        "linkedin/repair_author_take_quality.txt",
+        topic_name=digest.run.topic.name,
+        digest_title=digest.title,
+        articles=_format_list_for_prompt(articles),
+        source_evidence_pack=_format_list_for_prompt(source_evidence_pack or {}),
+        rejected_author_take=_format_list_for_prompt(rejected_author_take),
+        author_take_quality_issues=_format_list_for_prompt(author_take_quality_issues),
         author_role=author_profile["role"],
         author_background=author_profile["background"],
         author_focus=author_profile["focus"],
@@ -612,6 +790,138 @@ def _validate_author_take_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _validate_angle_decision_payload(
+    payload: dict[str, Any],
+    author_take: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate and normalize a staged LinkedIn angle decision payload."""
+    if not isinstance(payload, dict):
+        raise ContentPackageValidationError("Angle decision payload must be a JSON object.")
+
+    normalized: dict[str, Any] = {}
+    for field_name in _ANGLE_DECISION_STRING_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Angle decision payload is missing required field: {field_name}")
+        value = str(payload.get(field_name) or "").strip()
+        if not value:
+            raise ContentPackageValidationError(f"Angle decision field must be a non-empty string: {field_name}")
+        normalized[field_name] = value
+
+    if normalized["angle_source"] not in _ANGLE_DECISION_ALLOWED_SOURCES:
+        raise ContentPackageValidationError(
+            "Angle decision angle_source must be one of: author_take, source_evidence, fallback."
+        )
+
+    for field_name in _ANGLE_DECISION_LIST_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Angle decision payload is missing required field: {field_name}")
+        raw_items = payload.get(field_name)
+        if not isinstance(raw_items, list):
+            raise ContentPackageValidationError(f"Angle decision field must be a list: {field_name}")
+        normalized[field_name] = [
+            str(item).strip()
+            for item in raw_items
+            if isinstance(item, str) and str(item).strip()
+        ][:_ANGLE_DECISION_LIST_LIMIT]
+
+    allowed_terms, do_not_make_main_angle = _normalize_angle_decision_terms(
+        normalized["allowed_supporting_terms"],
+        normalized["do_not_make_main_angle"],
+        author_take=author_take,
+    )
+    controlling_angle_key = _normalize_angle_term_key(normalized["controlling_angle"])
+    for blocked_term in do_not_make_main_angle:
+        blocked_key = _normalize_angle_term_key(blocked_term)
+        if blocked_key and blocked_key in controlling_angle_key:
+            raise ContentPackageValidationError(
+                f"Angle decision controlling_angle contains blocked term: {blocked_term}"
+            )
+
+    return {
+        "controlling_angle": normalized["controlling_angle"],
+        "angle_source": normalized["angle_source"],
+        "why_this_angle": normalized["why_this_angle"],
+        "allowed_supporting_terms": allowed_terms,
+        "do_not_make_main_angle": do_not_make_main_angle,
+        "angle_to_avoid": normalized["angle_to_avoid"],
+    }
+
+
+def _normalize_angle_decision_terms(
+    allowed_supporting_terms: list[str],
+    do_not_make_main_angle: list[str],
+    *,
+    author_take: dict[str, Any] | None = None,
+) -> tuple[list[str], list[str]]:
+    author_core_opinion = ""
+    if isinstance(author_take, dict):
+        author_core_opinion = _normalize_angle_term_key(author_take.get("core_opinion"))
+
+    blocked_terms = _dedupe_angle_terms(do_not_make_main_angle)
+    blocked_keys = {_normalize_angle_term_key(term) for term in blocked_terms}
+    allowed_terms: list[str] = []
+    allowed_keys: set[str] = set()
+
+    for term in _dedupe_angle_terms(allowed_supporting_terms):
+        term_key = _normalize_angle_term_key(term)
+        if term_key in blocked_keys:
+            continue
+        if _is_hijack_prone_angle_term(term_key) and term_key not in author_core_opinion:
+            if term_key not in blocked_keys:
+                blocked_terms.append(term)
+                blocked_keys.add(term_key)
+            continue
+        if term_key not in allowed_keys:
+            allowed_terms.append(term)
+            allowed_keys.add(term_key)
+
+    return allowed_terms[:_ANGLE_DECISION_LIST_LIMIT], blocked_terms[:_ANGLE_DECISION_LIST_LIMIT]
+
+
+def _dedupe_angle_terms(terms: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        term_key = _normalize_angle_term_key(term)
+        if not term_key or term_key in seen:
+            continue
+        deduped.append(term)
+        seen.add(term_key)
+    return deduped
+
+
+def _normalize_angle_term_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _is_hijack_prone_angle_term(term_key: str) -> bool:
+    return any(hijack_term in term_key for hijack_term in _ANGLE_DECISION_HIJACK_PRONE_TERMS)
+
+
+def _validate_reader_problem_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a staged LinkedIn reader problem payload."""
+    if not isinstance(payload, dict):
+        raise ContentPackageValidationError("Reader problem payload must be a JSON object.")
+
+    normalized: dict[str, str] = {}
+    for field_name in _READER_PROBLEM_STRING_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Reader problem payload is missing required field: {field_name}")
+        value = str(payload.get(field_name) or "").strip()
+        if not value:
+            raise ContentPackageValidationError(f"Reader problem field must be a non-empty string: {field_name}")
+        normalized[field_name] = value
+
+    return {
+        "target_reader": normalized["target_reader"],
+        "reader_situation": normalized["reader_situation"],
+        "wrong_optimization": normalized["wrong_optimization"],
+        "visible_cost": normalized["visible_cost"],
+        "diagnostic_check": normalized["diagnostic_check"],
+        "why_reader_should_care": normalized["why_reader_should_care"],
+    }
+
+
 def _author_take_quality_issues(author_take: dict[str, Any]) -> list[str]:
     core_opinion = str(author_take.get("core_opinion") or "").strip()
     reader_mistake = str(author_take.get("reader_mistake") or "").strip()
@@ -717,6 +1027,50 @@ def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_writing_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize an internal executable LinkedIn writing plan."""
+    if not isinstance(payload, dict):
+        raise ContentPackageValidationError("Writing plan payload must be a JSON object.")
+
+    normalized: dict[str, Any] = {}
+    for field_name in _WRITING_PLAN_STRING_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Writing plan payload is missing required field: {field_name}")
+        value = str(payload.get(field_name) or "").strip()
+        if not value:
+            raise ContentPackageValidationError(f"Writing plan field must be a non-empty string: {field_name}")
+        normalized[field_name] = value
+
+    for field_name in _WRITING_PLAN_LIST_FIELDS:
+        if field_name not in payload:
+            raise ContentPackageValidationError(f"Writing plan payload is missing required field: {field_name}")
+        raw_items = payload.get(field_name)
+        if not isinstance(raw_items, list):
+            raise ContentPackageValidationError(f"Writing plan field must be a list: {field_name}")
+        values = [
+            str(item).strip()
+            for item in raw_items
+            if isinstance(item, str) and str(item).strip()
+        ]
+        if field_name == "first_3_lines" and not (2 <= len(values) <= 3):
+            raise ContentPackageValidationError("Writing plan first_3_lines must include 2-3 non-empty strings.")
+        if field_name == "body_sequence" and len(values) < 2:
+            raise ContentPackageValidationError("Writing plan body_sequence must include at least 2 non-empty strings.")
+        if field_name == "evidence_to_use" and len(values) < 1:
+            raise ContentPackageValidationError("Writing plan evidence_to_use must include at least 1 non-empty string.")
+        normalized[field_name] = values[:_WRITING_PLAN_LIST_LIMITS[field_name]]
+
+    return {
+        "opening_claim": normalized["opening_claim"],
+        "first_3_lines": normalized["first_3_lines"],
+        "body_sequence": normalized["body_sequence"],
+        "evidence_to_use": normalized["evidence_to_use"],
+        "diagnostic_check": normalized["diagnostic_check"],
+        "terms_to_avoid": normalized["terms_to_avoid"],
+        "ending_reframe": normalized["ending_reframe"],
+    }
+
+
 def build_carousel_prompt(
     digest: Digest,
     articles: list[dict[str, Any]],
@@ -742,6 +1096,7 @@ def build_post_repair_prompt(
     weak_payload: dict[str, Any],
     quality_report: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    writing_plan: dict[str, Any] | None = None,
     editorial_review: dict[str, Any] | None = None,
     editorial_review_error: str = "",
 ) -> str:
@@ -755,6 +1110,7 @@ def build_post_repair_prompt(
         digest_title=digest.title,
         articles=_format_list_for_prompt(articles),
         post_brief=_format_list_for_prompt(post_brief or {}),
+        writing_plan=_format_list_for_prompt(writing_plan or {}),
         editorial_review=_format_list_for_prompt(editorial_review_payload),
         editorial_review_issues=_format_list_for_prompt(editorial_review_payload.get("issues", [])),
         editorial_repair_instructions=_format_list_for_prompt(
@@ -875,6 +1231,7 @@ def _generate_payload_via_llm(
     articles: list[dict[str, Any]],
     author_profile: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    writing_plan: dict[str, Any] | None = None,
     source_evidence_pack: dict[str, Any] | None = None,
     author_take: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
@@ -884,6 +1241,7 @@ def _generate_payload_via_llm(
             articles,
             author_profile,
             post_brief=post_brief,
+            writing_plan=writing_plan,
             source_evidence_pack=source_evidence_pack,
             author_take=author_take,
         )
@@ -896,6 +1254,7 @@ def _generate_payload_via_llm(
         articles,
         author_profile,
         post_brief=post_brief,
+        writing_plan=writing_plan,
         source_evidence_pack=source_evidence_pack,
         author_take=author_take,
     )
@@ -913,11 +1272,44 @@ def _generate_payload_via_llm(
         articles,
         author_profile,
         post_brief=post_brief,
+        writing_plan=writing_plan,
         source_evidence_pack=source_evidence_pack,
         author_take=author_take,
     )
     response_text = json.dumps(payload, ensure_ascii=False, indent=2)
     return payload, prompt, response_text, None
+
+
+def _generate_writing_plan_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    *,
+    post_brief: dict[str, Any],
+    source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
+    angle_decision: dict[str, Any] | None = None,
+    reader_problem: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_writing_plan_prompt(
+        digest,
+        articles,
+        author_profile,
+        post_brief=post_brief,
+        source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
+        angle_decision=angle_decision,
+        reader_problem=reader_problem,
+    )
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=600,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    payload = _parse_json_response(response_text)
+    writing_plan = _validate_writing_plan_payload(payload)
+    return writing_plan, prompt, response_text, response.usage
 
 
 def _generate_post_brief_via_llm(
@@ -926,6 +1318,8 @@ def _generate_post_brief_via_llm(
     author_profile: dict[str, Any],
     source_evidence_pack: dict[str, Any] | None = None,
     author_take: dict[str, Any] | None = None,
+    angle_decision: dict[str, Any] | None = None,
+    reader_problem: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
     prompt = build_post_brief_prompt(
         digest,
@@ -933,6 +1327,8 @@ def _generate_post_brief_via_llm(
         author_profile,
         source_evidence_pack=source_evidence_pack,
         author_take=author_take,
+        angle_decision=angle_decision,
+        reader_problem=reader_problem,
     )
     response = OpenAIClient().generate_text(
         prompt=prompt,
@@ -943,6 +1339,58 @@ def _generate_post_brief_via_llm(
     payload = _parse_json_response(response_text)
     post_brief = _validate_post_brief_payload(payload)
     return post_brief, prompt, response_text, response.usage
+
+
+def _generate_reader_problem_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    angle_decision: dict[str, Any] | None = None,
+    source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_reader_problem_prompt(
+        digest,
+        articles,
+        author_profile,
+        angle_decision=angle_decision,
+        source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
+    )
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=500,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    payload = _parse_json_response(response_text)
+    reader_problem = _validate_reader_problem_payload(payload)
+    return reader_problem, prompt, response_text, response.usage
+
+
+def _generate_angle_decision_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    source_evidence_pack: dict[str, Any] | None = None,
+    author_take: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_angle_decision_prompt(
+        digest,
+        articles,
+        author_profile,
+        source_evidence_pack=source_evidence_pack,
+        author_take=author_take,
+    )
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=450,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    payload = _parse_json_response(response_text)
+    angle_decision = _validate_angle_decision_payload(payload, author_take=author_take)
+    return angle_decision, prompt, response_text, response.usage
 
 
 def _generate_author_take_via_llm(
@@ -966,6 +1414,34 @@ def _generate_author_take_via_llm(
     payload = _parse_json_response(response_text)
     author_take = _validate_author_take_payload(payload)
     return author_take, prompt, response_text, response.usage
+
+
+def _repair_author_take_via_llm(
+    digest: Digest,
+    articles: list[dict[str, Any]],
+    author_profile: dict[str, Any],
+    *,
+    rejected_author_take: dict[str, Any],
+    author_take_quality_issues: list[str],
+    source_evidence_pack: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
+    prompt = build_author_take_repair_prompt(
+        digest,
+        articles,
+        author_profile,
+        rejected_author_take=rejected_author_take,
+        author_take_quality_issues=author_take_quality_issues,
+        source_evidence_pack=source_evidence_pack,
+    )
+    response = OpenAIClient().generate_text(
+        prompt=prompt,
+        max_output_tokens=500,
+        json_mode=True,
+    )
+    response_text = response.text.strip()
+    payload = _parse_json_response(response_text)
+    repaired_author_take = _validate_author_take_payload(payload)
+    return repaired_author_take, prompt, response_text, response.usage
 
 
 def _generate_source_evidence_pack_via_llm(
@@ -1025,6 +1501,7 @@ def _repair_packaging_payload_via_llm(
     weak_payload: dict[str, Any],
     quality_report: dict[str, Any],
     post_brief: dict[str, Any] | None = None,
+    writing_plan: dict[str, Any] | None = None,
     editorial_review: dict[str, Any] | None = None,
     editorial_review_error: str = "",
 ) -> tuple[dict[str, Any], str, str, dict[str, int | None] | None]:
@@ -1035,6 +1512,7 @@ def _repair_packaging_payload_via_llm(
         weak_payload,
         quality_report,
         post_brief=post_brief,
+        writing_plan=writing_plan,
         editorial_review=editorial_review,
         editorial_review_error=editorial_review_error,
     )

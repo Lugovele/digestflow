@@ -40,9 +40,13 @@ class _PostSynthesisRepairFailure(ContentPackageValidationError):
 class PostSynthesisDependencies:
     generate_source_evidence_pack: Callable[..., Any]
     generate_author_take: Callable[..., Any]
+    repair_author_take: Callable[..., Any]
     author_take_quality_issues: Callable[[dict[str, Any]], list[str]]
     author_take_requires_rejection: Callable[[dict[str, Any]], bool]
+    generate_angle_decision: Callable[..., Any]
+    generate_reader_problem: Callable[..., Any]
     generate_post_brief: Callable[..., Any]
+    generate_writing_plan: Callable[..., Any]
     generate_payload: Callable[..., Any]
     normalize_payload: Callable[[dict[str, Any]], dict[str, Any]]
     collect_repairable_payload_issues: Callable[[dict[str, Any]], list[str]]
@@ -87,6 +91,9 @@ class PostSynthesisResult:
     post_brief: dict[str, Any] | None = None
     post_brief_prompt: str = ""
     post_brief_tokens: dict[str, int | None] | None = None
+    writing_plan: dict[str, Any] | None = None
+    writing_plan_tokens: dict[str, int | None] | None = None
+    writing_plan_error: str = ""
     source_evidence_pack: dict[str, Any] | None = None
     source_evidence_tokens: dict[str, int | None] | None = None
     source_evidence_error: str = ""
@@ -94,6 +101,17 @@ class PostSynthesisResult:
     author_take_tokens: dict[str, int | None] | None = None
     author_take_error: str = ""
     author_take_quality_issues: list[str] | None = None
+    author_take_repair_attempted: bool = False
+    author_take_repair_succeeded: bool = False
+    author_take_repair_quality_issues: list[str] | None = None
+    author_take_repair_error: str = ""
+    author_take_repair_tokens: dict[str, int | None] | None = None
+    angle_decision: dict[str, Any] | None = None
+    angle_decision_tokens: dict[str, int | None] | None = None
+    angle_decision_error: str = ""
+    reader_problem: dict[str, Any] | None = None
+    reader_problem_tokens: dict[str, int | None] | None = None
+    reader_problem_error: str = ""
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -131,6 +149,9 @@ def run_post_synthesis_pipeline(
     post_brief: dict[str, Any] | None = None
     post_brief_prompt = ""
     post_brief_tokens: dict[str, int | None] | None = None
+    writing_plan: dict[str, Any] | None = None
+    writing_plan_tokens: dict[str, int | None] | None = None
+    writing_plan_error = ""
     source_evidence_pack: dict[str, Any] | None = None
     source_evidence_tokens: dict[str, int | None] | None = None
     source_evidence_error = ""
@@ -138,6 +159,17 @@ def run_post_synthesis_pipeline(
     author_take_tokens: dict[str, int | None] | None = None
     author_take_error = ""
     author_take_quality_issues: list[str] = []
+    author_take_repair_attempted = False
+    author_take_repair_succeeded = False
+    author_take_repair_quality_issues: list[str] = []
+    author_take_repair_error = ""
+    author_take_repair_tokens: dict[str, int | None] | None = None
+    angle_decision: dict[str, Any] | None = None
+    angle_decision_tokens: dict[str, int | None] | None = None
+    angle_decision_error = ""
+    reader_problem: dict[str, Any] | None = None
+    reader_problem_tokens: dict[str, int | None] | None = None
+    reader_problem_error = ""
     brief_alignment: dict[str, Any] | None = None
     post_mechanics: dict[str, Any] | None = None
     editorial_review: dict[str, Any] | None = None
@@ -178,11 +210,88 @@ def run_post_synthesis_pipeline(
                 )
                 author_take_quality_issues = dependencies.author_take_quality_issues(author_take)
                 if dependencies.author_take_requires_rejection(author_take):
-                    author_take_error = f"author take rejected: {', '.join(author_take_quality_issues)}"
-                    author_take = None
+                    author_take_repair_attempted = True
+                    try:
+                        (
+                            repaired_author_take,
+                            _author_take_repair_prompt,
+                            _author_take_repair_response,
+                            author_take_repair_tokens,
+                        ) = dependencies.repair_author_take(
+                            digest,
+                            articles,
+                            profile,
+                            rejected_author_take=author_take,
+                            author_take_quality_issues=author_take_quality_issues,
+                            source_evidence_pack=source_evidence_pack,
+                        )
+                        author_take_repair_quality_issues = dependencies.author_take_quality_issues(
+                            repaired_author_take
+                        )
+                        if dependencies.author_take_requires_rejection(repaired_author_take):
+                            author_take_repair_error = (
+                                "author take repair rejected: "
+                                f"{', '.join(author_take_repair_quality_issues)}"
+                            )
+                            author_take_error = (
+                                "author take rejected: "
+                                f"{', '.join(author_take_quality_issues)}"
+                            )
+                            author_take = None
+                        else:
+                            author_take = repaired_author_take
+                            author_take_repair_succeeded = True
+                    except Exception as exc:  # noqa: BLE001 - author take repair is best-effort
+                        author_take_repair_error = str(exc)
+                        author_take_error = f"author take rejected: {', '.join(author_take_quality_issues)}"
+                        author_take = None
             except Exception as exc:  # noqa: BLE001 - author take is best-effort
                 author_take_error = str(exc)
                 author_take = None
+
+        if not author_take:
+            angle_decision_error = "skipped: author_take unavailable"
+            reader_problem_error = "skipped: angle_decision unavailable"
+
+        if author_take and getattr(settings, "PACKAGING_ANGLE_DECISION_ENABLED", True):
+            try:
+                (
+                    angle_decision,
+                    _angle_decision_prompt,
+                    _angle_decision_response,
+                    angle_decision_tokens,
+                ) = dependencies.generate_angle_decision(
+                    digest,
+                    articles,
+                    profile,
+                    source_evidence_pack=source_evidence_pack,
+                    author_take=author_take,
+                )
+            except Exception as exc:  # noqa: BLE001 - angle decision is best-effort
+                angle_decision_error = str(exc)
+                angle_decision = None
+
+        if author_take and not angle_decision and not reader_problem_error:
+            reader_problem_error = "skipped: angle_decision unavailable"
+
+        if angle_decision and getattr(settings, "PACKAGING_READER_PROBLEM_ENABLED", True):
+            try:
+                (
+                    reader_problem,
+                    _reader_problem_prompt,
+                    _reader_problem_response,
+                    reader_problem_tokens,
+                ) = dependencies.generate_reader_problem(
+                    digest,
+                    articles,
+                    profile,
+                    angle_decision=angle_decision,
+                    source_evidence_pack=source_evidence_pack,
+                    author_take=author_take,
+                )
+            except Exception as exc:  # noqa: BLE001 - reader problem is best-effort
+                reader_problem_error = str(exc)
+                reader_problem = None
 
         try:
             post_brief, post_brief_prompt, _brief_response_text, post_brief_tokens = (
@@ -192,6 +301,8 @@ def run_post_synthesis_pipeline(
                     profile,
                     source_evidence_pack=source_evidence_pack,
                     author_take=author_take,
+                    angle_decision=angle_decision,
+                    reader_problem=reader_problem,
                 )
             )
         except Exception as exc:
@@ -199,11 +310,33 @@ def run_post_synthesis_pipeline(
                 f"LinkedIn post brief generation/validation failed: {exc}"
             ) from exc
 
+        if getattr(settings, "PACKAGING_WRITING_PLAN_ENABLED", True):
+            try:
+                (
+                    writing_plan,
+                    _writing_plan_prompt,
+                    _writing_plan_response_text,
+                    writing_plan_tokens,
+                ) = dependencies.generate_writing_plan(
+                    digest,
+                    articles,
+                    profile,
+                    post_brief=post_brief,
+                    source_evidence_pack=source_evidence_pack,
+                    author_take=author_take,
+                    angle_decision=angle_decision,
+                    reader_problem=reader_problem,
+                )
+            except Exception as exc:  # noqa: BLE001 - writing plan is best-effort
+                writing_plan_error = str(exc)
+                writing_plan = None
+
         payload, prompt, response_text, tokens = dependencies.generate_payload(
             digest,
             articles,
             profile,
             post_brief=post_brief,
+            writing_plan=writing_plan,
             source_evidence_pack=source_evidence_pack,
             author_take=author_take,
         )
@@ -289,6 +422,7 @@ def run_post_synthesis_pipeline(
                     dependencies=dependencies,
                     payload=payload,
                     post_brief=post_brief,
+                    writing_plan=writing_plan,
                     quality_gate=quality_gate,
                     brief_alignment=brief_alignment,
                     post_mechanics=post_mechanics,
@@ -362,6 +496,7 @@ def run_post_synthesis_pipeline(
                         dependencies=dependencies,
                         payload=payload,
                         post_brief=post_brief,
+                        writing_plan=writing_plan,
                         quality_gate=quality_gate,
                         brief_alignment=brief_alignment,
                         post_mechanics=post_mechanics,
@@ -390,6 +525,7 @@ def run_post_synthesis_pipeline(
                 articles,
                 profile,
                 post_brief=post_brief,
+                writing_plan=writing_plan,
                 source_evidence_pack=source_evidence_pack,
                 author_take=author_take,
             )
@@ -421,6 +557,9 @@ def run_post_synthesis_pipeline(
         post_brief=post_brief,
         post_brief_prompt=post_brief_prompt,
         post_brief_tokens=post_brief_tokens,
+        writing_plan=writing_plan,
+        writing_plan_tokens=writing_plan_tokens,
+        writing_plan_error=writing_plan_error,
         source_evidence_pack=source_evidence_pack,
         source_evidence_tokens=source_evidence_tokens,
         source_evidence_error=source_evidence_error,
@@ -428,6 +567,17 @@ def run_post_synthesis_pipeline(
         author_take_tokens=author_take_tokens,
         author_take_error=author_take_error,
         author_take_quality_issues=author_take_quality_issues,
+        author_take_repair_attempted=author_take_repair_attempted,
+        author_take_repair_succeeded=author_take_repair_succeeded,
+        author_take_repair_quality_issues=author_take_repair_quality_issues,
+        author_take_repair_error=author_take_repair_error,
+        author_take_repair_tokens=author_take_repair_tokens,
+        angle_decision=angle_decision,
+        angle_decision_tokens=angle_decision_tokens,
+        angle_decision_error=angle_decision_error,
+        reader_problem=reader_problem,
+        reader_problem_tokens=reader_problem_tokens,
+        reader_problem_error=reader_problem_error,
         brief_alignment=brief_alignment,
         post_mechanics=post_mechanics,
         editorial_review=editorial_review,
@@ -451,6 +601,7 @@ def _run_repair_attempt(
     dependencies: PostSynthesisDependencies,
     payload: dict[str, Any],
     post_brief: dict[str, Any] | None,
+    writing_plan: dict[str, Any] | None,
     quality_gate: dict[str, Any] | None,
     brief_alignment: dict[str, Any] | None,
     post_mechanics: dict[str, Any] | None,
@@ -526,6 +677,7 @@ def _run_repair_attempt(
         weak_payload=payload,
         quality_report=repair_report,
         post_brief=post_brief,
+        writing_plan=writing_plan,
         editorial_review=editorial_review,
         editorial_review_error=editorial_review_error,
     )

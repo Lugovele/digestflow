@@ -33,11 +33,19 @@ RULES:
 * Avoid words from `source_evidence_pack.avoid_terms_from_sources`.
 * `core_opinion` must be a claim, not a question.
 * `core_opinion` must sound like a concrete human claim.
+* `core_opinion` must not define the topic; it must make a claim about what is going wrong or what the reader should rethink.
+* Do not start `core_opinion` with broad topic-definition openings such as "Personal branding is...", "Effective personal branding...", "Superficial branding...", or any similar definition of the topic.
+* Start `core_opinion` from a reader-visible behavior, wrong optimization, practical diagnostic, concrete contrast, consequence, or cost.
 * `core_opinion` must not use generic abstractions such as "authenticity", "authentic", "credibility", "visibility", "genuine connection", "delivering value", "personal branding efforts", "professional image", "enhance recognition", or "polished persona" unless the term is a necessary quoted/source term and not the main claim.
+* Bad `core_opinion` examples:
+  * "Personal branding is about showing your expertise."
+  * "Effective personal branding requires authenticity and consistency."
+  * "Superficial branding is not enough to build trust."
 * Prefer `core_opinion` claims shaped like:
-  * "A personal brand is not what you say you do. It is what your recent work proves."
+  * "If your last 10 posts show wins but not decisions, people see activity without evidence of judgment."
   * "A logo cannot fix a stale proof trail."
-  * "Build in public only works when it shows decisions, not activity."
+  * "Build in public only works when it shows decisions, tradeoffs, and lessons, not just progress."
+  * "A personal brand gets weaker when the profile looks polished but the recent work does not prove current capability."
 * Do not use question-led hooks as `core_opinion`.
 * `reader_mistake` must name a concrete wrong behavior, not a vague struggle.
 * `reader_check` may be a diagnostic instruction, but not a CTA.
