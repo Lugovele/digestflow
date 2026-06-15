@@ -233,6 +233,95 @@ Basic checks:
 * final post must include interpretation, not just facts;
 * final post should use evidence invisibly as support.
 
+## Staged Editorial-Context Hypothesis
+
+Prompt-only tightening of the existing flow improved some constraints, but manual checks showed that generic LinkedIn output can still happen.
+
+The system no longer generates directly from article summaries, but too much editorial reasoning is still concentrated in a few prompts. `author_take` can identify a useful human perspective, but `post_brief` may dilute it into broad personal-branding language. Final generation can also become generic when the writing context is incomplete, too abstract, or still dominated by compressed article summaries.
+
+Adding more constraints to the final prompt or brief prompt increases prompt complexity, but it does not guarantee context preservation. A single large `EditorialContext` would likely move the overload earlier rather than solve it.
+
+The next architecture hypothesis is to split editorial reasoning into smaller staged artifacts. Instead of:
+
+```text
+articles
+-> big EditorialContext
+-> final_post
+```
+
+Prefer:
+
+```text
+source_evidence_pack
+-> author_take
+-> angle_decision
+-> reader_problem
+-> writing_plan
+-> final_post
+```
+
+This staged pipeline is a proposed direction, not a claim that the full flow exists in production today.
+
+### Staged Artifact Responsibilities
+
+`source_evidence_pack`
+
+Extracts source facts, mechanisms, contrasts, examples, useful terms, and risky generic source language. It should not choose the final post angle.
+
+`author_take`
+
+Creates the human/editorial perspective. It should not produce the full writing plan.
+
+`angle_decision`
+
+Chooses one controlling angle from `author_take` and evidence. It should explicitly say which source terms or adjacent topics must not become the main angle. For example, `Brand Lag` may support an angle, but should not dominate unless it is central to `author_take`.
+
+`reader_problem`
+
+Defines one concrete reader situation, wrong optimization, visible cost, and practical diagnostic/check. It must not change the selected angle.
+
+`writing_plan`
+
+Creates a compact post structure: opening claim, body sequence, evidence to use, terms to avoid, and ending reframe. It must not write final prose.
+
+`final_post`
+
+Writes the LinkedIn post from the `writing_plan`. It should not choose a new angle, summarize articles, or solve upstream reasoning again.
+
+### Staging Principle
+
+Each stage should do one simple job:
+
+* evidence = what exists in sources;
+* angle_decision = what the post is really about;
+* reader_problem = why the reader should care;
+* writing_plan = how the post should unfold;
+* final_post = execution only.
+
+Later stages should receive only the context needed for their task. Full article summaries should not continue to dominate late-stage prompts unless needed for factual verification.
+
+### Debugging Benefit
+
+This staged design makes quality failures easier to diagnose:
+
+* bad angle = inspect `angle_decision`;
+* generic reader problem = inspect `reader_problem`;
+* weak structure = inspect `writing_plan`;
+* weak prose = inspect `final_post`;
+* drift during repair = inspect whether repair received the correct controlling artifacts.
+
+### MVP Boundary
+
+This is a proposed next architecture direction. Do not claim the full staged pipeline exists in production until it is implemented.
+
+Within the MVP boundary:
+
+* do not change UI, routes, templates, ranking, source lifecycle, used-article marking, LinkedIn API, mock/real switching, models, migrations, or output schema;
+* keep the current artifacts internal/debug-only unless explicitly decided otherwise;
+* evaluate the smallest safe implementation step before adding more stages.
+
+The next review should evaluate whether the smallest safe implementation step is an `angle_decision` artifact before `post_brief`, because the observed failure mode is angle drift and source-term dominance.
+
 ## A. Goal
 
 Layer 8D adds one internal editorial brief step before final LinkedIn post generation so the system chooses the reader, angle, claim, evidence, takeaway, and ending before writing the final post.
