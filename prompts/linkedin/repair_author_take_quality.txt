@@ -24,15 +24,35 @@ REPAIR RULES:
 * Do not summarize articles.
 * Keep the output compact.
 * Fix deterministic quality issues directly.
+* When repairing weak author_take, do not replace one soft/corporate phrase with another.
+* If the rejected author_take uses trust, engagement, authenticity, public presence, personal image, visibility, authority, reputation, narrative, journey, or credibility, translate the idea into proof, judgment, decision, tradeoff, diagnostic, visible behavior, observable cost, or lesson language.
+* Do not use trust, engagement, journey, narrative, authenticity, authentic, genuinely, genuine connection, audience connection, reputation, authority, credibility, professional image, personal image, public presence, visibility, growth, personal branding, or brand as the main wording in any repaired `author_take` field.
+* If source evidence uses those ideas, translate them into visible behavior, observable cost, proof, judgment, decisions, tradeoffs, lessons, or diagnostic checks.
 * If quality issues include `core_opinion_generic:visibility`, replace visibility framing with observable behavior, wrong optimization, diagnostic, or cost.
 * If quality issues include `core_opinion_generic_opening`, rewrite from topic definition into a concrete claim.
 * If quality issues include generic reader mistakes, name visible behavior.
 * If quality issues include generic practical points, turn advice into a concrete diagnostic/check.
 * Convert trust, authority, visibility, and reputation language into visible behavior, wrong optimization, concrete diagnostic, or practical cost.
 * `core_opinion` should start from a concrete claim, not from the topic name.
+* `core_opinion` must name what the reader fails to prove, show, or make clear.
+* `core_opinion` should not frame the problem as improving brand, trust, engagement, authenticity, authority, reputation, public presence, or visibility.
 * `core_opinion` must not be a question.
+* `tension` must describe a concrete conflict between what the reader shows publicly and what remains unproven or unclear.
+* `reader_mistake` must name a visible behavior, not a vague branding problem.
 * `reader_check` must be a diagnostic instruction, not a CTA or engagement question.
 * `practical_point` must tell the reader what to check or change, not motivate them.
+* `practical_point` must become a concrete check/change in evidence or proof behavior, not advice to improve brand, trust, engagement, presence, image, journey, or narrative.
+* `do_not_say` must include the soft/corporate terms that were removed or translated.
+* Bad repaired examples:
+  * "Your journey builds trust through authentic engagement."
+  * "Align your personal image with genuine growth."
+  * "Create a narrative that strengthens credibility."
+  * "Improve your visibility by showing authority."
+* Good repaired examples:
+  * "If recent posts show only outcomes, they hide the judgment behind the work."
+  * "Check whether recent posts show decisions, tradeoffs, failures, or lessons."
+  * "Show the choice behind the result, not only the result."
+  * "Make the proof trail visible before polishing the profile."
 
 Return exactly this JSON shape:
 {{

@@ -60,6 +60,26 @@ BRIEF REQUIREMENTS:
 * Do not override `author_take` with a generic article-derived angle.
 * The brief should sharpen the author_take with grounded evidence, not replace it.
 * Preserve author_take rather than converting it into generic branding language.
+* When `author_take` is present, preserve its proof, judgment, decision, and tradeoff framing.
+* Do not convert `author_take` or `reader_problem` into broad branding language.
+* Do not replace proof, judgment, or diagnostic wording with authenticity, journey, narrative, resonates, trust, engagement, credibility, authority, visibility, professional image, personal image, public presence, personal brands, personal branding, or brand growth.
+* If source evidence uses those soft branding terms, translate them into what is shown, what remains unclear, what decision was made, what tradeoff was handled, what lesson was learned, or what proof the reader can check.
+* Bad brief examples:
+  * "A stronger personal brand resonates when it is authentic."
+  * "Your journey builds trust and engagement."
+  * "Authenticity strengthens credibility."
+  * "Align your public presence with your personal brand."
+  * "Visibility grows when your narrative feels genuine."
+* Field-level rule: do not use authenticity, journey, narrative, resonates, trust, engagement, credibility, authority, visibility, professional image, personal image, public presence, personal brands, personal branding, or brand growth in core brief fields.
+* Core brief fields include `sharp_claim`, `tension`, `pattern_interrupt`, `evidence_points`, `concrete_details`, `human_angle`, `practical_takeaway`, `ending_reframe`, and `suggested_hook_direction`.
+* If one of those soft terms appears in source text, translate the useful idea into proof, judgment, decision, tradeoff, lesson, visible cost, or diagnostic language before writing the field.
+* The only field where these soft terms may appear is `avoid_angle`, and only to name the angle being avoided.
+* Good brief examples:
+  * "A finished result without the decision behind it proves less than expected."
+  * "Polished posts can show activity while hiding the judgment behind the work."
+  * "The cost is simple: people see outcomes but cannot tell what choices you can make now."
+  * "Check the last 10 posts for decisions, tradeoffs, failures, or lessons."
+  * "Reframe recent posts as a proof trail, not a display surface."
 * When `angle_decision` is present, `angle_decision.controlling_angle` is the controlling angle for the brief.
 * Do not choose a new angle when `angle_decision` is present.
 * Terms from `angle_decision.do_not_make_main_angle` must not appear in `sharp_claim`, `tension`, `pattern_interrupt`, `evidence_points`, `concrete_details`, `human_angle`, `practical_takeaway`, `ending_reframe`, or `suggested_hook_direction`.
@@ -72,10 +92,20 @@ BRIEF REQUIREMENTS:
 * Use `angle_decision.angle_to_avoid` to make `avoid_angle` more precise.
 * When `reader_problem` is present, use it to make the brief concrete.
 * Use `reader_problem.target_reader` to shape `target_reader`.
+* Preserve `reader_problem.wrong_optimization`, `reader_problem.visible_cost`, and `reader_problem.diagnostic_check`.
 * Use `reader_problem.wrong_optimization` and `reader_problem.visible_cost` to shape `reader_pain_or_mistake`.
 * Use `reader_problem.diagnostic_check` to shape `practical_takeaway`, `concrete_details`, or `ending_reframe`.
 * Do not replace `reader_problem.visible_cost` or `reader_problem.diagnostic_check` with abstract authority, reputation, or trust language unless that wording is explicitly central to `angle_decision.controlling_angle`.
 * Do not dilute `reader_problem` into broad audience advice.
+* `sharp_claim` should name a concrete proof/judgment failure, not a broad branding problem.
+* `tension` should describe the conflict between polished output and missing evidence of decisions, tradeoffs, or lessons.
+* `pattern_interrupt` should point to the concrete diagnostic or visible cost.
+* `evidence_points` should support the proof/judgment framing without reintroducing soft branding terms.
+* `concrete_details` should preserve decision, tradeoff, lesson, or check language.
+* `human_angle` should be an analytical concern, not authenticity, journey, or connection framing.
+* `practical_takeaway` should be a concrete diagnostic, check, or change in evidence behavior.
+* `ending_reframe` should land on proof, judgment, or evidence, not trust, authenticity, journey, or narrative.
+* `avoid_angle` should explicitly include the soft branding angle being avoided when relevant.
 
 Return valid JSON only.
 Return exactly this JSON shape:

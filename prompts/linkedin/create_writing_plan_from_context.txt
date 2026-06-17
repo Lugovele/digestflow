@@ -20,11 +20,42 @@ RULES:
 
 * Use the provided context only.
 * Preserve the `post_brief` angle, `reader_problem` diagnostic, and `author_take` perspective.
+* Use this source priority when planning:
+  1. `reader_problem.diagnostic_check`
+  2. `reader_problem.visible_cost`
+  3. `reader_problem.wrong_optimization`
+  4. `author_take.reader_check`
+  5. `author_take.practical_point`
+  6. `angle_decision`
+  7. `post_brief`
+* When `reader_problem` is present, build the writing plan primarily from it.
+* Use `reader_problem.diagnostic_check` as the practical spine of the post.
+* Use `reader_problem.visible_cost` as the stakes.
+* Use `reader_problem.wrong_optimization` as the mistake.
+* Use `author_take.reader_check` and `author_take.practical_point` as supporting practical direction.
+* Use `angle_decision` to prevent angle drift.
+* Use `post_brief` as editorial/factual guardrail, not as the main writing source.
+* Do not choose `opening_claim` from broad `post_brief` branding language when `reader_problem` provides a concrete diagnostic.
 * Do not invent facts, metrics, cases, personal experience, client claims, studies, or anecdotes.
 * `opening_claim` must be a short direct claim, not a question.
+* `opening_claim` should name a failure in proof, judgment, evidence, decisions, tradeoffs, or visible cost.
+* Do not make `opening_claim` primarily about branding, visibility, authority, credibility, reputation, legacy, or personal branding unless `reader_problem` makes that exact wording unavoidable.
 * `first_3_lines` must be usable as the opening rhythm of the post.
 * `first_3_lines` should avoid corporate tone and avoid topic-definition openings.
 * `body_sequence` should define the order of ideas, not final prose paragraphs.
+* `body_sequence` should include the wrong optimization, the visible cost, the concrete diagnostic, the proof/judgment reframe, and one practical next move.
+* Bad `body_sequence`/opening examples:
+  * "Focusing only on visibility makes your personal brand forgettable."
+  * "Authentic authority comes from sharing your journey."
+  * "Build trust by connecting with your audience."
+  * "A stronger narrative improves your credibility."
+  * "Personal branding requires balancing visibility and expertise."
+* Good `body_sequence`/opening examples:
+  * "If recent posts show only outcomes, they hide the judgment behind the work."
+  * "Name the cost: people see activity but cannot tell what decisions you can make now."
+  * "Use the last-10-posts check to count decisions, tradeoffs, failures, or lessons."
+  * "Show that a finished result without the choices behind it proves less than expected."
+  * "Reframe content as a proof trail, not a display surface."
 * `evidence_to_use` should include only source-grounded evidence or details from existing artifacts.
 * `diagnostic_check` must be concrete and immediately usable.
 * `terms_to_avoid` should include generic/corporate wording from the current context, especially if present: authenticity, engagement, connection, trust, visibility, reputation, authority, professional image, meaningful, enhance your brand, unlock, leverage, resonate, landscape.

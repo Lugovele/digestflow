@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from django.conf import settings
 from django.db import transaction
@@ -533,6 +533,17 @@ _POST_BRIEF_STRING_FIELDS = [
 ]
 
 _POST_BRIEF_HOOK_TYPES = {"personal_action", "reader_pain", "counterintuitive_fact"}
+_POST_BRIEF_BLOCKED_ANGLE_FIELDS = [
+    "sharp_claim",
+    "tension",
+    "pattern_interrupt",
+    "evidence_points",
+    "concrete_details",
+    "human_angle",
+    "practical_takeaway",
+    "ending_reframe",
+    "suggested_hook_direction",
+]
 _SOURCE_EVIDENCE_FIELDS = [
     "source_phrases",
     "specific_claims",
@@ -962,7 +973,52 @@ def _author_take_requires_rejection(author_take: dict[str, Any]) -> bool:
     return bool(_author_take_quality_issues(author_take))
 
 
-def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_blocked_angle_term_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value).lower())).strip()
+
+
+def _find_post_brief_blocked_angle_terms(
+    post_brief: Mapping[str, Any],
+    angle_decision: Mapping[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Find angle terms that leaked into core brief fields."""
+    if not isinstance(angle_decision, Mapping):
+        return []
+
+    raw_terms = angle_decision.get("do_not_make_main_angle")
+    if not isinstance(raw_terms, (list, tuple)):
+        return []
+
+    blocked_terms: list[tuple[str, str]] = []
+    seen_terms: set[str] = set()
+    for item in raw_terms:
+        if not isinstance(item, str):
+            continue
+        term = item.strip()
+        normalized_term = _normalize_blocked_angle_term_text(term)
+        if len(normalized_term.replace(" ", "")) < 4 or normalized_term in seen_terms:
+            continue
+        seen_terms.add(normalized_term)
+        blocked_terms.append((term, normalized_term))
+
+    matches: list[dict[str, str]] = []
+    for field_name in _POST_BRIEF_BLOCKED_ANGLE_FIELDS:
+        raw_value = post_brief.get(field_name)
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            normalized_value = f" {_normalize_blocked_angle_term_text(value)} "
+            for term, normalized_term in blocked_terms:
+                if f" {normalized_term} " in normalized_value:
+                    matches.append({"term": term, "field": field_name})
+    return matches
+
+
+def _validate_post_brief_payload(
+    payload: dict[str, Any],
+    angle_decision: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Validate and normalize an internal LinkedIn post brief payload."""
     if not isinstance(payload, dict):
         raise ContentPackageValidationError("Post brief payload must be a JSON object.")
@@ -1009,7 +1065,7 @@ def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, str) and str(item).strip()
     ]
 
-    return {
+    normalized_brief = {
         "target_reader": normalized["target_reader"],
         "reader_pain_or_mistake": normalized["reader_pain_or_mistake"],
         "hook_type": normalized["hook_type"],
@@ -1025,6 +1081,14 @@ def _validate_post_brief_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "suggested_hook_direction": normalized["suggested_hook_direction"],
         "avoid_angle": normalized["avoid_angle"],
     }
+    blocked_matches = _find_post_brief_blocked_angle_terms(normalized_brief, angle_decision)
+    if blocked_matches:
+        message = "; ".join(
+            f'post_brief contains blocked angle term "{match["term"]}" in {match["field"]}'
+            for match in blocked_matches[:5]
+        )
+        raise ContentPackageValidationError(message)
+    return normalized_brief
 
 
 def _validate_writing_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1337,7 +1401,7 @@ def _generate_post_brief_via_llm(
     )
     response_text = response.text.strip()
     payload = _parse_json_response(response_text)
-    post_brief = _validate_post_brief_payload(payload)
+    post_brief = _validate_post_brief_payload(payload, angle_decision=angle_decision)
     return post_brief, prompt, response_text, response.usage
 
 

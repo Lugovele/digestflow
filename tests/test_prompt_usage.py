@@ -181,16 +181,38 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Use digest summaries only as fallback/context.", author_take_prompt)
         self.assertIn("Do not invent personal experience.", author_take_prompt)
         self.assertIn("Avoid words from `source_evidence_pack.avoid_terms_from_sources`.", author_take_prompt)
+        self.assertIn(
+            "Do not use trust, engagement, journey, narrative, authenticity, authentic, genuinely, genuine connection",
+            author_take_prompt,
+        )
+        self.assertIn(
+            "professional image, personal image, public presence, visibility, growth, personal branding, or brand",
+            author_take_prompt,
+        )
+        self.assertIn(
+            "translate them into visible behavior, observable cost, proof, judgment, decisions, tradeoffs, lessons, or diagnostic checks",
+            author_take_prompt,
+        )
         self.assertIn("`core_opinion` must be a claim, not a question.", author_take_prompt)
         self.assertIn("`reader_check` may be a diagnostic instruction, but not a CTA.", author_take_prompt)
         self.assertIn("Produce a sharp editorial take, not marketing advice.", author_take_prompt)
         self.assertIn("`core_opinion` must sound like a concrete human claim.", author_take_prompt)
         self.assertIn("`core_opinion` must not define the topic", author_take_prompt)
+        self.assertIn("`core_opinion` must name what the reader fails to prove, show, or make clear.", author_take_prompt)
+        self.assertIn(
+            "`core_opinion` should not frame the problem as improving brand, trust, engagement, authenticity, authority, reputation, public presence, or visibility.",
+            author_take_prompt,
+        )
         self.assertIn('"Personal branding is..."', author_take_prompt)
         self.assertIn('"Effective personal branding..."', author_take_prompt)
         self.assertIn('"Superficial branding..."', author_take_prompt)
         self.assertIn("Start `core_opinion` from a reader-visible behavior", author_take_prompt)
         self.assertIn('"authenticity", "authentic", "credibility", "visibility"', author_take_prompt)
+        self.assertIn('"Your journey builds trust through authentic engagement."', author_take_prompt)
+        self.assertIn('"Align your personal image with genuine growth."', author_take_prompt)
+        self.assertIn('"Create a narrative that strengthens credibility."', author_take_prompt)
+        self.assertIn('"Improve your visibility by showing authority."', author_take_prompt)
+        self.assertIn('"A strong personal brand creates deeper audience connection."', author_take_prompt)
         self.assertIn("Do not use question-led hooks as `core_opinion`.", author_take_prompt)
         self.assertIn('"Personal branding is about showing your expertise."', author_take_prompt)
         self.assertIn('"Effective personal branding requires authenticity and consistency."', author_take_prompt)
@@ -208,8 +230,24 @@ class PromptUsageTests(SimpleTestCase):
             '"A personal brand gets weaker when the profile looks polished but the recent work does not prove current capability."',
             author_take_prompt,
         )
+        self.assertIn('"A finished result without the decision behind it proves less than expected."', author_take_prompt)
+        self.assertIn('"Check whether recent posts show decisions, tradeoffs, failures, or lessons."', author_take_prompt)
+        self.assertIn('"Show the choice behind the result, not only the result."', author_take_prompt)
+        self.assertIn('"Make the proof trail visible before polishing the profile."', author_take_prompt)
+        self.assertIn(
+            "`tension` must describe a concrete conflict between what the reader shows publicly and what remains unproven or unclear.",
+            author_take_prompt,
+        )
         self.assertIn("`reader_mistake` must name a concrete wrong behavior", author_take_prompt)
+        self.assertIn("`reader_mistake` must name a visible behavior, not a vague branding problem.", author_take_prompt)
         self.assertIn("`practical_point` must tell the reader what to check or change", author_take_prompt)
+        self.assertIn("`reader_check` must be a concrete diagnostic/check the reader can apply.", author_take_prompt)
+        self.assertIn(
+            "`practical_point` must name a check or change in evidence/proof behavior, not a brand, trust, engagement, journey, or narrative improvement.",
+            author_take_prompt,
+        )
+        self.assertIn("`do_not_say` must include any soft/corporate terms avoided or translated.", author_take_prompt)
+        self.assertIn("Prefer words like prove, show, make clear, decision, tradeoff, lesson", author_take_prompt)
         self.assertIn("Do not write a motivational, inspirational, or brand-strategy-sounding take.", author_take_prompt)
         self.assertNotIn("{author_role}", author_take_prompt)
         self.assertNotIn("{author_background}", author_take_prompt)
@@ -240,8 +278,33 @@ class PromptUsageTests(SimpleTestCase):
         self.assertIn("Do not choose angle_decision.", repair_prompt)
         self.assertIn("core_opinion_generic:visibility", repair_prompt)
         self.assertIn("core_opinion_generic_opening", repair_prompt)
+        self.assertIn("do not replace one soft/corporate phrase with another", repair_prompt)
+        self.assertIn(
+            "trust, engagement, authenticity, public presence, personal image, visibility, authority, reputation, narrative, journey, or credibility",
+            repair_prompt,
+        )
+        self.assertIn(
+            "translate the idea into proof, judgment, decision, tradeoff, diagnostic, visible behavior, observable cost, or lesson language",
+            repair_prompt,
+        )
+        self.assertIn(
+            "Do not use trust, engagement, journey, narrative, authenticity, authentic, genuinely, genuine connection",
+            repair_prompt,
+        )
         self.assertIn("Convert trust, authority, visibility, and reputation language", repair_prompt)
+        self.assertIn("`core_opinion` must name what the reader fails to prove, show, or make clear.", repair_prompt)
         self.assertIn("visible behavior, wrong optimization, concrete diagnostic, or practical cost", repair_prompt)
+        self.assertIn(
+            "`practical_point` must become a concrete check/change in evidence or proof behavior",
+            repair_prompt,
+        )
+        self.assertIn("not advice to improve brand, trust, engagement, presence, image, journey, or narrative", repair_prompt)
+        self.assertIn("`do_not_say` must include the soft/corporate terms that were removed or translated.", repair_prompt)
+        self.assertIn('"Your journey builds trust through authentic engagement."', repair_prompt)
+        self.assertIn('"Align your personal image with genuine growth."', repair_prompt)
+        self.assertIn('"Create a narrative that strengthens credibility."', repair_prompt)
+        self.assertIn('"Check whether recent posts show decisions, tradeoffs, failures, or lessons."', repair_prompt)
+        self.assertIn('"Make the proof trail visible before polishing the profile."', repair_prompt)
         self.assertIn("Do not invent personal experience, metrics, cases, examples, client claims, studies, or anecdotes.", repair_prompt)
 
     def test_angle_decision_prompt_declares_exact_json_contract(self):
@@ -359,7 +422,42 @@ class PromptUsageTests(SimpleTestCase):
             self.assertIn(f'"{field_name}"', writing_plan_prompt)
         self.assertIn("Do not write the final post.", writing_plan_prompt)
         self.assertIn("Do not create a new angle.", writing_plan_prompt)
+        self.assertIn("Use this source priority when planning:", writing_plan_prompt)
+        self.assertIn("`reader_problem.diagnostic_check`", writing_plan_prompt)
+        self.assertIn("`reader_problem.visible_cost`", writing_plan_prompt)
+        self.assertIn("`reader_problem.wrong_optimization`", writing_plan_prompt)
+        self.assertIn("`author_take.reader_check`", writing_plan_prompt)
+        self.assertIn("`author_take.practical_point`", writing_plan_prompt)
+        self.assertIn("When `reader_problem` is present, build the writing plan primarily from it.", writing_plan_prompt)
+        self.assertIn("Use `reader_problem.diagnostic_check` as the practical spine of the post.", writing_plan_prompt)
+        self.assertIn("Use `reader_problem.visible_cost` as the stakes.", writing_plan_prompt)
+        self.assertIn("Use `reader_problem.wrong_optimization` as the mistake.", writing_plan_prompt)
+        self.assertIn("Use `angle_decision` to prevent angle drift.", writing_plan_prompt)
+        self.assertIn("Use `post_brief` as editorial/factual guardrail, not as the main writing source.", writing_plan_prompt)
+        self.assertIn(
+            "Do not choose `opening_claim` from broad `post_brief` branding language",
+            writing_plan_prompt,
+        )
+        self.assertIn(
+            "`opening_claim` should name a failure in proof, judgment, evidence, decisions, tradeoffs, or visible cost.",
+            writing_plan_prompt,
+        )
+        self.assertIn(
+            "Do not make `opening_claim` primarily about branding, visibility, authority, credibility, reputation, legacy, or personal branding",
+            writing_plan_prompt,
+        )
+        self.assertIn(
+            "`body_sequence` should include the wrong optimization, the visible cost, the concrete diagnostic, the proof/judgment reframe, and one practical next move.",
+            writing_plan_prompt,
+        )
         self.assertIn("`diagnostic_check` must be concrete and immediately usable.", writing_plan_prompt)
+        self.assertIn("Focusing only on visibility makes your personal brand forgettable.", writing_plan_prompt)
+        self.assertIn("Authentic authority comes from sharing your journey.", writing_plan_prompt)
+        self.assertIn("Personal branding requires balancing visibility and expertise.", writing_plan_prompt)
+        self.assertIn("If recent posts show only outcomes, they hide the judgment behind the work.", writing_plan_prompt)
+        self.assertIn("Name the cost: people see activity but cannot tell what decisions you can make now.", writing_plan_prompt)
+        self.assertIn("Use the last-10-posts check to count decisions, tradeoffs, failures, or lessons.", writing_plan_prompt)
+        self.assertIn("Reframe content as a proof trail, not a display surface.", writing_plan_prompt)
         self.assertIn("generic/corporate wording", writing_plan_prompt)
         self.assertIn("authenticity, engagement, connection, trust, visibility", writing_plan_prompt)
         self.assertIn("write like a practitioner, not a content marketer", writing_plan_prompt)
@@ -527,7 +625,51 @@ class PromptUsageTests(SimpleTestCase):
         )
         self.assertIn("When `reader_problem` is present, use it to make the brief concrete.", brief_prompt)
         self.assertIn(
+            "When `author_take` is present, preserve its proof, judgment, decision, and tradeoff framing.",
+            brief_prompt,
+        )
+        self.assertIn("Do not convert `author_take` or `reader_problem` into broad branding language.", brief_prompt)
+        self.assertIn(
+            "Do not replace proof, judgment, or diagnostic wording with authenticity, journey, narrative, resonates, trust, engagement, credibility, authority, visibility",
+            brief_prompt,
+        )
+        self.assertIn(
+            "professional image, personal image, public presence, personal brands, personal branding, or brand growth",
+            brief_prompt,
+        )
+        self.assertIn(
+            "translate them into what is shown, what remains unclear, what decision was made, what tradeoff was handled, what lesson was learned, or what proof the reader can check.",
+            brief_prompt,
+        )
+        self.assertIn('"A stronger personal brand resonates when it is authentic."', brief_prompt)
+        self.assertIn('"Your journey builds trust and engagement."', brief_prompt)
+        self.assertIn('"Visibility grows when your narrative feels genuine."', brief_prompt)
+        self.assertIn("Field-level rule: do not use authenticity, journey, narrative, resonates", brief_prompt)
+        self.assertIn(
+            "Core brief fields include `sharp_claim`, `tension`, `pattern_interrupt`, `evidence_points`, `concrete_details`, `human_angle`, `practical_takeaway`, `ending_reframe`, and `suggested_hook_direction`.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "translate the useful idea into proof, judgment, decision, tradeoff, lesson, visible cost, or diagnostic language before writing the field.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "The only field where these soft terms may appear is `avoid_angle`, and only to name the angle being avoided.",
+            brief_prompt,
+        )
+        self.assertIn('"A finished result without the decision behind it proves less than expected."', brief_prompt)
+        self.assertIn('"Polished posts can show activity while hiding the judgment behind the work."', brief_prompt)
+        self.assertIn(
+            '"Check the last 10 posts for decisions, tradeoffs, failures, or lessons."',
+            brief_prompt,
+        )
+        self.assertIn('"Reframe recent posts as a proof trail, not a display surface."', brief_prompt)
+        self.assertIn(
             "Use `reader_problem.wrong_optimization` and `reader_problem.visible_cost` to shape `reader_pain_or_mistake`.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "Preserve `reader_problem.wrong_optimization`, `reader_problem.visible_cost`, and `reader_problem.diagnostic_check`.",
             brief_prompt,
         )
         self.assertIn(
@@ -535,6 +677,32 @@ class PromptUsageTests(SimpleTestCase):
             brief_prompt,
         )
         self.assertIn("Do not dilute `reader_problem` into broad audience advice.", brief_prompt)
+        self.assertIn(
+            "`sharp_claim` should name a concrete proof/judgment failure, not a broad branding problem.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "`tension` should describe the conflict between polished output and missing evidence of decisions, tradeoffs, or lessons.",
+            brief_prompt,
+        )
+        self.assertIn("`pattern_interrupt` should point to the concrete diagnostic or visible cost.", brief_prompt)
+        self.assertIn(
+            "`evidence_points` should support the proof/judgment framing without reintroducing soft branding terms.",
+            brief_prompt,
+        )
+        self.assertIn("`concrete_details` should preserve decision, tradeoff, lesson, or check language.", brief_prompt)
+        self.assertIn(
+            "`human_angle` should be an analytical concern, not authenticity, journey, or connection framing.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "`practical_takeaway` should be a concrete diagnostic, check, or change in evidence behavior.",
+            brief_prompt,
+        )
+        self.assertIn(
+            "`ending_reframe` should land on proof, judgment, or evidence, not trust, authenticity, journey, or narrative.",
+            brief_prompt,
+        )
         self.assertIn("human expert LinkedIn post", brief_prompt)
 
     def test_build_post_brief_prompt_renders_author_profile_and_article_evidence_without_placeholders(self):

@@ -31,12 +31,23 @@ RULES:
 * Do not invent metrics, examples, names, or cases.
 * Do not use generic marketing language.
 * Avoid words from `source_evidence_pack.avoid_terms_from_sources`.
+* Do not use trust, engagement, journey, narrative, authenticity, authentic, genuinely, genuine connection, audience connection, reputation, authority, credibility, professional image, personal image, public presence, visibility, growth, personal branding, or brand as the main wording in any `author_take` field.
+* If source evidence uses those ideas, translate them into visible behavior, observable cost, proof, judgment, decisions, tradeoffs, lessons, or diagnostic checks.
 * `core_opinion` must be a claim, not a question.
 * `core_opinion` must sound like a concrete human claim.
 * `core_opinion` must not define the topic; it must make a claim about what is going wrong or what the reader should rethink.
+* `core_opinion` must name what the reader fails to prove, show, or make clear.
+* `core_opinion` should not frame the problem as improving brand, trust, engagement, authenticity, authority, reputation, public presence, or visibility.
 * Do not start `core_opinion` with broad topic-definition openings such as "Personal branding is...", "Effective personal branding...", "Superficial branding...", or any similar definition of the topic.
 * Start `core_opinion` from a reader-visible behavior, wrong optimization, practical diagnostic, concrete contrast, consequence, or cost.
 * `core_opinion` must not use generic abstractions such as "authenticity", "authentic", "credibility", "visibility", "genuine connection", "delivering value", "personal branding efforts", "professional image", "enhance recognition", or "polished persona" unless the term is a necessary quoted/source term and not the main claim.
+* Bad soft/corporate examples:
+  * "Your journey builds trust through authentic engagement."
+  * "Align your personal image with genuine growth."
+  * "Create a narrative that strengthens credibility."
+  * "Build trust by sharing more authentically."
+  * "Improve your visibility by showing authority."
+  * "A strong personal brand creates deeper audience connection."
 * Bad `core_opinion` examples:
   * "Personal branding is about showing your expertise."
   * "Effective personal branding requires authenticity and consistency."
@@ -46,14 +57,25 @@ RULES:
   * "A logo cannot fix a stale proof trail."
   * "Build in public only works when it shows decisions, tradeoffs, and lessons, not just progress."
   * "A personal brand gets weaker when the profile looks polished but the recent work does not prove current capability."
+  * "A finished result without the decision behind it proves less than expected."
+  * "Check whether recent posts show decisions, tradeoffs, failures, or lessons."
+  * "Show the choice behind the result, not only the result."
+  * "Name what changed after the mistake."
+  * "Make the proof trail visible before polishing the profile."
 * Do not use question-led hooks as `core_opinion`.
+* `tension` must describe a concrete conflict between what the reader shows publicly and what remains unproven or unclear.
 * `reader_mistake` must name a concrete wrong behavior, not a vague struggle.
+* `reader_mistake` must name a visible behavior, not a vague branding problem.
 * `reader_check` may be a diagnostic instruction, but not a CTA.
 * `reader_check` must be a practical diagnostic instruction, not an engagement question or CTA.
+* `reader_check` must be a concrete diagnostic/check the reader can apply.
 * `practical_point` must tell the reader what to check or change, not motivate them.
+* `practical_point` must name a check or change in evidence/proof behavior, not a brand, trust, engagement, journey, or narrative improvement.
 * `tone` should be concrete, for example "skeptical, plainspoken, practical" rather than just "analytical".
 * `do_not_say` should include generic terms and weak angles the final post must avoid.
 * `do_not_say` must include generic terms and weak angles from both `source_evidence_pack.avoid_terms_from_sources` and generic marketing or branding language detected in the source evidence.
+* `do_not_say` must include any soft/corporate terms avoided or translated.
+* Prefer words like prove, show, make clear, decision, tradeoff, lesson, evidence, proof trail, visible behavior, recent posts, diagnostic, and what remains unclear.
 * Do not write a motivational, inspirational, or brand-strategy-sounding take.
 
 Return exactly this JSON shape:

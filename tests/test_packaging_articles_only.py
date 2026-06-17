@@ -738,6 +738,92 @@ class PackagingArticlesOnlyTests(TestCase):
 
         self.assertEqual(normalized, payload)
 
+    def test_validate_post_brief_payload_allows_blocked_terms_only_in_avoid_angle(self) -> None:
+        payload = self._post_brief_payload(avoid_angle="Avoid making Brand Lag the main idea.")
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["Brand Lag"])
+
+        normalized = _validate_post_brief_payload(payload, angle_decision=angle_decision)
+
+        self.assertEqual(normalized["avoid_angle"], "Avoid making Brand Lag the main idea.")
+
+    def test_validate_post_brief_payload_rejects_blocked_term_in_evidence_points(self) -> None:
+        payload = self._post_brief_payload(
+            evidence_points=[
+                "Brand Lag explains the proof gap.",
+                "People trust current evidence of expertise more than polished claims.",
+            ]
+        )
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["Brand Lag"])
+
+        with self.assertRaisesRegex(
+            ContentPackageValidationError,
+            'post_brief contains blocked angle term "Brand Lag" in evidence_points',
+        ):
+            _validate_post_brief_payload(payload, angle_decision=angle_decision)
+
+    def test_validate_post_brief_payload_rejects_blocked_term_in_sharp_claim(self) -> None:
+        payload = self._post_brief_payload(sharp_claim="Visibility is not the same as judgment.")
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["visibility"])
+
+        with self.assertRaisesRegex(
+            ContentPackageValidationError,
+            'post_brief contains blocked angle term "visibility" in sharp_claim',
+        ):
+            _validate_post_brief_payload(payload, angle_decision=angle_decision)
+
+    def test_validate_post_brief_payload_rejects_blocked_term_in_tension(self) -> None:
+        payload = self._post_brief_payload(tension="Brand Lag can pull the post away from proof.")
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["Brand Lag"])
+
+        with self.assertRaisesRegex(
+            ContentPackageValidationError,
+            'post_brief contains blocked angle term "Brand Lag" in tension',
+        ):
+            _validate_post_brief_payload(payload, angle_decision=angle_decision)
+
+    def test_validate_post_brief_payload_rejects_blocked_terms_in_core_outcome_fields(self) -> None:
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["public persona"])
+        cases = [
+            ("human_angle", "The public persona hides the missing proof."),
+            ("practical_takeaway", "Stop optimizing the public persona first."),
+            ("ending_reframe", "Treat the public persona as secondary to proof."),
+        ]
+
+        for field_name, field_value in cases:
+            with self.subTest(field_name=field_name):
+                payload = self._post_brief_payload(**{field_name: field_value})
+                with self.assertRaisesRegex(
+                    ContentPackageValidationError,
+                    f'post_brief contains blocked angle term "public persona" in {field_name}',
+                ):
+                    _validate_post_brief_payload(payload, angle_decision=angle_decision)
+
+    def test_validate_post_brief_payload_blocked_term_matching_is_case_and_punctuation_tolerant(
+        self,
+    ) -> None:
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["Brand Lag"])
+        cases = [
+            ("evidence_points", ["brand lag is a tempting label.", "Proof matters more."]),
+            ("concrete_details", ["Brand-Lag: should not label this detail."]),
+            ("human_angle", "Do not make Brand-Lag the human angle."),
+        ]
+
+        for field_name, field_value in cases:
+            with self.subTest(field_name=field_name):
+                payload = self._post_brief_payload(**{field_name: field_value})
+                with self.assertRaisesRegex(
+                    ContentPackageValidationError,
+                    f'post_brief contains blocked angle term "Brand Lag" in {field_name}',
+                ):
+                    _validate_post_brief_payload(payload, angle_decision=angle_decision)
+
+    def test_validate_post_brief_payload_without_angle_decision_still_works(self) -> None:
+        payload = self._post_brief_payload(evidence_points=["Brand Lag appears.", "Proof matters."])
+
+        normalized = _validate_post_brief_payload(payload)
+
+        self.assertEqual(normalized["evidence_points"], ["Brand Lag appears.", "Proof matters."])
+
     def test_validate_post_brief_payload_strips_surrounding_whitespace(self) -> None:
         payload = self._post_brief_payload(
             target_reader="  Founders building visible expertise  ",
@@ -1069,6 +1155,35 @@ class PackagingArticlesOnlyTests(TestCase):
 
         with self.assertRaises(ContentPackageValidationError):
             _generate_post_brief_via_llm(digest, digest.get_articles(), self._author_profile())
+
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_brief_via_llm_rejects_blocked_angle_term_from_angle_decision(
+        self,
+        mock_openai_client,
+    ) -> None:
+        digest = self._create_digest_for_packaging("brief-blocked-angle-user")
+        invalid_payload = self._post_brief_payload(
+            evidence_points=[
+                "Brand Lag explains the proof gap.",
+                "People trust current evidence of expertise more than polished claims.",
+            ]
+        )
+        angle_decision = self._angle_decision_payload(do_not_make_main_angle=["Brand Lag"])
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(invalid_payload),
+            usage=None,
+        )
+
+        with self.assertRaisesRegex(
+            ContentPackageValidationError,
+            'post_brief contains blocked angle term "Brand Lag" in evidence_points',
+        ):
+            _generate_post_brief_via_llm(
+                digest,
+                digest.get_articles(),
+                self._author_profile(),
+                angle_decision=angle_decision,
+            )
 
     @patch("services.packaging.generator.OpenAIClient")
     def test_generate_post_brief_via_llm_prompt_includes_article_evidence_without_author_profile(
