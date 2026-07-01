@@ -1,5 +1,7 @@
 from django.test import SimpleTestCase
 
+from apps.digests.models import Digest, DigestRun
+from apps.topics.models import Topic
 from services.packaging.linkedin_post_pipeline import (
     AngleDecision,
     ArticleEvidence,
@@ -12,6 +14,7 @@ from services.packaging.linkedin_post_pipeline import (
     PipelineInput,
     PostBrief,
     SelectedArticle,
+    build_pipeline_input_from_digest,
     final_post_payload_to_dict,
     validate_angle_decision,
     validate_article_evidence_pack,
@@ -22,6 +25,28 @@ from services.packaging.linkedin_post_pipeline import (
     validate_selected_articles,
 )
 from services.packaging.validators import validate_content_package_payload
+
+
+class FakeTopic:
+    name = "Personal Branding"
+
+
+class FakeRun:
+    topic = FakeTopic()
+
+
+class FakeDigest:
+    def __init__(self, articles: list[dict]) -> None:
+        self.id = 130
+        self.title = "Digest for Personal Branding"
+        self.run = FakeRun()
+        self.get_articles_calls = 0
+        self.payload = {"articles": [{"title": "Raw payload should not be used"}]}
+        self._articles = articles
+
+    def get_articles(self) -> list[dict]:
+        self.get_articles_calls += 1
+        return self._articles
 
 
 def make_selected_article(
@@ -109,6 +134,328 @@ def make_final_post_payload(
 
 
 class LinkedInPostPipelineContractTests(SimpleTestCase):
+    def test_build_pipeline_input_from_digest_uses_digest_articles_helper(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article from helper",
+                    "summary": "Helper summary.",
+                    "key_points": ["Helper point."],
+                    "content_type": "article",
+                    "confidence": 0.9,
+                }
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(digest)
+
+        self.assertEqual(digest.get_articles_calls, 1)
+        self.assertEqual(pipeline_input.articles[0].title, "Article from helper")
+
+    def test_build_pipeline_input_from_digest_works_with_real_digest_get_articles(self) -> None:
+        topic = Topic(name="Personal Branding")
+        run = DigestRun(topic=topic)
+        digest = Digest(
+            id=130,
+            run=run,
+            title="Digest for Personal Branding",
+            payload={
+                "articles": [
+                    {
+                        "url": "https://example.com/article-1",
+                        "title": "Article from real Digest",
+                        "summary": "Real Digest summary.",
+                        "key_points": ["Real Digest point."],
+                        "content_type": "analysis",
+                        "confidence": 0.73,
+                    }
+                ]
+            },
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(digest)
+
+        self.assertEqual(pipeline_input.digest_id, 130)
+        self.assertEqual(pipeline_input.topic_name, "Personal Branding")
+        self.assertEqual(pipeline_input.articles[0].title, "Article from real Digest")
+        self.assertEqual(pipeline_input.articles[0].source_index, 0)
+
+    def test_build_pipeline_input_from_digest_assigns_zero_based_source_indexes(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "First article",
+                    "summary": "First summary.",
+                    "key_points": ["First point."],
+                },
+                {
+                    "url": "https://example.com/article-2",
+                    "title": "Second article",
+                    "summary": "Second summary.",
+                    "key_points": ["Second point."],
+                },
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(digest)
+
+        self.assertEqual([article.source_index for article in pipeline_input.articles], [0, 1])
+
+    def test_build_pipeline_input_from_digest_preserves_available_article_metadata(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Metadata article",
+                    "summary": "Metadata summary.",
+                    "key_points": ["Metadata point."],
+                    "source_name": "Example Source",
+                    "published_at": "2026-06-01",
+                    "content_type": "analysis",
+                    "confidence": 0.74,
+                }
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(
+            digest,
+            author_profile={"role": "AI Automation Specialist"},
+        )
+        article = pipeline_input.articles[0]
+
+        self.assertEqual(pipeline_input.digest_id, 130)
+        self.assertEqual(pipeline_input.digest_title, "Digest for Personal Branding")
+        self.assertEqual(pipeline_input.topic_name, "Personal Branding")
+        self.assertEqual(article.url, "https://example.com/article-1")
+        self.assertEqual(article.title, "Metadata article")
+        self.assertEqual(article.summary, "Metadata summary.")
+        self.assertEqual(article.key_points, ["Metadata point."])
+        self.assertEqual(article.content_type, "analysis")
+        self.assertEqual(article.confidence, 0.74)
+        self.assertEqual(article.source_name, "Example Source")
+        self.assertEqual(article.published_at, "2026-06-01")
+
+    def test_build_pipeline_input_from_digest_defaults_none_optional_metadata_to_empty_strings(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Metadata article",
+                    "summary": "Metadata summary.",
+                    "key_points": ["Metadata point."],
+                    "source_name": None,
+                    "published_at": None,
+                }
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(digest)
+        article = pipeline_input.articles[0]
+
+        self.assertEqual(article.source_name, "")
+        self.assertEqual(article.published_at, "")
+
+    def test_build_pipeline_input_from_digest_accepts_author_profile_none(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(digest, author_profile=None)
+
+        self.assertEqual(pipeline_input.author_profile, {})
+
+    def test_build_pipeline_input_from_digest_accepts_partial_author_profile(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(
+            digest,
+            author_profile={"role": "AI Automation Specialist"},
+        )
+
+        self.assertEqual(pipeline_input.author_profile, {"role": "AI Automation Specialist"})
+
+    def test_build_pipeline_input_from_digest_rejects_non_dict_author_profile(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest, author_profile=[])  # type: ignore[arg-type]
+
+    def test_build_pipeline_input_from_digest_fails_validation_for_invalid_article(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": " ",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_missing_url(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_blank_url(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": " ",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_non_string_url(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": 123,
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_non_string_title(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": 123,
+                    "summary": "Summary.",
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_non_string_summary(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": 123,
+                    "key_points": ["Point."],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_allows_missing_key_points_as_empty_list(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                }
+            ]
+        )
+
+        pipeline_input = build_pipeline_input_from_digest(digest)
+
+        self.assertEqual(pipeline_input.articles[0].key_points, [])
+
+    def test_build_pipeline_input_from_digest_rejects_non_list_key_points(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": "Point.",
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_non_string_key_point_items(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": [123],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
+    def test_build_pipeline_input_from_digest_rejects_empty_key_point_items(self) -> None:
+        digest = FakeDigest(
+            [
+                {
+                    "url": "https://example.com/article-1",
+                    "title": "Article",
+                    "summary": "Summary.",
+                    "key_points": [" "],
+                }
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_pipeline_input_from_digest(digest)
+
     def test_validate_pipeline_input_accepts_valid_input(self) -> None:
         validate_pipeline_input(make_pipeline_input())
 

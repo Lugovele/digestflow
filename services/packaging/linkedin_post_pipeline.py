@@ -158,6 +158,55 @@ class TargetedRepairPlan:
     avoid: list[str]
 
 
+def build_pipeline_input_from_digest(
+    digest: Any,
+    author_profile: dict[str, Any] | None = None,
+) -> PipelineInput:
+    if author_profile is None:
+        normalized_author_profile: dict[str, Any] = {}
+    elif isinstance(author_profile, dict):
+        normalized_author_profile = dict(author_profile)
+    else:
+        raise LinkedInPostPipelineContractError("author_profile must be a dictionary.")
+
+    raw_articles = digest.get_articles()
+    if not isinstance(raw_articles, list):
+        raise LinkedInPostPipelineContractError("digest.get_articles() must return a list.")
+
+    articles: list[SelectedArticle] = []
+    for source_index, article in enumerate(raw_articles):
+        if not isinstance(article, dict):
+            raise LinkedInPostPipelineContractError(
+                f"digest.get_articles()[{source_index}] must be a dictionary."
+            )
+        articles.append(
+            SelectedArticle(
+                source_index=source_index,
+                title=article.get("title", ""),
+                url=article.get("url", ""),
+                summary=article.get("summary", ""),
+                key_points=article.get("key_points", []),
+                source_name=str(article.get("source_name") or "").strip(),
+                published_at=str(article.get("published_at") or "").strip(),
+                content_type=str(article.get("content_type") or "").strip(),
+                confidence=article.get("confidence"),
+            )
+        )
+
+    run = getattr(digest, "run", None)
+    topic = getattr(run, "topic", None)
+
+    pipeline_input = PipelineInput(
+        digest_id=getattr(digest, "id", None),
+        topic_name=str(getattr(topic, "name", "")).strip(),
+        digest_title=str(getattr(digest, "title", "")).strip(),
+        articles=articles,
+        author_profile=normalized_author_profile,
+    )
+    validate_pipeline_input(pipeline_input)
+    return pipeline_input
+
+
 def validate_pipeline_input(pipeline_input: PipelineInput) -> None:
     if not isinstance(pipeline_input, PipelineInput):
         raise LinkedInPostPipelineContractError(
@@ -189,6 +238,7 @@ def validate_selected_articles(articles: list[SelectedArticle]) -> None:
                 "in the selected article list."
             )
         _require_non_empty_string(article.title, f"articles[{expected_index}].title")
+        _require_non_empty_string(article.url, f"articles[{expected_index}].url")
         _require_non_empty_string(article.summary, f"articles[{expected_index}].summary")
         _require_string_list(article.key_points, f"articles[{expected_index}].key_points")
 
@@ -434,6 +484,7 @@ __all__ = [
     "QualityReviewResult",
     "SelectedArticle",
     "TargetedRepairPlan",
+    "build_pipeline_input_from_digest",
     "final_post_payload_to_dict",
     "validate_angle_decision",
     "validate_article_evidence_pack",
