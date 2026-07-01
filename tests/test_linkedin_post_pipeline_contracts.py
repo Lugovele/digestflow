@@ -17,11 +17,16 @@ from services.packaging.linkedin_post_pipeline import (
     build_pipeline_input_from_digest,
     final_post_payload_to_dict,
     validate_angle_decision,
+    validate_angle_decision_for_contextual_evidence,
     validate_article_evidence_pack,
+    validate_article_evidence_pack_for_pipeline_input,
     validate_contextual_evidence_pack,
+    validate_contextual_evidence_pack_for_article_evidence,
     validate_final_post_payload,
+    validate_linkedin_post_stage_relationships,
     validate_pipeline_input,
     validate_post_brief,
+    validate_post_brief_for_angle_decision,
     validate_selected_articles,
 )
 from services.packaging.validators import validate_content_package_payload
@@ -76,12 +81,14 @@ def make_pipeline_input() -> PipelineInput:
 
 
 def make_article_evidence(
+    evidence_id: str = "e1",
+    source_index: int = 0,
     evidence_type: str = "contrast",
     specificity_level: str = "medium",
 ) -> ArticleEvidence:
     return ArticleEvidence(
-        evidence_id="e1",
-        source_index=0,
+        evidence_id=evidence_id,
+        source_index=source_index,
         source_title="Article 0",
         evidence_text="Recent posts can show decisions and tradeoffs, not just finished outcomes.",
         evidence_type=evidence_type,
@@ -90,9 +97,12 @@ def make_article_evidence(
     )
 
 
-def make_contextual_evidence(best_use_in_post: str = "tension") -> ContextualEvidence:
+def make_contextual_evidence(
+    evidence_id: str = "e1",
+    best_use_in_post: str = "tension",
+) -> ContextualEvidence:
     return ContextualEvidence(
-        evidence_id="e1",
+        evidence_id=evidence_id,
         evidence_text="Recent posts can show decisions and tradeoffs, not just finished outcomes.",
         what_it_says="Visible process helps people evaluate judgment.",
         supports_argument="The post can argue that public proof needs more than polished output.",
@@ -130,6 +140,68 @@ def make_final_post_payload(
             "linkedin_ready": True,
         },
         carousel_outline=[],
+    )
+
+
+def make_article_evidence_pack(
+    items: list[ArticleEvidence] | None = None,
+) -> ArticleEvidencePack:
+    evidence_items = items if items is not None else [make_article_evidence()]
+    return ArticleEvidencePack(
+        items=evidence_items,
+        usable_count=len(evidence_items),
+        rejected_count=0,
+    )
+
+
+def make_contextual_evidence_pack(
+    items: list[ContextualEvidence] | None = None,
+    main_candidate_evidence_ids: list[str] | None = None,
+    background_evidence_ids: list[str] | None = None,
+) -> ContextualEvidencePack:
+    contextual_items = items if items is not None else [make_contextual_evidence()]
+    return ContextualEvidencePack(
+        items=contextual_items,
+        main_candidate_evidence_ids=main_candidate_evidence_ids
+        if main_candidate_evidence_ids is not None
+        else ["e1"],
+        background_evidence_ids=background_evidence_ids
+        if background_evidence_ids is not None
+        else [],
+        risks=["generic summary"],
+    )
+
+
+def make_angle_decision(supporting_evidence_ids: list[str] | None = None) -> AngleDecision:
+    return AngleDecision(
+        controlling_angle="A polished profile is weak proof without visible decisions.",
+        reader_problem="The reader shows finished work but not the thinking behind it.",
+        author_position="Proof of judgment matters more than surface polish.",
+        main_tension="Finished outcomes can hide how the person actually works.",
+        supporting_evidence_ids=supporting_evidence_ids
+        if supporting_evidence_ids is not None
+        else ["e1"],
+        angle_to_avoid=["generic personal branding advice"],
+    )
+
+
+def make_post_brief(evidence_ids: list[str] | None = None) -> PostBrief:
+    ids = evidence_ids if evidence_ids is not None else ["e1"]
+    return PostBrief(
+        opening_direction="Start with polished outcomes versus visible judgment.",
+        pattern_interrupt="The profile is not the real proof.",
+        core_point="Recent content should show decisions, tradeoffs, and lessons.",
+        evidence_to_use=[
+            BriefEvidenceUse(
+                evidence_id=evidence_id,
+                evidence_text="Recent posts can show decisions and tradeoffs.",
+                role_in_post="Use as the concrete proof point.",
+            )
+            for evidence_id in ids
+        ],
+        practical_point="Review the last ten posts for decisions or lessons.",
+        ending_direction="End by reframing proof as visible judgment.",
+        cta_direction="Ask what proof makes expertise feel real.",
     )
 
 
@@ -515,6 +587,27 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         with self.assertRaises(LinkedInPostPipelineContractError):
             validate_article_evidence_pack(pack)
 
+    def test_article_evidence_relationship_rejects_source_index_outside_pipeline_input(self) -> None:
+        pipeline_input = make_pipeline_input()
+        pack = make_article_evidence_pack(
+            items=[make_article_evidence(source_index=7)]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_article_evidence_pack_for_pipeline_input(pipeline_input, pack)
+
+    def test_article_evidence_relationship_rejects_duplicate_evidence_id(self) -> None:
+        pipeline_input = make_pipeline_input()
+        pack = make_article_evidence_pack(
+            items=[
+                make_article_evidence(evidence_id="e1"),
+                make_article_evidence(evidence_id="e1"),
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_article_evidence_pack_for_pipeline_input(pipeline_input, pack)
+
     def test_validate_contextual_evidence_pack_accepts_valid_pack(self) -> None:
         pack = ContextualEvidencePack(
             items=[make_contextual_evidence()],
@@ -547,6 +640,62 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         with self.assertRaises(LinkedInPostPipelineContractError):
             validate_contextual_evidence_pack(pack)
 
+    def test_contextual_evidence_relationship_rejects_unknown_evidence_id(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(evidence_id="missing")],
+            main_candidate_evidence_ids=["missing"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_duplicate_evidence_id(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="e1"),
+                make_contextual_evidence(evidence_id="e1"),
+            ],
+            main_candidate_evidence_ids=["e1"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_unknown_candidate_evidence_id(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(evidence_id="e1")],
+            main_candidate_evidence_ids=["missing"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_unknown_background_evidence_id(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(evidence_id="e1")],
+            main_candidate_evidence_ids=["e1"],
+            background_evidence_ids=["missing"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
     def test_validate_angle_decision_accepts_valid_decision(self) -> None:
         decision = AngleDecision(
             controlling_angle="A polished profile is weak proof without visible decisions.",
@@ -558,6 +707,16 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         )
 
         validate_angle_decision(decision)
+
+    def test_angle_decision_relationship_rejects_unknown_supporting_evidence_id(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision(supporting_evidence_ids=["missing"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_angle_decision_for_contextual_evidence(
+                contextual_pack,
+                angle_decision,
+            )
 
     def test_validate_post_brief_accepts_valid_brief(self) -> None:
         brief = PostBrief(
@@ -591,6 +750,43 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
 
         with self.assertRaises(LinkedInPostPipelineContractError):
             validate_post_brief(brief)
+
+    def test_post_brief_relationship_rejects_evidence_not_selected_by_angle(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="e1"),
+                make_contextual_evidence(evidence_id="e2"),
+            ],
+            main_candidate_evidence_ids=["e1", "e2"],
+        )
+        angle_decision = make_angle_decision(supporting_evidence_ids=["e1"])
+        brief = make_post_brief(evidence_ids=["e2"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_post_brief_for_angle_decision(
+                contextual_pack,
+                angle_decision,
+                brief,
+            )
+
+    def test_linkedin_post_stage_relationships_accepts_valid_staged_chain(self) -> None:
+        validate_linkedin_post_stage_relationships(
+            make_pipeline_input(),
+            make_article_evidence_pack(),
+            make_contextual_evidence_pack(),
+            make_angle_decision(),
+            make_post_brief(),
+        )
+
+    def test_linkedin_post_stage_relationships_rejects_broken_staged_chain(self) -> None:
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_linkedin_post_stage_relationships(
+                make_pipeline_input(),
+                make_article_evidence_pack(),
+                make_contextual_evidence_pack(),
+                make_angle_decision(supporting_evidence_ids=["missing"]),
+                make_post_brief(),
+            )
 
     def test_validate_final_post_payload_accepts_valid_payload(self) -> None:
         validate_final_post_payload(make_final_post_payload())

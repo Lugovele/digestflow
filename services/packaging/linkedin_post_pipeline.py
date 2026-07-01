@@ -286,6 +286,25 @@ def validate_article_evidence_pack(pack: ArticleEvidencePack) -> None:
         )
 
 
+def validate_article_evidence_pack_for_pipeline_input(
+    pipeline_input: PipelineInput,
+    article_evidence_pack: ArticleEvidencePack,
+) -> None:
+    validate_pipeline_input(pipeline_input)
+    validate_article_evidence_pack(article_evidence_pack)
+
+    article_indexes = {article.source_index for article in pipeline_input.articles}
+    _require_unique_ids(
+        [item.evidence_id for item in article_evidence_pack.items],
+        "ArticleEvidencePack.items.evidence_id",
+    )
+    for item in article_evidence_pack.items:
+        if item.source_index not in article_indexes:
+            raise LinkedInPostPipelineContractError(
+                "ArticleEvidence.source_index must reference an existing selected article."
+            )
+
+
 def validate_contextual_evidence_pack(pack: ContextualEvidencePack) -> None:
     if not isinstance(pack, ContextualEvidencePack):
         raise LinkedInPostPipelineContractError("pack must be a ContextualEvidencePack.")
@@ -330,6 +349,38 @@ def validate_contextual_evidence_pack(pack: ContextualEvidencePack) -> None:
     _require_string_list(pack.risks, "ContextualEvidencePack.risks")
 
 
+def validate_contextual_evidence_pack_for_article_evidence(
+    article_evidence_pack: ArticleEvidencePack,
+    contextual_evidence_pack: ContextualEvidencePack,
+) -> None:
+    validate_article_evidence_pack(article_evidence_pack)
+    validate_contextual_evidence_pack(contextual_evidence_pack)
+
+    article_evidence_ids = _require_unique_ids(
+        [item.evidence_id for item in article_evidence_pack.items],
+        "ArticleEvidencePack.items.evidence_id",
+    )
+    contextual_evidence_ids = _require_unique_ids(
+        [item.evidence_id for item in contextual_evidence_pack.items],
+        "ContextualEvidencePack.items.evidence_id",
+    )
+    _require_existing_ids(
+        list(contextual_evidence_ids),
+        article_evidence_ids,
+        "ContextualEvidencePack.items.evidence_id",
+    )
+    _require_existing_ids(
+        contextual_evidence_pack.main_candidate_evidence_ids,
+        article_evidence_ids,
+        "ContextualEvidencePack.main_candidate_evidence_ids",
+    )
+    _require_existing_ids(
+        contextual_evidence_pack.background_evidence_ids,
+        article_evidence_ids,
+        "ContextualEvidencePack.background_evidence_ids",
+    )
+
+
 def validate_angle_decision(decision: AngleDecision) -> None:
     if not isinstance(decision, AngleDecision):
         raise LinkedInPostPipelineContractError("decision must be an AngleDecision.")
@@ -340,6 +391,24 @@ def validate_angle_decision(decision: AngleDecision) -> None:
     _require_non_empty_string(decision.main_tension, "AngleDecision.main_tension")
     _require_string_list(decision.supporting_evidence_ids, "AngleDecision.supporting_evidence_ids")
     _require_string_list(decision.angle_to_avoid, "AngleDecision.angle_to_avoid")
+
+
+def validate_angle_decision_for_contextual_evidence(
+    contextual_evidence_pack: ContextualEvidencePack,
+    angle_decision: AngleDecision,
+) -> None:
+    validate_contextual_evidence_pack(contextual_evidence_pack)
+    validate_angle_decision(angle_decision)
+
+    contextual_evidence_ids = _require_unique_ids(
+        [item.evidence_id for item in contextual_evidence_pack.items],
+        "ContextualEvidencePack.items.evidence_id",
+    )
+    _require_existing_ids(
+        angle_decision.supporting_evidence_ids,
+        contextual_evidence_ids,
+        "AngleDecision.supporting_evidence_ids",
+    )
 
 
 def validate_post_brief(brief: PostBrief) -> None:
@@ -374,6 +443,55 @@ def validate_post_brief(brief: PostBrief) -> None:
             item.role_in_post,
             f"PostBrief.evidence_to_use[{item_index}].role_in_post",
         )
+
+
+def validate_post_brief_for_angle_decision(
+    contextual_evidence_pack: ContextualEvidencePack,
+    angle_decision: AngleDecision,
+    post_brief: PostBrief,
+) -> None:
+    validate_angle_decision_for_contextual_evidence(contextual_evidence_pack, angle_decision)
+    validate_post_brief(post_brief)
+
+    contextual_evidence_ids = _require_unique_ids(
+        [item.evidence_id for item in contextual_evidence_pack.items],
+        "ContextualEvidencePack.items.evidence_id",
+    )
+    supporting_evidence_ids = set(angle_decision.supporting_evidence_ids)
+    approved_evidence_ids = contextual_evidence_ids & supporting_evidence_ids
+    brief_evidence_ids = [item.evidence_id for item in post_brief.evidence_to_use]
+
+    _require_existing_ids(
+        brief_evidence_ids,
+        approved_evidence_ids,
+        "PostBrief.evidence_to_use.evidence_id",
+    )
+
+
+def validate_linkedin_post_stage_relationships(
+    pipeline_input: PipelineInput,
+    article_evidence_pack: ArticleEvidencePack,
+    contextual_evidence_pack: ContextualEvidencePack,
+    angle_decision: AngleDecision,
+    post_brief: PostBrief,
+) -> None:
+    validate_article_evidence_pack_for_pipeline_input(
+        pipeline_input,
+        article_evidence_pack,
+    )
+    validate_contextual_evidence_pack_for_article_evidence(
+        article_evidence_pack,
+        contextual_evidence_pack,
+    )
+    validate_angle_decision_for_contextual_evidence(
+        contextual_evidence_pack,
+        angle_decision,
+    )
+    validate_post_brief_for_angle_decision(
+        contextual_evidence_pack,
+        angle_decision,
+        post_brief,
+    )
 
 
 def validate_final_post_payload(payload: FinalPostPayload) -> None:
@@ -466,6 +584,20 @@ def _require_existing_ids(value: Any, allowed_ids: set[str], field_name: str) ->
         )
 
 
+def _require_unique_ids(values: list[str], field_name: str) -> set[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if value in seen:
+            duplicates.add(value)
+        seen.add(value)
+    if duplicates:
+        raise LinkedInPostPipelineContractError(
+            f"{field_name} contains duplicate IDs: {sorted(duplicates)}."
+        )
+    return seen
+
+
 __all__ = [
     "ALLOWED_BEST_USE_VALUES",
     "ALLOWED_EVIDENCE_TYPES",
@@ -487,10 +619,15 @@ __all__ = [
     "build_pipeline_input_from_digest",
     "final_post_payload_to_dict",
     "validate_angle_decision",
+    "validate_angle_decision_for_contextual_evidence",
     "validate_article_evidence_pack",
+    "validate_article_evidence_pack_for_pipeline_input",
     "validate_contextual_evidence_pack",
+    "validate_contextual_evidence_pack_for_article_evidence",
     "validate_final_post_payload",
+    "validate_linkedin_post_stage_relationships",
     "validate_pipeline_input",
     "validate_post_brief",
+    "validate_post_brief_for_angle_decision",
     "validate_selected_articles",
 ]
