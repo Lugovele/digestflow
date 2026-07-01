@@ -14,6 +14,7 @@ from services.packaging.linkedin_post_pipeline import (
     PipelineInput,
     PostBrief,
     SelectedArticle,
+    build_article_evidence_pack_from_pipeline_input,
     build_pipeline_input_from_digest,
     final_post_payload_to_dict,
     validate_angle_decision,
@@ -77,6 +78,31 @@ def make_pipeline_input() -> PipelineInput:
         digest_title="Digest for Personal Branding",
         articles=[make_selected_article()],
         author_profile={"role": "AI Automation Specialist"},
+    )
+
+
+def make_pipeline_input_with_two_articles() -> PipelineInput:
+    return PipelineInput(
+        digest_id=130,
+        topic_name="Personal Branding",
+        digest_title="Digest for Personal Branding",
+        articles=[
+            SelectedArticle(
+                source_index=0,
+                title="First article",
+                url="https://example.com/article-0",
+                summary="First summary.",
+                key_points=["First key point.", "Second key point."],
+            ),
+            SelectedArticle(
+                source_index=1,
+                title="Second article",
+                url="https://example.com/article-1",
+                summary="Second summary.",
+                key_points=["Third key point."],
+            ),
+        ],
+        author_profile={},
     )
 
 
@@ -527,6 +553,124 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
 
         with self.assertRaises(LinkedInPostPipelineContractError):
             build_pipeline_input_from_digest(digest)
+
+    def test_build_article_evidence_pack_from_pipeline_input_creates_pack(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(make_pipeline_input())
+
+        self.assertIsInstance(pack, ArticleEvidencePack)
+        self.assertEqual(pack.usable_count, len(pack.items))
+        self.assertEqual(pack.rejected_count, 0)
+
+    def test_build_article_evidence_pack_from_pipeline_input_uses_stable_evidence_ids(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(
+            make_pipeline_input_with_two_articles()
+        )
+
+        self.assertEqual(
+            [item.evidence_id for item in pack.items],
+            [
+                "a0-summary",
+                "a0-kp0",
+                "a0-kp1",
+                "a1-summary",
+                "a1-kp0",
+            ],
+        )
+
+    def test_build_article_evidence_pack_from_pipeline_input_sets_source_indexes(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(
+            make_pipeline_input_with_two_articles()
+        )
+
+        self.assertEqual(
+            [(item.evidence_id, item.source_index) for item in pack.items],
+            [
+                ("a0-summary", 0),
+                ("a0-kp0", 0),
+                ("a0-kp1", 0),
+                ("a1-summary", 1),
+                ("a1-kp0", 1),
+            ],
+        )
+
+    def test_build_article_evidence_pack_from_pipeline_input_preserves_source_title(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(
+            make_pipeline_input_with_two_articles()
+        )
+
+        self.assertEqual(
+            [(item.evidence_id, item.source_title) for item in pack.items],
+            [
+                ("a0-summary", "First article"),
+                ("a0-kp0", "First article"),
+                ("a0-kp1", "First article"),
+                ("a1-summary", "Second article"),
+                ("a1-kp0", "Second article"),
+            ],
+        )
+
+    def test_build_article_evidence_pack_from_pipeline_input_uses_only_summary_and_key_points(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(
+            make_pipeline_input_with_two_articles()
+        )
+
+        self.assertEqual(
+            [item.evidence_text for item in pack.items],
+            [
+                "First summary.",
+                "First key point.",
+                "Second key point.",
+                "Second summary.",
+                "Third key point.",
+            ],
+        )
+
+    def test_build_article_evidence_pack_from_pipeline_input_sets_evidence_types(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(make_pipeline_input())
+
+        self.assertEqual(pack.items[0].evidence_type, "pattern")
+        self.assertEqual(pack.items[0].specificity_level, "medium")
+        self.assertEqual(pack.items[1].evidence_type, "practical_point")
+        self.assertEqual(pack.items[1].specificity_level, "medium")
+
+    def test_build_article_evidence_pack_from_pipeline_input_discloses_source_limitations(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(make_pipeline_input())
+
+        self.assertTrue(
+            all("digest summaries and key points" in item.source_limitations for item in pack.items)
+        )
+        self.assertTrue(
+            all("not full article extraction" in item.source_limitations for item in pack.items)
+        )
+
+    def test_build_article_evidence_pack_from_pipeline_input_passes_relationship_validation(self) -> None:
+        pipeline_input = make_pipeline_input_with_two_articles()
+
+        pack = build_article_evidence_pack_from_pipeline_input(pipeline_input)
+
+        validate_article_evidence_pack_for_pipeline_input(pipeline_input, pack)
+
+    def test_build_article_evidence_pack_from_pipeline_input_rejects_invalid_pipeline_input(self) -> None:
+        pipeline_input = PipelineInput(
+            digest_id=130,
+            topic_name="Personal Branding",
+            digest_title="Digest for Personal Branding",
+            articles=[make_selected_article(summary=" ")],
+            author_profile={},
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_article_evidence_pack_from_pipeline_input(pipeline_input)
+
+    def test_build_article_evidence_pack_from_pipeline_input_does_not_include_later_stage_fields(self) -> None:
+        pack = build_article_evidence_pack_from_pipeline_input(make_pipeline_input())
+
+        self.assertFalse(hasattr(pack, "post_text"))
+        self.assertFalse(hasattr(pack, "angle_decision"))
+        self.assertFalse(hasattr(pack, "author_position"))
+        self.assertFalse(hasattr(pack, "post_brief"))
+        self.assertFalse(hasattr(pack, "quality_review"))
+        self.assertFalse(hasattr(pack, "repair_instruction"))
 
     def test_validate_pipeline_input_accepts_valid_input(self) -> None:
         validate_pipeline_input(make_pipeline_input())

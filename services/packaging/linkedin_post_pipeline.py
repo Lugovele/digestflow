@@ -207,6 +207,53 @@ def build_pipeline_input_from_digest(
     return pipeline_input
 
 
+def build_article_evidence_pack_from_pipeline_input(
+    pipeline_input: PipelineInput,
+) -> ArticleEvidencePack:
+    validate_pipeline_input(pipeline_input)
+
+    items: list[ArticleEvidence] = []
+    source_limitations = (
+        "Evidence is derived from digest summaries and key points, "
+        "not full article extraction."
+    )
+    for article in pipeline_input.articles:
+        items.append(
+            ArticleEvidence(
+                evidence_id=f"a{article.source_index}-summary",
+                source_index=article.source_index,
+                source_title=article.title,
+                evidence_text=article.summary,
+                evidence_type="pattern",
+                specificity_level="medium",
+                source_limitations=source_limitations,
+            )
+        )
+        for key_point_index, key_point in enumerate(article.key_points):
+            items.append(
+                ArticleEvidence(
+                    evidence_id=f"a{article.source_index}-kp{key_point_index}",
+                    source_index=article.source_index,
+                    source_title=article.title,
+                    evidence_text=key_point,
+                    evidence_type="practical_point",
+                    specificity_level="medium",
+                    source_limitations=source_limitations,
+                )
+            )
+
+    article_evidence_pack = ArticleEvidencePack(
+        items=items,
+        usable_count=len(items),
+        rejected_count=0,
+    )
+    validate_article_evidence_pack_for_pipeline_input(
+        pipeline_input,
+        article_evidence_pack,
+    )
+    return article_evidence_pack
+
+
 def validate_pipeline_input(pipeline_input: PipelineInput) -> None:
     if not isinstance(pipeline_input, PipelineInput):
         raise LinkedInPostPipelineContractError(
@@ -616,6 +663,7 @@ __all__ = [
     "QualityReviewResult",
     "SelectedArticle",
     "TargetedRepairPlan",
+    "build_article_evidence_pack_from_pipeline_input",
     "build_pipeline_input_from_digest",
     "final_post_payload_to_dict",
     "validate_angle_decision",
