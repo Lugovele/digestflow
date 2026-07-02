@@ -17,6 +17,7 @@ from services.packaging.linkedin_post_pipeline import (
     build_angle_decision_from_contextual_evidence_pack,
     build_article_evidence_pack_from_pipeline_input,
     build_contextual_evidence_pack_from_article_evidence_pack,
+    build_final_post_payload_from_post_brief,
     build_pipeline_input_from_digest,
     build_post_brief_from_angle_decision,
     final_post_payload_to_dict,
@@ -27,6 +28,7 @@ from services.packaging.linkedin_post_pipeline import (
     validate_contextual_evidence_pack,
     validate_contextual_evidence_pack_for_article_evidence,
     validate_final_post_payload,
+    validate_final_post_payload_for_post_brief,
     validate_linkedin_post_stage_relationships,
     validate_pipeline_input,
     validate_post_brief,
@@ -1220,6 +1222,417 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         self.assertFalse(hasattr(post_brief, "repair_instruction"))
         self.assertFalse(hasattr(post_brief, "package_payload"))
         self.assertFalse(hasattr(post_brief, "core_opinion"))
+
+    def test_build_final_post_payload_from_post_brief_returns_valid_payload(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        validate_final_post_payload(payload)
+        validate_final_post_payload_for_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+            payload,
+        )
+
+    def test_build_final_post_payload_from_post_brief_dict_passes_content_package_validator(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        validate_content_package_payload(final_post_payload_to_dict(payload))
+
+    def test_build_final_post_payload_from_post_brief_sets_scaffold_post_text(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertTrue(payload.post_text.strip())
+        self.assertLessEqual(len(payload.post_text), 1300)
+        self.assertIn("[Scaffold only - not production copy]", payload.post_text)
+
+    def test_build_final_post_payload_from_post_brief_post_text_contains_no_urls(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertNotIn("http://", payload.post_text.lower())
+        self.assertNotIn("https://", payload.post_text.lower())
+        self.assertNotIn("www.", payload.post_text.lower())
+
+    def test_build_final_post_payload_from_post_brief_includes_selected_evidence_text(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="e1",
+                    evidence_text="Exact selected evidence for final scaffold.",
+                )
+            ],
+            main_candidate_evidence_ids=["e1"],
+        )
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertIn("Exact selected evidence for final scaffold.", payload.post_text)
+
+    def test_build_final_post_payload_from_post_brief_includes_controlling_angle(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertIn(angle_decision.controlling_angle, payload.post_text)
+
+    def test_build_final_post_payload_from_post_brief_rejects_evidence_text_with_url(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="e1",
+                    evidence_text="Evidence text points to https://example.com.",
+                )
+            ],
+            main_candidate_evidence_ids=["e1"],
+        )
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_final_post_payload_from_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+            )
+
+    def test_build_final_post_payload_from_post_brief_rejects_overlength_scaffold(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="e1",
+                    evidence_text="x" * 1200,
+                )
+            ],
+            main_candidate_evidence_ids=["e1"],
+        )
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_final_post_payload_from_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+            )
+
+    def test_build_final_post_payload_from_post_brief_sets_conservative_quality_checks(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertIs(payload.quality_checks["linkedin_ready"], False)
+        self.assertIs(payload.quality_checks["uses_only_provided_facts"], True)
+        self.assertIs(payload.quality_checks["has_clear_point_of_view"], True)
+
+    def test_build_final_post_payload_from_post_brief_has_required_lists(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertGreaterEqual(len(payload.hook_variants), 3)
+        self.assertGreaterEqual(len(payload.cta_variants), 3)
+        self.assertGreaterEqual(len(payload.hashtags), 1)
+        self.assertEqual(payload.carousel_outline, [])
+
+    def test_final_post_payload_relationship_rejects_missing_selected_evidence_text(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = FinalPostPayload(
+            post_text=(
+                "[Scaffold only - not production copy]\n"
+                f"Controlling angle: {angle_decision.controlling_angle}\n"
+                "Scaffold text without the selected evidence."
+            ),
+            hook_variants=[
+                "Scaffold hook one.",
+                "Scaffold hook two.",
+                "Scaffold hook three.",
+            ],
+            cta_variants=[
+                "Scaffold CTA one?",
+                "Scaffold CTA two?",
+                "Scaffold CTA three?",
+            ],
+            hashtags=["#PostFlow"],
+            quality_checks={
+                "uses_only_provided_facts": True,
+                "has_clear_point_of_view": True,
+                "linkedin_ready": False,
+            },
+            carousel_outline=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload,
+            )
+
+    def test_final_post_payload_relationship_rejects_missing_scaffold_marker(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+        payload_without_marker = FinalPostPayload(
+            post_text=payload.post_text.replace(
+                "[Scaffold only - not production copy]",
+                "Scaffold text",
+            ),
+            hook_variants=payload.hook_variants,
+            cta_variants=payload.cta_variants,
+            hashtags=payload.hashtags,
+            quality_checks=payload.quality_checks,
+            carousel_outline=payload.carousel_outline,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload_without_marker,
+            )
+
+    def test_final_post_payload_relationship_rejects_missing_controlling_angle(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+        payload_without_angle = FinalPostPayload(
+            post_text=payload.post_text.replace(
+                angle_decision.controlling_angle,
+                "Controlling angle removed.",
+            ),
+            hook_variants=payload.hook_variants,
+            cta_variants=payload.cta_variants,
+            hashtags=payload.hashtags,
+            quality_checks=payload.quality_checks,
+            carousel_outline=payload.carousel_outline,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload_without_angle,
+            )
+
+    def test_final_post_payload_relationship_rejects_urls_in_post_text(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+        payload_with_url = FinalPostPayload(
+            post_text=f"{payload.post_text}\nhttps://example.com",
+            hook_variants=payload.hook_variants,
+            cta_variants=payload.cta_variants,
+            hashtags=payload.hashtags,
+            quality_checks=payload.quality_checks,
+            carousel_outline=payload.carousel_outline,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload_with_url,
+            )
+
+    def test_final_post_payload_relationship_rejects_linkedin_ready_true(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+        payload_ready = FinalPostPayload(
+            post_text=payload.post_text,
+            hook_variants=payload.hook_variants,
+            cta_variants=payload.cta_variants,
+            hashtags=payload.hashtags,
+            quality_checks={
+                **payload.quality_checks,
+                "linkedin_ready": True,
+            },
+            carousel_outline=payload.carousel_outline,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload_ready,
+            )
+
+    def test_final_post_payload_relationship_rejects_carousel_outline(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+        payload_with_carousel = FinalPostPayload(
+            post_text=payload.post_text,
+            hook_variants=payload.hook_variants,
+            cta_variants=payload.cta_variants,
+            hashtags=payload.hashtags,
+            quality_checks=payload.quality_checks,
+            carousel_outline=[{"slide": "Not part of this scaffold."}],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload_with_carousel,
+            )
+
+    def test_build_final_post_payload_from_post_brief_does_not_include_runtime_or_repair_fields(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertFalse(hasattr(payload, "content_package"))
+        self.assertFalse(hasattr(payload, "package_payload"))
+        self.assertFalse(hasattr(payload, "debug_info"))
+        self.assertFalse(hasattr(payload, "quality_review"))
+        self.assertFalse(hasattr(payload, "repair_instruction"))
+        self.assertFalse(hasattr(payload, "repair_output"))
 
     def test_validate_pipeline_input_accepts_valid_input(self) -> None:
         validate_pipeline_input(make_pipeline_input())

@@ -442,6 +442,74 @@ def build_post_brief_from_angle_decision(
     return post_brief
 
 
+def build_final_post_payload_from_post_brief(
+    contextual_evidence_pack: ContextualEvidencePack,
+    angle_decision: AngleDecision,
+    post_brief: PostBrief,
+) -> FinalPostPayload:
+    validate_post_brief_for_angle_decision(
+        contextual_evidence_pack,
+        angle_decision,
+        post_brief,
+    )
+
+    for item in post_brief.evidence_to_use:
+        if _contains_url(item.evidence_text):
+            raise LinkedInPostPipelineContractError(
+                "PostBrief.evidence_to_use.evidence_text must not contain URLs "
+                "when building the FinalPostPayload scaffold."
+            )
+
+    evidence_lines = [
+        f"- {item.evidence_text}"
+        for item in post_brief.evidence_to_use
+    ]
+    post_text = "\n".join(
+        [
+            "[Scaffold only - not production copy]",
+            f"Controlling angle: {angle_decision.controlling_angle}",
+            f"Core point direction: {post_brief.core_point}",
+            "Selected evidence:",
+            *evidence_lines,
+            f"Practical direction: {post_brief.practical_point}",
+            f"CTA direction: {post_brief.cta_direction}",
+        ]
+    )
+    if len(post_text) > 1300:
+        raise LinkedInPostPipelineContractError(
+            "FinalPostPayload scaffold post_text would exceed 1300 characters."
+        )
+
+    final_post_payload = FinalPostPayload(
+        post_text=post_text,
+        hook_variants=[
+            f"Scaffold hook from opening: {post_brief.opening_direction}",
+            f"Scaffold hook from core point: {post_brief.core_point}",
+            f"Scaffold hook from angle: {angle_decision.controlling_angle}",
+        ],
+        cta_variants=[
+            f"Scaffold CTA from brief: {post_brief.cta_direction}",
+            f"Scaffold CTA from reader problem: {angle_decision.reader_problem}",
+            "What should the reader check against the selected evidence?",
+        ],
+        hashtags=["#PostFlow"],
+        quality_checks={
+            "uses_only_provided_facts": True,
+            "has_clear_point_of_view": True,
+            "linkedin_ready": False,
+        },
+        carousel_outline=[],
+    )
+    validate_final_post_payload(final_post_payload)
+    validate_final_post_payload_for_post_brief(
+        contextual_evidence_pack,
+        angle_decision,
+        post_brief,
+        final_post_payload,
+    )
+    return final_post_payload
+
+
 def validate_pipeline_input(pipeline_input: PipelineInput) -> None:
     if not isinstance(pipeline_input, PipelineInput):
         raise LinkedInPostPipelineContractError(
@@ -851,6 +919,47 @@ def validate_linkedin_post_stage_relationships(
     )
 
 
+def validate_final_post_payload_for_post_brief(
+    contextual_evidence_pack: ContextualEvidencePack,
+    angle_decision: AngleDecision,
+    post_brief: PostBrief,
+    final_post_payload: FinalPostPayload,
+) -> None:
+    validate_post_brief_for_angle_decision(
+        contextual_evidence_pack,
+        angle_decision,
+        post_brief,
+    )
+    validate_final_post_payload(final_post_payload)
+
+    if "[Scaffold only - not production copy]" not in final_post_payload.post_text:
+        raise LinkedInPostPipelineContractError(
+            "FinalPostPayload.post_text must include the scaffold marker."
+        )
+    if angle_decision.controlling_angle not in final_post_payload.post_text:
+        raise LinkedInPostPipelineContractError(
+            "FinalPostPayload.post_text must include AngleDecision.controlling_angle."
+        )
+    for item in post_brief.evidence_to_use:
+        if item.evidence_text not in final_post_payload.post_text:
+            raise LinkedInPostPipelineContractError(
+                "FinalPostPayload.post_text must include selected evidence text "
+                f"for evidence_id {item.evidence_id}."
+            )
+    if _contains_url(final_post_payload.post_text):
+        raise LinkedInPostPipelineContractError(
+            "FinalPostPayload.post_text must not contain URLs."
+        )
+    if final_post_payload.quality_checks.get("linkedin_ready") is not False:
+        raise LinkedInPostPipelineContractError(
+            "FinalPostPayload.quality_checks.linkedin_ready must be False for the scaffold."
+        )
+    if final_post_payload.carousel_outline != []:
+        raise LinkedInPostPipelineContractError(
+            "FinalPostPayload.carousel_outline must be empty for the scaffold."
+        )
+
+
 def validate_final_post_payload(payload: FinalPostPayload) -> None:
     if not isinstance(payload, FinalPostPayload):
         raise LinkedInPostPipelineContractError("payload must be a FinalPostPayload.")
@@ -1043,6 +1152,11 @@ def _brief_role_for_contextual_evidence(item: ContextualEvidence) -> str:
     )
 
 
+def _contains_url(value: str) -> bool:
+    lowered = value.lower()
+    return "http://" in lowered or "https://" in lowered or "www." in lowered
+
+
 def _unique_preserving_order(values: list[str]) -> list[str]:
     unique_values: list[str] = []
     seen: set[str] = set()
@@ -1105,6 +1219,7 @@ __all__ = [
     "build_angle_decision_from_contextual_evidence_pack",
     "build_article_evidence_pack_from_pipeline_input",
     "build_contextual_evidence_pack_from_article_evidence_pack",
+    "build_final_post_payload_from_post_brief",
     "build_pipeline_input_from_digest",
     "build_post_brief_from_angle_decision",
     "final_post_payload_to_dict",
@@ -1115,6 +1230,7 @@ __all__ = [
     "validate_contextual_evidence_pack",
     "validate_contextual_evidence_pack_for_article_evidence",
     "validate_final_post_payload",
+    "validate_final_post_payload_for_post_brief",
     "validate_linkedin_post_stage_relationships",
     "validate_pipeline_input",
     "validate_post_brief",
