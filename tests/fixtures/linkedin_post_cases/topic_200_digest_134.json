@@ -1,0 +1,173 @@
+{
+  "case_id": "topic_200_digest_134",
+  "source_type": "latest_completed_digest",
+  "topic": {
+    "id": 200,
+    "name": "bitcion market",
+    "source_mode": "discovery_only"
+  },
+  "digest": {
+    "id": 134,
+    "run_id": 181,
+    "title": "Digest for bitcion market"
+  },
+  "articles": [
+    {
+      "source_index": 0,
+      "url": "https://security.org/digital-security/cryptocurrency-annual-consumer-report",
+      "title": "2026 Cryptocurrency Adoption and Sentiment Report",
+      "summary": "The article analyzes the current state of cryptocurrency ownership in the U.S., revealing that 30% of Americans own cryptocurrencies and that 61% of these owners plan to invest further in the coming year. The author argues that while President Trump's pro-crypto policies have sparked renewed interest and some stability, fundamental issues like security concerns and market volatility continue to limit broader adoption. The conclusion emphasizes the need for improved security infrastructure to enhance public trust and facilitate mainstream acceptance.",
+      "key_points": [
+        "30% of Americans own cryptocurrencies, a slight increase from 27% in 2024.",
+        "Trump's presidency has instigated significant federal support for digital assets but has not fully assuaged public skepticism.",
+        "Security concerns remain a major barrier to cryptocurrency adoption, with 59% of Americans lacking confidence in its security."
+      ],
+      "content_type": "news",
+      "confidence": 0.9,
+      "source_name": "2026 Cryptocurrency Adoption and Sentiment Report",
+      "published_at": null,
+      "snippet": "2026 Cryptocurrency Adoption and Sentiment Report Today, 30% of Americans own cryptocurrencies, and 61% of owners plan to increase their crypto investments in 2026. Key Findings Approximately 30% of American adults, or 70.4 million people, own cryptocurrency today—up slightly...",
+      "quality_metadata": {
+        "discovery_status": "kept",
+        "discovery_outcome": "already_known",
+        "quality_score": 4.0,
+        "substance_score": 3.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "substantive_longform_article",
+        "detected_publication_date": null,
+        "ranking_quality_score": 0.95,
+        "ranking_score": 9.5,
+        "quality_threshold_used": 0.4,
+        "content_tier": "full_article",
+        "content_length": 16470,
+        "primary_article_type": "deep_technical",
+        "quality_reasons": [
+          "strong relevance to topic",
+          "broad topic match without strong specificity",
+          "sufficient evidence/detail",
+          "good technical/practical article",
+          "high novelty or strategic value",
+          "deep technical article"
+        ],
+        "rejection_reasons": [
+          "low specificity"
+        ],
+        "diagnostic_warnings": []
+      }
+    },
+    {
+      "source_index": 1,
+      "url": "https://marketresearchfuture.com/reports/cryptocurrency-market-31627",
+      "title": "Cryptocurrency Market Size, Share | Report Trends 2035",
+      "summary": "The article provides a comprehensive analysis of the cryptocurrency market, forecasting significant growth from an estimated valuation of 389.96 billion USD in 2025 to approximately 1.87 trillion USD by 2035, driven by institutional adoption and regulatory clarity. The author argues that the increasing institutional interest along with technological advancements and decentralized finance (DeFi) innovations will propel the market's future expansion. The conclusion emphasizes that the evolving landscape, supported by regulatory frameworks and mainstream integration, will enhance market stability and attract more investors.",
+      "key_points": [
+        "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+        "Institutional adoption is significantly increasing, particularly in North America.",
+        "Regulatory clarity is becoming a crucial factor for investor confidence and market stability.",
+        "Decentralized finance platforms are reshaping traditional financial services, driving user engagement.",
+        "Technological advancements are enhancing transaction efficiency and security in the market."
+      ],
+      "content_type": "unknown",
+      "confidence": 0.9,
+      "source_name": "Cryptocurrency Market Size, Share | Report Trends 2035",
+      "published_at": null,
+      "snippet": "Cryptocurrency Market Cryptocurrency Market Summary As per Market Research Future analysis, the Cryptocurrency Market Size was estimated at 333.32 USD Billion in 2024. The Crypto Currency industry is projected to grow from 389.96 USD Billion in 2025 to 1873.2 USD Billion by 20...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "already_known",
+        "quality_score": 7.0,
+        "substance_score": 6.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "research_report",
+        "detected_publication_date": null,
+        "ranking_quality_score": 0.95,
+        "ranking_score": 9.5,
+        "quality_threshold_used": 0.4,
+        "content_tier": "full_article",
+        "content_length": 37498,
+        "primary_article_type": "deep_technical",
+        "quality_reasons": [
+          "strong relevance to topic",
+          "broad topic match without strong specificity",
+          "sufficient evidence/detail",
+          "good technical/practical article",
+          "high novelty or strategic value",
+          "deep technical article"
+        ],
+        "rejection_reasons": [
+          "low specificity"
+        ],
+        "diagnostic_warnings": []
+      }
+    },
+    {
+      "source_index": 2,
+      "url": "https://coindesk.com/markets/2026/05/19/this-bitcoin-bear-market-is-different-with-uniquely-pessimistic-traders-limiting-downside-k33-says",
+      "title": "Bitcoin price analysis: BTC likely bottomed at $60K amid milder bear market, K33 Research says",
+      "summary": "The article presents an analysis from K33 Research indicating that Bitcoin's price likely hit its lowest point of $60,000 in February, distinguishing this bear market from previous downturns. The author's main argument is that the current market sentiment is marked by extreme caution among traders, which limits the potential for significant further declines. The conclusion is that while risks remain, the pessimism may actually stabilize the market, suggesting that a more moderate bear cycle could follow.",
+      "key_points": [
+        "Current traders exhibit 'uniquely pessimistic' sentiment, reducing the risk of a drastic market collapse.",
+        "Bitcoin's recent inability to rise above $83,000 has heightened fears of further declines, yet the market behavior contrasts with previous cycles.",
+        "K33 Research argues that the February drop to $60,000 represents the maximum decline for this bear market."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "Bitcoin price analysis: BTC likely bottomed at $60K amid milder bear market, K33 Research says",
+      "published_at": null,
+      "snippet": "This bitcoin bear market is different with 'uniquely pessimistic' traders limiting downside, K33 says The research firm said bitcoin traders remain unusually defensive, reducing the risk of the kind of leverage-driven collapse seen in prior downturns. What to know : Bitcoin’s...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 9.0,
+        "substance_score": 5.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "substantive_longform_article",
+        "detected_publication_date": "2026-05-19",
+        "ranking_quality_score": 0.9,
+        "ranking_score": 9.0,
+        "quality_threshold_used": 0.4,
+        "content_tier": "full_article",
+        "content_length": 4477,
+        "primary_article_type": "opinion_analysis",
+        "quality_reasons": [
+          "strong relevance to topic",
+          "broad topic match without strong specificity",
+          "sufficient evidence/detail",
+          "good technical/practical article",
+          "high novelty or strategic value",
+          "opinion analysis article"
+        ],
+        "rejection_reasons": [
+          "low specificity"
+        ],
+        "diagnostic_warnings": []
+      }
+    }
+  ],
+  "expected_behavior": {
+    "must_preserve": [
+      "Crypto adoption is rising, but security concerns remain a major barrier.",
+      "Market growth forecasts are source claims, not guaranteed outcomes.",
+      "Bitcoin sentiment analysis should stay attributed to K33 Research.",
+      "Use quoted price levels and market forecasts only as sourced context.",
+      "Separate adoption data, market-size forecasts, trader sentiment, and price-level claims instead of treating them as one signal."
+    ],
+    "must_not_infer": [
+      "Do not recommend buying, selling, holding, timing, or increasing crypto exposure.",
+      "Do not claim Bitcoin has definitely bottomed.",
+      "Do not turn forecasted market growth into a guaranteed investment opportunity.",
+      "Do not invent additional statistics, investor behavior, ETF flows, or regulatory facts.",
+      "Do not present political policy as the sole cause of adoption changes.",
+      "Do not combine survey adoption, market forecasts, and price analysis into a single bullish conclusion unless the sources explicitly support it."
+    ],
+    "preferred_angle": "Crypto sources often mix different types of signals — adoption, forecast, sentiment, and price levels. A useful post should separate what each signal actually proves instead of turning them into one bullish market narrative.",
+    "generic_output_risk": "The post may collapse into generic crypto-market commentary about adoption, regulation, institutional interest, and trust.",
+    "source_dominance_risk": "The market-size forecast or K33 bottoming claim may hijack the final angle and turn the post into a prediction recap.",
+    "metric_hallucination_risk": "The fixture contains many numbers; the model must not extrapolate beyond the stated survey, forecast, CAGR, and price-level claims.",
+    "investment_advice_risk": "High. The post must avoid trading calls, price predictions, portfolio advice, or implied recommendations.",
+    "notes": "Good evaluation case for testing source-grounded market commentary that avoids investment advice, separates different signal types, and does not overfit to the loudest metric."
+  }
+}
