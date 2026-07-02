@@ -15,6 +15,7 @@ from services.packaging.linkedin_post_pipeline import (
     PostBrief,
     SelectedArticle,
     build_article_evidence_pack_from_pipeline_input,
+    build_contextual_evidence_pack_from_article_evidence_pack,
     build_pipeline_input_from_digest,
     final_post_payload_to_dict,
     validate_angle_decision,
@@ -126,10 +127,20 @@ def make_article_evidence(
 def make_contextual_evidence(
     evidence_id: str = "e1",
     best_use_in_post: str = "tension",
+    source_index: int = 0,
+    source_title: str = "Article 0",
+    evidence_type: str = "contrast",
+    specificity_level: str = "medium",
+    source_limitations: str = "No named case or metric.",
 ) -> ContextualEvidence:
     return ContextualEvidence(
         evidence_id=evidence_id,
+        source_index=source_index,
+        source_title=source_title,
         evidence_text="Recent posts can show decisions and tradeoffs, not just finished outcomes.",
+        evidence_type=evidence_type,
+        specificity_level=specificity_level,
+        source_limitations=source_limitations,
         what_it_says="Visible process helps people evaluate judgment.",
         supports_argument="The post can argue that public proof needs more than polished output.",
         best_use_in_post=best_use_in_post,
@@ -672,6 +683,140 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         self.assertFalse(hasattr(pack, "quality_review"))
         self.assertFalse(hasattr(pack, "repair_instruction"))
 
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_creates_one_item_per_evidence_item(self) -> None:
+        article_pack = make_article_evidence_pack(
+            items=[
+                make_article_evidence(evidence_id="e1"),
+                make_article_evidence(evidence_id="e2", evidence_type="practical_point"),
+            ]
+        )
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+
+        self.assertEqual([item.evidence_id for item in contextual_pack.items], ["e1", "e2"])
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_preserves_evidence_text(self) -> None:
+        article_pack = make_article_evidence_pack()
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+
+        self.assertEqual(
+            contextual_pack.items[0].evidence_text,
+            article_pack.items[0].evidence_text,
+        )
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_preserves_source_metadata(self) -> None:
+        article_pack = make_article_evidence_pack(
+            items=[
+                ArticleEvidence(
+                    evidence_id="e1",
+                    source_index=2,
+                    source_title="Source title",
+                    evidence_text="A concrete source point.",
+                    evidence_type="fact",
+                    specificity_level="high",
+                    source_limitations="Derived from digest summaries.",
+                )
+            ]
+        )
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+        item = contextual_pack.items[0]
+
+        self.assertEqual(item.source_index, 2)
+        self.assertEqual(item.source_title, "Source title")
+        self.assertEqual(item.evidence_type, "fact")
+        self.assertEqual(item.specificity_level, "high")
+        self.assertEqual(item.source_limitations, "Derived from digest summaries.")
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_maps_roles(self) -> None:
+        article_pack = make_article_evidence_pack(
+            items=[
+                make_article_evidence(evidence_id="contrast", evidence_type="contrast"),
+                make_article_evidence(evidence_id="warning", evidence_type="warning"),
+                make_article_evidence(evidence_id="example", evidence_type="example"),
+                make_article_evidence(evidence_id="fact", evidence_type="fact"),
+                make_article_evidence(
+                    evidence_id="practical", evidence_type="practical_point"
+                ),
+                make_article_evidence(evidence_id="pattern", evidence_type="pattern"),
+            ]
+        )
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+
+        self.assertEqual(
+            {item.evidence_id: item.best_use_in_post for item in contextual_pack.items},
+            {
+                "contrast": "tension",
+                "warning": "tension",
+                "example": "proof",
+                "fact": "proof",
+                "practical": "practical_point",
+                "pattern": "proof",
+            },
+        )
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_maps_low_specificity_to_background(self) -> None:
+        article_pack = make_article_evidence_pack(
+            items=[
+                make_article_evidence(
+                    evidence_id="low",
+                    evidence_type="fact",
+                    specificity_level="low",
+                )
+            ]
+        )
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+
+        self.assertEqual(contextual_pack.items[0].best_use_in_post, "background_only")
+        self.assertEqual(contextual_pack.background_evidence_ids, ["low"])
+        self.assertNotIn("low", contextual_pack.main_candidate_evidence_ids)
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_passes_relationship_validation(self) -> None:
+        article_pack = make_article_evidence_pack()
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+
+        validate_contextual_evidence_pack_for_article_evidence(
+            article_pack,
+            contextual_pack,
+        )
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_rejects_invalid_article_pack(self) -> None:
+        article_pack = ArticleEvidencePack(
+            items=[make_article_evidence()],
+            usable_count=99,
+            rejected_count=0,
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_contextual_evidence_pack_from_article_evidence_pack(article_pack)
+
+    def test_build_contextual_evidence_pack_from_article_evidence_pack_does_not_include_later_stage_fields(self) -> None:
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            make_article_evidence_pack()
+        )
+
+        self.assertFalse(hasattr(contextual_pack, "angle_decision"))
+        self.assertFalse(hasattr(contextual_pack, "post_brief"))
+        self.assertFalse(hasattr(contextual_pack, "post_text"))
+        self.assertFalse(hasattr(contextual_pack, "quality_review"))
+        self.assertFalse(hasattr(contextual_pack, "repair_instruction"))
+
     def test_validate_pipeline_input_accepts_valid_input(self) -> None:
         validate_pipeline_input(make_pipeline_input())
 
@@ -773,12 +918,135 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         with self.assertRaises(LinkedInPostPipelineContractError):
             validate_contextual_evidence_pack(pack)
 
+    def test_validate_contextual_evidence_pack_rejects_duplicate_item_evidence_id(self) -> None:
+        pack = ContextualEvidencePack(
+            items=[
+                make_contextual_evidence(evidence_id="e1"),
+                make_contextual_evidence(evidence_id="e1"),
+            ],
+            main_candidate_evidence_ids=["e1"],
+            background_evidence_ids=[],
+            risks=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
     def test_validate_contextual_evidence_pack_rejects_invalid_best_use(self) -> None:
         pack = ContextualEvidencePack(
             items=[make_contextual_evidence(best_use_in_post="headline")],
             main_candidate_evidence_ids=["e1"],
             background_evidence_ids=[],
             risks=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_negative_source_index(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(source_index=-1)]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_empty_source_title(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(source_title=" ")]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_invalid_evidence_type(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(evidence_type="unsupported")]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_invalid_specificity_level(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(specificity_level="extreme")]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_non_string_source_limitations(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    source_limitations=None,  # type: ignore[arg-type]
+                )
+            ]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_duplicate_main_candidate_ids(self) -> None:
+        pack = make_contextual_evidence_pack(
+            main_candidate_evidence_ids=["e1", "e1"],
+            background_evidence_ids=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_duplicate_background_ids(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(best_use_in_post="background_only")],
+            main_candidate_evidence_ids=[],
+            background_evidence_ids=["e1", "e1"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_blank_source_limitations(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(source_limitations=" ")]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_background_only_in_main_candidates(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(best_use_in_post="background_only")],
+            main_candidate_evidence_ids=["e1"],
+            background_evidence_ids=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_background_only_missing_from_background_ids(self) -> None:
+        pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(best_use_in_post="background_only")],
+            main_candidate_evidence_ids=[],
+            background_evidence_ids=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_non_background_item_in_background_ids(self) -> None:
+        pack = make_contextual_evidence_pack(
+            main_candidate_evidence_ids=[],
+            background_evidence_ids=["e1"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack(pack)
+
+    def test_validate_contextual_evidence_pack_rejects_candidate_background_overlap(self) -> None:
+        pack = make_contextual_evidence_pack(
+            main_candidate_evidence_ids=["e1"],
+            background_evidence_ids=["e1"],
         )
 
         with self.assertRaises(LinkedInPostPipelineContractError):
@@ -805,6 +1073,113 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
                 make_contextual_evidence(evidence_id="e1"),
             ],
             main_candidate_evidence_ids=["e1"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_missing_contextual_evidence(self) -> None:
+        article_pack = make_article_evidence_pack(
+            items=[
+                make_article_evidence(evidence_id="e1"),
+                make_article_evidence(evidence_id="e2", evidence_type="fact"),
+            ]
+        )
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(evidence_id="e1")],
+            main_candidate_evidence_ids=["e1"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_mismatched_source_index(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(source_index=1)],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_mismatched_source_title(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(source_title="Different article")],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_mismatched_evidence_text(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                ContextualEvidence(
+                    evidence_id="e1",
+                    source_index=0,
+                    source_title="Article 0",
+                    evidence_text="Different evidence text.",
+                    evidence_type="contrast",
+                    specificity_level="medium",
+                    source_limitations="No named case or metric.",
+                    what_it_says="Visible process helps people evaluate judgment.",
+                    supports_argument=(
+                        "The post can argue that public proof needs more than polished output."
+                    ),
+                    best_use_in_post="tension",
+                    do_not_use_for="Do not turn this into generic personal branding advice.",
+                    risk_of_misuse="Could drift into surface-level branding language.",
+                )
+            ],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_mismatched_evidence_type(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(evidence_type="fact")],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_mismatched_specificity_level(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(specificity_level="high")],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_contextual_evidence_pack_for_article_evidence(
+                article_pack,
+                contextual_pack,
+            )
+
+    def test_contextual_evidence_relationship_rejects_mismatched_source_limitations(self) -> None:
+        article_pack = make_article_evidence_pack()
+        contextual_pack = make_contextual_evidence_pack(
+            items=[make_contextual_evidence(source_limitations="Different limitation.")],
         )
 
         with self.assertRaises(LinkedInPostPipelineContractError):

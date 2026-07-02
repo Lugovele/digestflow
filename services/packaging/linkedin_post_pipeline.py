@@ -86,7 +86,12 @@ class ArticleEvidencePack:
 @dataclass(frozen=True)
 class ContextualEvidence:
     evidence_id: str
+    source_index: int
+    source_title: str
     evidence_text: str
+    evidence_type: str
+    specificity_level: str
+    source_limitations: str
     what_it_says: str
     supports_argument: str
     best_use_in_post: str
@@ -254,6 +259,67 @@ def build_article_evidence_pack_from_pipeline_input(
     return article_evidence_pack
 
 
+def build_contextual_evidence_pack_from_article_evidence_pack(
+    article_evidence_pack: ArticleEvidencePack,
+) -> ContextualEvidencePack:
+    validate_article_evidence_pack(article_evidence_pack)
+
+    items: list[ContextualEvidence] = []
+    main_candidate_evidence_ids: list[str] = []
+    background_evidence_ids: list[str] = []
+    risks: list[str] = []
+
+    for evidence in article_evidence_pack.items:
+        best_use = _best_use_for_article_evidence(evidence)
+        evidence_risks = _risks_for_article_evidence(evidence)
+        risk_of_misuse = "; ".join(evidence_risks)
+
+        items.append(
+            ContextualEvidence(
+                evidence_id=evidence.evidence_id,
+                source_index=evidence.source_index,
+                source_title=evidence.source_title,
+                evidence_text=evidence.evidence_text,
+                evidence_type=evidence.evidence_type,
+                specificity_level=evidence.specificity_level,
+                source_limitations=evidence.source_limitations,
+                what_it_says=f"Evidence says: {evidence.evidence_text}",
+                supports_argument=(
+                    f"May support a {best_use} role in a later LinkedIn post."
+                    if best_use != "background_only"
+                    else "Provides background context only."
+                ),
+                best_use_in_post=best_use,
+                do_not_use_for=(
+                    "Do not use as main proof or the controlling angle."
+                    if best_use == "background_only"
+                    else "Do not use as a standalone claim beyond the source evidence."
+                ),
+                risk_of_misuse=risk_of_misuse,
+            )
+        )
+
+        if best_use == "background_only":
+            background_evidence_ids.append(evidence.evidence_id)
+        else:
+            main_candidate_evidence_ids.append(evidence.evidence_id)
+        for risk in evidence_risks:
+            if risk not in risks:
+                risks.append(risk)
+
+    contextual_evidence_pack = ContextualEvidencePack(
+        items=items,
+        main_candidate_evidence_ids=main_candidate_evidence_ids,
+        background_evidence_ids=background_evidence_ids,
+        risks=risks,
+    )
+    validate_contextual_evidence_pack_for_article_evidence(
+        article_evidence_pack,
+        contextual_evidence_pack,
+    )
+    return contextual_evidence_pack
+
+
 def validate_pipeline_input(pipeline_input: PipelineInput) -> None:
     if not isinstance(pipeline_input, PipelineInput):
         raise LinkedInPostPipelineContractError(
@@ -358,14 +424,32 @@ def validate_contextual_evidence_pack(pack: ContextualEvidencePack) -> None:
     if not isinstance(pack.items, list):
         raise LinkedInPostPipelineContractError("ContextualEvidencePack.items must be a list.")
 
-    evidence_ids: set[str] = set()
     for item_index, item in enumerate(pack.items):
         if not isinstance(item, ContextualEvidence):
             raise LinkedInPostPipelineContractError(
                 f"ContextualEvidencePack.items[{item_index}] must be a ContextualEvidence."
             )
         _require_non_empty_string(item.evidence_id, f"items[{item_index}].evidence_id")
+        if not isinstance(item.source_index, int) or item.source_index < 0:
+            raise LinkedInPostPipelineContractError(
+                f"items[{item_index}].source_index must be a non-negative integer."
+            )
+        _require_non_empty_string(item.source_title, f"items[{item_index}].source_title")
         _require_non_empty_string(item.evidence_text, f"items[{item_index}].evidence_text")
+        _require_choice(
+            item.evidence_type,
+            ALLOWED_EVIDENCE_TYPES,
+            f"items[{item_index}].evidence_type",
+        )
+        _require_choice(
+            item.specificity_level,
+            ALLOWED_SPECIFICITY_LEVELS,
+            f"items[{item_index}].specificity_level",
+        )
+        _require_non_empty_string(
+            item.source_limitations,
+            f"items[{item_index}].source_limitations",
+        )
         _require_non_empty_string(item.what_it_says, f"items[{item_index}].what_it_says")
         _require_non_empty_string(
             item.supports_argument,
@@ -381,7 +465,10 @@ def validate_contextual_evidence_pack(pack: ContextualEvidencePack) -> None:
             item.risk_of_misuse,
             f"items[{item_index}].risk_of_misuse",
         )
-        evidence_ids.add(item.evidence_id)
+    evidence_ids = _require_unique_ids(
+        [item.evidence_id for item in pack.items],
+        "ContextualEvidencePack.items.evidence_id",
+    )
 
     _require_existing_ids(
         pack.main_candidate_evidence_ids,
@@ -393,6 +480,38 @@ def validate_contextual_evidence_pack(pack: ContextualEvidencePack) -> None:
         evidence_ids,
         "ContextualEvidencePack.background_evidence_ids",
     )
+    _require_unique_ids(
+        pack.main_candidate_evidence_ids,
+        "ContextualEvidencePack.main_candidate_evidence_ids",
+    )
+    _require_unique_ids(
+        pack.background_evidence_ids,
+        "ContextualEvidencePack.background_evidence_ids",
+    )
+    main_candidate_ids = set(pack.main_candidate_evidence_ids)
+    background_ids = set(pack.background_evidence_ids)
+    overlapping_ids = sorted(main_candidate_ids & background_ids)
+    if overlapping_ids:
+        raise LinkedInPostPipelineContractError(
+            "ContextualEvidencePack main and background evidence IDs must be disjoint: "
+            f"{overlapping_ids}."
+        )
+    background_only_ids = {
+        item.evidence_id
+        for item in pack.items
+        if item.best_use_in_post == "background_only"
+    }
+    expected_main_candidate_ids = evidence_ids - background_only_ids
+    if main_candidate_ids != expected_main_candidate_ids:
+        raise LinkedInPostPipelineContractError(
+            "ContextualEvidencePack.main_candidate_evidence_ids must exactly match "
+            "contextual evidence that is not background_only."
+        )
+    if background_ids != background_only_ids:
+        raise LinkedInPostPipelineContractError(
+            "ContextualEvidencePack.background_evidence_ids must exactly match "
+            "contextual evidence where best_use_in_post is background_only."
+        )
     _require_string_list(pack.risks, "ContextualEvidencePack.risks")
 
 
@@ -411,11 +530,14 @@ def validate_contextual_evidence_pack_for_article_evidence(
         [item.evidence_id for item in contextual_evidence_pack.items],
         "ContextualEvidencePack.items.evidence_id",
     )
-    _require_existing_ids(
-        list(contextual_evidence_ids),
-        article_evidence_ids,
-        "ContextualEvidencePack.items.evidence_id",
-    )
+    if contextual_evidence_ids != article_evidence_ids:
+        missing_ids = sorted(article_evidence_ids - contextual_evidence_ids)
+        extra_ids = sorted(contextual_evidence_ids - article_evidence_ids)
+        raise LinkedInPostPipelineContractError(
+            "ContextualEvidencePack.items.evidence_id must exactly match "
+            "ArticleEvidencePack.items.evidence_id. "
+            f"Missing: {missing_ids}. Extra: {extra_ids}."
+        )
     _require_existing_ids(
         contextual_evidence_pack.main_candidate_evidence_ids,
         article_evidence_ids,
@@ -426,6 +548,47 @@ def validate_contextual_evidence_pack_for_article_evidence(
         article_evidence_ids,
         "ContextualEvidencePack.background_evidence_ids",
     )
+    article_evidence_by_id = {
+        item.evidence_id: item for item in article_evidence_pack.items
+    }
+    for item in contextual_evidence_pack.items:
+        article_evidence = article_evidence_by_id[item.evidence_id]
+        _require_matching_contextual_evidence_field(
+            item.source_index,
+            article_evidence.source_index,
+            item.evidence_id,
+            "source_index",
+        )
+        _require_matching_contextual_evidence_field(
+            item.source_title,
+            article_evidence.source_title,
+            item.evidence_id,
+            "source_title",
+        )
+        _require_matching_contextual_evidence_field(
+            item.evidence_text,
+            article_evidence.evidence_text,
+            item.evidence_id,
+            "evidence_text",
+        )
+        _require_matching_contextual_evidence_field(
+            item.evidence_type,
+            article_evidence.evidence_type,
+            item.evidence_id,
+            "evidence_type",
+        )
+        _require_matching_contextual_evidence_field(
+            item.specificity_level,
+            article_evidence.specificity_level,
+            item.evidence_id,
+            "specificity_level",
+        )
+        _require_matching_contextual_evidence_field(
+            item.source_limitations,
+            article_evidence.source_limitations,
+            item.evidence_id,
+            "source_limitations",
+        )
 
 
 def validate_angle_decision(decision: AngleDecision) -> None:
@@ -645,6 +808,49 @@ def _require_unique_ids(values: list[str], field_name: str) -> set[str]:
     return seen
 
 
+def _require_matching_contextual_evidence_field(
+    contextual_value: Any,
+    article_value: Any,
+    evidence_id: str,
+    field_name: str,
+) -> None:
+    if contextual_value != article_value:
+        raise LinkedInPostPipelineContractError(
+            "ContextualEvidence must preserve ArticleEvidence "
+            f"{field_name} for evidence_id {evidence_id}."
+        )
+
+
+def _best_use_for_article_evidence(evidence: ArticleEvidence) -> str:
+    if evidence.specificity_level == "low":
+        return "background_only"
+    if evidence.evidence_type in {"contrast", "warning"}:
+        return "tension"
+    if evidence.evidence_type in {"example", "fact", "pattern"}:
+        return "proof"
+    if evidence.evidence_type == "practical_point":
+        return "practical_point"
+    return "background_only"
+
+
+def _risks_for_article_evidence(evidence: ArticleEvidence) -> list[str]:
+    risks: list[str] = []
+    if evidence.specificity_level == "low":
+        risks.append("low-specificity evidence should not become main proof")
+    elif evidence.evidence_type == "pattern":
+        risks.append("generic summary")
+    elif evidence.evidence_type in {"contrast", "warning"}:
+        risks.append("overstated contrast")
+    elif evidence.evidence_type == "practical_point":
+        risks.append("unsupported prescription risk")
+    else:
+        risks.append("evidence may be overgeneralized")
+
+    if "digest summaries" in evidence.source_limitations.lower():
+        risks.append("source-term drift")
+    return risks
+
+
 __all__ = [
     "ALLOWED_BEST_USE_VALUES",
     "ALLOWED_EVIDENCE_TYPES",
@@ -664,6 +870,7 @@ __all__ = [
     "SelectedArticle",
     "TargetedRepairPlan",
     "build_article_evidence_pack_from_pipeline_input",
+    "build_contextual_evidence_pack_from_article_evidence_pack",
     "build_pipeline_input_from_digest",
     "final_post_payload_to_dict",
     "validate_angle_decision",
