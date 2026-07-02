@@ -320,6 +320,58 @@ def build_contextual_evidence_pack_from_article_evidence_pack(
     return contextual_evidence_pack
 
 
+def build_angle_decision_from_contextual_evidence_pack(
+    contextual_evidence_pack: ContextualEvidencePack,
+) -> AngleDecision:
+    validate_contextual_evidence_pack(contextual_evidence_pack)
+
+    if not contextual_evidence_pack.main_candidate_evidence_ids:
+        raise LinkedInPostPipelineContractError(
+            "ContextualEvidencePack.main_candidate_evidence_ids must contain at least one item."
+        )
+
+    items_by_id = {item.evidence_id: item for item in contextual_evidence_pack.items}
+    selected_items = _select_angle_supporting_evidence(
+        contextual_evidence_pack,
+        items_by_id,
+    )
+    selected_ids = [item.evidence_id for item in selected_items]
+    selected_roles = _unique_preserving_order(
+        [item.best_use_in_post for item in selected_items]
+    )
+    role_summary = ", ".join(selected_roles)
+    primary_evidence_text = selected_items[0].evidence_text
+
+    angle_decision = AngleDecision(
+        controlling_angle=(
+            "Use the selected contextual evidence to keep one source-grounded "
+            f"angle focused on {role_summary}, starting from: {primary_evidence_text}"
+        ),
+        reader_problem=(
+            "The reader may collapse separate source signals into one broad claim "
+            "unless the post separates what each selected evidence item supports."
+        ),
+        author_position=(
+            "Separate signals, keep claims attributed to the selected evidence, "
+            "and avoid unsupported conclusions or investment advice."
+        ),
+        main_tension=(
+            "The selected evidence can support a useful post angle, but its limits "
+            "must stay visible."
+        ),
+        supporting_evidence_ids=selected_ids,
+        angle_to_avoid=_build_angle_to_avoid(
+            contextual_evidence_pack,
+            selected_items,
+        ),
+    )
+    validate_angle_decision_for_contextual_evidence(
+        contextual_evidence_pack,
+        angle_decision,
+    )
+    return angle_decision
+
+
 def validate_pipeline_input(pipeline_input: PipelineInput) -> None:
     if not isinstance(pipeline_input, PipelineInput):
         raise LinkedInPostPipelineContractError(
@@ -610,13 +662,17 @@ def validate_angle_decision_for_contextual_evidence(
     validate_contextual_evidence_pack(contextual_evidence_pack)
     validate_angle_decision(angle_decision)
 
-    contextual_evidence_ids = _require_unique_ids(
-        [item.evidence_id for item in contextual_evidence_pack.items],
-        "ContextualEvidencePack.items.evidence_id",
+    if not 1 <= len(angle_decision.supporting_evidence_ids) <= 3:
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.supporting_evidence_ids must contain 1 to 3 IDs."
+        )
+    _require_unique_ids(
+        angle_decision.supporting_evidence_ids,
+        "AngleDecision.supporting_evidence_ids",
     )
     _require_existing_ids(
         angle_decision.supporting_evidence_ids,
-        contextual_evidence_ids,
+        set(contextual_evidence_pack.main_candidate_evidence_ids),
         "AngleDecision.supporting_evidence_ids",
     )
 
@@ -821,6 +877,85 @@ def _require_matching_contextual_evidence_field(
         )
 
 
+def _select_angle_supporting_evidence(
+    contextual_evidence_pack: ContextualEvidencePack,
+    items_by_id: dict[str, ContextualEvidence],
+) -> list[ContextualEvidence]:
+    main_items = [
+        items_by_id[evidence_id]
+        for evidence_id in contextual_evidence_pack.main_candidate_evidence_ids
+    ]
+    selected_items: list[ContextualEvidence] = []
+    selected_ids: set[str] = set()
+    selected_source_indexes: set[int] = set()
+
+    for role in ["tension", "proof", "practical_point"]:
+        role_candidates = [
+            item
+            for item in main_items
+            if item.best_use_in_post == role and item.evidence_id not in selected_ids
+        ]
+        if not role_candidates:
+            continue
+        source_diverse_candidate = next(
+            (
+                item
+                for item in role_candidates
+                if item.source_index not in selected_source_indexes
+            ),
+            role_candidates[0],
+        )
+        selected_items.append(source_diverse_candidate)
+        selected_ids.add(source_diverse_candidate.evidence_id)
+        selected_source_indexes.add(source_diverse_candidate.source_index)
+        if len(selected_items) == 3:
+            return selected_items
+
+    for item in main_items:
+        if item.evidence_id in selected_ids or item.source_index in selected_source_indexes:
+            continue
+        selected_items.append(item)
+        selected_ids.add(item.evidence_id)
+        selected_source_indexes.add(item.source_index)
+        if len(selected_items) == 3:
+            return selected_items
+
+    for item in main_items:
+        if item.evidence_id in selected_ids:
+            continue
+        selected_items.append(item)
+        selected_ids.add(item.evidence_id)
+        if len(selected_items) == 3:
+            return selected_items
+
+    return selected_items
+
+
+def _build_angle_to_avoid(
+    contextual_evidence_pack: ContextualEvidencePack,
+    selected_items: list[ContextualEvidence],
+) -> list[str]:
+    values: list[str] = []
+    values.extend(contextual_evidence_pack.risks)
+    for item in contextual_evidence_pack.items:
+        values.append(item.do_not_use_for)
+        values.append(item.risk_of_misuse)
+    for item in selected_items:
+        values.append(f"Do not overstate evidence from {item.evidence_id}.")
+    return _unique_preserving_order(values)
+
+
+def _unique_preserving_order(values: list[str]) -> list[str]:
+    unique_values: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique_values.append(value)
+    return unique_values
+
+
 def _best_use_for_article_evidence(evidence: ArticleEvidence) -> str:
     if evidence.specificity_level == "low":
         return "background_only"
@@ -869,6 +1004,7 @@ __all__ = [
     "QualityReviewResult",
     "SelectedArticle",
     "TargetedRepairPlan",
+    "build_angle_decision_from_contextual_evidence_pack",
     "build_article_evidence_pack_from_pipeline_input",
     "build_contextual_evidence_pack_from_article_evidence_pack",
     "build_pipeline_input_from_digest",

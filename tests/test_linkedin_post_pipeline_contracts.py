@@ -14,6 +14,7 @@ from services.packaging.linkedin_post_pipeline import (
     PipelineInput,
     PostBrief,
     SelectedArticle,
+    build_angle_decision_from_contextual_evidence_pack,
     build_article_evidence_pack_from_pipeline_input,
     build_contextual_evidence_pack_from_article_evidence_pack,
     build_pipeline_input_from_digest,
@@ -132,6 +133,8 @@ def make_contextual_evidence(
     evidence_type: str = "contrast",
     specificity_level: str = "medium",
     source_limitations: str = "No named case or metric.",
+    do_not_use_for: str = "Do not turn this into generic personal branding advice.",
+    risk_of_misuse: str = "Could drift into surface-level branding language.",
 ) -> ContextualEvidence:
     return ContextualEvidence(
         evidence_id=evidence_id,
@@ -144,8 +147,8 @@ def make_contextual_evidence(
         what_it_says="Visible process helps people evaluate judgment.",
         supports_argument="The post can argue that public proof needs more than polished output.",
         best_use_in_post=best_use_in_post,
-        do_not_use_for="Do not turn this into generic personal branding advice.",
-        risk_of_misuse="Could drift into surface-level branding language.",
+        do_not_use_for=do_not_use_for,
+        risk_of_misuse=risk_of_misuse,
     )
 
 
@@ -817,6 +820,256 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         self.assertFalse(hasattr(contextual_pack, "quality_review"))
         self.assertFalse(hasattr(contextual_pack, "repair_instruction"))
 
+    def test_build_angle_decision_from_contextual_evidence_pack_returns_valid_decision(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        validate_angle_decision_for_contextual_evidence(
+            contextual_pack,
+            angle_decision,
+        )
+
+    def test_build_angle_decision_from_contextual_evidence_pack_uses_only_main_candidates(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="main", best_use_in_post="proof"),
+                make_contextual_evidence(
+                    evidence_id="background",
+                    best_use_in_post="background_only",
+                ),
+            ],
+            main_candidate_evidence_ids=["main"],
+            background_evidence_ids=["background"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertEqual(angle_decision.supporting_evidence_ids, ["main"])
+
+    def test_build_angle_decision_from_contextual_evidence_pack_never_selects_background_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="tension", best_use_in_post="tension"),
+                make_contextual_evidence(
+                    evidence_id="background",
+                    best_use_in_post="background_only",
+                ),
+            ],
+            main_candidate_evidence_ids=["tension"],
+            background_evidence_ids=["background"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertNotIn("background", angle_decision.supporting_evidence_ids)
+
+    def test_build_angle_decision_from_contextual_evidence_pack_fails_without_main_candidates(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="background",
+                    best_use_in_post="background_only",
+                ),
+            ],
+            main_candidate_evidence_ids=[],
+            background_evidence_ids=["background"],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_build_angle_decision_from_contextual_evidence_pack_prefers_source_diversity(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="tension",
+                    best_use_in_post="tension",
+                    source_index=0,
+                ),
+                make_contextual_evidence(
+                    evidence_id="proof-same-source",
+                    best_use_in_post="proof",
+                    source_index=0,
+                ),
+                make_contextual_evidence(
+                    evidence_id="proof-new-source",
+                    best_use_in_post="proof",
+                    source_index=1,
+                    source_title="Article 1",
+                ),
+            ],
+            main_candidate_evidence_ids=[
+                "tension",
+                "proof-same-source",
+                "proof-new-source",
+            ],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertEqual(
+            angle_decision.supporting_evidence_ids[:2],
+            ["tension", "proof-new-source"],
+        )
+
+    def test_build_angle_decision_from_contextual_evidence_pack_prefers_role_diversity(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="tension", best_use_in_post="tension"),
+                make_contextual_evidence(
+                    evidence_id="proof",
+                    best_use_in_post="proof",
+                    source_index=1,
+                    source_title="Article 1",
+                ),
+                make_contextual_evidence(
+                    evidence_id="practical",
+                    best_use_in_post="practical_point",
+                    source_index=2,
+                    source_title="Article 2",
+                ),
+            ],
+            main_candidate_evidence_ids=["tension", "proof", "practical"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertEqual(
+            angle_decision.supporting_evidence_ids,
+            ["tension", "proof", "practical"],
+        )
+
+    def test_build_angle_decision_from_contextual_evidence_pack_caps_supporting_evidence_at_three(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="tension", best_use_in_post="tension"),
+                make_contextual_evidence(
+                    evidence_id="proof",
+                    best_use_in_post="proof",
+                    source_index=1,
+                    source_title="Article 1",
+                ),
+                make_contextual_evidence(
+                    evidence_id="practical",
+                    best_use_in_post="practical_point",
+                    source_index=2,
+                    source_title="Article 2",
+                ),
+                make_contextual_evidence(
+                    evidence_id="hook",
+                    best_use_in_post="hook",
+                    source_index=3,
+                    source_title="Article 3",
+                ),
+                make_contextual_evidence(
+                    evidence_id="ending",
+                    best_use_in_post="ending",
+                    source_index=4,
+                    source_title="Article 4",
+                ),
+            ],
+            main_candidate_evidence_ids=[
+                "tension",
+                "proof",
+                "practical",
+                "hook",
+                "ending",
+            ],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertLessEqual(len(angle_decision.supporting_evidence_ids), 3)
+
+    def test_build_angle_decision_from_contextual_evidence_pack_supports_non_priority_main_roles(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="hook", best_use_in_post="hook"),
+                make_contextual_evidence(
+                    evidence_id="ending",
+                    best_use_in_post="ending",
+                    source_index=1,
+                    source_title="Article 1",
+                ),
+            ],
+            main_candidate_evidence_ids=["hook", "ending"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertEqual(angle_decision.supporting_evidence_ids, ["hook", "ending"])
+
+    def test_build_angle_decision_from_contextual_evidence_pack_falls_back_when_source_diversity_is_impossible(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="tension", best_use_in_post="tension"),
+                make_contextual_evidence(evidence_id="proof", best_use_in_post="proof"),
+                make_contextual_evidence(
+                    evidence_id="practical",
+                    best_use_in_post="practical_point",
+                ),
+            ],
+            main_candidate_evidence_ids=["tension", "proof", "practical"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertEqual(
+            angle_decision.supporting_evidence_ids,
+            ["tension", "proof", "practical"],
+        )
+
+    def test_build_angle_decision_from_contextual_evidence_pack_flows_risks_into_angle_to_avoid(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="e1",
+                    do_not_use_for="Do not turn this into a price prediction.",
+                    risk_of_misuse="Could imply investment advice.",
+                )
+            ],
+            main_candidate_evidence_ids=["e1"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertIn("generic summary", angle_decision.angle_to_avoid)
+        self.assertIn(
+            "Do not turn this into a price prediction.",
+            angle_decision.angle_to_avoid,
+        )
+        self.assertIn("Could imply investment advice.", angle_decision.angle_to_avoid)
+
+    def test_build_angle_decision_from_contextual_evidence_pack_does_not_include_later_stage_fields(self) -> None:
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            make_contextual_evidence_pack()
+        )
+
+        self.assertFalse(hasattr(angle_decision, "post_brief"))
+        self.assertFalse(hasattr(angle_decision, "post_text"))
+        self.assertFalse(hasattr(angle_decision, "quality_review"))
+        self.assertFalse(hasattr(angle_decision, "repair_instruction"))
+        self.assertFalse(hasattr(angle_decision, "core_opinion"))
+
     def test_validate_pipeline_input_accepts_valid_input(self) -> None:
         validate_pipeline_input(make_pipeline_input())
 
@@ -1230,6 +1483,66 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
     def test_angle_decision_relationship_rejects_unknown_supporting_evidence_id(self) -> None:
         contextual_pack = make_contextual_evidence_pack()
         angle_decision = make_angle_decision(supporting_evidence_ids=["missing"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_angle_decision_for_contextual_evidence(
+                contextual_pack,
+                angle_decision,
+            )
+
+    def test_angle_decision_relationship_rejects_empty_supporting_evidence_ids(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision(supporting_evidence_ids=[])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_angle_decision_for_contextual_evidence(
+                contextual_pack,
+                angle_decision,
+            )
+
+    def test_angle_decision_relationship_rejects_duplicate_supporting_evidence_ids(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision(supporting_evidence_ids=["e1", "e1"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_angle_decision_for_contextual_evidence(
+                contextual_pack,
+                angle_decision,
+            )
+
+    def test_angle_decision_relationship_rejects_more_than_three_supporting_evidence_ids(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="e1"),
+                make_contextual_evidence(evidence_id="e2", source_index=1),
+                make_contextual_evidence(evidence_id="e3", source_index=2),
+                make_contextual_evidence(evidence_id="e4", source_index=3),
+            ],
+            main_candidate_evidence_ids=["e1", "e2", "e3", "e4"],
+        )
+        angle_decision = make_angle_decision(
+            supporting_evidence_ids=["e1", "e2", "e3", "e4"]
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_angle_decision_for_contextual_evidence(
+                contextual_pack,
+                angle_decision,
+            )
+
+    def test_angle_decision_relationship_rejects_background_supporting_evidence_id(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="main", best_use_in_post="proof"),
+                make_contextual_evidence(
+                    evidence_id="background",
+                    best_use_in_post="background_only",
+                ),
+            ],
+            main_candidate_evidence_ids=["main"],
+            background_evidence_ids=["background"],
+        )
+        angle_decision = make_angle_decision(supporting_evidence_ids=["background"])
 
         with self.assertRaises(LinkedInPostPipelineContractError):
             validate_angle_decision_for_contextual_evidence(
