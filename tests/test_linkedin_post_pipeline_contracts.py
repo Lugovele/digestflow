@@ -18,6 +18,7 @@ from services.packaging.linkedin_post_pipeline import (
     build_article_evidence_pack_from_pipeline_input,
     build_contextual_evidence_pack_from_article_evidence_pack,
     build_pipeline_input_from_digest,
+    build_post_brief_from_angle_decision,
     final_post_payload_to_dict,
     validate_angle_decision,
     validate_angle_decision_for_contextual_evidence,
@@ -133,6 +134,7 @@ def make_contextual_evidence(
     evidence_type: str = "contrast",
     specificity_level: str = "medium",
     source_limitations: str = "No named case or metric.",
+    evidence_text: str = "Recent posts can show decisions and tradeoffs, not just finished outcomes.",
     do_not_use_for: str = "Do not turn this into generic personal branding advice.",
     risk_of_misuse: str = "Could drift into surface-level branding language.",
 ) -> ContextualEvidence:
@@ -140,7 +142,7 @@ def make_contextual_evidence(
         evidence_id=evidence_id,
         source_index=source_index,
         source_title=source_title,
-        evidence_text="Recent posts can show decisions and tradeoffs, not just finished outcomes.",
+        evidence_text=evidence_text,
         evidence_type=evidence_type,
         specificity_level=specificity_level,
         source_limitations=source_limitations,
@@ -234,7 +236,10 @@ def make_post_brief(evidence_ids: list[str] | None = None) -> PostBrief:
         evidence_to_use=[
             BriefEvidenceUse(
                 evidence_id=evidence_id,
-                evidence_text="Recent posts can show decisions and tradeoffs.",
+                evidence_text=(
+                    "Recent posts can show decisions and tradeoffs, "
+                    "not just finished outcomes."
+                ),
                 role_in_post="Use as the concrete proof point.",
             )
             for evidence_id in ids
@@ -1070,6 +1075,152 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         self.assertFalse(hasattr(angle_decision, "repair_instruction"))
         self.assertFalse(hasattr(angle_decision, "core_opinion"))
 
+    def test_build_post_brief_from_angle_decision_returns_valid_brief(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        validate_post_brief_for_angle_decision(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+    def test_build_post_brief_from_angle_decision_uses_only_supporting_evidence_ids(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="selected"),
+                make_contextual_evidence(evidence_id="not-selected", source_index=1),
+            ],
+            main_candidate_evidence_ids=["selected", "not-selected"],
+        )
+        angle_decision = make_angle_decision(supporting_evidence_ids=["selected"])
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        self.assertEqual(
+            [item.evidence_id for item in post_brief.evidence_to_use],
+            ["selected"],
+        )
+
+    def test_build_post_brief_from_angle_decision_preserves_exact_evidence_id_and_text(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="e1",
+                    evidence_text="First exact evidence text.",
+                ),
+                make_contextual_evidence(
+                    evidence_id="e2",
+                    evidence_text="Second exact evidence text.",
+                    source_index=1,
+                ),
+            ],
+            main_candidate_evidence_ids=["e1", "e2"],
+        )
+        angle_decision = make_angle_decision(supporting_evidence_ids=["e2", "e1"])
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        self.assertEqual(
+            [(item.evidence_id, item.evidence_text) for item in post_brief.evidence_to_use],
+            [
+                ("e2", "Second exact evidence text."),
+                ("e1", "First exact evidence text."),
+            ],
+        )
+
+    def test_build_post_brief_from_angle_decision_preserves_supporting_evidence_order(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="first"),
+                make_contextual_evidence(evidence_id="second", source_index=1),
+                make_contextual_evidence(evidence_id="third", source_index=2),
+            ],
+            main_candidate_evidence_ids=["first", "second", "third"],
+        )
+        angle_decision = make_angle_decision(
+            supporting_evidence_ids=["third", "first", "second"]
+        )
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        self.assertEqual(
+            [item.evidence_id for item in post_brief.evidence_to_use],
+            ["third", "first", "second"],
+        )
+
+    def test_build_post_brief_from_angle_decision_assigns_non_empty_roles(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        self.assertTrue(post_brief.evidence_to_use[0].role_in_post.strip())
+
+    def test_build_post_brief_from_angle_decision_rejects_unknown_supporting_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision(supporting_evidence_ids=["missing"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            build_post_brief_from_angle_decision(
+                contextual_pack,
+                angle_decision,
+            )
+
+    def test_build_post_brief_from_angle_decision_staged_chain_accepts_generated_brief(self) -> None:
+        pipeline_input = make_pipeline_input()
+        article_pack = build_article_evidence_pack_from_pipeline_input(pipeline_input)
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_pack
+        )
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        validate_linkedin_post_stage_relationships(
+            pipeline_input,
+            article_pack,
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+    def test_build_post_brief_from_angle_decision_does_not_include_final_stage_fields(self) -> None:
+        post_brief = build_post_brief_from_angle_decision(
+            make_contextual_evidence_pack(),
+            make_angle_decision(),
+        )
+
+        self.assertFalse(hasattr(post_brief, "post_text"))
+        self.assertFalse(hasattr(post_brief, "hook_variants"))
+        self.assertFalse(hasattr(post_brief, "hashtags"))
+        self.assertFalse(hasattr(post_brief, "quality_checks"))
+        self.assertFalse(hasattr(post_brief, "repair_instruction"))
+        self.assertFalse(hasattr(post_brief, "package_payload"))
+        self.assertFalse(hasattr(post_brief, "core_opinion"))
+
     def test_validate_pipeline_input_accepts_valid_input(self) -> None:
         validate_pipeline_input(make_pipeline_input())
 
@@ -1593,6 +1744,88 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         )
         angle_decision = make_angle_decision(supporting_evidence_ids=["e1"])
         brief = make_post_brief(evidence_ids=["e2"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_post_brief_for_angle_decision(
+                contextual_pack,
+                angle_decision,
+                brief,
+            )
+
+    def test_post_brief_relationship_rejects_missing_selected_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="e1"),
+                make_contextual_evidence(evidence_id="e2", source_index=1),
+            ],
+            main_candidate_evidence_ids=["e1", "e2"],
+        )
+        angle_decision = make_angle_decision(supporting_evidence_ids=["e1", "e2"])
+        brief = make_post_brief(evidence_ids=["e1"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_post_brief_for_angle_decision(
+                contextual_pack,
+                angle_decision,
+                brief,
+            )
+
+    def test_post_brief_relationship_rejects_reordered_selected_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(evidence_id="e1"),
+                make_contextual_evidence(evidence_id="e2", source_index=1),
+            ],
+            main_candidate_evidence_ids=["e1", "e2"],
+        )
+        angle_decision = make_angle_decision(supporting_evidence_ids=["e1", "e2"])
+        brief = make_post_brief(evidence_ids=["e2", "e1"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_post_brief_for_angle_decision(
+                contextual_pack,
+                angle_decision,
+                brief,
+            )
+
+    def test_post_brief_relationship_rejects_duplicate_selected_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        brief = make_post_brief(evidence_ids=["e1", "e1"])
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_post_brief_for_angle_decision(
+                contextual_pack,
+                angle_decision,
+                brief,
+            )
+
+    def test_post_brief_relationship_rejects_mismatched_evidence_text(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="e1",
+                    evidence_text="Original contextual evidence text.",
+                )
+            ],
+            main_candidate_evidence_ids=["e1"],
+        )
+        angle_decision = make_angle_decision()
+        brief = PostBrief(
+            opening_direction="Start with polished outcomes versus visible judgment.",
+            pattern_interrupt="The profile is not the real proof.",
+            core_point="Recent content should show decisions, tradeoffs, and lessons.",
+            evidence_to_use=[
+                BriefEvidenceUse(
+                    evidence_id="e1",
+                    evidence_text="Changed evidence text.",
+                    role_in_post="Use as the concrete proof point.",
+                )
+            ],
+            practical_point="Review the last ten posts for decisions or lessons.",
+            ending_direction="End by reframing proof as visible judgment.",
+            cta_direction="Ask what proof makes expertise feel real.",
+        )
 
         with self.assertRaises(LinkedInPostPipelineContractError):
             validate_post_brief_for_angle_decision(

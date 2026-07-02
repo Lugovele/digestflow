@@ -372,6 +372,76 @@ def build_angle_decision_from_contextual_evidence_pack(
     return angle_decision
 
 
+def build_post_brief_from_angle_decision(
+    contextual_evidence_pack: ContextualEvidencePack,
+    angle_decision: AngleDecision,
+) -> PostBrief:
+    validate_angle_decision_for_contextual_evidence(
+        contextual_evidence_pack,
+        angle_decision,
+    )
+
+    items_by_id = {item.evidence_id: item for item in contextual_evidence_pack.items}
+    selected_items = [
+        items_by_id[evidence_id]
+        for evidence_id in angle_decision.supporting_evidence_ids
+    ]
+    practical_item = next(
+        (
+            item
+            for item in selected_items
+            if item.best_use_in_post == "practical_point"
+        ),
+        None,
+    )
+
+    post_brief = PostBrief(
+        opening_direction=(
+            "Open with the controlling angle as a planning direction: "
+            f"{angle_decision.controlling_angle}"
+        ),
+        pattern_interrupt=(
+            "Use this tension to interrupt the expected framing: "
+            f"{angle_decision.main_tension}"
+        ),
+        core_point=(
+            "Frame the core point as the author's position: "
+            f"{angle_decision.author_position}"
+        ),
+        evidence_to_use=[
+            BriefEvidenceUse(
+                evidence_id=item.evidence_id,
+                evidence_text=item.evidence_text,
+                role_in_post=_brief_role_for_contextual_evidence(item),
+            )
+            for item in selected_items
+        ],
+        practical_point=(
+            "Use this practical evidence to shape the reader takeaway: "
+            f"{practical_item.evidence_text}"
+            if practical_item is not None
+            else (
+                "Keep the practical point source-grounded and limited to the "
+                "selected supporting evidence."
+            )
+        ),
+        ending_direction=(
+            "End by returning to the author's position without adding new claims: "
+            f"{angle_decision.author_position}"
+        ),
+        cta_direction=(
+            "Ask the reader to consider the reader problem: "
+            f"{angle_decision.reader_problem}"
+        ),
+    )
+    validate_post_brief_for_angle_decision(
+        contextual_evidence_pack,
+        angle_decision,
+        post_brief,
+    )
+    return post_brief
+
+
 def validate_pipeline_input(pipeline_input: PipelineInput) -> None:
     if not isinstance(pipeline_input, PipelineInput):
         raise LinkedInPostPipelineContractError(
@@ -726,12 +796,33 @@ def validate_post_brief_for_angle_decision(
     supporting_evidence_ids = set(angle_decision.supporting_evidence_ids)
     approved_evidence_ids = contextual_evidence_ids & supporting_evidence_ids
     brief_evidence_ids = [item.evidence_id for item in post_brief.evidence_to_use]
+    _require_unique_ids(
+        brief_evidence_ids,
+        "PostBrief.evidence_to_use.evidence_id",
+    )
 
     _require_existing_ids(
         brief_evidence_ids,
         approved_evidence_ids,
         "PostBrief.evidence_to_use.evidence_id",
     )
+    if brief_evidence_ids != angle_decision.supporting_evidence_ids:
+        raise LinkedInPostPipelineContractError(
+            "PostBrief.evidence_to_use.evidence_id must exactly match "
+            "AngleDecision.supporting_evidence_ids in order."
+        )
+
+    contextual_evidence_by_id = {
+        item.evidence_id: item
+        for item in contextual_evidence_pack.items
+    }
+    for item in post_brief.evidence_to_use:
+        contextual_evidence = contextual_evidence_by_id[item.evidence_id]
+        if item.evidence_text != contextual_evidence.evidence_text:
+            raise LinkedInPostPipelineContractError(
+                "PostBrief.evidence_to_use.evidence_text must preserve "
+                f"ContextualEvidence.evidence_text for evidence_id {item.evidence_id}."
+            )
 
 
 def validate_linkedin_post_stage_relationships(
@@ -945,6 +1036,13 @@ def _build_angle_to_avoid(
     return _unique_preserving_order(values)
 
 
+def _brief_role_for_contextual_evidence(item: ContextualEvidence) -> str:
+    return (
+        f"Use this evidence as {item.best_use_in_post} support. "
+        f"{item.supports_argument}"
+    )
+
+
 def _unique_preserving_order(values: list[str]) -> list[str]:
     unique_values: list[str] = []
     seen: set[str] = set()
@@ -1008,6 +1106,7 @@ __all__ = [
     "build_article_evidence_pack_from_pipeline_input",
     "build_contextual_evidence_pack_from_article_evidence_pack",
     "build_pipeline_input_from_digest",
+    "build_post_brief_from_angle_decision",
     "final_post_payload_to_dict",
     "validate_angle_decision",
     "validate_angle_decision_for_contextual_evidence",
