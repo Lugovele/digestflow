@@ -1296,7 +1296,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         self.assertNotIn("https://", payload.post_text.lower())
         self.assertNotIn("www.", payload.post_text.lower())
 
-    def test_build_final_post_payload_from_post_brief_includes_selected_evidence_text(self) -> None:
+    def test_build_final_post_payload_from_post_brief_includes_selected_evidence_ids(self) -> None:
         contextual_pack = make_contextual_evidence_pack(
             items=[
                 make_contextual_evidence(
@@ -1318,7 +1318,8 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             post_brief,
         )
 
-        self.assertIn("Exact selected evidence for final scaffold.", payload.post_text)
+        self.assertIn("e1", payload.post_text)
+        self.assertNotIn("Exact selected evidence for final scaffold.", payload.post_text)
 
     def test_build_final_post_payload_from_post_brief_includes_controlling_angle(self) -> None:
         contextual_pack = make_contextual_evidence_pack()
@@ -1336,7 +1337,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
 
         self.assertIn(angle_decision.controlling_angle, payload.post_text)
 
-    def test_build_final_post_payload_from_post_brief_rejects_evidence_text_with_url(self) -> None:
+    def test_build_final_post_payload_from_post_brief_does_not_copy_url_bearing_evidence_text(self) -> None:
         contextual_pack = make_contextual_evidence_pack(
             items=[
                 make_contextual_evidence(
@@ -1352,24 +1353,25 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             angle_decision,
         )
 
-        with self.assertRaises(LinkedInPostPipelineContractError):
-            build_final_post_payload_from_post_brief(
-                contextual_pack,
-                angle_decision,
-                post_brief,
-            )
+        payload = build_final_post_payload_from_post_brief(
+            contextual_pack,
+            angle_decision,
+            post_brief,
+        )
+
+        self.assertIn("e1", payload.post_text)
+        self.assertNotIn("https://example.com", payload.post_text)
 
     def test_build_final_post_payload_from_post_brief_rejects_overlength_scaffold(self) -> None:
-        contextual_pack = make_contextual_evidence_pack(
-            items=[
-                make_contextual_evidence(
-                    evidence_id="e1",
-                    evidence_text="x" * 1200,
-                )
-            ],
-            main_candidate_evidence_ids=["e1"],
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = AngleDecision(
+            controlling_angle="x" * 1200,
+            reader_problem="The reader shows finished work but not the thinking behind it.",
+            author_position="Proof of judgment matters more than surface polish.",
+            main_tension="Finished outcomes can hide how the person actually works.",
+            supporting_evidence_ids=["e1"],
+            angle_to_avoid=["generic personal branding advice"],
         )
-        angle_decision = make_angle_decision()
         post_brief = build_post_brief_from_angle_decision(
             contextual_pack,
             angle_decision,
@@ -1419,7 +1421,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         self.assertGreaterEqual(len(payload.hashtags), 1)
         self.assertEqual(payload.carousel_outline, [])
 
-    def test_final_post_payload_relationship_rejects_missing_selected_evidence_text(self) -> None:
+    def test_final_post_payload_relationship_rejects_missing_selected_evidence_id(self) -> None:
         contextual_pack = make_contextual_evidence_pack()
         angle_decision = make_angle_decision()
         post_brief = build_post_brief_from_angle_decision(
@@ -1431,6 +1433,47 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
                 "[Scaffold only - not production copy]\n"
                 f"Controlling angle: {angle_decision.controlling_angle}\n"
                 "Scaffold text without the selected evidence."
+            ),
+            hook_variants=[
+                "Scaffold hook one.",
+                "Scaffold hook two.",
+                "Scaffold hook three.",
+            ],
+            cta_variants=[
+                "Scaffold CTA one?",
+                "Scaffold CTA two?",
+                "Scaffold CTA three?",
+            ],
+            hashtags=["#PostFlow"],
+            quality_checks={
+                "uses_only_provided_facts": True,
+                "has_clear_point_of_view": True,
+                "linkedin_ready": False,
+            },
+            carousel_outline=[],
+        )
+
+        with self.assertRaises(LinkedInPostPipelineContractError):
+            validate_final_post_payload_for_post_brief(
+                contextual_pack,
+                angle_decision,
+                post_brief,
+                payload,
+            )
+
+    def test_final_post_payload_relationship_rejects_prefix_matched_evidence_id(self) -> None:
+        contextual_pack = make_contextual_evidence_pack()
+        angle_decision = make_angle_decision()
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+        payload = FinalPostPayload(
+            post_text=(
+                "[Scaffold only - not production copy]\n"
+                f"Controlling angle: {angle_decision.controlling_angle}\n"
+                "Selected evidence references: e10 (proof)\n"
+                "Scaffold text with a prefix-colliding evidence reference."
             ),
             hook_variants=[
                 "Scaffold hook one.",

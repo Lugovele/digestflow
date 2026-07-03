@@ -453,15 +453,8 @@ def build_final_post_payload_from_post_brief(
         post_brief,
     )
 
-    for item in post_brief.evidence_to_use:
-        if _contains_url(item.evidence_text):
-            raise LinkedInPostPipelineContractError(
-                "PostBrief.evidence_to_use.evidence_text must not contain URLs "
-                "when building the FinalPostPayload scaffold."
-            )
-
-    evidence_lines = [
-        f"- {item.evidence_text}"
+    evidence_references = [
+        f"{item.evidence_id} ({_compact_role_label(item.role_in_post)})"
         for item in post_brief.evidence_to_use
     ]
     post_text = "\n".join(
@@ -469,9 +462,8 @@ def build_final_post_payload_from_post_brief(
             "[Scaffold only - not production copy]",
             f"Controlling angle: {angle_decision.controlling_angle}",
             f"Core point direction: {post_brief.core_point}",
-            "Selected evidence:",
-            *evidence_lines,
-            f"Practical direction: {post_brief.practical_point}",
+            f"Selected evidence references: {', '.join(evidence_references)}",
+            "Practical direction: Use the selected evidence references to keep the takeaway source-grounded.",
             f"CTA direction: {post_brief.cta_direction}",
         ]
     )
@@ -940,10 +932,13 @@ def validate_final_post_payload_for_post_brief(
         raise LinkedInPostPipelineContractError(
             "FinalPostPayload.post_text must include AngleDecision.controlling_angle."
         )
+    selected_reference_ids = _extract_selected_evidence_reference_ids(
+        final_post_payload.post_text
+    )
     for item in post_brief.evidence_to_use:
-        if item.evidence_text not in final_post_payload.post_text:
+        if item.evidence_id not in selected_reference_ids:
             raise LinkedInPostPipelineContractError(
-                "FinalPostPayload.post_text must include selected evidence text "
+                "FinalPostPayload.post_text must include selected evidence ID "
                 f"for evidence_id {item.evidence_id}."
             )
     if _contains_url(final_post_payload.post_text):
@@ -1149,6 +1144,40 @@ def _brief_role_for_contextual_evidence(item: ContextualEvidence) -> str:
     return (
         f"Use this evidence as {item.best_use_in_post} support. "
         f"{item.supports_argument}"
+    )
+
+
+def _compact_role_label(role_in_post: str) -> str:
+    role = role_in_post.strip()
+    prefix = "Use this evidence as "
+    if role.startswith(prefix):
+        role = role[len(prefix) :]
+    role = role.split(".", 1)[0]
+    role = role.replace(" support", "").strip()
+    return role or "support"
+
+
+def _extract_selected_evidence_reference_ids(post_text: str) -> set[str]:
+    prefix = "Selected evidence references:"
+    for line in post_text.splitlines():
+        stripped_line = line.strip()
+        if not stripped_line.startswith(prefix):
+            continue
+
+        raw_references = stripped_line[len(prefix) :].strip()
+        if not raw_references:
+            return set()
+
+        reference_ids: set[str] = set()
+        for reference in raw_references.split(","):
+            reference_label = reference.strip()
+            evidence_id = reference_label.split(" (", 1)[0].strip()
+            if evidence_id:
+                reference_ids.add(evidence_id)
+        return reference_ids
+
+    raise LinkedInPostPipelineContractError(
+        "FinalPostPayload.post_text must include the selected evidence references line."
     )
 
 
