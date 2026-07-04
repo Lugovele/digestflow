@@ -341,6 +341,15 @@ def build_angle_decision_from_contextual_evidence_pack(
     )
     role_summary = ", ".join(selected_roles)
     primary_evidence_text = selected_items[0].evidence_text
+    author_position = (
+        "Separate signals, keep claims attributed to the selected evidence, "
+        "and avoid unsupported conclusions."
+    )
+    if _contains_finance_or_investment_context(selected_items):
+        author_position = (
+            "Separate signals, keep claims attributed to the selected evidence, "
+            "and avoid unsupported conclusions or investment advice."
+        )
 
     angle_decision = AngleDecision(
         controlling_angle=(
@@ -351,10 +360,7 @@ def build_angle_decision_from_contextual_evidence_pack(
             "The reader may collapse separate source signals into one broad claim "
             "unless the post separates what each selected evidence item supports."
         ),
-        author_position=(
-            "Separate signals, keep claims attributed to the selected evidence, "
-            "and avoid unsupported conclusions or investment advice."
-        ),
+        author_position=author_position,
         main_tension=(
             "The selected evidence can support a useful post angle, but its limits "
             "must stay visible."
@@ -1138,6 +1144,34 @@ def _build_angle_to_avoid(
     for item in selected_items:
         values.append(f"Do not overstate evidence from {item.evidence_id}.")
     return _unique_preserving_order(values)
+
+
+def _contains_finance_or_investment_context(
+    selected_items: list[ContextualEvidence],
+) -> bool:
+    finance_terms = [
+        "bitcoin",
+        "crypto",
+        "cryptocurrency",
+        "financial advice",
+        "investment",
+        "investor",
+        "portfolio",
+        "trading",
+    ]
+    selected_text = " ".join(
+        " ".join(
+            [
+                item.source_title,
+                item.evidence_text,
+                item.supports_argument,
+                item.do_not_use_for,
+                item.risk_of_misuse,
+            ]
+        )
+        for item in selected_items
+    ).lower()
+    return any(term in selected_text for term in finance_terms)
 
 
 def _brief_role_for_contextual_evidence(item: ContextualEvidence) -> str:

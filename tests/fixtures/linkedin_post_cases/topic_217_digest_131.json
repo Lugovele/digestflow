@@ -1,0 +1,164 @@
+{
+  "case_id": "topic_217_digest_131",
+  "source_type": "saved_completed_digest",
+  "topic": {
+    "id": 217,
+    "name": "AI general",
+    "source_mode": "hybrid"
+  },
+  "digest": {
+    "id": 131,
+    "run_id": 178,
+    "title": "Digest for AI general"
+  },
+  "articles": [
+    {
+      "source_index": 0,
+      "url": "https://tech-insider.org/au/what-is-machine-learning",
+      "title": "What Is Machine Learning? Explained Simply (2026)",
+      "summary": "The article provides an accessible overview of machine learning, explaining its key types\u2014supervised, unsupervised, and reinforcement learning\u2014while highlighting its distinction from traditional programming. The author argues that understanding machine learning is essential as it underpins many everyday technologies and suggests starting to learn with basic programming skills and free resources. The conclusion emphasizes that machine learning is increasingly integrated into daily life, making it important for users to discern its capabilities and limitations.",
+      "key_points": [
+        "Machine learning learns patterns from data rather than following explicit rules.",
+        "The main types of machine learning are supervised, unsupervised, and reinforcement learning.",
+        "Basic programming skills in Python and free courses are sufficient to get started in machine learning.",
+        "Machine learning is prevalent in everyday applications, influencing technology like recommendations and fraud detection.",
+        "Models can inherit biases from training data, highlighting the need for responsible use."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "What Is Machine Learning? Explained Simply (2026)",
+      "published_at": null,
+      "snippet": "Key Takeaways Machine learning is a branch of artificial intelligence where software learns patterns from data and improves at a task with experience, instead of following rules a programmer wrote by hand. There are three core families: supervised learning (learns from labelle...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 6.0,
+        "substance_score": 5.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "concrete_case_study",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "case_study_signals",
+          "practical_guide_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:concrete_case_study"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 1,
+      "url": "https://professional.mit.edu/course-catalog/no-code-and-agentic-ai",
+      "title": "No Code and Agentic AI | Professional Education",
+      "summary": "The article presents the No Code and Agentic AI program from MIT Professional Education, emphasizing its potential to empower professionals from diverse backgrounds to leverage AI and machine learning without programming skills. The main argument is that no-code tools enable effective data-driven decision-making while enhancing accessibility to advanced technologies. It concludes that by completing this 14-week program, participants will gain practical skills and knowledge to implement AI solutions confidently in real-world scenarios.",
+      "key_points": [
+        "The program spans 14 weeks, covering essential AI and machine learning concepts using no-code tools.",
+        "Participants will engage in hands-on projects under the guidance of industry experts, enhancing their practical skills.",
+        "The curriculum includes topics such as Generative AI, Prompt Engineering, and building autonomous systems.",
+        "Collaboration with Great Learning facilitates enrollment and support for participants.",
+        "Graduates receive a certificate from MIT Professional Education upon completion."
+      ],
+      "content_type": "news",
+      "confidence": 0.9,
+      "source_name": "No Code and Agentic AI | Professional Education",
+      "published_at": null,
+      "snippet": "In our age of information and insights, the success of a business relies on how well we utilize the data in creating algorithms and making predictions. As organizations realize this, no-code approaches to implementing emerging technologies are becoming popular and essential to...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 4.0,
+        "substance_score": 3.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "substantive_longform_article",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "research_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:substantive_longform_article"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 2,
+      "url": "https://goodfirms.co/resources/software-development-research",
+      "title": "Remarkably Useful Stats and Trends on Software Development | Goodfirms Research",
+      "summary": "The article provides an in-depth analysis of the current software development landscape, emphasizing key statistics and trends affecting the industry. The author argues that custom software development remains a viable solution for businesses amidst fluctuating client demands and evolving technologies, highlighting the significant role of methodologies and AI in shaping future practices. The conclusion urges stakeholders to consider these insights as a guide for optimizing their software development endeavors.",
+      "key_points": [
+        "The average time to develop custom software is around 4.5 months, with costs varying from $3,000 to $120,000 depending on project specifications.",
+        "Agile and Scrum are the most popular software development methodologies, reflecting a shift towards more flexible and iterative processes.",
+        "AI is predicted to significantly impact software development, enhancing productivity and enabling smarter coding practices."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "Remarkably Useful Stats and Trends on Software Development | Goodfirms Research",
+      "published_at": null,
+      "snippet": "Software frames the premise of numerous cutting-edge gadgets, such as personal computers, smartphones, tablets, the Internet of Things, and network systems, on which we depend so heavily in our daily lives. While the consumer software industry is a multi-billion-dollar industr...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 6.0,
+        "substance_score": 5.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "practical_guide_with_concrete_steps",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "research_signals",
+          "practical_guide_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:practical_guide_with_concrete_steps"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    }
+  ],
+  "expected_behavior": {
+    "must_preserve": [
+      "Machine learning learns patterns from data rather than following explicit rules.",
+      "No-code and agentic AI programs are education offerings, not proof that every team can skip technical expertise.",
+      "AI may improve software development productivity, but the source presents this as an industry trend rather than a guaranteed outcome.",
+      "Model bias and responsible use remain important limitations when discussing machine learning adoption.",
+      "Separate foundational ML education, no-code training, and software development trend statistics instead of treating them as one adoption signal."
+    ],
+    "must_not_infer": [
+      "Do not claim no-code AI eliminates the need for engineers or programming skills in all cases.",
+      "Do not invent additional productivity statistics, adoption rates, or benchmark numbers.",
+      "Do not present the MIT program as an endorsement of a specific tool or vendor.",
+      "Do not treat broad software development trend data as proof that every organization should adopt agentic AI immediately.",
+      "Do not ignore limitations such as model bias, training data issues, and responsible use."
+    ],
+    "preferred_angle": "AI tooling sources often blend education, accessibility, and productivity claims. A useful post should separate what people need to understand, what no-code tools make easier, and what still requires engineering judgment.",
+    "generic_output_risk": "The post may become generic AI transformation commentary about productivity, upskilling, and the future of software work.",
+    "source_dominance_risk": "The MIT no-code program may dominate the angle and turn the post into a training-program recap.",
+    "metric_hallucination_risk": "The fixture includes development time and cost numbers; the model must not extrapolate beyond those stated claims.",
+    "investment_advice_risk": "Low. The main risk is overclaiming business value or career outcomes rather than financial advice.",
+    "notes": "Good evaluation case for distinguishing AI literacy, no-code accessibility, and software-development trend evidence."
+  }
+}

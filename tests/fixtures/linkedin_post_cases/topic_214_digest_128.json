@@ -1,0 +1,161 @@
+{
+  "case_id": "topic_214_digest_128",
+  "source_type": "saved_completed_digest",
+  "topic": {
+    "id": 214,
+    "name": "Future of Work",
+    "source_mode": "hybrid"
+  },
+  "digest": {
+    "id": 128,
+    "run_id": 173,
+    "title": "Digest for Future of Work"
+  },
+  "articles": [
+    {
+      "source_index": 0,
+      "url": "https://factorialhr.com/blog/remote-work-policy",
+      "title": "Remote Working Policy & Best Tips for Remote Workers",
+      "summary": "The article provides a comprehensive guide on creating an effective remote work policy, arguing that such a policy is essential for optimizing employee productivity and well-being in a permanent hybrid work environment. It concludes that clear guidelines and defined expectations can help avoid misunderstandings and promote a healthier work-life balance for remote workers. Ensuring consistent communication, providing appropriate tools, and regularly reviewing the policy are critical for success.",
+      "key_points": [
+        "Employers should implement a detailed remote work policy to establish clear expectations.",
+        "The policy should cover essential areas like working hours, tools, and performance measurement.",
+        "Consistent communication and periodic reviews of the policy are vital for maintaining productivity."
+      ],
+      "content_type": "tutorial",
+      "confidence": 0.9,
+      "source_name": "Remote Working Policy & Best Tips for Remote Workers",
+      "published_at": null,
+      "snippet": "Remote Working Policy & Best Tips for Remote Workers The past two years have shown us that, in one form or another , remote work is here to stay. In fact, a recent McKinsey study reported that 9 in 10 companies are switching to a permanent hybrid work model. This makes it more...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 6.0,
+        "substance_score": 5.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "institutional_guideline",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "blog_index",
+        "quality_reasons": [
+          "research_signals",
+          "practical_guide_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:institutional_guideline"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 1,
+      "url": "https://selectsoftwarereviews.com/blog/workplace-diversity",
+      "title": "Workplace Diversity: Benefits, Importance, & Statistics (2026) - SSR",
+      "summary": "The article examines workplace diversity, emphasizing its critical role in fostering innovation, productivity, and employee satisfaction. The author argues that genuine diversity\u2014beyond mere quotas\u2014leads to better financial outcomes and a more inclusive company culture. It concludes that embracing diversity is not just ethically correct but a necessary strategy for modern businesses to thrive in a competitive environment.",
+      "key_points": [
+        "Workplace diversity goes beyond race and gender, encompassing various aspects like age, sexual orientation, and socioeconomic status.",
+        "Companies with diverse teams experience improved problem-solving and creativity, leading to better decision-making.",
+        "Statistics show that financial performance improves significantly with increased diversity on executive teams."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.95,
+      "source_name": "Workplace Diversity: Benefits, Importance, & Statistics (2026) - SSR",
+      "published_at": null,
+      "snippet": "Workplace Diversity: Benefits, Importance, & Statistics (2026) This article will dive deeper into workplace diversity, its importance, and its benefits... Contributing Experts Share this article Subscribe to weekly updates Diversity in the workplace is everywhere. Politicians...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 4.0,
+        "substance_score": 3.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "scientific_study",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "blog_index",
+        "quality_reasons": [
+          "research_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:scientific_study"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 2,
+      "url": "https://scientificamerican.com/article/remote-work-is-making-americans-lonelier-and-sadder-new-study-suggests",
+      "title": "Remote work is making Americans lonelier and sadder, new study suggests",
+      "summary": "The article presents research indicating that the long-term shift to remote work post-pandemic has led to increased feelings of isolation and mental distress among American workers, particularly those in remote-friendly jobs who live alone. The author, Emma Harrington, argues that while remote work offers certain benefits, its adverse effects on mental well-being warrant attention. The conclusion emphasizes the need for strategies to mitigate isolation in remote work environments.",
+      "key_points": [
+        "A recent study analyzed the mental health effects of remote work on 588,322 Americans over multiple surveys.",
+        "Workers in remote-friendly jobs reported higher levels of isolation and mental distress than their nonremote counterparts.",
+        "About 25% of respondents in remotable jobs living alone spent an entire day by themselves, indicating significant isolation.",
+        "There is a disconnect between the popularity of remote work and its potential negative impacts on mental health.",
+        "The study suggests prioritizing measures to reduce isolation in remote work arrangements."
+      ],
+      "content_type": "news",
+      "confidence": 0.9,
+      "source_name": "Remote work is making Americans lonelier and sadder, new study suggests",
+      "published_at": null,
+      "snippet": "When the pandemic hit, just like so many Americans, researcher Emma Harrington started working remotely . What shocked her most in those early days of COVID was how productive she was. Then a Ph.D. student at Harvard University, she found that she could still focus on her work...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 3.0,
+        "substance_score": 3.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "scientific_study",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "research_signals",
+          "freshness:provider_date",
+          "freshness:unknown",
+          "source_content_type:scientific_study"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    }
+  ],
+  "expected_behavior": {
+    "must_preserve": [
+      "Remote work policy sources emphasize clear expectations, tools, communication, performance measurement, and periodic review.",
+      "Diversity claims should remain distinct from remote-work policy claims.",
+      "Remote work mental-health evidence includes isolation and distress risks, especially for remote-friendly workers living alone.",
+      "The Scientific American study claim involves 588,322 Americans and should stay attributed as research context.",
+      "Separate productivity, inclusion, and mental-health signals instead of turning them into one simple workplace trend."
+    ],
+    "must_not_infer": [
+      "Do not claim remote work is universally harmful or universally beneficial.",
+      "Do not invent additional HR metrics, retention numbers, productivity gains, or diversity statistics.",
+      "Do not present diversity as a quota-only issue or as unrelated to management systems.",
+      "Do not treat one study as proof that all remote work should be reduced or eliminated.",
+      "Do not turn policy guidance into legal or HR compliance advice."
+    ],
+    "preferred_angle": "Future-of-work sources mix policy design, inclusion, and mental health. A useful post should argue for operating systems that handle all three instead of treating remote work as only a perk or productivity tactic.",
+    "generic_output_risk": "The post may become generic future-of-work commentary about flexibility, diversity, and employee wellbeing.",
+    "source_dominance_risk": "The loneliness study may dominate the angle and turn the post into an anti-remote-work claim.",
+    "metric_hallucination_risk": "The fixture includes a large survey/sample claim and percentage claims; the model must not extrapolate beyond them.",
+    "investment_advice_risk": "Low. The main risk is unsupported HR or workplace policy prescription.",
+    "notes": "Good evaluation case for separating policy, culture, and research evidence without flattening remote work into a single verdict."
+  }
+}

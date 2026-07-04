@@ -1,0 +1,149 @@
+{
+  "case_id": "topic_140_digest_126",
+  "source_type": "saved_completed_digest",
+  "topic": {
+    "id": 140,
+    "name": "AI Education Teens",
+    "source_mode": "discovery_only"
+  },
+  "digest": {
+    "id": 126,
+    "run_id": 170,
+    "title": "Digest for AI Education Teens"
+  },
+  "articles": [
+    {
+      "source_index": 0,
+      "url": "https://dl.acm.org/doi/10.1145/3786183.3786192",
+      "title": "Exploring Challenges and Opportunities in Artificial Intelligence (AI) Literacy and Educational AI Development: A Qualitative Study of Teachers and Researchers' Perspectives | Proceedings of the 2025 8th International Conference on Big Data and Education",
+      "summary": "The article explores the challenges and opportunities related to AI literacy and educational AI development from the perspectives of teachers and researchers. The author argues that establishing a national AI literacy framework is essential for creating a cohesive educational strategy and highlights the need for interdisciplinary projects that integrate ethical discussions into AI learning. The conclusion emphasizes the importance of institutionalization and ongoing support for AI education to ensure its sustainability in schools.",
+      "key_points": [
+        "The absence of a unified definition of AI literacy leads to inconsistent educational approaches.",
+        "Interdisciplinary project-based learning can enhance student engagement and reduce teachers' fears about AI.",
+        "Ethics should be integrated into AI literacy curricula to develop conscientious users and coders.",
+        "Professional development is crucial for teachers to effectively teach AI concepts.",
+        "Funding and policy continuity are necessary for the long-term success of AI education programs."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "Exploring Challenges and Opportunities in Artificial Intelligence (AI) Literacy and Educational AI Development: A Qualitative Study of Teachers and Researchers' Perspectives | Proceedings of the 2025 8th International Conference on Big Data and Education",
+      "published_at": null,
+      "snippet": "As part of the Digital Library's transition to Open Access , new features for researchers are available in the Premium Edition . Click here to learn more . You are currently in the Basic Edition. Features requiring a subscription appear in grey. Abstract 1 Introduction 2 Relat...",
+      "quality_metadata": {
+        "discovery_status": "kept",
+        "discovery_outcome": "already_known",
+        "quality_score": 6.0,
+        "substance_score": 6.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "scientific_study",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "research_signals",
+          "freshness:unknown",
+          "source_content_type:scientific_study"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 1,
+      "url": "https://programs.com/resources/ai-education-statistics",
+      "title": "The Latest AI in Education Statistics (2026)",
+      "summary": "The article examines the pervasive use of AI in education, highlighting its benefits, such as improving student engagement and efficiency, while also acknowledging concerns about potential drawbacks like cheating and insufficient institutional support. The author's main argument is that while AI tools can enhance educational outcomes, there is a significant gap in training and guidance for both students and teachers. The conclusion emphasizes the need for structured educational frameworks to better integrate AI into the learning process effectively and responsibly.",
+      "key_points": [
+        "30% of K-12 students use AI tools at least once per day.",
+        "Just 7% of schools worldwide provide formal AI guidance.",
+        "81% of educators lack the time to develop an AI training curriculum."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "The Latest AI in Education Statistics (2026)",
+      "published_at": null,
+      "snippet": "AI is now ubiquitous in education. The vast majority of students , teachers, researchers, administrators, and other education professionals have used AI tools at least once. Generative AI can have significant benefits for teachers and students. However, there are legitimate co...",
+      "quality_metadata": {
+        "discovery_status": "kept",
+        "discovery_outcome": "new_shown",
+        "quality_score": 0.0,
+        "substance_score": 0.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "",
+        "detected_publication_date": null,
+        "quality_threshold_used": null,
+        "content_tier": "",
+        "content_length": null,
+        "primary_article_type": "",
+        "quality_reasons": [],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 2,
+      "url": "https://skillstruck.com/blog/what-is-computer-science-skill-struck?hs_amp=true",
+      "title": "What is Computer Science? A Guide for K-12 Educators",
+      "summary": "The article emphasizes the critical importance of computer science (CS) education for K-12 students, arguing that it equips them with essential skills for a rapidly changing job market influenced by AI. The author concludes that schools must prioritize CS to prepare students for future careers across various industries while addressing the existing access and participation gaps. By integrating CS into curricula, students transition from passive technology users to active creators, fostering critical thinking and problem-solving skills.",
+      "key_points": [
+        "Despite the demand for CS skills, only 6.1% of eligible high school students enroll in CS courses.",
+        "CS education covers essential fields such as algorithms, AI, and cybersecurity, which are relevant in nearly every industry.",
+        "Schools should focus on teaching CS to help bridge the skills gap and prepare students for future job markets influenced by AI."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "What is Computer Science? A Guide for K-12 Educators",
+      "published_at": null,
+      "snippet": "Your students are already living inside computer science. They just don't know it yet. Every time they scroll a feed, get a route on a map app, talk to a voice assistant, or get a Netflix recommendation, an algorithm makes a decision. Every time they interact with a chatbot or...",
+      "quality_metadata": {
+        "discovery_status": "kept",
+        "discovery_outcome": "new_shown",
+        "quality_score": 0.0,
+        "substance_score": 0.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "",
+        "detected_publication_date": null,
+        "quality_threshold_used": null,
+        "content_tier": "",
+        "content_length": null,
+        "primary_article_type": "",
+        "quality_reasons": [],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    }
+  ],
+  "expected_behavior": {
+    "must_preserve": [
+      "AI literacy lacks a unified definition, creating inconsistent education approaches.",
+      "Teachers need professional development, support, and institutional continuity for AI education to work.",
+      "AI-in-education statistics should remain source claims, including daily student use, formal guidance gaps, and teacher time constraints.",
+      "Computer science education is broader than AI tool usage and includes algorithms, AI, cybersecurity, and problem-solving.",
+      "Ethics and responsible use should remain central to AI literacy discussion."
+    ],
+    "must_not_infer": [
+      "Do not claim AI tools automatically improve education outcomes.",
+      "Do not invent new student adoption numbers, school policy statistics, or labor-market projections.",
+      "Do not conflate AI literacy, AI tool usage, and computer science education as the same curriculum.",
+      "Do not present statistics as global facts unless the source frames them that way.",
+      "Do not ignore teacher workload, guidance gaps, funding, policy continuity, or ethics constraints."
+    ],
+    "preferred_angle": "AI education sources show that adoption is moving faster than institutional readiness. A useful post should separate tool use, AI literacy, and computer science foundations.",
+    "generic_output_risk": "The post may become generic commentary about preparing students for an AI future.",
+    "source_dominance_risk": "The statistics article may dominate the angle and turn the post into a numbers recap.",
+    "metric_hallucination_risk": "The fixture contains several education statistics; the model must not generalize beyond the stated claims.",
+    "investment_advice_risk": "Low. The main risk is education-policy overreach or unsupported curriculum claims.",
+    "notes": "Good evaluation case for education commentary that separates adoption metrics from institutional readiness and curriculum design."
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "case_id": "topic_215_digest_129",
+  "source_type": "saved_completed_digest",
+  "topic": {
+    "id": 215,
+    "name": "Freelancing",
+    "source_mode": "hybrid"
+  },
+  "digest": {
+    "id": 129,
+    "run_id": 174,
+    "title": "Digest for Freelancing"
+  },
+  "articles": [
+    {
+      "source_index": 0,
+      "url": "https://invoicesimple.com/blog/pricing-strategy",
+      "title": "What Is a Pricing Strategy? Tips & Examples - Invoice Simple",
+      "summary": "The article discusses the importance of a pricing strategy for business success, emphasizing the need for a clear plan to set prices that cover costs and align with customer perceptions of value. The author argues that choosing the right pricing strategy is crucial to effectively communicate product value and attract the right customers. In conclusion, a well-thought-out pricing strategy can enhance a business's competitiveness and ensure profitability.",
+      "key_points": [
+        "A pricing strategy is essential for navigating market fluctuations and competition.",
+        "There are 11 different types of pricing strategies, including psychological, competition-based, and value-based pricing.",
+        "An effective pricing strategy reflects product value, persuades customers to buy, and instills confidence in the business."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "What Is a Pricing Strategy? Tips & Examples - Invoice Simple",
+      "published_at": null,
+      "snippet": "What Is a Pricing Strategy? Tips & Examples By webadmin 9 min read | Last Updated June 2, 2026 Starting a business without a pricing strategy is like taking a sailboat out to sea without a sail. The boat would float around aimlessly, at the mercy of the wind and waves. But ins...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 4.0,
+        "substance_score": 3.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "concrete_case_study",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "blog_index",
+        "quality_reasons": [
+          "case_study_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:concrete_case_study"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 1,
+      "url": "https://lokuri.com/how-to-get-international-freelance-clients-2",
+      "title": "How to get international freelance clients",
+      "summary": "The article discusses effective strategies for freelancers to attract international clients in a competitive market by emphasizing niche specialization and high-trust networking. The author argues that building a strong personal brand and embracing cultural intelligence are essential for long-term success, suggesting that freelancers must evolve from being mere vendors to becoming strategic partners. Ultimately, the takeaway is that a thoughtful and proactive approach to client acquisition and relationship management is crucial in the borderless freelance economy of 2026.",
+      "key_points": [
+        "Freelancers must focus on extreme specialization to stand out in a saturated market.",
+        "Building a strong personal brand through consistent, value-driven communication is essential.",
+        "Cultural intelligence enhances communication and fosters better relationships with international clients.",
+        "Using curated, invite-only platforms for client connections yields better ROI than traditional marketplaces.",
+        "Value-Based Pricing models are becoming crucial as freelancers adapt to global economic shifts."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "How to get international freelance clients",
+      "published_at": null,
+      "snippet": "How to get international freelance clients Establishing a global career requires more than just technical skills; it demands a strategic approach to finding freelance clients who value specialized expertise across different time zones. To succeed in 2026, professionals must na...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 6.0,
+        "substance_score": 5.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "practical_guide_with_concrete_steps",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "research_signals",
+          "practical_guide_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:practical_guide_with_concrete_steps"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    },
+    {
+      "source_index": 2,
+      "url": "https://getmany.com/uk/blog/upwork-vs-freelance-platforms-2026-comparison",
+      "title": "Upwork vs Freelance Platforms: 2026 Comparison",
+      "summary": "The article critically examines Upwork's features against competing freelance platforms like Fiverr and Toptal, arguing that Upwork's robust AI-driven job matching and escrow system offer significant advantages for freelancers. It concludes that Upwork remains the best platform for high-value, repeat contracts due to its diverse offerings and reliable payment structures. Overall, understanding these comparisons is essential for freelancers seeking to maximize their opportunities and earnings in 2026.",
+      "key_points": [
+        "Upwork finds jobs is distinguished by its AI-powered job recommendations and escrow payment system, ensuring secure transactions.",
+        "Competitors like Fiverr and Toptal focus on niche offerings, but often lack Upwork's broad range of high-value project opportunities.",
+        "User experience is streamlined on Upwork with automated job alerts and efficient proposal management tools."
+      ],
+      "content_type": "opinion",
+      "confidence": 0.9,
+      "source_name": "Upwork vs Freelance Platforms: 2026 Comparison",
+      "published_at": null,
+      "snippet": "12 February, 2026 Category upwork-find-jobs Author Kyrylo Kozak Upwork vs Freelance Platforms: 2026 Comparison Choosing the right freelance platform can define your career path, income potential, and client relationships in 2026. The upwork find jobs feature stands out as a to...",
+      "quality_metadata": {
+        "discovery_status": "shown",
+        "discovery_outcome": "new_shown",
+        "quality_score": 6.0,
+        "substance_score": 5.0,
+        "commercial_intent_score": 0.0,
+        "quality_rejection_reason": "",
+        "source_content_type": "concrete_case_study",
+        "detected_publication_date": null,
+        "quality_threshold_used": 0.4,
+        "content_tier": "",
+        "content_length": 0,
+        "primary_article_type": "generic_html",
+        "quality_reasons": [
+          "expert_signals",
+          "case_study_signals",
+          "freshness:provider_date",
+          "freshness:year:2026",
+          "source_content_type:concrete_case_study"
+        ],
+        "rejection_reasons": [],
+        "diagnostic_warnings": [],
+        "ranking_quality_score": null,
+        "ranking_score": null
+      }
+    }
+  ],
+  "expected_behavior": {
+    "must_preserve": [
+      "Pricing strategy should reflect costs, market conditions, customer value perception, and business positioning.",
+      "International freelance client acquisition emphasizes specialization, personal brand, trust, and cultural intelligence.",
+      "Platform comparisons should remain attributed to the source claims about Upwork, Fiverr, Toptal, escrow, and AI matching.",
+      "Value-based pricing appears as one tactic among several, not a universal answer.",
+      "Separate pricing strategy, client acquisition, and platform selection instead of treating them as the same freelancing problem."
+    ],
+    "must_not_infer": [
+      "Do not claim one freelance platform is objectively best for every freelancer.",
+      "Do not invent earnings numbers, conversion rates, platform fees, or client acquisition statistics.",
+      "Do not promise that specialization, branding, or value-based pricing will guarantee international clients.",
+      "Do not present pricing strategy advice as legal, tax, or financial advice.",
+      "Do not collapse platform features and client-trust practices into a single recommendation without source support."
+    ],
+    "preferred_angle": "Freelancing sources point to a practical tension: freelancers need a coherent offer before platform tactics matter. A useful post should separate pricing, trust-building, and channel choice.",
+    "generic_output_risk": "The post may become generic freelancing advice about niche down, build a brand, and use platforms.",
+    "source_dominance_risk": "The Upwork comparison may hijack the angle and turn the post into a platform recommendation.",
+    "metric_hallucination_risk": "The fixture has few hard metrics; the model must not invent earnings, rates, fees, or ROI claims.",
+    "investment_advice_risk": "Low to medium. Avoid treating pricing or platform selection as guaranteed income advice.",
+    "notes": "Good evaluation case for business/process commentary that avoids overprescriptive platform and pricing advice."
+  }
+}
