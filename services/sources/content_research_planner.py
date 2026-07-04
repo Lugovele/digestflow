@@ -109,7 +109,7 @@ def create_content_research_plan(topic) -> ContentResearchPlannerResult:
         )
 
     try:
-        response = OpenAIClient().generate_text(
+        response = OpenAIClient(model=settings.POSTFLOW_RESEARCH_MODEL).generate_text(
             prompt=prompt,
             max_output_tokens=1200,
             json_mode=True,

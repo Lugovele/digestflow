@@ -81,6 +81,32 @@ class ContentResearchPlannerTests(SimpleTestCase):
         )
         self.assertEqual(result.topic_interpretation, "AI education for teenagers in current practice.")
 
+    @override_settings(OPENAI_API_KEY="sk-test", POSTFLOW_RESEARCH_MODEL="research-model")
+    @patch("services.sources.content_research_planner.OpenAIClient")
+    def test_ai_planner_uses_postflow_research_model(self, mock_openai_client) -> None:
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text=json.dumps(
+                {
+                    "topic_interpretation": "AI education for teenagers in current practice.",
+                    "content_research_goal": "Find fresh, practical materials for a digest and post.",
+                    "source_selection_criteria": {
+                        "must_be_relevant_to": ["AI use in teen education"],
+                        "preferred_material_types": ["case study"],
+                        "freshness_signals": ["recent examples"],
+                        "post_value_signals": ["trade-offs"],
+                        "relevance_boundary": "Stay focused on teen learning and teaching practice.",
+                    },
+                    "content_tension_opportunities": [],
+                    "search_angles": [],
+                    "queries": ["AI education teens recent classroom examples"],
+                }
+            )
+        )
+
+        create_content_research_plan(_TopicStub("AI Education Teens", ["AI literacy"]))
+
+        mock_openai_client.assert_called_once_with(model="research-model")
+
     @override_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test")
     @patch("services.sources.content_research_planner.OpenAIClient.generate_text")
     def test_invalid_json_triggers_fallback(self, mock_generate_text) -> None:

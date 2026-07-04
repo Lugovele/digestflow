@@ -1,7 +1,12 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
+from django.test import override_settings
 
 from services.ai.validators import DigestPayloadValidationError, validate_digest_payload
 from services.ai.digest_smoke_test import (
+    call_llm,
     clean_llm_json,
     ensure_list,
     safe_json_loads,
@@ -184,6 +189,18 @@ class DigestValidatorTests(SimpleTestCase):
             normalized["key_points"],
             ["Teams saw faster review cycles after redesign."],
         )
+
+    @override_settings(POSTFLOW_RESEARCH_MODEL="research-model")
+    @patch("services.ai.digest_smoke_test.OpenAIClient")
+    def test_call_llm_uses_postflow_research_model(self, mock_openai_client):
+        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"summary": "Done"}',
+            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        )
+
+        call_llm("Analyze this article.")
+
+        mock_openai_client.assert_called_once_with(model="research-model")
 
     def _build_payload(self, **overrides):
         payload = {

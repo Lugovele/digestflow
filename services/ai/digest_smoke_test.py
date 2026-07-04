@@ -191,7 +191,7 @@ def build_prompt(article: dict[str, Any]) -> str:
 
 def call_llm(prompt: str) -> tuple[str, dict[str, int | None] | None]:
     """Call the LLM and return response text plus token usage."""
-    response = OpenAIClient().generate_text(
+    response = OpenAIClient(model=settings.POSTFLOW_RESEARCH_MODEL).generate_text(
         prompt=prompt,
         max_output_tokens=500,
         json_mode=True,
