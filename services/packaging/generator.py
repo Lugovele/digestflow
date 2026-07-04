@@ -195,7 +195,7 @@ def generate_post_from_articles(
     if not articles:
         return _build_safe_fallback_post(digest)
 
-    response = OpenAIClient().generate_text(
+    response = OpenAIClient(model=settings.POSTFLOW_POST_MODEL).generate_text(
         prompt=prompt,
         max_output_tokens=900,
         json_mode=True,
@@ -220,7 +220,7 @@ def generate_carousel_from_articles(
             }
         ]
 
-    response = OpenAIClient().generate_text(
+    response = OpenAIClient(model=settings.POSTFLOW_POST_MODEL).generate_text(
         prompt=prompt,
         max_output_tokens=900,
         json_mode=True,

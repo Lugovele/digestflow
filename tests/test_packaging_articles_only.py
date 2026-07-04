@@ -6,7 +6,13 @@ from django.test import TestCase, override_settings
 from apps.topics.models import Topic
 from apps.digests.models import Digest, DigestRun
 from services.packaging import generate_content_package_for_digest
-from services.packaging.generator import PackagingGenerationResult, normalize_linkedin_hashtags
+from services.packaging.generator import (
+    DEFAULT_AUTHOR_PROFILE,
+    PackagingGenerationResult,
+    generate_carousel_from_articles,
+    generate_post_from_articles,
+    normalize_linkedin_hashtags,
+)
 
 
 @override_settings(OPENAI_API_KEY="sk-your-key")
@@ -154,6 +160,37 @@ class PackagingArticlesOnlyTests(TestCase):
         self.assertFalse(digest.has_articles())
         self.assertIn("No post draft articles were available.", content_package.post_text)
 
+    @override_settings(POSTFLOW_POST_MODEL="post-model-for-linkedin")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_post_from_articles_uses_postflow_post_model(self, mock_openai_client) -> None:
+        digest = _build_unsaved_digest_for_packaging()
+        mock_openai_client.return_value.generate_text.return_value.text = (
+            '{"post_text": "Post text", "hook_variants": [], "cta_variants": [], '
+            '"hashtags": [], "quality_checks": {}}'
+        )
+
+        generate_post_from_articles(
+            digest,
+            [_article_payload()],
+            DEFAULT_AUTHOR_PROFILE,
+        )
+
+        mock_openai_client.assert_called_once_with(model="post-model-for-linkedin")
+
+    @override_settings(POSTFLOW_POST_MODEL="post-model-for-linkedin")
+    @patch("services.packaging.generator.OpenAIClient")
+    def test_generate_carousel_from_articles_uses_postflow_post_model(self, mock_openai_client) -> None:
+        digest = _build_unsaved_digest_for_packaging()
+        mock_openai_client.return_value.generate_text.return_value.text = '{"slides": []}'
+
+        generate_carousel_from_articles(
+            digest,
+            [_article_payload()],
+            DEFAULT_AUTHOR_PROFILE,
+        )
+
+        mock_openai_client.assert_called_once_with(model="post-model-for-linkedin")
+
     @patch("services.packaging.generator._generate_packaging_payload")
     def test_packaging_saves_normalized_linkedin_hashtags_in_post_text_and_hashtag_list(
         self,
@@ -209,3 +246,35 @@ class PackagingArticlesOnlyTests(TestCase):
             content_package.hashtags,
             ["#PersonalBranding", "#Authority", "#Storytelling"],
         )
+
+
+def _build_unsaved_digest_for_packaging() -> Digest:
+    user = get_user_model().objects.create_user(username="packaging-model-user")
+    topic = Topic.objects.create(
+        user=user,
+        name="Model routing",
+        keywords=["model"],
+        excluded_keywords=[],
+    )
+    run = DigestRun.objects.create(
+        topic=topic,
+        status=DigestRun.STATUS_PACKAGING,
+        metrics={"digest_stage": {"status": "completed", "articles_count": 1}},
+    )
+    return Digest.objects.create(
+        run=run,
+        title="Digest for Model routing",
+        payload={"title": "Digest for Model routing", "articles": [_article_payload()]},
+        quality_score=0.0,
+    )
+
+
+def _article_payload() -> dict[str, object]:
+    return {
+        "url": "https://example.com/model-routing",
+        "title": "Model routing article",
+        "summary": "The article explains why final copy should use a stronger model.",
+        "key_points": ["Research and final writing have different model needs."],
+        "content_type": "opinion",
+        "confidence": 0.9,
+    }
