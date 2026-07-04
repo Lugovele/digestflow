@@ -8,6 +8,15 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+
+def _postflow_model_setting(env_name: str, default: str) -> str:
+    return os.getenv(env_name) or os.getenv("OPENAI_MODEL") or default
+
+
+def _postflow_provider_setting(env_name: str) -> str:
+    return os.getenv(env_name, "openai").strip().lower() or "openai"
+
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-insecure-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
 ALLOWED_HOSTS = [
@@ -82,9 +91,15 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# Legacy shared model setting. PostFlow stage-specific settings below should be
+# preferred by new staged pipeline code; keep this as a compatibility fallback.
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_TIMEOUT_SECONDS = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
 AI_DAILY_TOKEN_BUDGET = int(os.getenv("AI_DAILY_TOKEN_BUDGET", "100000"))
+POSTFLOW_RESEARCH_PROVIDER = _postflow_provider_setting("POSTFLOW_RESEARCH_PROVIDER")
+POSTFLOW_POST_PROVIDER = _postflow_provider_setting("POSTFLOW_POST_PROVIDER")
+POSTFLOW_RESEARCH_MODEL = _postflow_model_setting("POSTFLOW_RESEARCH_MODEL", "gpt-4o-mini-2024-07-18")
+POSTFLOW_POST_MODEL = _postflow_model_setting("POSTFLOW_POST_MODEL", "gpt-4.1-2025-04-14")
 SEARCH_PROVIDER_ENABLED = os.getenv("SEARCH_PROVIDER_ENABLED", "False").lower() == "true"
 SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "").strip().lower()
 SEARCH_PROVIDER_API_KEY = os.getenv("SEARCH_PROVIDER_API_KEY", "")
