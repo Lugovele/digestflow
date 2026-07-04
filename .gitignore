@@ -15,6 +15,7 @@ db.sqlite3
 media/
 staticfiles/
 *.log
+debug_outputs/
 
 # IDE settings
 .vscode/
