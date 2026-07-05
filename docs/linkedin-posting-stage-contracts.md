@@ -570,8 +570,10 @@ Required fields:
 
 Rules:
 
-- scores must cover all 8 rubric criteria;
-- total score max is 40;
+- scores must cover all 9 rubric criteria defined in `docs/linkedin-post-quality-target.md`;
+- total score max is 45;
+- pass threshold is 36 out of 45;
+- required minimums are `hook >= 4`, `controlling_angle >= 4`, `author_point_of_view >= 4`, `human_voice >= 4`, and `evidence >= 3`;
 - automatic fail reason should be explicit when present.
 
 Example JSON:
@@ -585,10 +587,11 @@ Example JSON:
     "pattern_interrupt": 4,
     "evidence": 3,
     "author_point_of_view": 5,
+    "human_voice": 4,
     "practical_value": 4,
     "cta": 4
   },
-  "total_score": 33,
+  "total_score": 37,
   "pass": true,
   "failed_criteria": [],
   "automatic_fail_reason": ""
