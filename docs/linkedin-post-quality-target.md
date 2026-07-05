@@ -11,6 +11,7 @@ The goal is a post with:
 - one clear point of view;
 - strong opening;
 - concrete reader problem;
+- human voice;
 - early pattern interrupt;
 - specific evidence;
 - practical value;
@@ -181,6 +182,30 @@ Avoid:
 - exaggerated claims;
 - fake personal stories.
 
+## Human Voice
+
+The post should sound like a real person with a clear thought, not like a corporate summary, consultant memo, generic AI text, or article recap.
+
+Human voice can come from:
+
+- natural human phrasing;
+- clear author interpretation;
+- honest observation, doubt, tension, or revision of thinking;
+- specific wording instead of polished abstractions;
+- readable LinkedIn voice;
+- text that sounds written by a person, not by a content template.
+
+Avoid:
+
+- corporate or institutional tone;
+- consultant-speak;
+- generic AI-generated phrasing;
+- motivational filler;
+- overly polished but empty language;
+- article-summary tone;
+- vague abstractions;
+- safe wording that avoids a real position.
+
 ## Practical Value
 
 Each post should give one practical takeaway.
@@ -267,9 +292,10 @@ Score each post from 1 to 5 on each criterion.
 | Pattern Interrupt    |         5 |
 | Evidence             |         5 |
 | Author Point Of View |         5 |
+| Human Voice          |         5 |
 | Practical Value      |         5 |
 | CTA                  |         5 |
-| Total                |        40 |
+| Total                |        45 |
 
 ### Hook
 
@@ -319,6 +345,14 @@ Score each post from 1 to 5 on each criterion.
 - 2 = mostly neutral reporting.
 - 1 = no author position.
 
+### Human Voice
+
+- 5 = sounds natural, specific, and human; has clear author interpretation; avoids corporate or template phrasing.
+- 4 = mostly human and readable, with minor generic phrasing.
+- 3 = understandable but somewhat generic or polished.
+- 2 = corporate, summary-like, or overly safe.
+- 1 = clearly template-like, generic AI text, consultant-speak, or no human voice.
+
 ### Practical Value
 
 - 5 = specific actionable takeaway the reader can apply.
@@ -339,11 +373,12 @@ Score each post from 1 to 5 on each criterion.
 
 A post passes if:
 
-- total score is at least 32 out of 40;
+- total score is at least 36 out of 45;
 - hook score is at least 4;
 - controlling angle score is at least 4;
 - evidence score is at least 3;
 - author point of view score is at least 4;
+- human voice score is at least 4;
 - there are no unsupported claims;
 - there is only one CTA;
 - there are no links in the body;
@@ -358,6 +393,9 @@ A post fails automatically if it:
 - uses external links in the body;
 - has no clear angle;
 - reads like a summary of articles;
+- sounds like generic AI-generated content;
+- reads like a corporate memo instead of a human LinkedIn post;
+- has no human author voice;
 - makes source terminology the main angle by accident;
 - exceeds 1300 characters;
 - relies on generic phrases as the main argument;
