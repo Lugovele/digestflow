@@ -1,0 +1,197 @@
+# Final LinkedIn Post From Post Brief
+
+## Purpose
+
+Generate a validator-compatible FinalPostPayload from a PostBrief and AngleDecision.
+
+This prompt is a contract for future generation. It does not define runtime wiring,
+repair behavior, quality scoring, provider settings, persistence, or package output.
+
+## Model Routing Constraint
+
+This final post generation prompt is intended for gpt-4.1-2025-04-14.
+
+Research, extraction, ArticleEvidencePack, and ContextualEvidencePack work may use
+gpt-4o-mini-2024-07-18 when those stages become LLM-backed.
+
+AngleDecision and PostBrief may start on gpt-4o-mini-2024-07-18 and may move to
+gpt-4.1-2025-04-14 if angle quality is weak.
+
+Repair or quality-sensitive rewrite work should use gpt-4.1-2025-04-14 when that
+stage exists.
+
+This prompt does not implement model routing, runtime wiring, model selection,
+provider configuration, or prompt execution.
+
+Do not evaluate final post quality from Codex or chat samples. Use API-like debug runs
+with the actual final prompt, actual input shape, intended model target, and
+validator-compatible JSON output.
+
+## Inputs
+
+Use these inputs:
+
+* PostBrief
+* AngleDecision
+* PostBrief.evidence_to_use selected evidence IDs
+* PostBrief.evidence_to_use selected evidence text
+* PostBrief.evidence_to_use role_in_post values
+* quality constraints supplied by the caller
+* forbidden claims and safety rules supplied by the caller
+
+## Source Of Truth
+
+Use PostBrief as the source of truth.
+
+PostBrief is the source of truth for exact selected evidence.
+
+Exact evidence text is preserved upstream through PostBrief.
+
+Preserve AngleDecision.controlling_angle.
+
+Use only selected evidence from PostBrief.evidence_to_use.
+
+Do not use non-selected evidence, background-only evidence, or contextual evidence
+that is not listed in PostBrief.evidence_to_use.
+
+## Evidence Rules
+
+Use selected evidence content to support the post.
+
+Selected evidence IDs are input-side traceability references only.
+
+FinalPostPayload currently has no traceability field, so do not output evidence IDs.
+
+Do not add non-schema traceability fields, evidence ID fields, debug fields, or
+source-reference fields.
+
+Do not include evidence IDs in human-facing LinkedIn text.
+
+Do not include evidence IDs in post_text, hook_variants, or cta_variants.
+
+Do not include evidence IDs such as a0-summary, a1-kp0, a2-summary, or any
+a<number>-... evidence ID in human-facing LinkedIn text.
+
+Represent evidence with compact references or concise synthesis.
+
+FinalPostPayload is not an evidence archive.
+
+Do not copy long evidence verbatim.
+
+Do not include URLs.
+
+Do not use evidence IDs that were not provided in PostBrief.evidence_to_use.
+
+## Factuality Rules
+
+Do not invent facts, metrics, examples, personal experience, company names,
+customer stories, benchmarks, sources, dates, or claims.
+
+Do not infer causality unless it is explicitly supported by selected evidence.
+
+Do not add claims that are broader than the selected evidence supports.
+
+For non-finance topics, avoid unsupported conclusions, keep claims attributed,
+and do not overgeneralize beyond selected evidence.
+
+## LinkedIn Post Rules
+
+Transform selected evidence into concise LinkedIn post text.
+
+If PostBrief contains generic scaffold language such as separate signals,
+keep claims attributed, avoid unsupported conclusions, or source-grounded,
+do not simply repeat it mechanically.
+
+Convert scaffold-like brief instructions into a clear human-facing editorial angle
+grounded in the selected evidence.
+
+Human-facing fields must not use scaffold or source-summary phrasing such as
+selected evidence, evidence above, source-grounded, separate signals,
+keep claims attributed, avoid unsupported conclusions, according to one source,
+another source, research cited in a third source, or sources matter.
+
+Keep post_text under the existing final payload limit.
+
+Write a finished LinkedIn post, not a brief, research summary, evidence report,
+repair instruction, debug note, or runtime log.
+
+The post may be opinionated only when the opinion is grounded in PostBrief and
+AngleDecision.
+
+## Safety / Financial Advice Rules
+
+Do not make investment-advice wording a global rule for every topic.
+
+Apply financial, investment, trading, portfolio, market-timing, and crypto-specific
+guardrails only when selected evidence or topic context is finance, crypto, or
+investment related.
+
+When finance, crypto, or investment context is present, do not provide investment advice,
+financial advice, trading advice, portfolio advice, or market-timing advice.
+
+When finance, crypto, or investment context is present, do not use direct advice framing such as:
+
+* you should buy
+* buy bitcoin
+* sell bitcoin
+* hold bitcoin
+* time the market
+
+## Output JSON Requirements
+
+Return only valid JSON matching the existing FinalPostPayload schema.
+
+The JSON must include:
+
+* post_text
+* hook_variants
+* cta_variants
+* hashtags
+* quality_checks
+* carousel_outline
+
+The output must be validator-compatible with the existing FinalPostPayload contract.
+
+Keep carousel_outline empty unless carousel support is explicitly added later.
+
+## Forbidden Output Fields
+
+Do not include debug fields.
+
+Do not include repair fields.
+
+Do not include runtime fields.
+
+Do not include provider fields.
+
+Do not include token fields.
+
+Do not include cost fields.
+
+Do not include persistence fields.
+
+Do not include package fields.
+
+Do not include ContentPackage fields.
+
+## Quality Checks
+
+quality_checks must be coarse booleans only.
+
+quality_checks must include these required boolean keys:
+
+* linkedin_ready
+* uses_only_provided_facts
+* has_clear_point_of_view
+
+quality_checks.linkedin_ready must reflect actual readiness.
+
+Do not blindly set quality_checks.linkedin_ready to true.
+
+Set quality_checks.linkedin_ready to false if required quality_checks keys are
+missing, if any required quality_checks value is not boolean, if evidence IDs
+appear in human-facing fields, or if scaffold/source-summary phrases appear in
+human-facing fields.
+
+Do not include quality scores, numeric ratings, rubric details, repair instructions,
+or review commentary.
