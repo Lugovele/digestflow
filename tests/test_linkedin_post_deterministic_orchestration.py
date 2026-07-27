@@ -9,6 +9,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from services.packaging import linkedin_post_deterministic_orchestration
+from services.packaging.linkedin_final_post_diagnostics import diagnose_final_post_payload
 from services.packaging.linkedin_post_deterministic_orchestration import (
     FinalPostDecisionReadyResult,
     prepare_final_post_decision_ready_result,
@@ -19,7 +20,10 @@ from services.packaging.linkedin_post_flow_contracts import (
     ACTION_REPAIR_MECHANICAL,
     FinalPostAttemptHistory,
 )
-from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
+from services.packaging.linkedin_post_flow_handoffs import (
+    CandidateWriterOutput,
+    DeterministicGateOutput,
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,50 @@ class LinkedInPostDeterministicOrchestrationTests(SimpleTestCase):
         self.assertTrue(result.gate_output.validation_passed)
         self.assertTrue(result.gate_output.diagnostics.system_linkedin_ready)
         self.assertEqual(result.decision.action, ACTION_ACCEPT)
+
+    def test_valid_input_calls_deterministic_gate_once_with_post_brief_evidence_ids(self) -> None:
+        post_brief = _post_brief(
+            evidence_to_use=[
+                EvidenceUseStub("a2-summary", "Third evidence.", "proof"),
+                EvidenceUseStub("a0-summary", "First evidence.", "hook"),
+                EvidenceUseStub("a1-kp0", "Second evidence.", "practical_point"),
+            ],
+        )
+        candidate_output = _candidate_output()
+        post_brief_before = copy.deepcopy(post_brief)
+        candidate_output_before = copy.deepcopy(candidate_output)
+        selected_evidence_ids = ("a2-summary", "a0-summary", "a1-kp0")
+        mocked_gate_output = DeterministicGateOutput(
+            payload=candidate_output.payload,
+            validation_passed=True,
+            validation_error="",
+            diagnostics=diagnose_final_post_payload(
+                candidate_output.payload,
+                selected_evidence_ids=list(selected_evidence_ids),
+                schema_validation_passed=True,
+            ),
+            selected_evidence_ids=selected_evidence_ids,
+        )
+
+        with patch.object(
+            linkedin_post_deterministic_orchestration,
+            "run_final_post_deterministic_gate",
+            return_value=mocked_gate_output,
+        ) as gate:
+            result = prepare_final_post_decision_ready_result(
+                post_brief=post_brief,
+                candidate_output=candidate_output,
+                quality_review=_passing_quality_review(),
+            )
+
+        gate.assert_called_once_with(
+            candidate_output,
+            selected_evidence_ids=selected_evidence_ids,
+        )
+        self.assertIsInstance(result, FinalPostDecisionReadyResult)
+        self.assertEqual(result.gate_output.selected_evidence_ids, selected_evidence_ids)
+        self.assertEqual(post_brief, post_brief_before)
+        self.assertEqual(candidate_output, candidate_output_before)
 
     def test_schema_invalid_candidate_routes_through_decision_controller(self) -> None:
         payload = _valid_payload()
