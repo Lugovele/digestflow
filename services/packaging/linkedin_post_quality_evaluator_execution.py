@@ -116,7 +116,7 @@ def execute_quality_evaluator_prompt(
             provider=request.provider,
             model=request.model,
             prompt_metadata=prompt_metadata,
-            execution_error=f"provider invocation failed: {exc}",
+            execution_error="provider invocation failed",
         )
 
     raw_text = response.text
@@ -152,10 +152,19 @@ def _resolve_model(model: str | None) -> str:
 
 
 def _execution_request_error(request: QualityEvaluatorExecutionRequest) -> str | None:
+    if not request.provider:
+        return "missing quality evaluator provider"
     if request.provider != SUPPORTED_PROVIDER:
         return f"unsupported quality evaluator provider: {request.provider}"
     if not request.model:
         return "missing quality evaluator model"
+    if isinstance(request.max_output_tokens, bool) or not isinstance(
+        request.max_output_tokens,
+        int,
+    ):
+        return "invalid quality evaluator max_output_tokens: must be a positive integer"
+    if request.max_output_tokens <= 0:
+        return "invalid quality evaluator max_output_tokens: must be a positive integer"
     if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
         return "missing quality evaluator prompt text"
     rendered_input_text = request.rendered_prompt_input.input_text

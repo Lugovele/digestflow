@@ -149,10 +149,7 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
 
         self.assertEqual(len(create_calls), 1)
         self.assertEqual(raw_response.raw_text, "")
-        self.assertIn(
-            "provider invocation failed: json mode unavailable",
-            raw_response.execution_error,
-        )
+        self.assertEqual(raw_response.execution_error, "provider invocation failed")
         self.assertNotIn("text", create_calls[0])
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
@@ -180,17 +177,26 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         self,
         mock_openai_client,
     ) -> None:
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
-            text="   ",
-            raw={"id": "empty"},
-            usage={"total_tokens": 3},
-        )
+        empty_values = (None, "", "   ", "\r\n")
 
-        raw_response = execute_quality_evaluator_prompt(_request())
+        for empty_value in empty_values:
+            with self.subTest(raw_text=empty_value):
+                mock_openai_client.return_value.generate_text.return_value = (
+                    SimpleNamespace(
+                        text=empty_value,
+                        raw={"id": "empty"},
+                        usage={"total_tokens": 3},
+                    )
+                )
 
-        self.assertEqual(raw_response.raw_text, "   ")
-        self.assertEqual(raw_response.execution_error, "empty provider response")
-        self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
+                raw_response = execute_quality_evaluator_prompt(_request())
+
+                self.assertEqual(raw_response.raw_text, str(empty_value or ""))
+                self.assertEqual(
+                    raw_response.execution_error,
+                    "empty provider response",
+                )
+                self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
     def test_provider_failure_returns_execution_error_without_downstream_calls(
@@ -204,7 +210,7 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         raw_response = execute_quality_evaluator_prompt(request)
 
         self.assertEqual(raw_response.raw_text, "")
-        self.assertIn("provider invocation failed: boom", raw_response.execution_error)
+        self.assertEqual(raw_response.execution_error, "provider invocation failed")
         self.assertEqual(request, request_before)
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
@@ -220,6 +226,43 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
             raw_response.execution_error,
             "unsupported quality evaluator provider: gemini",
         )
+        mock_openai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
+    def test_missing_provider_returns_distinct_execution_error_without_provider_call(
+        self,
+        mock_openai_client,
+    ) -> None:
+        raw_response = execute_quality_evaluator_prompt(
+            _request(provider="", model="quality-model")
+        )
+
+        self.assertEqual(
+            raw_response.execution_error,
+            "missing quality evaluator provider",
+        )
+        mock_openai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
+    def test_invalid_max_output_tokens_returns_execution_error_without_provider_call(
+        self,
+        mock_openai_client,
+    ) -> None:
+        invalid_values = (True, False, "900", None, 0, -1)
+
+        for invalid_value in invalid_values:
+            with self.subTest(max_output_tokens=invalid_value):
+                raw_response = execute_quality_evaluator_prompt(
+                    _request(max_output_tokens=invalid_value)
+                )
+
+                self.assertEqual(
+                    raw_response.execution_error,
+                    "invalid quality evaluator max_output_tokens: "
+                    "must be a positive integer",
+                )
+                self.assertEqual(raw_response.raw_text, "")
+
         mock_openai_client.assert_not_called()
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
@@ -345,6 +388,7 @@ def _request(
     prompt_text: str = "Quality evaluator prompt.",
     provider: str = "openai",
     model: str = "quality-model",
+    max_output_tokens: object = 900,
     execution_metadata: dict | None = None,
 ) -> QualityEvaluatorExecutionRequest:
     return QualityEvaluatorExecutionRequest(
@@ -352,6 +396,7 @@ def _request(
         prompt_text=prompt_text,
         provider=provider,
         model=model,
+        max_output_tokens=max_output_tokens,
         execution_metadata=execution_metadata,
     )
 
