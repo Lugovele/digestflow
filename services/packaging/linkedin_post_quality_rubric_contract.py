@@ -125,6 +125,19 @@ class QualityEvaluatorRubricPayload:
             "automatic_fail_conditions": list(self.automatic_fail_conditions),
         }
 
+    def to_prompt_dict(self) -> dict[str, Any]:
+        return {
+            "rubric_version": self.rubric_version,
+            "criteria": dict(self.criteria),
+            "score_min": self.score_min,
+            "score_max": self.score_max,
+            "total_min": self.total_min,
+            "total_max": self.total_max,
+            "pass_threshold": self.pass_threshold,
+            "required_minimums": dict(self.required_minimums),
+            "automatic_fail_conditions": list(self.automatic_fail_conditions),
+        }
+
 
 def get_quality_evaluator_rubric_payload() -> QualityEvaluatorRubricPayload:
     return QualityEvaluatorRubricPayload(

@@ -1,19 +1,40 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import fields
 import inspect
 import json
 
 from django.test import SimpleTestCase
 
 from services.packaging import linkedin_post_prompt_renderers
+from services.packaging.linkedin_final_post_diagnostics import FinalPostDiagnostics
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
+from services.packaging.linkedin_post_editorial_boundary import PostGenerationMetadata
 from services.packaging.linkedin_post_flow_input_builders import (
     build_candidate_writer_input,
 )
+from services.packaging.linkedin_post_pipeline import FinalPostPayload
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
+    FINAL_POST_PAYLOAD_PROMPT_FIELDS,
+    QualityEvaluatorPromptRender,
+    SELECTED_EVIDENCE_PROMPT_FIELDS,
     render_candidate_writer_prompt_input,
+    render_quality_evaluator_prompt_input,
+)
+from services.packaging.linkedin_post_quality_rubric_contract import (
+    get_quality_evaluator_rubric_payload,
+)
+
+
+QUALITY_EVALUATOR_VARIABLES = (
+    "candidate_payload_json",
+    "post_brief_json",
+    "angle_decision_json",
+    "selected_evidence_json",
+    "quality_rubric_json",
 )
 
 
@@ -170,6 +191,530 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertNotIn("raw_article", source)
         self.assertNotIn("articles", source)
 
+    def test_render_quality_evaluator_prompt_input_returns_contract(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertIsInstance(render, QualityEvaluatorPromptRender)
+
+    def test_quality_evaluator_variables_are_exact_and_ordered(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertEqual(tuple(render.variables), QUALITY_EVALUATOR_VARIABLES)
+
+    def test_quality_evaluator_variable_values_are_strings(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        for value in render.variables.values():
+            self.assertIsInstance(value, str)
+
+    def test_quality_evaluator_variables_use_stable_json_format(self) -> None:
+        editorial_input = _post_editorial_input()
+        rubric = get_quality_evaluator_rubric_payload()
+
+        render = render_quality_evaluator_prompt_input(editorial_input, rubric)
+
+        self.assertEqual(
+            render.variables["candidate_payload_json"],
+            _stable_json(_canonical_candidate_payload(editorial_input.candidate_payload)),
+        )
+        self.assertEqual(
+            render.variables["post_brief_json"],
+            _stable_json(editorial_input.post_brief),
+        )
+        self.assertEqual(
+            render.variables["angle_decision_json"],
+            _stable_json(editorial_input.angle_decision),
+        )
+        self.assertEqual(
+            render.variables["selected_evidence_json"],
+            _stable_json(_prompt_selected_evidence(editorial_input.selected_evidence)),
+        )
+        self.assertEqual(
+            render.variables["quality_rubric_json"],
+            _stable_json(rubric.to_prompt_dict()),
+        )
+
+    def test_quality_evaluator_candidate_payload_json_contains_only_candidate_payload(self) -> None:
+        editorial_input = _post_editorial_input()
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertEqual(
+            json.loads(render.variables["candidate_payload_json"]),
+            _canonical_candidate_payload(editorial_input.candidate_payload),
+        )
+        self.assertIn("post_text", json.loads(render.variables["candidate_payload_json"]))
+
+    def test_quality_evaluator_candidate_payload_json_uses_final_post_payload_fields(self) -> None:
+        self.assertEqual(
+            set(FINAL_POST_PAYLOAD_PROMPT_FIELDS),
+            {field.name for field in fields(FinalPostPayload)},
+        )
+
+    def test_quality_evaluator_candidate_payload_json_filters_extra_fields(self) -> None:
+        extra_candidate_fields = {
+            "diagnostics": "diagnostics-sentinel",
+            "repair_reasons": ["repair-sentinel"],
+            "validation_error": "validation-error-extra-sentinel",
+            "provider": "provider-sentinel",
+            "model": "model-sentinel",
+            "token_usage": {"input_tokens": 100},
+            "cost_metadata": {"estimated_usd": "0.01"},
+            "run_id": "run-id-extra-sentinel",
+            "created_at": "created-at-extra-sentinel",
+            "attempt_history": "attempt-history-sentinel",
+            "decision": "decision-sentinel",
+            "debug": "debug-sentinel",
+            "runtime": "runtime-sentinel",
+            "raw_articles": ["raw-article-extra-sentinel"],
+            "source_articles": ["source-article-extra-sentinel"],
+            "internal_notes": "internal-notes-sentinel",
+        }
+        editorial_input = _post_editorial_input(
+            candidate_payload={
+                **_candidate_payload(),
+                **extra_candidate_fields,
+            }
+        )
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+        candidate_payload = json.loads(render.variables["candidate_payload_json"])
+        rendered_text = "\n".join([*render.variables.values(), render.input_text])
+
+        self.assertEqual(set(candidate_payload), set(FINAL_POST_PAYLOAD_PROMPT_FIELDS))
+        for forbidden in (
+            *extra_candidate_fields,
+            "diagnostics-sentinel",
+            "repair-sentinel",
+            "validation-error-extra-sentinel",
+            "provider-sentinel",
+            "model-sentinel",
+            "input_tokens",
+            "estimated_usd",
+            "run-id-extra-sentinel",
+            "created-at-extra-sentinel",
+            "attempt-history-sentinel",
+            "decision-sentinel",
+            "debug-sentinel",
+            "runtime-sentinel",
+            "raw-article-extra-sentinel",
+            "source-article-extra-sentinel",
+            "internal-notes-sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
+
+    def test_quality_evaluator_candidate_payload_json_does_not_invent_absent_optional_fields(self) -> None:
+        candidate_payload = _candidate_payload()
+        candidate_payload.pop("carousel_outline")
+        editorial_input = _post_editorial_input(candidate_payload=candidate_payload)
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        rendered_payload = json.loads(render.variables["candidate_payload_json"])
+
+        self.assertNotIn("carousel_outline", rendered_payload)
+        self.assertNotIn("carousel_outline", render.variables["candidate_payload_json"])
+
+    def test_quality_evaluator_serializes_complete_post_brief_snapshot(self) -> None:
+        editorial_input = _post_editorial_input()
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertEqual(
+            json.loads(render.variables["post_brief_json"]),
+            editorial_input.post_brief,
+        )
+        self.assertIn(
+            "evidence_to_use",
+            json.loads(render.variables["post_brief_json"]),
+        )
+
+    def test_quality_evaluator_serializes_complete_angle_decision_snapshot(self) -> None:
+        editorial_input = _post_editorial_input()
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertEqual(
+            json.loads(render.variables["angle_decision_json"]),
+            editorial_input.angle_decision,
+        )
+        self.assertEqual(
+            json.loads(render.variables["angle_decision_json"])["controlling_angle"],
+            "Make remote work explicit.",
+        )
+
+    def test_quality_evaluator_serializes_object_brief_and_angle_inputs(self) -> None:
+        editorial_input = _post_editorial_input(
+            post_brief=_post_brief(),
+            angle_decision=_angle_decision(),
+        )
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        post_brief = json.loads(render.variables["post_brief_json"])
+        angle_decision = json.loads(render.variables["angle_decision_json"])
+
+        self.assertEqual(post_brief["core_point"], "Use selected evidence.")
+        self.assertEqual(post_brief["evidence_to_use"][0]["evidence_id"], "a0-summary")
+        self.assertEqual(
+            angle_decision["controlling_angle"],
+            "Make remote work explicit.",
+        )
+        self.assertEqual(
+            angle_decision["supporting_evidence_ids"],
+            ["a0-summary", "a1-kp0"],
+        )
+
+    def test_quality_evaluator_selected_evidence_order_text_and_role_are_preserved(self) -> None:
+        editorial_input = _post_editorial_input()
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+        selected_evidence = json.loads(render.variables["selected_evidence_json"])
+
+        self.assertEqual(
+            [item["evidence_id"] for item in selected_evidence],
+            ["a0-summary", "a1-kp0"],
+        )
+        self.assertEqual(
+            [item["evidence_text"] for item in selected_evidence],
+            [
+                "Remote teams need clear operating agreements.",
+                "Isolation can rise when remote work is unmanaged. café",
+            ],
+        )
+        self.assertEqual(
+            [item["role_in_post"] for item in selected_evidence],
+            ["opening support", "practical tension"],
+        )
+
+    def test_quality_evaluator_selected_evidence_json_filters_extra_fields(self) -> None:
+        first_extra_fields = {
+            "source_url": "https://example.invalid/source",
+            "article_id": "article-id-sentinel",
+            "article": {"title": "raw article title sentinel"},
+            "raw_article": "raw article body sentinel",
+            "source_summary": "source summary sentinel",
+            "source_title": "source title sentinel",
+            "source_index": 0,
+            "provider": "evidence-provider-sentinel",
+            "score": 99,
+            "debug": "evidence-debug-sentinel",
+            "internal_notes": "evidence-internal-notes-sentinel",
+        }
+        second_extra_fields = {
+            "source_url": "https://example.invalid/second",
+            "article_id": "second-article-id-sentinel",
+            "article": {"title": "second raw article title sentinel"},
+            "raw_article": "second raw article body sentinel",
+            "source_summary": "second source summary sentinel",
+            "source_title": "second source sentinel",
+            "source_index": 1,
+            "provider": "second-evidence-provider-sentinel",
+            "score": 88,
+            "debug": "second-evidence-debug-sentinel",
+            "internal_notes": "second-evidence-internal-notes-sentinel",
+        }
+        editorial_input = _post_editorial_input(
+            selected_evidence=[
+                {
+                    "evidence_id": "a0-summary",
+                    "evidence_text": "Remote teams need clear operating agreements.",
+                    "role_in_post": "opening support",
+                    **first_extra_fields,
+                },
+                {
+                    "evidence_id": "a1-kp0",
+                    "evidence_text": "Isolation can rise when remote work is unmanaged.",
+                    "role_in_post": "practical tension",
+                    **second_extra_fields,
+                },
+            ]
+        )
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+        selected_evidence = json.loads(render.variables["selected_evidence_json"])
+        rendered_text = "\n".join([*render.variables.values(), render.input_text])
+
+        for item in selected_evidence:
+            self.assertEqual(set(item), set(SELECTED_EVIDENCE_PROMPT_FIELDS))
+        self.assertEqual(
+            [item["evidence_id"] for item in selected_evidence],
+            ["a0-summary", "a1-kp0"],
+        )
+        self.assertEqual(
+            [item["evidence_text"] for item in selected_evidence],
+            [
+                "Remote teams need clear operating agreements.",
+                "Isolation can rise when remote work is unmanaged.",
+            ],
+        )
+        self.assertEqual(
+            [item["role_in_post"] for item in selected_evidence],
+            ["opening support", "practical tension"],
+        )
+        for extra_field in (*first_extra_fields, *second_extra_fields):
+            with self.subTest(extra_field=extra_field):
+                self.assertNotIn(extra_field, render.variables["selected_evidence_json"])
+        for forbidden in (
+            "https://example.invalid/source",
+            "article-id-sentinel",
+            "raw article title sentinel",
+            "raw article body sentinel",
+            "source summary sentinel",
+            "source title sentinel",
+            "evidence-provider-sentinel",
+            "evidence-debug-sentinel",
+            "evidence-internal-notes-sentinel",
+            "https://example.invalid/second",
+            "second-article-id-sentinel",
+            "second raw article title sentinel",
+            "second raw article body sentinel",
+            "second source summary sentinel",
+            "second source sentinel",
+            "second-evidence-provider-sentinel",
+            "second-evidence-debug-sentinel",
+            "second-evidence-internal-notes-sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
+
+    def test_quality_evaluator_rubric_json_uses_prompt_dict_not_to_dict(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        rubric_json = json.loads(render.variables["quality_rubric_json"])
+
+        self.assertIn("rubric_version", rubric_json)
+        self.assertNotIn("source_document", rubric_json)
+
+    def test_quality_evaluator_unicode_is_preserved(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertIn("café", render.variables["selected_evidence_json"])
+        self.assertIn("человечность", render.variables["candidate_payload_json"])
+
+    def test_quality_evaluator_dictionary_keys_are_sorted(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        candidate_payload_json = render.variables["candidate_payload_json"]
+
+        self.assertLess(
+            candidate_payload_json.index('"carousel_outline"'),
+            candidate_payload_json.index('"post_text"'),
+        )
+
+    def test_quality_evaluator_input_text_has_exact_section_order(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+        headers = [
+            "## CANDIDATE_PAYLOAD_JSON",
+            "## POST_BRIEF_JSON",
+            "## ANGLE_DECISION_JSON",
+            "## SELECTED_EVIDENCE_JSON",
+            "## QUALITY_RUBRIC_JSON",
+        ]
+
+        self.assertEqual(
+            [line for line in render.input_text.splitlines() if line.startswith("## ")],
+            headers,
+        )
+        for header in headers:
+            self.assertEqual(render.input_text.count(header), 1)
+        self.assertNotIn("```", render.input_text)
+
+    def test_quality_evaluator_every_serialized_variable_appears_once_in_input_text(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        for value in render.variables.values():
+            self.assertEqual(render.input_text.count(value), 1)
+
+    def test_quality_evaluator_does_not_serialize_full_post_editorial_input(self) -> None:
+        rendered_text = _rendered_quality_evaluator_text()
+
+        for forbidden in (
+            "final_payload_validation_passed",
+            "final_payload_validation_error",
+            "diagnostics",
+            "repair_reasons",
+            "generation_metadata",
+            "prompt_metadata",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
+
+    def test_quality_evaluator_excludes_audit_runtime_fields(self) -> None:
+        rendered_text = _rendered_quality_evaluator_text()
+
+        for forbidden in (
+            "schema_validation_passed",
+            "system_linkedin_ready",
+            "repair-reason-sentinel",
+            "candidate-writer-prompt",
+            "provider-sentinel",
+            "model-sentinel",
+            "input_tokens",
+            "estimated_usd",
+            "run-sentinel",
+            "2026-07-05T10:00:00Z",
+            "source_document",
+            "raw article sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
+
+    def test_quality_evaluator_prompt_metadata_is_explicit(self) -> None:
+        prompt_metadata = PromptMetadata(
+            prompt_name="final_post_quality_evaluator",
+            prompt_version="1.0",
+            prompt_path="prompts/linkedin/final_post_quality_evaluator.txt",
+        )
+
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+            prompt_metadata=prompt_metadata,
+        )
+
+        self.assertEqual(render.prompt_name, "final_post_quality_evaluator")
+        self.assertEqual(render.prompt_version, "1.0")
+        self.assertEqual(
+            render.prompt_path,
+            "prompts/linkedin/final_post_quality_evaluator.txt",
+        )
+
+    def test_quality_evaluator_prompt_metadata_is_not_copied_from_editorial_input(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        self.assertIsNone(render.prompt_name)
+        self.assertIsNone(render.prompt_version)
+        self.assertIsNone(render.prompt_path)
+        self.assertNotIn("candidate-writer-prompt", json.dumps(render.to_dict()))
+
+    def test_quality_evaluator_to_dict_output_is_json_serializable(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+            prompt_metadata=PromptMetadata(
+                prompt_name="final_post_quality_evaluator",
+                prompt_version="1.0",
+                prompt_path="prompts/linkedin/final_post_quality_evaluator.txt",
+            ),
+        )
+
+        serialized = json.dumps(render.to_dict(), ensure_ascii=False, sort_keys=True)
+
+        self.assertIn("final_post_quality_evaluator", serialized)
+
+    def test_quality_evaluator_renderer_does_not_mutate_inputs(self) -> None:
+        editorial_input = _post_editorial_input()
+        rubric = get_quality_evaluator_rubric_payload()
+        before_editorial = editorial_input.to_dict()
+        before_rubric = rubric.to_dict()
+
+        render_quality_evaluator_prompt_input(editorial_input, rubric)
+
+        self.assertEqual(editorial_input.to_dict(), before_editorial)
+        self.assertEqual(rubric.to_dict(), before_rubric)
+
+    def test_quality_evaluator_render_output_is_independent_from_source_structures(self) -> None:
+        editorial_input = _post_editorial_input()
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        mutation_sentinel = "MUTATED_AFTER_RENDER_SENTINEL"
+        editorial_input.candidate_payload["post_text"] = mutation_sentinel
+        editorial_input.post_brief["core_point"] = mutation_sentinel
+        editorial_input.angle_decision["controlling_angle"] = mutation_sentinel
+        editorial_input.selected_evidence[0]["evidence_text"] = mutation_sentinel
+
+        self.assertIn("Remote work needs explicit systems", render.input_text)
+        self.assertIn("Make remote work explicit.", render.input_text)
+        self.assertIn("Remote teams need clear operating agreements.", render.input_text)
+        self.assertNotIn(mutation_sentinel, render.input_text)
+
+    def test_quality_evaluator_to_dict_variables_are_defensively_copied(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        render_dict = render.to_dict()
+        render_dict["variables"]["candidate_payload_json"] = "changed"
+
+        self.assertNotEqual(render.variables["candidate_payload_json"], "changed")
+
+    def test_quality_evaluator_renderer_does_not_import_execution_registry_or_runtime_wiring(self) -> None:
+        source = inspect.getsource(linkedin_post_prompt_renderers)
+
+        for forbidden in (
+            "OpenAIClient",
+            "generate_text",
+            "call_command",
+            "linkedin_post_prompt_registry",
+            "normalize_quality_review_result",
+            "FinalPostDecisionController",
+            "TargetedRepairPlan",
+            "FinalPostAttempt",
+            "ContentPackage",
+            "services.packaging.generator",
+            "generate_content_package_for_digest",
+            "django",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
+
 
 def _candidate_input(prompt_metadata=None):
     return build_candidate_writer_input(
@@ -209,4 +754,156 @@ def _prompt_metadata() -> PromptMetadata:
         prompt_name="final_post_candidate_from_brief",
         prompt_version="1.0",
         prompt_path="prompts/linkedin/final_post_from_brief.txt",
+    )
+
+
+def _post_editorial_input(
+    *,
+    candidate_payload=None,
+    post_brief=None,
+    angle_decision=None,
+    selected_evidence=None,
+) -> PostEditorialInput:
+    return PostEditorialInput(
+        candidate_payload=candidate_payload or {
+            "post_text": "Remote work needs explicit systems. человечность",
+            "hook_variants": ["Remote work fails quietly."],
+            "cta_variants": ["What system changed remote work for your team?"],
+            "hashtags": ["#RemoteWork"],
+            "carousel_outline": [],
+            "quality_checks": {
+                "linkedin_ready": True,
+                "uses_only_provided_facts": True,
+                "has_clear_point_of_view": True,
+            },
+        },
+        post_brief=post_brief or {
+            "core_point": "Use selected evidence.",
+            "evidence_to_use": [
+                {
+                    "evidence_id": "a0-summary",
+                    "evidence_text": "Remote teams need clear operating agreements.",
+                    "role_in_post": "opening support",
+                },
+                {
+                    "evidence_id": "a1-kp0",
+                    "evidence_text": "Isolation can rise when remote work is unmanaged. café",
+                    "role_in_post": "practical tension",
+                },
+            ],
+        },
+        angle_decision=angle_decision or {
+            "controlling_angle": "Make remote work explicit.",
+            "author_position": "Remote policy is an operating system.",
+            "reader_problem": "Hybrid teams often rely on implicit norms.",
+            "main_tension": "Flexibility can create isolation.",
+            "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+        },
+        selected_evidence=selected_evidence or [
+            {
+                "evidence_id": "a0-summary",
+                "evidence_text": "Remote teams need clear operating agreements.",
+                "role_in_post": "opening support",
+            },
+            {
+                "evidence_id": "a1-kp0",
+                "evidence_text": "Isolation can rise when remote work is unmanaged. café",
+                "role_in_post": "practical tension",
+            },
+        ],
+        final_payload_validation_passed=True,
+        final_payload_validation_error="validation-error-sentinel",
+        diagnostics=FinalPostDiagnostics(
+            schema_validation_passed=True,
+            schema_validation_error="schema-error-sentinel",
+            missing_quality_check_keys=[],
+            non_boolean_quality_check_keys=[],
+            evidence_id_leaks=[],
+            scaffold_phrase_leaks=[],
+            source_summary_phrase_leaks=[],
+            model_claimed_linkedin_ready=True,
+            deterministic_checks_passed=True,
+            system_linkedin_ready=True,
+            repair_reasons=["repair-reason-sentinel"],
+        ),
+        repair_reasons=["repair-reason-sentinel"],
+        generation_metadata=PostGenerationMetadata(
+            provider="provider-sentinel",
+            model="model-sentinel",
+            run_id="run-sentinel",
+            created_at="2026-07-05T10:00:00Z",
+            token_usage={"input_tokens": 100},
+            cost_metadata={"estimated_usd": "0.01"},
+        ),
+        prompt_metadata=PromptMetadata(
+            prompt_name="candidate-writer-prompt",
+            prompt_version="candidate-version",
+            prompt_path="prompts/linkedin/final_post_from_brief.txt",
+        ),
+    )
+
+
+def _candidate_payload() -> dict:
+    return {
+        "post_text": "Remote work needs explicit systems.",
+        "hook_variants": ["Remote work fails quietly."],
+        "cta_variants": ["What system changed remote work for your team?"],
+        "hashtags": ["#RemoteWork"],
+        "carousel_outline": [],
+        "quality_checks": {
+            "linkedin_ready": True,
+            "uses_only_provided_facts": True,
+            "has_clear_point_of_view": True,
+        },
+    }
+
+
+def _selected_evidence() -> list[dict]:
+    return [
+        {
+            "evidence_id": "a0-summary",
+            "evidence_text": "Remote teams need clear operating agreements.",
+            "role_in_post": "opening support",
+        },
+        {
+            "evidence_id": "a1-kp0",
+            "evidence_text": "Isolation can rise when remote work is unmanaged. cafГ©",
+            "role_in_post": "practical tension",
+        },
+    ]
+
+
+def _canonical_candidate_payload(candidate_payload: dict) -> dict:
+    return {
+        field_name: candidate_payload[field_name]
+        for field_name in FINAL_POST_PAYLOAD_PROMPT_FIELDS
+        if field_name in candidate_payload
+    }
+
+
+def _prompt_selected_evidence(selected_evidence: list[dict]) -> list[dict]:
+    return [
+        {
+            field_name: item[field_name]
+            for field_name in SELECTED_EVIDENCE_PROMPT_FIELDS
+            if field_name in item
+        }
+        for item in selected_evidence
+    ]
+
+
+def _rendered_quality_evaluator_text() -> str:
+    render = render_quality_evaluator_prompt_input(
+        _post_editorial_input(),
+        get_quality_evaluator_rubric_payload(),
+    )
+    return "\n".join([*render.variables.values(), render.input_text])
+
+
+def _stable_json(value) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
     )

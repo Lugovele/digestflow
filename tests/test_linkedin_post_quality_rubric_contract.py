@@ -208,6 +208,102 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         )
         self.assertEqual(payload_dict["pass_threshold"], 36)
 
+    def test_to_prompt_dict_returns_dictionary(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        self.assertIsInstance(payload.to_prompt_dict(), dict)
+
+    def test_to_prompt_dict_preserves_model_facing_rubric_fields(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        self.assertEqual(
+            tuple(payload.to_prompt_dict()),
+            (
+                "rubric_version",
+                "criteria",
+                "score_min",
+                "score_max",
+                "total_min",
+                "total_max",
+                "pass_threshold",
+                "required_minimums",
+                "automatic_fail_conditions",
+            ),
+        )
+
+    def test_to_prompt_dict_excludes_source_document(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        self.assertNotIn("source_document", payload.to_prompt_dict())
+
+    def test_to_prompt_dict_preserves_order_and_values(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+        prompt_dict = payload.to_prompt_dict()
+
+        self.assertEqual(prompt_dict["rubric_version"], "1.0")
+        self.assertEqual(tuple(prompt_dict["criteria"]), EXPECTED_CRITERIA)
+        self.assertEqual(prompt_dict["score_min"], 1)
+        self.assertEqual(prompt_dict["score_max"], 5)
+        self.assertEqual(prompt_dict["total_min"], 9)
+        self.assertEqual(prompt_dict["total_max"], 45)
+        self.assertEqual(prompt_dict["pass_threshold"], 36)
+        self.assertEqual(
+            tuple(prompt_dict["required_minimums"]),
+            tuple(EXPECTED_REQUIRED_MINIMUMS),
+        )
+        self.assertEqual(
+            prompt_dict["automatic_fail_conditions"],
+            list(EXPECTED_AUTOMATIC_FAIL_CONDITIONS),
+        )
+
+    def test_to_prompt_dict_is_json_serializable(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        serialized = json.dumps(
+            payload.to_prompt_dict(),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+
+        self.assertIn("human_voice", serialized)
+
+    def test_to_prompt_dict_mutation_does_not_mutate_source_payload(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+        prompt_dict = payload.to_prompt_dict()
+
+        prompt_dict["criteria"]["hook"] = "changed"
+        prompt_dict["required_minimums"]["hook"] = 1
+        prompt_dict["automatic_fail_conditions"].append("changed")
+
+        self.assertNotEqual(payload.criteria["hook"], "changed")
+        self.assertEqual(payload.required_minimums["hook"], 4)
+        self.assertNotIn("changed", payload.automatic_fail_conditions)
+
+    def test_repeated_to_prompt_dict_calls_return_independent_nested_values(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+        first = payload.to_prompt_dict()
+        second = payload.to_prompt_dict()
+
+        first["criteria"]["hook"] = "changed"
+        first["required_minimums"]["hook"] = 1
+        first["automatic_fail_conditions"].append("changed")
+
+        self.assertNotEqual(second["criteria"]["hook"], "changed")
+        self.assertEqual(second["required_minimums"]["hook"], 4)
+        self.assertNotIn("changed", second["automatic_fail_conditions"])
+        self.assertIsNot(first["criteria"], second["criteria"])
+        self.assertIsNot(first["required_minimums"], second["required_minimums"])
+        self.assertIsNot(
+            first["automatic_fail_conditions"],
+            second["automatic_fail_conditions"],
+        )
+
+    def test_to_dict_still_includes_provenance(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        self.assertIn("source_document", payload.to_dict())
+
     def test_serialized_mutation_does_not_mutate_source_payload(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
         payload_dict = payload.to_dict()
