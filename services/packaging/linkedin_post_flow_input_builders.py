@@ -4,9 +4,18 @@ from __future__ import annotations
 from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import is_dataclass
+import copy
 from typing import Any
 
-from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_editorial_boundary import (
+    PostEditorialInput,
+    PostGenerationMetadata,
+    PromptMetadata,
+)
+from services.packaging.linkedin_post_flow_handoffs import (
+    CandidateWriterOutput,
+    DeterministicGateOutput,
+)
 
 
 @dataclass(frozen=True)
@@ -43,18 +52,201 @@ def build_candidate_writer_input(
     )
 
 
+def build_post_editorial_input(
+    *,
+    post_brief: object | dict,
+    angle_decision: object | dict,
+    candidate_output: CandidateWriterOutput,
+    gate_output: DeterministicGateOutput,
+    generation_metadata: PostGenerationMetadata | None = None,
+    prompt_metadata: PromptMetadata | None = None,
+) -> PostEditorialInput:
+    _require_passing_gate(gate_output)
+    _require_matching_candidate_payload(candidate_output, gate_output)
+
+    selected_evidence = _selected_evidence_from_post_brief(post_brief)
+    selected_evidence_ids = tuple(item["evidence_id"] for item in selected_evidence)
+    if selected_evidence_ids != gate_output.selected_evidence_ids:
+        raise ValueError(
+            "PostBrief.evidence_to_use evidence IDs must match "
+            "DeterministicGateOutput.selected_evidence_ids."
+        )
+
+    resolved_generation_metadata = _build_generation_metadata(
+        candidate_output,
+        generation_metadata,
+    )
+    resolved_prompt_metadata = _build_prompt_metadata(
+        candidate_output,
+        prompt_metadata,
+    )
+
+    return PostEditorialInput(
+        candidate_payload=copy.deepcopy(gate_output.payload),
+        post_brief=_serialize_input_value(post_brief),
+        angle_decision=_serialize_input_value(angle_decision),
+        selected_evidence=[copy.deepcopy(item) for item in selected_evidence],
+        final_payload_validation_passed=gate_output.validation_passed,
+        final_payload_validation_error=gate_output.validation_error,
+        diagnostics=gate_output.diagnostics,
+        repair_reasons=list(gate_output.diagnostics.repair_reasons),
+        generation_metadata=resolved_generation_metadata,
+        prompt_metadata=resolved_prompt_metadata,
+    )
+
+
 def _normalize_selected_evidence_item(item: object | dict) -> dict[str, str]:
-    return {
-        "evidence_id": _get_required_value(item, "evidence_id"),
-        "evidence_text": _get_required_value(item, "evidence_text"),
-        "role_in_post": _get_required_value(item, "role_in_post"),
+    normalized = {
+        "evidence_id": _get_required_value(item, "evidence_id", "PostBrief.evidence_to_use"),
+        "evidence_text": _get_required_value(item, "evidence_text", "PostBrief.evidence_to_use"),
+        "role_in_post": _get_required_value(item, "role_in_post", "PostBrief.evidence_to_use"),
     }
+    for field_name, field_value in normalized.items():
+        if not isinstance(field_value, str) or not field_value.strip():
+            raise ValueError(
+                f"PostBrief.evidence_to_use.{field_name} must be a non-empty string."
+            )
+    return normalized
 
 
-def _get_required_value(value: object | dict, field_name: str) -> Any:
+def _selected_evidence_from_post_brief(post_brief: object | dict) -> tuple[dict[str, str], ...]:
+    evidence_to_use = _get_field(post_brief, "evidence_to_use")
+    if not isinstance(evidence_to_use, (list, tuple)) or not evidence_to_use:
+        raise ValueError("PostBrief.evidence_to_use must be a non-empty list or tuple.")
+    selected_evidence = tuple(
+        _normalize_selected_evidence_item(item)
+        for item in evidence_to_use
+    )
+    evidence_ids = [item["evidence_id"] for item in selected_evidence]
+    if len(set(evidence_ids)) != len(evidence_ids):
+        raise ValueError("PostBrief.evidence_to_use evidence IDs must be unique.")
+    return selected_evidence
+
+
+def _get_required_value(value: object | dict, field_name: str, owner_name: str = "value") -> Any:
+    field_value = _get_field(value, field_name)
+    if field_value is None:
+        raise ValueError(f"{owner_name}.{field_name} must be present.")
+    return field_value
+
+
+def _get_field(value: object | dict, field_name: str) -> Any:
     if isinstance(value, dict):
-        return value[field_name]
-    return getattr(value, field_name)
+        return value.get(field_name)
+    return getattr(value, field_name, None)
+
+
+def _require_passing_gate(gate_output: DeterministicGateOutput) -> None:
+    if gate_output.validation_passed is not True:
+        raise ValueError("DeterministicGateOutput.validation_passed must be True.")
+    if gate_output.diagnostics.schema_validation_passed is not True:
+        raise ValueError("Deterministic diagnostics schema validation must pass.")
+    if gate_output.diagnostics.system_linkedin_ready is not True:
+        raise ValueError("Deterministic diagnostics system_linkedin_ready must be True.")
+    if gate_output.diagnostics.repair_reasons:
+        raise ValueError("Deterministic diagnostics repair_reasons must be empty.")
+
+
+def _require_matching_candidate_payload(
+    candidate_output: CandidateWriterOutput,
+    gate_output: DeterministicGateOutput,
+) -> None:
+    if candidate_output.payload != gate_output.payload:
+        raise ValueError(
+            "CandidateWriterOutput.payload must match DeterministicGateOutput.payload."
+        )
+
+
+def _build_generation_metadata(
+    candidate_output: CandidateWriterOutput,
+    supplied_metadata: PostGenerationMetadata | None,
+) -> PostGenerationMetadata:
+    provider = _require_metadata_string(candidate_output.provider, "provider")
+    model = _require_metadata_string(candidate_output.model, "model")
+    if supplied_metadata is not None:
+        if supplied_metadata.provider != provider or supplied_metadata.model != model:
+            raise ValueError(
+                "PostGenerationMetadata provider/model must match CandidateWriterOutput."
+            )
+        token_usage = _resolve_generation_metadata_value(
+            candidate_output.token_usage,
+            supplied_metadata.token_usage,
+            "token_usage",
+        )
+        cost_metadata = _resolve_generation_metadata_value(
+            candidate_output.cost_metadata,
+            supplied_metadata.cost_metadata,
+            "cost_metadata",
+        )
+        return PostGenerationMetadata(
+            provider=provider,
+            model=model,
+            run_id=supplied_metadata.run_id,
+            created_at=supplied_metadata.created_at,
+            token_usage=token_usage,
+            cost_metadata=cost_metadata,
+        )
+
+    return PostGenerationMetadata(
+        provider=provider,
+        model=model,
+        run_id=None,
+        created_at=None,
+        token_usage=copy.deepcopy(candidate_output.token_usage),
+        cost_metadata=copy.deepcopy(candidate_output.cost_metadata),
+    )
+
+
+def _resolve_generation_metadata_value(
+    candidate_value: dict | None,
+    supplied_value: dict | None,
+    field_name: str,
+) -> dict | None:
+    if candidate_value is not None and supplied_value is not None:
+        if candidate_value != supplied_value:
+            raise ValueError(
+                f"CandidateWriterOutput {field_name} conflicts with "
+                f"PostGenerationMetadata.{field_name}."
+            )
+        return copy.deepcopy(candidate_value)
+    if candidate_value is not None:
+        return copy.deepcopy(candidate_value)
+    return copy.deepcopy(supplied_value)
+
+
+def _build_prompt_metadata(
+    candidate_output: CandidateWriterOutput,
+    supplied_metadata: PromptMetadata | None,
+) -> PromptMetadata:
+    prompt_name = _require_metadata_string(candidate_output.prompt_name, "prompt_name")
+    prompt_version = _require_metadata_string(
+        candidate_output.prompt_version,
+        "prompt_version",
+    )
+    if supplied_metadata is not None:
+        if (
+            supplied_metadata.prompt_name != prompt_name
+            or supplied_metadata.prompt_version != prompt_version
+        ):
+            raise ValueError(
+                "PromptMetadata name/version must match CandidateWriterOutput."
+            )
+        return PromptMetadata(
+            prompt_name=prompt_name,
+            prompt_version=prompt_version,
+            prompt_path=supplied_metadata.prompt_path,
+        )
+    return PromptMetadata(
+        prompt_name=prompt_name,
+        prompt_version=prompt_version,
+        prompt_path=None,
+    )
+
+
+def _require_metadata_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"CandidateWriterOutput.{field_name} must be a non-empty string.")
+    return value
 
 
 def _serialize_input_value(value: Any) -> Any:
