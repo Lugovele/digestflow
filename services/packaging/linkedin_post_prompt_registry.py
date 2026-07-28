@@ -6,6 +6,7 @@ from typing import Any
 
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_flow_access import ROLE_CANDIDATE_WRITER
+from services.packaging.linkedin_post_flow_access import ROLE_QUALITY_EVALUATOR
 from services.packaging.linkedin_post_flow_access import get_access_contract
 
 
@@ -27,6 +28,7 @@ MODEL_ROLE_REPAIR_PRIMARY = "final_post_repair_primary"
 MODEL_ROLE_FACTUALITY_REVIEWER_PRIMARY = "final_post_factuality_reviewer_primary"
 
 PROMPT_FINAL_POST_CANDIDATE_FROM_BRIEF = "final_post_candidate_from_brief"
+PROMPT_FINAL_POST_QUALITY_EVALUATOR = "final_post_quality_evaluator"
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,17 @@ FINAL_POST_PROMPT_REGISTRY = (
         output_contract="FinalPostPayload",
         model_role=MODEL_ROLE_CANDIDATE_WRITER_PRIMARY,
         status=PROMPT_STATUS_BASELINE,
+    ),
+    FinalPostPromptContract(
+        prompt_name=PROMPT_FINAL_POST_QUALITY_EVALUATOR,
+        prompt_version="1.0",
+        prompt_path="prompts/linkedin/final_post_quality_evaluator.txt",
+        agent_role=ROLE_QUALITY_EVALUATOR,
+        access_mode=get_access_contract(ROLE_QUALITY_EVALUATOR).access_mode,
+        input_contract="PostEditorialInput",
+        output_contract="QualityReviewResult",
+        model_role=MODEL_ROLE_QUALITY_EVALUATOR_PRIMARY,
+        status=PROMPT_STATUS_EXPERIMENTAL,
     ),
 )
 
