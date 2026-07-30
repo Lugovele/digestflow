@@ -20,9 +20,11 @@ from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
     FINAL_POST_PAYLOAD_PROMPT_FIELDS,
     QualityEvaluatorPromptRender,
+    RepairWriterPromptRender,
     SELECTED_EVIDENCE_PROMPT_FIELDS,
     render_candidate_writer_prompt_input,
     render_quality_evaluator_prompt_input,
+    render_repair_writer_prompt_input,
 )
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
@@ -35,6 +37,17 @@ QUALITY_EVALUATOR_VARIABLES = (
     "angle_decision_json",
     "selected_evidence_json",
     "quality_rubric_json",
+)
+
+REPAIR_WRITER_VARIABLES = (
+    "original_candidate_payload_json",
+    "post_brief_json",
+    "angle_decision_json",
+    "selected_evidence_json",
+    "deterministic_findings_json",
+    "quality_findings_json",
+    "repair_instruction_json",
+    "repair_attempt_json",
 )
 
 
@@ -715,6 +728,148 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
 
+    def test_render_repair_writer_prompt_input_returns_contract(self) -> None:
+        render = _repair_writer_render()
+
+        self.assertIsInstance(render, RepairWriterPromptRender)
+        self.assertEqual(tuple(render.variables), REPAIR_WRITER_VARIABLES)
+
+    def test_repair_writer_render_preserves_selected_evidence_boundary(self) -> None:
+        editorial_input = _post_editorial_input()
+        render = _repair_writer_render()
+
+        selected_evidence = json.loads(render.variables["selected_evidence_json"])
+
+        self.assertEqual(
+            [item["evidence_id"] for item in selected_evidence],
+            ["a0-summary", "a1-kp0"],
+        )
+        self.assertEqual(
+            [item["evidence_text"] for item in selected_evidence],
+            [item["evidence_text"] for item in editorial_input.selected_evidence],
+        )
+        self.assertEqual(
+            [item["role_in_post"] for item in selected_evidence],
+            ["opening support", "practical tension"],
+        )
+
+    def test_repair_writer_render_filters_candidate_payload_runtime_fields(self) -> None:
+        render = _repair_writer_render(
+            original_candidate_payload={
+                **_candidate_payload(),
+                "provider": "provider-sentinel",
+                "model": "model-sentinel",
+                "raw_provider_response": "raw-provider-sentinel",
+                "token_usage": {"input_tokens": 100},
+                "debug": "debug-sentinel",
+            }
+        )
+        rendered_text = "\n".join([*render.variables.values(), render.input_text])
+
+        self.assertEqual(
+            set(json.loads(render.variables["original_candidate_payload_json"])),
+            set(FINAL_POST_PAYLOAD_PROMPT_FIELDS),
+        )
+        for forbidden in (
+            "provider-sentinel",
+            "model-sentinel",
+            "raw-provider-sentinel",
+            "input_tokens",
+            "debug-sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
+
+    def test_repair_writer_render_filters_brief_and_angle_context(self) -> None:
+        render = _repair_writer_render(
+            post_brief={
+                **_post_editorial_input().post_brief,
+                "raw_articles": ["brief-raw-article-sentinel"],
+                "debug": {"trace": "brief-debug-sentinel"},
+                "runtime_metadata": "brief-runtime-sentinel",
+                "evidence_to_use": [
+                    {
+                        "evidence_id": "a0-summary",
+                        "evidence_text": "Remote teams need clear operating agreements.",
+                        "role_in_post": "opening support",
+                        "raw_article": "selected-raw-article-sentinel",
+                        "debug": "selected-debug-sentinel",
+                    },
+                    {
+                        "evidence_id": "a1-kp0",
+                        "evidence_text": "Isolation can rise when remote work is unmanaged.",
+                        "role_in_post": "practical tension",
+                    },
+                    {
+                        "evidence_id": "unselected-ev",
+                        "evidence_text": "Unselected evidence sentinel.",
+                        "role_in_post": "must_not_enter_prompt",
+                    },
+                ],
+            },
+            angle_decision={
+                **_post_editorial_input().angle_decision,
+                "supporting_evidence_ids": ["a0-summary", "unselected-ev", "a1-kp0"],
+                "raw_articles": ["angle-raw-article-sentinel"],
+                "debug": {"trace": "angle-debug-sentinel"},
+                "provider_metadata": "angle-provider-sentinel",
+                "unselected_evidence": "angle-unselected-evidence-sentinel",
+            },
+        )
+        post_brief = json.loads(render.variables["post_brief_json"])
+        angle_decision = json.loads(render.variables["angle_decision_json"])
+        rendered_text = "\n".join([*render.variables.values(), render.input_text])
+
+        self.assertEqual(
+            [item["evidence_id"] for item in post_brief["evidence_to_use"]],
+            ["a0-summary", "a1-kp0"],
+        )
+        self.assertEqual(
+            angle_decision["supporting_evidence_ids"],
+            ["a0-summary", "a1-kp0"],
+        )
+        for item in post_brief["evidence_to_use"]:
+            self.assertEqual(set(item), set(SELECTED_EVIDENCE_PROMPT_FIELDS))
+        for forbidden in (
+            "brief-raw-article-sentinel",
+            "brief-debug-sentinel",
+            "brief-runtime-sentinel",
+            "selected-raw-article-sentinel",
+            "selected-debug-sentinel",
+            "unselected-ev",
+            "Unselected evidence sentinel.",
+            "must_not_enter_prompt",
+            "angle-raw-article-sentinel",
+            "angle-debug-sentinel",
+            "angle-provider-sentinel",
+            "angle-unselected-evidence-sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
+
+    def test_repair_writer_render_includes_only_structured_repair_facts(self) -> None:
+        render = _repair_writer_render()
+        repair_findings = json.loads(render.variables["quality_findings_json"])
+        repair_instruction = json.loads(render.variables["repair_instruction_json"])
+
+        self.assertEqual(repair_findings["failed_criteria"], ["human_voice"])
+        self.assertEqual(repair_instruction["repair_type"], "editorial")
+        self.assertIn("QUALITY_FINDINGS_JSON", render.input_text)
+        self.assertIn("REPAIR_INSTRUCTION_JSON", render.input_text)
+
+    def test_repair_writer_render_prompt_metadata_is_explicit(self) -> None:
+        prompt_metadata = PromptMetadata(
+            prompt_name="final_post_repair_writer",
+            prompt_version="1.0",
+            prompt_path=None,
+        )
+
+        render = _repair_writer_render(prompt_metadata=prompt_metadata)
+
+        self.assertEqual(render.prompt_name, "final_post_repair_writer")
+        self.assertEqual(render.prompt_version, "1.0")
+        self.assertIsNone(render.prompt_path)
+
 
 def _candidate_input(prompt_metadata=None):
     return build_candidate_writer_input(
@@ -898,6 +1053,39 @@ def _rendered_quality_evaluator_text() -> str:
         get_quality_evaluator_rubric_payload(),
     )
     return "\n".join([*render.variables.values(), render.input_text])
+
+
+def _repair_writer_render(
+    *,
+    original_candidate_payload=None,
+    post_brief=None,
+    angle_decision=None,
+    selected_evidence=None,
+    prompt_metadata=None,
+) -> RepairWriterPromptRender:
+    return render_repair_writer_prompt_input(
+        original_candidate_payload=original_candidate_payload or _candidate_payload(),
+        post_brief=post_brief or _post_editorial_input().post_brief,
+        angle_decision=angle_decision or _post_editorial_input().angle_decision,
+        selected_evidence=selected_evidence or _post_editorial_input().selected_evidence,
+        deterministic_findings={
+            "validation_passed": True,
+            "repair_reasons": [],
+        },
+        quality_findings={
+            "scores": {
+                "human_voice": 3,
+            },
+            "failed_criteria": ["human_voice"],
+        },
+        repair_instruction={
+            "repair_type": "editorial",
+            "repair_instruction": "Make the post sound less generic.",
+        },
+        attempt_index=1,
+        max_attempts=2,
+        prompt_metadata=prompt_metadata,
+    )
 
 
 def _stable_json(value) -> str:

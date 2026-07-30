@@ -1,0 +1,743 @@
+from __future__ import annotations
+
+import ast
+import copy
+import inspect
+import json
+from types import SimpleNamespace
+
+from django.test import SimpleTestCase
+
+from services.packaging import linkedin_post_controlled_repair_execution
+from services.packaging.linkedin_post_attempt_outcome import (
+    OUTCOME_ACCEPTED,
+    OUTCOME_NEEDS_HUMAN_REVIEW,
+    OUTCOME_NOT_READY,
+    OUTCOME_REPAIR_REQUIRED,
+)
+from services.packaging.linkedin_post_controlled_repair_contract import (
+    FAILURE_REPAIR_INELIGIBLE,
+    FAILURE_REPAIR_WRITER_ADAPTATION,
+    FAILURE_REPAIR_WRITER_EMPTY_RESPONSE,
+    FAILURE_REPAIR_WRITER_PARSE,
+    FAILURE_REPAIR_WRITER_PROVIDER,
+    FAILURE_REPAIR_WRITER_REQUEST,
+    FAILURE_REPAIRED_DETERMINISTIC_GATE,
+    FAILURE_REPAIRED_QUALITY_EVALUATOR_EMPTY_RESPONSE,
+    FAILURE_REPAIRED_QUALITY_EVALUATOR_PARSE,
+    FAILURE_REPAIRED_QUALITY_EVALUATOR_PROVIDER,
+    FAILURE_REPAIRED_QUALITY_REVIEW_NORMALIZATION,
+    REPAIR_ELIGIBLE,
+    REPAIR_INELIGIBLE,
+    FinalPostControlledRepairRequest,
+)
+from services.packaging.linkedin_post_controlled_repair_execution import (
+    execute_final_post_controlled_repair_attempt,
+)
+from services.packaging.linkedin_post_final_post_attempt_contract import (
+    FinalPostAttemptRequest,
+)
+from services.packaging.linkedin_post_flow_decision import FinalPostDecisionPolicy
+from services.packaging.linkedin_post_prompt_renderers import (
+    CandidateWriterPromptRender,
+)
+from services.packaging.linkedin_post_quality_rubric_contract import (
+    get_quality_evaluator_rubric_payload,
+)
+
+
+class FinalPostControlledRepairExecutionTests(SimpleTestCase):
+    def test_accepted_initial_attempt_skips_repair(self) -> None:
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=True)))
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.repair_eligibility.status, REPAIR_INELIGIBLE)
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(repair_client.call_count, 0)
+        self.assertEqual(result.terminal_outcome, OUTCOME_ACCEPTED)
+        self.assertEqual(
+            result.accepted_payload["post_text"],
+            "Initial candidate text from fake provider.",
+        )
+        self.assertIsNone(result.failure_code)
+
+    def test_initial_technical_failure_skips_repair(self) -> None:
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(
+                initial_attempt_request=_attempt_request(candidate_writer_provider="")
+            ),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(repair_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_INELIGIBLE)
+        self.assertIn("initial attempt failed", result.failure_message)
+
+    def test_initial_deterministic_gate_failure_skips_repair(self) -> None:
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(
+                    json.dumps(_candidate_payload(post_text="This leaks ev-1."))
+                )
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(repair_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_INELIGIBLE)
+        self.assertIn("initial attempt failed", result.failure_message)
+
+    def test_human_review_quality_outcome_skips_repair(self) -> None:
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(
+                    json.dumps(
+                        _quality_review_payload(
+                            passed=False,
+                            failed_criteria=["evidence"],
+                            blocking_factuality_ambiguity=True,
+                        )
+                    )
+                )
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(repair_client.call_count, 0)
+        self.assertEqual(result.terminal_outcome, OUTCOME_NEEDS_HUMAN_REVIEW)
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_INELIGIBLE)
+
+    def test_repair_disabled_skips_repair(self) -> None:
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(repair_enabled=False),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(result.repair_eligibility.reason, "repair disabled")
+        self.assertEqual(repair_client.call_count, 0)
+
+    def test_exhausted_attempt_budget_skips_repair(self) -> None:
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(
+                initial_attempt_request=_attempt_request(max_attempts=1)
+            ),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(
+            result.repair_eligibility.reason,
+            "initial request does not allow repair attempts",
+        )
+        self.assertEqual(repair_client.call_count, 0)
+
+    def test_eligible_repair_executes_once_and_accepts_repaired_payload(self) -> None:
+        candidate_client = QueuedFakeClient(_provider_response(_candidate_json()))
+        evaluator_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=False))),
+            _provider_response(json.dumps(_quality_review_payload(passed=True))),
+        )
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Repaired human post."))
+        )
+        post_brief = _post_brief()
+        angle_decision = _angle_decision()
+        request = _controlled_request(execution_metadata={"audit": "debug-only"})
+        request_before = copy.deepcopy(request)
+        post_brief_before = copy.deepcopy(post_brief)
+        angle_decision_before = copy.deepcopy(angle_decision)
+
+        result = execute_final_post_controlled_repair_attempt(
+            request,
+            post_brief=post_brief,
+            angle_decision=angle_decision,
+            selected_evidence_ids=("ev-1", "ev-2"),
+            candidate_writer_client=candidate_client,
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=repair_client,
+        )
+        serialized = json.dumps(result.to_dict(), allow_nan=False, sort_keys=True)
+
+        self.assertEqual(result.repair_eligibility.status, REPAIR_ELIGIBLE)
+        self.assertTrue(result.repair_executed)
+        self.assertEqual(candidate_client.call_count, 1)
+        self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(evaluator_client.call_count, 2)
+        self.assertEqual(result.candidate_writer_invocation_count, 1)
+        self.assertEqual(result.repair_invocation_count, 1)
+        self.assertEqual(result.quality_evaluator_invocation_count, 2)
+        self.assertEqual(result.terminal_outcome, OUTCOME_ACCEPTED)
+        self.assertEqual(result.accepted_payload["post_text"], "Repaired human post.")
+        self.assertEqual(
+            result.initial_attempt_result.candidate_writer_output.payload["post_text"],
+            "Initial candidate text from fake provider.",
+        )
+        self.assertIn("Repaired human post.", serialized)
+        self.assertEqual(request, request_before)
+        self.assertEqual(post_brief, post_brief_before)
+        self.assertEqual(angle_decision, angle_decision_before)
+
+    def test_repair_prompt_uses_allowlisted_findings_without_raw_metadata(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Repaired text."))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(execution_metadata={"runtime": "metadata-sentinel"}),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(_quality_review_payload(passed=True))),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+        prompt_text = repair_client.prompts[0]
+
+        self.assertNotIn("provider-metadata", prompt_text)
+        self.assertNotIn("metadata-sentinel", prompt_text)
+        self.assertNotIn("raw_provider_response", prompt_text)
+        self.assertIn("human_voice", prompt_text)
+        self.assertIn("selected evidence only", prompt_text)
+        self.assertEqual(
+            json.loads(
+                result.repair_prompt_render.variables["selected_evidence_json"]
+            )[0]["evidence_id"],
+            "ev-1",
+        )
+
+    def test_repaired_deterministic_gate_failure_skips_second_quality_review(self) -> None:
+        evaluator_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=False)))
+        )
+        repair_client = QueuedFakeClient(
+            _provider_response(
+                _candidate_json(post_text="Repaired text still leaks ev-1.")
+            )
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIRED_DETERMINISTIC_GATE)
+        self.assertEqual(evaluator_client.call_count, 1)
+        self.assertEqual(result.repair_invocation_count, 1)
+        self.assertIsNotNone(result.repaired_deterministic_gate_output)
+        self.assertIsNone(result.repaired_quality_evaluation_state)
+
+    def test_repaired_quality_fail_does_not_execute_second_repair(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Still too generic."))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(result.repair_invocation_count, 1)
+        self.assertEqual(result.terminal_outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.accepted_payload)
+        self.assertEqual(
+            result.repaired_attempt_outcome.outcome,
+            OUTCOME_NOT_READY,
+        )
+
+    def test_repair_provider_failure_is_distinct(self) -> None:
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=FailingFakeClient(RuntimeError("secret")),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_PROVIDER)
+        self.assertEqual(result.failure_message, "provider invocation failed")
+        self.assertEqual(result.repair_invocation_count, 1)
+
+    def test_repair_request_failure_does_not_mark_repair_executed(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Should not be called."))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(repair_provider="unsupported"),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_REQUEST)
+        self.assertEqual(result.failure_stage, "repair_writer_request")
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(result.repair_invocation_count, 0)
+        self.assertEqual(repair_client.call_count, 0)
+
+    def test_repair_empty_response_is_distinct(self) -> None:
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=QueuedFakeClient(_provider_response("   ")),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_EMPTY_RESPONSE)
+        self.assertEqual(result.repair_invocation_count, 1)
+
+    def test_repair_parse_failure_is_distinct(self) -> None:
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=QueuedFakeClient(_provider_response("{not-json")),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_PARSE)
+        self.assertEqual(result.repair_invocation_count, 1)
+
+    def test_repair_adaptation_failure_is_distinct(self) -> None:
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(json.dumps({"post_text": "Missing fields."}))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_ADAPTATION)
+        self.assertEqual(result.repair_invocation_count, 1)
+
+    def test_repaired_evaluator_provider_failure_is_distinct(self) -> None:
+        evaluator_client = QueuedThenFailingClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=False))),
+            RuntimeError("secret"),
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Repaired text."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIRED_QUALITY_EVALUATOR_PROVIDER)
+        self.assertEqual(result.quality_evaluator_invocation_count, 2)
+        self.assertNotIn("secret", result.failure_message)
+
+    def test_repaired_evaluator_empty_response_is_distinct(self) -> None:
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(""),
+            ),
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Repaired text."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(
+            result.failure_code,
+            FAILURE_REPAIRED_QUALITY_EVALUATOR_EMPTY_RESPONSE,
+        )
+        self.assertEqual(result.quality_evaluator_invocation_count, 2)
+
+    def test_repaired_evaluator_parse_failure_is_distinct(self) -> None:
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response("{not-json"),
+            ),
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Repaired text."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIRED_QUALITY_EVALUATOR_PARSE)
+        self.assertEqual(result.quality_evaluator_invocation_count, 2)
+
+    def test_repaired_quality_normalization_failure_is_distinct(self) -> None:
+        invalid_review = _quality_review_payload(passed=True)
+        invalid_review["scores"].pop("human_voice")
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(invalid_review)),
+            ),
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Repaired text."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(
+            result.failure_code,
+            FAILURE_REPAIRED_QUALITY_REVIEW_NORMALIZATION,
+        )
+        self.assertEqual(result.quality_evaluator_invocation_count, 2)
+
+    def test_execution_module_does_not_import_forbidden_runtime_layers(self) -> None:
+        tree = ast.parse(inspect.getsource(linkedin_post_controlled_repair_execution))
+        imported_modules = _imported_modules(tree)
+        imported_symbols = _imported_symbols(tree)
+
+        forbidden_modules = {
+            "apps.packaging.models",
+            "django.db",
+            "services.packaging.generator",
+            "services.sources",
+        }
+        forbidden_symbols = {
+            "ContentPackage",
+            "OpenAIClient",
+            "generate_content_package_for_digest",
+            "GeminiClient",
+            "raw_articles",
+        }
+
+        self.assertTrue(forbidden_modules.isdisjoint(imported_modules))
+        self.assertTrue(forbidden_symbols.isdisjoint(imported_symbols))
+
+
+class QueuedFakeClient:
+    def __init__(self, *responses: SimpleNamespace) -> None:
+        self.responses = list(responses)
+        self.call_count = 0
+        self.prompts: list[str] = []
+
+    def generate_text(
+        self,
+        *,
+        prompt: str,
+        max_output_tokens: int,
+        json_mode: bool,
+    ) -> SimpleNamespace:
+        self.call_count += 1
+        self.prompts.append(prompt)
+        self.max_output_tokens = max_output_tokens
+        self.json_mode = json_mode
+        if not self.responses:
+            raise AssertionError("No queued fake response available.")
+        return self.responses.pop(0)
+
+
+class FailingFakeClient:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.call_count = 0
+
+    def generate_text(self, **kwargs) -> SimpleNamespace:
+        self.call_count += 1
+        raise self.exc
+
+
+class QueuedThenFailingClient:
+    def __init__(self, first_response: SimpleNamespace, exc: Exception) -> None:
+        self.first_response = first_response
+        self.exc = exc
+        self.call_count = 0
+
+    def generate_text(self, **kwargs) -> SimpleNamespace:
+        self.call_count += 1
+        if self.call_count == 1:
+            return self.first_response
+        raise self.exc
+
+
+def _controlled_request(
+    *,
+    initial_attempt_request: FinalPostAttemptRequest | None = None,
+    repair_enabled: bool = True,
+    repair_provider: str | None = "openai",
+    max_controlled_attempts: int = 2,
+    execution_metadata: dict | None = None,
+) -> FinalPostControlledRepairRequest:
+    return FinalPostControlledRepairRequest(
+        initial_attempt_request=(
+            _attempt_request() if initial_attempt_request is None else initial_attempt_request
+        ),
+        repair_prompt_text="Repair Writer prompt text.",
+        repair_provider=repair_provider,
+        repair_model="repair-model",
+        repair_max_output_tokens=1200,
+        repair_enabled=repair_enabled,
+        max_controlled_attempts=max_controlled_attempts,
+        execution_metadata=copy.deepcopy(execution_metadata),
+    )
+
+
+def _attempt_request(
+    *,
+    candidate_writer_provider: str | None = "openai",
+    max_attempts: int = 2,
+    policy: object | None = None,
+) -> FinalPostAttemptRequest:
+    return FinalPostAttemptRequest(
+        candidate_writer_render=CandidateWriterPromptRender(
+            prompt_name="final_post_candidate_from_brief",
+            prompt_version="1.0",
+            prompt_path="prompts/linkedin/final_post_from_brief.txt",
+            variables={
+                "post_brief_json": "{}",
+                "angle_decision_json": "{}",
+                "selected_evidence_json": "[]",
+                "candidate_writer_input_json": "{}",
+            },
+            input_text="## CANDIDATE_WRITER_INPUT_JSON\n{}",
+        ),
+        candidate_writer_prompt_text="Candidate Writer prompt text.",
+        quality_rubric=get_quality_evaluator_rubric_payload().to_dict(),
+        quality_evaluator_prompt_text="Quality Evaluator prompt text.",
+        attempt_index=0,
+        max_attempts=max_attempts,
+        candidate_writer_provider=candidate_writer_provider,
+        candidate_writer_model="candidate-model",
+        candidate_writer_max_output_tokens=1200,
+        quality_evaluator_provider="openai",
+        quality_evaluator_model="quality-model",
+        quality_evaluator_max_output_tokens=900,
+        policy=policy or FinalPostDecisionPolicy(max_total_attempts=2),
+    )
+
+
+def _flow_kwargs() -> dict:
+    return {
+        "post_brief": _post_brief(),
+        "angle_decision": _angle_decision(),
+        "selected_evidence_ids": ("ev-1", "ev-2"),
+    }
+
+
+def _post_brief() -> dict:
+    return {
+        "core_point": "Clear remote work policies need human operating habits.",
+        "evidence_to_use": [
+            {
+                "evidence_id": "ev-1",
+                "evidence_text": "Remote work policies need clear expectations.",
+                "role_in_post": "proof",
+            },
+            {
+                "evidence_id": "ev-2",
+                "evidence_text": "Inclusive work cultures should account for isolation.",
+                "role_in_post": "practical_point",
+            },
+        ],
+    }
+
+
+def _angle_decision() -> dict:
+    return {
+        "controlling_angle": "Remote policies need clarity and inclusion.",
+        "author_position": "Leaders should connect policy clarity with team trust.",
+    }
+
+
+def _provider_response(raw_text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        text=raw_text,
+        raw={"id": "resp-1", "metadata_sentinel": "provider-metadata"},
+        usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+    )
+
+
+def _candidate_json(
+    *,
+    post_text: str = "Initial candidate text from fake provider.",
+) -> str:
+    return json.dumps(_candidate_payload(post_text=post_text))
+
+
+def _candidate_payload(
+    *,
+    post_text: str = "Initial candidate text from fake provider.",
+) -> dict:
+    return {
+        "post_text": post_text,
+        "hook_variants": [
+            "A practical remote work policy starts here.",
+            "Remote policy is not just a document.",
+            "Hybrid work needs clearer operating habits.",
+        ],
+        "cta_variants": [
+            "What would you clarify first in a remote policy?",
+            "Where does your team still need shared expectations?",
+            "What makes hybrid work sustainable in your organization?",
+        ],
+        "hashtags": ["#remotework", "#futureofwork"],
+        "quality_checks": {
+            "linkedin_ready": True,
+            "uses_only_provided_facts": True,
+            "has_clear_point_of_view": True,
+        },
+        "carousel_outline": [],
+    }
+
+
+def _quality_review_payload(
+    *,
+    passed: bool = True,
+    total_score: int | None = None,
+    failed_criteria: list[str] | None = None,
+    blocking_factuality_ambiguity: bool = False,
+) -> dict:
+    return {
+        "scores": {
+            "hook": 4,
+            "controlling_angle": 4,
+            "reader_problem": 4,
+            "pattern_interrupt": 4,
+            "evidence": 4,
+            "author_point_of_view": 4,
+            "human_voice": 5 if passed else 3,
+            "practical_value": 4,
+            "cta": 4,
+        },
+        "total_score": 37 if total_score is None else total_score,
+        "pass": passed,
+        "failed_criteria": failed_criteria or ([] if passed else ["human_voice"]),
+        "automatic_fail_reason": "",
+        "notes": ["Evaluator note."],
+        "blocking_factuality_ambiguity": blocking_factuality_ambiguity,
+    }
+
+
+def _imported_modules(tree: ast.AST) -> set[str]:
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            modules.add(node.module)
+    return modules
+
+
+def _imported_symbols(tree: ast.AST) -> set[str]:
+    symbols: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            symbols.update(
+                alias.asname or alias.name.partition(".")[0] for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            symbols.update(alias.asname or alias.name for alias in node.names)
+    return symbols
