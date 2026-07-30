@@ -95,6 +95,8 @@ def build_candidate_writer_execution_request(
 
 def execute_candidate_writer_prompt(
     request: CandidateWriterExecutionRequest,
+    *,
+    client: Any | None = None,
 ) -> CandidateWriterRawResponse:
     prompt_metadata = _prompt_metadata_from_render(request.rendered_prompt_input)
     execution_metadata = copy.deepcopy(request.execution_metadata)
@@ -111,7 +113,8 @@ def execute_candidate_writer_prompt(
 
     prompt = _build_provider_prompt(request)
     try:
-        response = OpenAIClient(model=request.model).generate_text(
+        text_client = client if client is not None else OpenAIClient(model=request.model)
+        response = text_client.generate_text(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
