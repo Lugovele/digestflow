@@ -1,3 +1,6 @@
+from copy import deepcopy
+from pathlib import Path
+
 from django.test import SimpleTestCase
 
 from apps.digests.models import Digest, DigestRun
@@ -9,6 +12,8 @@ from services.packaging.linkedin_post_pipeline import (
     BriefEvidenceUse,
     ContextualEvidence,
     ContextualEvidencePack,
+    EditorialSynthesisResult,
+    EvidenceRelationship,
     FinalPostPayload,
     LinkedInPostPipelineContractError,
     PipelineInput,
@@ -17,6 +22,7 @@ from services.packaging.linkedin_post_pipeline import (
     build_angle_decision_from_contextual_evidence_pack,
     build_article_evidence_pack_from_pipeline_input,
     build_contextual_evidence_pack_from_article_evidence_pack,
+    build_editorial_synthesis_result_for_selected_items,
     build_final_post_payload_from_post_brief,
     build_pipeline_input_from_digest,
     build_post_brief_from_angle_decision,
@@ -27,6 +33,8 @@ from services.packaging.linkedin_post_pipeline import (
     validate_article_evidence_pack_for_pipeline_input,
     validate_contextual_evidence_pack,
     validate_contextual_evidence_pack_for_article_evidence,
+    validate_editorial_synthesis_result,
+    validate_evidence_relationship,
     validate_final_post_payload,
     validate_final_post_payload_for_post_brief,
     validate_linkedin_post_stage_relationships,
@@ -62,7 +70,10 @@ class FakeDigest:
 
 def make_selected_article(
     source_index: int = 0,
-    summary: str = "The article explains why visible work examples matter.",
+    summary: str = (
+        "The article explains why visible work examples matter, but polished "
+        "output alone can hide the decisions behind the work."
+    ),
 ) -> SelectedArticle:
     return SelectedArticle(
         source_index=source_index,
@@ -137,6 +148,8 @@ def make_contextual_evidence(
     specificity_level: str = "medium",
     source_limitations: str = "No named case or metric.",
     evidence_text: str = "Recent posts can show decisions and tradeoffs, not just finished outcomes.",
+    what_it_says: str = "Visible process helps people evaluate judgment.",
+    supports_argument: str = "The post can argue that public proof needs more than polished output.",
     do_not_use_for: str = "Do not turn this into generic personal branding advice.",
     risk_of_misuse: str = "Could drift into surface-level branding language.",
 ) -> ContextualEvidence:
@@ -148,8 +161,8 @@ def make_contextual_evidence(
         evidence_type=evidence_type,
         specificity_level=specificity_level,
         source_limitations=source_limitations,
-        what_it_says="Visible process helps people evaluate judgment.",
-        supports_argument="The post can argue that public proof needs more than polished output.",
+        what_it_says=what_it_says,
+        supports_argument=supports_argument,
         best_use_in_post=best_use_in_post,
         do_not_use_for=do_not_use_for,
         risk_of_misuse=risk_of_misuse,
@@ -214,6 +227,21 @@ def make_contextual_evidence_pack(
         else [],
         risks=["generic summary"],
     )
+
+
+def primary_editorial_text(
+    angle_decision: AngleDecision,
+    post_brief: PostBrief | None = None,
+) -> str:
+    values = [
+        angle_decision.controlling_angle,
+        angle_decision.reader_problem,
+        angle_decision.author_position,
+        angle_decision.main_tension,
+    ]
+    if post_brief is not None:
+        values.extend([post_brief.core_point, post_brief.practical_point])
+    return "\n".join(values).lower()
 
 
 def make_angle_decision(supporting_evidence_ids: list[str] | None = None) -> AngleDecision:
@@ -1065,6 +1093,827 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             angle_decision.angle_to_avoid,
         )
         self.assertIn("Could imply investment advice.", angle_decision.angle_to_avoid)
+
+    def test_build_angle_decision_from_contextual_evidence_pack_builds_content_thesis(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="adoption",
+                    source_index=0,
+                    source_title="Crypto adoption article",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "Thirty percent of Americans own crypto, while security "
+                        "concerns and volatility limit broader adoption."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="forecast",
+                    source_index=1,
+                    source_title="Crypto market forecast",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "The cryptocurrency market is projected to grow at a "
+                        "16.99% CAGR from 2025 to 2035."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="sentiment",
+                    source_index=2,
+                    source_title="Bitcoin trader sentiment",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "K33 says Bitcoin likely bottomed at $60K, while "
+                        "pessimistic trader sentiment may limit deeper downside."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["adoption", "forecast", "sentiment"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        editorial_text = primary_editorial_text(angle_decision)
+        self.assertIn("growth evidence", editorial_text)
+        self.assertIn("confidence", editorial_text)
+        self.assertIn("risk", editorial_text)
+        self.assertIn("conditional", angle_decision.author_position)
+        self.assertNotIn("signals qualify one another", editorial_text)
+        self.assertNotIn("operate on different horizons", editorial_text)
+        for phrase in [
+            "keep claims attributed",
+            "use selected evidence",
+            "avoid unsupported conclusions",
+            "avoid investment advice",
+            "separate signals",
+            "source-grounded",
+        ]:
+            self.assertNotIn(phrase, editorial_text)
+
+    def test_editorial_synthesis_result_selects_growth_vs_constraint_relationship(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="adoption",
+                    source_index=0,
+                    source_title="Crypto adoption article",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "Thirty percent of Americans own crypto, while security "
+                        "concerns and volatility limit broader adoption."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="forecast",
+                    source_index=1,
+                    source_title="Crypto market forecast",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "The cryptocurrency market is projected to grow at a "
+                        "16.99% CAGR from 2025 to 2035."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="sentiment",
+                    source_index=2,
+                    source_title="Bitcoin trader sentiment",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "K33 says Bitcoin likely bottomed at $60K, while "
+                        "pessimistic trader sentiment may limit deeper downside."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["adoption", "forecast", "sentiment"],
+        )
+
+        synthesis_result = build_editorial_synthesis_result_for_selected_items(
+            contextual_pack.items
+        )
+
+        self.assertEqual(synthesis_result.status, "READY")
+        self.assertIsNotNone(synthesis_result.dominant_relationship)
+        self.assertEqual(
+            synthesis_result.dominant_relationship.relationship_type,
+            "growth_vs_constraint",
+        )
+        self.assertEqual(
+            synthesis_result.dominant_relationship.supporting_evidence_ids,
+            ["adoption", "forecast", "sentiment"],
+        )
+
+    def test_empty_selected_items_returns_valid_non_ready_editorial_synthesis(self) -> None:
+        synthesis_result = build_editorial_synthesis_result_for_selected_items([])
+
+        validate_editorial_synthesis_result(synthesis_result)
+
+        self.assertEqual(synthesis_result.status, "NON_READY")
+        self.assertEqual(
+            synthesis_result.non_ready_reason,
+            "INSUFFICIENT_SELECTED_EVIDENCE",
+        )
+        self.assertEqual(synthesis_result.selected_evidence_ids, [])
+
+    def test_evidence_relationship_rejects_unsupported_causal_strengthening(self) -> None:
+        relationship = EvidenceRelationship(
+            relationship_type="growth_vs_constraint",
+            left_label="growth evidence",
+            right_label="risk evidence",
+            left_evidence_ids=["growth"],
+            right_evidence_ids=["risk"],
+            supporting_evidence_ids=["growth", "risk"],
+            qualifier="",
+            thesis="Growth evidence causes market stability.",
+            reader_problem="Readers may overstate the growth evidence.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between growth and risk.",
+            score=10,
+            priority=1,
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "unsupported causal strengthening",
+        ):
+            validate_evidence_relationship(relationship)
+
+    def test_evidence_relationship_rejects_will_lead_to_causal_strengthening(self) -> None:
+        relationship = EvidenceRelationship(
+            relationship_type="growth_vs_constraint",
+            left_label="growth evidence",
+            right_label="risk evidence",
+            left_evidence_ids=["growth"],
+            right_evidence_ids=["risk"],
+            supporting_evidence_ids=["growth", "risk"],
+            qualifier="",
+            thesis="Growth evidence will lead to market stability.",
+            reader_problem="Readers may overstate the growth evidence.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between growth and risk.",
+            score=10,
+            priority=1,
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "unsupported causal strengthening",
+        ):
+            validate_evidence_relationship(relationship)
+
+    def test_editorial_synthesis_result_rejects_relationship_ids_outside_selected_evidence(self) -> None:
+        relationship = EvidenceRelationship(
+            relationship_type="growth_vs_constraint",
+            left_label="growth evidence",
+            right_label="risk evidence",
+            left_evidence_ids=["unselected-growth"],
+            right_evidence_ids=["unselected-risk"],
+            supporting_evidence_ids=["unselected-growth", "unselected-risk"],
+            qualifier="",
+            thesis="Growth evidence remains conditional on risk evidence.",
+            reader_problem="Readers may overstate the growth evidence.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between growth and risk.",
+            score=10,
+            priority=1,
+        )
+        synthesis_result = EditorialSynthesisResult(
+            status="READY",
+            dominant_relationship=relationship,
+            candidate_relationships=[relationship],
+            selected_evidence_ids=["selected-only"],
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "outside selected_evidence_ids",
+        ):
+            validate_editorial_synthesis_result(synthesis_result)
+
+    def test_non_ready_editorial_synthesis_result_rejects_candidate_ids_outside_selected_evidence(self) -> None:
+        relationship = EvidenceRelationship(
+            relationship_type="growth_vs_constraint",
+            left_label="growth evidence",
+            right_label="risk evidence",
+            left_evidence_ids=["unselected-growth"],
+            right_evidence_ids=["unselected-risk"],
+            supporting_evidence_ids=["unselected-growth", "unselected-risk"],
+            qualifier="",
+            thesis="Growth evidence remains conditional on risk evidence.",
+            reader_problem="Readers may overstate the growth evidence.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between growth and risk.",
+            score=10,
+            priority=1,
+        )
+        synthesis_result = EditorialSynthesisResult(
+            status="NON_READY",
+            dominant_relationship=None,
+            candidate_relationships=[relationship],
+            selected_evidence_ids=["selected-only"],
+            non_ready_reason="AMBIGUOUS_DOMINANT_RELATIONSHIP",
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "outside selected_evidence_ids",
+        ):
+            validate_editorial_synthesis_result(synthesis_result)
+
+    def test_editorial_synthesis_result_rejects_unknown_non_ready_reason(self) -> None:
+        synthesis_result = EditorialSynthesisResult(
+            status="NON_READY",
+            dominant_relationship=None,
+            candidate_relationships=[],
+            selected_evidence_ids=["selected"],
+            non_ready_reason="SOMETHING_ELSE",
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "must be one of",
+        ):
+            validate_editorial_synthesis_result(synthesis_result)
+
+    def test_editorial_synthesis_result_rejects_ready_result_with_non_ready_fields(self) -> None:
+        relationship = EvidenceRelationship(
+            relationship_type="growth_vs_constraint",
+            left_label="growth evidence",
+            right_label="risk evidence",
+            left_evidence_ids=["growth"],
+            right_evidence_ids=["risk"],
+            supporting_evidence_ids=["growth", "risk"],
+            qualifier="",
+            thesis="Growth evidence remains conditional on risk evidence.",
+            reader_problem="Readers may overstate the growth evidence.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between growth and risk.",
+            score=10,
+            priority=1,
+        )
+        synthesis_result = EditorialSynthesisResult(
+            status="READY",
+            dominant_relationship=relationship,
+            candidate_relationships=[relationship],
+            selected_evidence_ids=["growth", "risk"],
+            non_ready_reason="NO_SUPPORTED_RELATIONSHIP",
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "must not include non-ready fields",
+        ):
+            validate_editorial_synthesis_result(synthesis_result)
+
+    def test_editorial_synthesis_result_requires_dominant_relationship_in_candidates(self) -> None:
+        dominant_relationship = EvidenceRelationship(
+            relationship_type="growth_vs_constraint",
+            left_label="growth evidence",
+            right_label="risk evidence",
+            left_evidence_ids=["growth"],
+            right_evidence_ids=["risk"],
+            supporting_evidence_ids=["growth", "risk"],
+            qualifier="",
+            thesis="Growth evidence remains conditional on risk evidence.",
+            reader_problem="Readers may overstate the growth evidence.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between growth and risk.",
+            score=10,
+            priority=1,
+        )
+        other_relationship = EvidenceRelationship(
+            relationship_type="interest_vs_confidence",
+            left_label="participation interest",
+            right_label="confidence barrier",
+            left_evidence_ids=["growth"],
+            right_evidence_ids=["risk"],
+            supporting_evidence_ids=["growth", "risk"],
+            qualifier="",
+            thesis="Participation interest can rise before confidence catches up.",
+            reader_problem="Readers may confuse participation with trust.",
+            author_position="The author position is limited to selected evidence.",
+            main_tension="The tension is between interest and confidence.",
+            score=9,
+            priority=2,
+        )
+        synthesis_result = EditorialSynthesisResult(
+            status="READY",
+            dominant_relationship=dominant_relationship,
+            candidate_relationships=[other_relationship],
+            selected_evidence_ids=["growth", "risk"],
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "dominant relationship must be included",
+        ):
+            validate_editorial_synthesis_result(synthesis_result)
+
+    def test_generic_non_finance_growth_concern_does_not_emit_market_angle(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="operations",
+                    source_index=0,
+                    source_title="Operations rollout",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "Teams reported growth concerns after the rollout and "
+                        "asked for clearer operating rules."
+                    ),
+                    what_it_says=(
+                        "The source describes operations growth concerns without "
+                        "broader domain context."
+                    ),
+                    supports_argument="The post can discuss operations uncertainty.",
+                ),
+            ],
+            main_candidate_evidence_ids=["operations"],
+        )
+
+        synthesis_result = build_editorial_synthesis_result_for_selected_items(
+            contextual_pack.items
+        )
+
+        self.assertEqual(synthesis_result.status, "NON_READY")
+        self.assertEqual(
+            synthesis_result.non_ready_reason,
+            "NO_SUPPORTED_RELATIONSHIP",
+        )
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "NO_SUPPORTED_RELATIONSHIP",
+        ):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_non_finance_business_market_growth_concern_does_not_emit_finance_angle(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="saas-market",
+                    source_index=0,
+                    source_title="SaaS market operations note",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "The SaaS market showed growth concerns after the rollout "
+                        "and asked for clearer customer-support rules."
+                    ),
+                    what_it_says=(
+                        "The source describes a business market operations issue."
+                    ),
+                    supports_argument=(
+                        "The post can discuss a non-finance business market issue."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["saas-market"],
+        )
+
+        synthesis_result = build_editorial_synthesis_result_for_selected_items(
+            contextual_pack.items
+        )
+
+        self.assertEqual(synthesis_result.status, "NON_READY")
+        self.assertEqual(
+            synthesis_result.non_ready_reason,
+            "NO_SUPPORTED_RELATIONSHIP",
+        )
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "NO_SUPPORTED_RELATIONSHIP",
+        ):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_supports_argument_text_does_not_create_editorial_signal_labels(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="support-only",
+                    source_index=0,
+                    source_title="Opaque operations note",
+                    best_use_in_post="proof",
+                    evidence_text="The team reviewed the rollout.",
+                    what_it_says="The source says a team reviewed an internal rollout.",
+                    supports_argument=(
+                        "This invented support text mentions pricing strategy, "
+                        "freelance client positioning, polished output, and decisions."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["support-only"],
+        )
+
+        synthesis_result = build_editorial_synthesis_result_for_selected_items(
+            contextual_pack.items
+        )
+
+        self.assertEqual(synthesis_result.status, "NON_READY")
+        self.assertEqual(
+            synthesis_result.non_ready_reason,
+            "NO_SUPPORTED_RELATIONSHIP",
+        )
+
+    def test_unselected_sibling_evidence_does_not_contribute_signal_label(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="adoption",
+                    source_index=0,
+                    source_title="Crypto adoption article",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "Thirty percent of Americans own crypto, while security "
+                        "concerns and volatility limit broader adoption."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="forecast",
+                    source_index=1,
+                    source_title="Crypto market forecast",
+                    best_use_in_post="practical_point",
+                    evidence_text=(
+                        "The cryptocurrency market is projected to grow at a "
+                        "16.99% CAGR from 2025 to 2035."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="technology",
+                    source_index=1,
+                    source_title="Unselected technology key point",
+                    best_use_in_post="background_only",
+                    evidence_text=(
+                        "Technological advancements are enhancing transaction "
+                        "efficiency and security confidence in the market."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="sentiment",
+                    source_index=2,
+                    source_title="Bitcoin trader sentiment",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "K33 says Bitcoin likely bottomed at $60K, while "
+                        "pessimistic trader sentiment may limit deeper downside."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["adoption", "forecast", "sentiment"],
+            background_evidence_ids=["technology"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        self.assertEqual(
+            angle_decision.supporting_evidence_ids,
+            ["adoption", "forecast", "sentiment"],
+        )
+        editorial_text = primary_editorial_text(angle_decision, post_brief)
+        self.assertNotIn("technology reliability", editorial_text)
+        self.assertNotIn("transaction efficiency", editorial_text)
+
+    def test_technology_reliability_label_requires_selected_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="technology",
+                    source_index=0,
+                    source_title="Selected crypto technology key point",
+                    best_use_in_post="practical_point",
+                    evidence_text=(
+                        "Technological advancements are enhancing transaction "
+                        "efficiency and security confidence in the market."
+                    ),
+                    supports_argument=(
+                        "The post can connect technology reliability to security "
+                        "confidence."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["technology"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        self.assertIn(
+            "technology reliability",
+            primary_editorial_text(angle_decision),
+        )
+
+    def test_build_post_brief_from_angle_decision_keeps_core_point_content_bearing(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="adoption",
+                    source_index=0,
+                    source_title="Crypto adoption article",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "Thirty percent of Americans own crypto, while security "
+                        "concerns and volatility limit broader adoption."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="forecast",
+                    source_index=1,
+                    source_title="Crypto market forecast",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "The cryptocurrency market is projected to grow at a "
+                        "16.99% CAGR from 2025 to 2035."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="sentiment",
+                    source_index=2,
+                    source_title="Bitcoin trader sentiment",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "K33 says Bitcoin likely bottomed at $60K, while "
+                        "pessimistic trader sentiment may limit deeper downside."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["adoption", "forecast", "sentiment"],
+        )
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        post_brief = build_post_brief_from_angle_decision(
+            contextual_pack,
+            angle_decision,
+        )
+
+        self.assertEqual(post_brief.core_point, angle_decision.author_position)
+        self.assertIn("growth should be read as conditional", post_brief.core_point)
+        self.assertNotIn("16.99% CAGR", post_brief.practical_point)
+        for phrase in [
+            "keep claims attributed",
+            "selected evidence",
+            "avoid unsupported conclusions",
+            "avoid investment advice",
+            "separate signals",
+            "source-grounded",
+        ]:
+            self.assertNotIn(phrase, post_brief.core_point.lower())
+            self.assertNotIn(phrase, post_brief.practical_point.lower())
+
+    def test_build_angle_decision_from_contextual_evidence_pack_rejects_incoherent_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                ContextualEvidence(
+                    evidence_id="opaque",
+                    source_index=0,
+                    source_title="Opaque item",
+                    evidence_type="contrast",
+                    specificity_level="medium",
+                    source_limitations="No named case or metric.",
+                    evidence_text="Item one.",
+                    what_it_says="A vague item exists.",
+                    supports_argument="Support is unclear.",
+                    best_use_in_post="tension",
+                    do_not_use_for="Do not infer a topic.",
+                    risk_of_misuse="Could become generic.",
+                ),
+            ],
+            main_candidate_evidence_ids=["opaque"],
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "NO_SUPPORTED_RELATIONSHIP",
+        ):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_guardrail_text_does_not_create_editorial_signal_labels(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                ContextualEvidence(
+                    evidence_id="guardrail-only",
+                    source_index=0,
+                    source_title="Opaque item",
+                    evidence_type="contrast",
+                    specificity_level="medium",
+                    source_limitations="No named case or metric.",
+                    evidence_text="Item one.",
+                    what_it_says="A vague item exists.",
+                    supports_argument="Support is unclear.",
+                    best_use_in_post="tension",
+                    do_not_use_for="Do not turn this into a price prediction.",
+                    risk_of_misuse=(
+                        "Could drift into Bitcoin trader sentiment or investment advice."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["guardrail-only"],
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "NO_SUPPORTED_RELATIONSHIP",
+        ):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_single_one_sided_signal_returns_non_ready(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="adoption",
+                    source_index=0,
+                    source_title="Crypto adoption article",
+                    best_use_in_post="proof",
+                    evidence_text="More consumers own crypto than before.",
+                    what_it_says="Consumer adoption interest is visible.",
+                    supports_argument=(
+                        "The post can discuss adoption interest without adding "
+                        "a second-side relationship."
+                    ),
+                    do_not_use_for="Do not turn this into trading advice.",
+                    risk_of_misuse="Could overstate the adoption signal.",
+                ),
+            ],
+            main_candidate_evidence_ids=["adoption"],
+        )
+
+        synthesis_result = build_editorial_synthesis_result_for_selected_items(
+            contextual_pack.items
+        )
+
+        self.assertEqual(synthesis_result.status, "NON_READY")
+        self.assertEqual(
+            synthesis_result.non_ready_reason,
+            "INSUFFICIENT_SELECTED_EVIDENCE",
+        )
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "INSUFFICIENT_SELECTED_EVIDENCE",
+        ):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_non_finance_pricing_advice_remains_practical_point(self) -> None:
+        article_evidence_pack = make_article_evidence_pack(
+            items=[
+                ArticleEvidence(
+                    evidence_id="pricing",
+                    source_index=0,
+                    source_title="SaaS pricing article",
+                    evidence_text=(
+                        "A pricing page should show the full subscription price "
+                        "before checkout."
+                    ),
+                    evidence_type="practical_point",
+                    specificity_level="medium",
+                    source_limitations="No named case or metric.",
+                )
+            ]
+        )
+
+        contextual_pack = build_contextual_evidence_pack_from_article_evidence_pack(
+            article_evidence_pack
+        )
+
+        self.assertEqual(
+            contextual_pack.items[0].best_use_in_post,
+            "practical_point",
+        )
+
+    def test_remote_work_policy_does_not_emit_regulatory_clarity(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="remote-policy",
+                    source_index=0,
+                    source_title="Remote work policy guidance",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "Remote work policy guidance recommends clear expectations "
+                        "and consistent communication for hybrid teams, while "
+                        "inclusive work design helps teams avoid isolation."
+                    ),
+                    supports_argument=(
+                        "The post can connect workplace expectations to inclusive "
+                        "work design."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["remote-policy"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        editorial_text = primary_editorial_text(angle_decision)
+        self.assertIn("workplace rules", editorial_text)
+        self.assertIn("inclusive work design", editorial_text)
+        self.assertNotIn("regulatory clarity", editorial_text)
+
+    def test_freelance_pricing_strategy_does_not_emit_price_positioning(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="pricing",
+                    source_index=0,
+                    source_title="Freelance pricing strategy",
+                    best_use_in_post="practical_point",
+                    evidence_text=(
+                        "An effective pricing strategy reflects product value, "
+                        "supports freelance client acquisition, and clarifies "
+                        "the freelance offer for international clients."
+                    ),
+                    supports_argument=(
+                        "The post can connect pricing strategy to freelance "
+                        "client positioning."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["pricing"],
+        )
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        editorial_text = primary_editorial_text(angle_decision)
+        self.assertIn("pricing strategy", editorial_text)
+        self.assertNotIn("price positioning", editorial_text)
+
+    def test_generic_efficiency_does_not_emit_technology_reliability(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                ContextualEvidence(
+                    evidence_id="efficiency",
+                    source_index=0,
+                    source_title="Operations efficiency article",
+                    evidence_type="fact",
+                    specificity_level="medium",
+                    source_limitations="No named case or metric.",
+                    best_use_in_post="proof",
+                    evidence_text="The process improves team efficiency.",
+                    what_it_says="A process changes efficiency.",
+                    supports_argument="The item may support a narrow operations point.",
+                    do_not_use_for="Do not infer technology adoption.",
+                    risk_of_misuse="Could overstate an operational point.",
+                ),
+            ],
+            main_candidate_evidence_ids=["efficiency"],
+        )
+
+        with self.assertRaisesMessage(
+            LinkedInPostPipelineContractError,
+            "NO_SUPPORTED_RELATIONSHIP",
+        ):
+            build_angle_decision_from_contextual_evidence_pack(contextual_pack)
+
+    def test_build_angle_and_brief_do_not_mutate_contextual_evidence(self) -> None:
+        contextual_pack = make_contextual_evidence_pack(
+            items=[
+                make_contextual_evidence(
+                    evidence_id="adoption",
+                    source_index=0,
+                    evidence_text=(
+                        "Thirty percent of Americans own crypto, while security "
+                        "concerns limit broader adoption."
+                    ),
+                ),
+                make_contextual_evidence(
+                    evidence_id="forecast",
+                    source_index=1,
+                    source_title="Crypto market forecast",
+                    best_use_in_post="proof",
+                    evidence_text=(
+                        "The cryptocurrency market is projected to grow at a "
+                        "16.99% CAGR from 2025 to 2035."
+                    ),
+                ),
+            ],
+            main_candidate_evidence_ids=["adoption", "forecast"],
+        )
+        original_pack = deepcopy(contextual_pack)
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+        build_post_brief_from_angle_decision(contextual_pack, angle_decision)
+
+        self.assertEqual(contextual_pack, original_pack)
+
+    def test_linkedin_post_pipeline_does_not_import_provider_clients(self) -> None:
+        module_text = Path("services/packaging/linkedin_post_pipeline.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("OpenAIClient", module_text)
+        self.assertNotIn("execute_candidate_writer_prompt", module_text)
 
     def test_build_angle_decision_from_contextual_evidence_pack_does_not_include_later_stage_fields(self) -> None:
         angle_decision = build_angle_decision_from_contextual_evidence_pack(

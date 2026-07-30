@@ -303,6 +303,127 @@ class LinkedInPostFixtureEvaluationTests(SimpleTestCase):
                         re.search(rf"\b{re.escape(word)}\b", evaluated_text)
                     )
 
+    def test_primary_editorial_fields_do_not_emit_process_language(self) -> None:
+        process_phrases = [
+            "keep claims attributed",
+            "use selected evidence",
+            "avoid unsupported conclusions",
+            "avoid investment advice",
+            "separate signals",
+            "source-grounded",
+        ]
+        for case_id in self.case_ids:
+            with self.subTest(case_id=case_id):
+                fixture = _load_fixture(case_id)
+                pipeline_input = _build_pipeline_input_from_fixture(fixture)
+                chain = _run_staged_chain(pipeline_input)
+                angle_decision = chain["angle_decision"]
+                post_brief = chain["post_brief"]
+                editorial_text = "\n".join(
+                    [
+                        angle_decision.controlling_angle,
+                        angle_decision.author_position,
+                        post_brief.core_point,
+                    ]
+                ).lower()
+
+                for phrase in process_phrases:
+                    self.assertNotIn(phrase, editorial_text)
+
+    def test_bitcoin_market_fixture_produces_content_bearing_thesis(self) -> None:
+        fixture = _load_fixture("topic_200_digest_134")
+        pipeline_input = _build_pipeline_input_from_fixture(fixture)
+        chain = _run_staged_chain(pipeline_input)
+        angle_decision = chain["angle_decision"]
+        post_brief = chain["post_brief"]
+
+        self.assertEqual(
+            angle_decision.supporting_evidence_ids,
+            ["a0-summary", "a1-kp0", "a2-summary"],
+        )
+        selected_roles_by_id = {
+            item.evidence_id: item.role_in_post
+            for item in post_brief.evidence_to_use
+        }
+        self.assertIn("proof support", selected_roles_by_id["a1-kp0"])
+        self.assertNotIn("practical_point support", selected_roles_by_id["a1-kp0"])
+        editorial_text = "\n".join(
+            [
+                angle_decision.controlling_angle,
+                angle_decision.reader_problem,
+                angle_decision.author_position,
+                angle_decision.main_tension,
+                post_brief.core_point,
+                post_brief.practical_point,
+            ]
+        ).lower()
+
+        for content_term in [
+            "adoption",
+            "forecasts",
+            "confidence",
+            "risk",
+            "conditional",
+        ]:
+            self.assertIn(content_term, editorial_text)
+        for defective_phrase in [
+            "keep claims attributed",
+            "use selected evidence",
+            "avoid unsupported conclusions",
+            "avoid investment advice",
+            "separate signals",
+            "source-grounded",
+            "16.99% cagr",
+            "single clean narrative",
+            "signals qualify one another",
+            "operate on different horizons",
+        ]:
+            self.assertNotIn(defective_phrase, editorial_text)
+        for unselected_signal in [
+            "technology reliability",
+            "technology improvement",
+            "transaction efficiency",
+            "regulatory clarity",
+            "institutional adoption",
+            "defi",
+        ]:
+            self.assertNotIn(unselected_signal, editorial_text)
+        for causal_strengthening in [
+            "led to stability",
+            "caused stability",
+            "creates stability",
+            "prevents downturns",
+            "prevents declines",
+            "guarantees a bottom",
+        ]:
+            self.assertNotIn(causal_strengthening, editorial_text)
+
+    def test_non_finance_fixtures_do_not_emit_market_or_regulatory_signal_labels(self) -> None:
+        forbidden_by_case = {
+            "topic_214_digest_128": ["regulatory clarity"],
+            "topic_215_digest_129": ["price positioning"],
+        }
+        for case_id, forbidden_signals in forbidden_by_case.items():
+            with self.subTest(case_id=case_id):
+                fixture = _load_fixture(case_id)
+                pipeline_input = _build_pipeline_input_from_fixture(fixture)
+                chain = _run_staged_chain(pipeline_input)
+                angle_decision = chain["angle_decision"]
+                post_brief = chain["post_brief"]
+                editorial_text = "\n".join(
+                    [
+                        angle_decision.controlling_angle,
+                        angle_decision.reader_problem,
+                        angle_decision.author_position,
+                        angle_decision.main_tension,
+                        post_brief.core_point,
+                        post_brief.practical_point,
+                    ]
+                ).lower()
+
+                for forbidden_signal in forbidden_signals:
+                    self.assertNotIn(forbidden_signal, editorial_text)
+
     def test_fixture_post_brief_output_summary_helper_is_available(self) -> None:
         for case_id in self.case_ids:
             with self.subTest(case_id=case_id):

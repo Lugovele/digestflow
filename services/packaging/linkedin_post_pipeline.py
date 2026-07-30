@@ -108,6 +108,33 @@ class ContextualEvidencePack:
 
 
 @dataclass(frozen=True)
+class EvidenceRelationship:
+    relationship_type: str
+    left_label: str
+    right_label: str
+    left_evidence_ids: list[str]
+    right_evidence_ids: list[str]
+    supporting_evidence_ids: list[str]
+    qualifier: str
+    thesis: str
+    reader_problem: str
+    author_position: str
+    main_tension: str
+    score: int
+    priority: int
+
+
+@dataclass(frozen=True)
+class EditorialSynthesisResult:
+    status: str
+    dominant_relationship: EvidenceRelationship | None
+    candidate_relationships: list[EvidenceRelationship]
+    selected_evidence_ids: list[str]
+    non_ready_reason: str = ""
+    non_ready_detail: str = ""
+
+
+@dataclass(frozen=True)
 class AngleDecision:
     controlling_angle: str
     reader_problem: str
@@ -336,35 +363,34 @@ def build_angle_decision_from_contextual_evidence_pack(
         items_by_id,
     )
     selected_ids = [item.evidence_id for item in selected_items]
-    selected_roles = _unique_preserving_order(
-        [item.best_use_in_post for item in selected_items]
+    editorial_synthesis = build_editorial_synthesis_result_for_selected_items(
+        selected_items,
     )
-    role_summary = ", ".join(selected_roles)
-    primary_evidence_text = selected_items[0].evidence_text
-    author_position = (
-        "Separate signals, keep claims attributed to the selected evidence, "
-        "and avoid unsupported conclusions."
-    )
-    if _contains_finance_or_investment_context(selected_items):
-        author_position = (
-            "Separate signals, keep claims attributed to the selected evidence, "
-            "and avoid unsupported conclusions or investment advice."
+    validate_editorial_synthesis_result(editorial_synthesis)
+    if editorial_synthesis.status != EDITORIAL_SYNTHESIS_STATUS_READY:
+        raise LinkedInPostPipelineContractError(
+            "Selected evidence is not ready for an editorial angle: "
+            f"{editorial_synthesis.non_ready_reason}. "
+            f"{editorial_synthesis.non_ready_detail}"
         )
+    relationship = editorial_synthesis.dominant_relationship
+    if relationship is None:
+        raise LinkedInPostPipelineContractError(
+            "Selected evidence is not ready for an editorial angle: "
+            "NO_SUPPORTED_RELATIONSHIP."
+        )
+    controlling_angle, reader_problem, author_position, main_tension = (
+        relationship.thesis,
+        relationship.reader_problem,
+        relationship.author_position,
+        relationship.main_tension,
+    )
 
     angle_decision = AngleDecision(
-        controlling_angle=(
-            "Use the selected contextual evidence to keep one source-grounded "
-            f"angle focused on {role_summary}, starting from: {primary_evidence_text}"
-        ),
-        reader_problem=(
-            "The reader may collapse separate source signals into one broad claim "
-            "unless the post separates what each selected evidence item supports."
-        ),
+        controlling_angle=controlling_angle,
+        reader_problem=reader_problem,
         author_position=author_position,
-        main_tension=(
-            "The selected evidence can support a useful post angle, but its limits "
-            "must stay visible."
-        ),
+        main_tension=main_tension,
         supporting_evidence_ids=selected_ids,
         angle_to_avoid=_build_angle_to_avoid(
             contextual_evidence_pack,
@@ -397,23 +423,25 @@ def build_post_brief_from_angle_decision(
             item
             for item in selected_items
             if item.best_use_in_post == "practical_point"
+            and not _is_market_projection_or_positioning(item)
         ),
         None,
+    )
+    reader_takeaway = _build_reader_takeaway_for_selected_items(
+        selected_items,
+        angle_decision,
     )
 
     post_brief = PostBrief(
         opening_direction=(
-            "Open with the controlling angle as a planning direction: "
+            "Open with this editorial angle: "
             f"{angle_decision.controlling_angle}"
         ),
         pattern_interrupt=(
-            "Use this tension to interrupt the expected framing: "
+            "Interrupt the expected framing with this tension: "
             f"{angle_decision.main_tension}"
         ),
-        core_point=(
-            "Frame the core point as the author's position: "
-            f"{angle_decision.author_position}"
-        ),
+        core_point=angle_decision.author_position,
         evidence_to_use=[
             BriefEvidenceUse(
                 evidence_id=item.evidence_id,
@@ -423,20 +451,17 @@ def build_post_brief_from_angle_decision(
             for item in selected_items
         ],
         practical_point=(
-            "Use this practical evidence to shape the reader takeaway: "
+            "Anchor the reader takeaway in this practical point: "
             f"{practical_item.evidence_text}"
             if practical_item is not None
-            else (
-                "Keep the practical point source-grounded and limited to the "
-                "selected supporting evidence."
-            )
+            else reader_takeaway
         ),
         ending_direction=(
-            "End by returning to the author's position without adding new claims: "
+            "End by returning to this author position: "
             f"{angle_decision.author_position}"
         ),
         cta_direction=(
-            "Ask the reader to consider the reader problem: "
+            "Ask the reader to reconsider this reader problem: "
             f"{angle_decision.reader_problem}"
         ),
     )
@@ -1034,6 +1059,18 @@ def _require_string_list(value: Any, field_name: str, min_items: int = 0) -> Non
             )
 
 
+def _require_unique_non_empty_string_list(
+    value: Any,
+    field_name: str,
+    min_items: int = 1,
+) -> None:
+    _require_string_list(value, field_name, min_items=min_items)
+    if len(set(value)) != len(value):
+        raise LinkedInPostPipelineContractError(
+            f"{field_name} must not contain duplicate strings."
+        )
+
+
 def _require_choice(value: Any, allowed_values: set[str], field_name: str) -> None:
     if value not in allowed_values:
         allowed = ", ".join(sorted(allowed_values))
@@ -1076,6 +1113,962 @@ def _require_matching_contextual_evidence_field(
             "ContextualEvidence must preserve ArticleEvidence "
             f"{field_name} for evidence_id {evidence_id}."
         )
+
+
+EDITORIAL_SIGNAL_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "adoption interest",
+        (
+            "adoption",
+            "consumer",
+            "integrated",
+            "leverage",
+            "accessibility",
+            "own crypto",
+            "owners",
+            "users",
+        ),
+    ),
+    (
+        "security confidence",
+        (
+            "security",
+            "confidence",
+            "trust",
+            "volatility",
+            "concern",
+        ),
+    ),
+    (
+        "market forecast",
+        (
+            "forecast",
+            "projected",
+            "projection",
+            "cagr",
+            "growth",
+            "grow",
+        ),
+    ),
+    (
+        "price positioning",
+        (
+            "bottom",
+            "downside",
+            "bear",
+            "pessimistic",
+            "trader",
+        ),
+    ),
+    (
+        "regulatory clarity",
+        (
+            "regulation",
+            "regulatory",
+        ),
+    ),
+    (
+        "technology reliability",
+        (
+            "technological advancements",
+            "transaction efficiency",
+            "efficiency and security",
+        ),
+    ),
+    (
+        "workplace expectations",
+        (
+            "remote",
+            "hybrid",
+            "workplace",
+            "expectations",
+            "communication",
+            "isolation",
+            "mental health",
+        ),
+    ),
+    (
+        "inclusion",
+        (
+            "diversity",
+            "inclusion",
+            "inclusive",
+        ),
+    ),
+    (
+        "pricing strategy",
+        (
+            "pricing strategy",
+            "value-based pricing",
+            "product value",
+            "customer perceptions",
+            "profitability",
+        ),
+    ),
+    (
+        "freelance client positioning",
+        (
+            "freelance",
+            "freelancers",
+            "client acquisition",
+            "international clients",
+            "specialization",
+            "personal brand",
+        ),
+    ),
+    (
+        "education impact",
+        (
+            "education",
+            "students",
+            "teens",
+            "school",
+            "learning",
+        ),
+    ),
+    (
+        "work decisions",
+        (
+            "decisions",
+            "tradeoffs",
+            "lessons",
+            "visible process",
+        ),
+    ),
+    (
+        "surface outcomes",
+        (
+            "finished outcomes",
+            "polished output",
+            "surface-level",
+        ),
+    ),
+)
+
+
+EDITORIAL_SYNTHESIS_STATUS_READY = "READY"
+EDITORIAL_SYNTHESIS_STATUS_NON_READY = "NON_READY"
+
+EDITORIAL_SYNTHESIS_REASON_INSUFFICIENT_SELECTED_EVIDENCE = (
+    "INSUFFICIENT_SELECTED_EVIDENCE"
+)
+EDITORIAL_SYNTHESIS_REASON_NO_SUPPORTED_RELATIONSHIP = "NO_SUPPORTED_RELATIONSHIP"
+EDITORIAL_SYNTHESIS_REASON_ONLY_SIGNAL_INVENTORY = "ONLY_SIGNAL_INVENTORY"
+EDITORIAL_SYNTHESIS_REASON_AMBIGUOUS_DOMINANT_RELATIONSHIP = (
+    "AMBIGUOUS_DOMINANT_RELATIONSHIP"
+)
+EDITORIAL_SYNTHESIS_REASON_UNSAFE_CAUSAL_SYNTHESIS = "UNSAFE_CAUSAL_SYNTHESIS"
+EDITORIAL_SYNTHESIS_NON_READY_REASONS = {
+    EDITORIAL_SYNTHESIS_REASON_INSUFFICIENT_SELECTED_EVIDENCE,
+    EDITORIAL_SYNTHESIS_REASON_NO_SUPPORTED_RELATIONSHIP,
+    EDITORIAL_SYNTHESIS_REASON_ONLY_SIGNAL_INVENTORY,
+    EDITORIAL_SYNTHESIS_REASON_AMBIGUOUS_DOMINANT_RELATIONSHIP,
+    EDITORIAL_SYNTHESIS_REASON_UNSAFE_CAUSAL_SYNTHESIS,
+}
+
+RELATIONSHIP_PRIORITY: dict[str, int] = {
+    "growth_vs_constraint": 1,
+    "interest_vs_confidence": 2,
+    "forecast_vs_current_condition": 3,
+    "expectation_vs_behavior": 4,
+    "adoption_vs_infrastructure": 5,
+}
+
+METRIC_OR_QUALIFIER_TERMS = (
+    "%",
+    "projected",
+    "forecast",
+    "likely",
+    "may",
+    "suggest",
+    "risk",
+    "concern",
+)
+
+
+def build_editorial_synthesis_result_for_selected_items(
+    selected_items: list[ContextualEvidence],
+) -> EditorialSynthesisResult:
+    selected_evidence_ids = [item.evidence_id for item in selected_items]
+    if not selected_items:
+        return _non_ready_editorial_synthesis_result(
+            selected_evidence_ids,
+            EDITORIAL_SYNTHESIS_REASON_INSUFFICIENT_SELECTED_EVIDENCE,
+            "No selected evidence items were provided.",
+        )
+
+    signal_evidence_ids = _editorial_signal_evidence_ids_for_selected_items(
+        selected_items
+    )
+    signal_labels = list(signal_evidence_ids)
+    if not signal_labels:
+        return _non_ready_editorial_synthesis_result(
+            selected_evidence_ids,
+            EDITORIAL_SYNTHESIS_REASON_NO_SUPPORTED_RELATIONSHIP,
+            "Selected evidence did not contain recognized editorial signals.",
+        )
+
+    raw_candidates = _build_evidence_relationship_candidates(
+        selected_items,
+        signal_evidence_ids,
+    )
+    candidates, rejected_reasons = _validated_relationship_candidates(raw_candidates)
+    if not candidates:
+        if EDITORIAL_SYNTHESIS_REASON_UNSAFE_CAUSAL_SYNTHESIS in rejected_reasons:
+            reason = EDITORIAL_SYNTHESIS_REASON_UNSAFE_CAUSAL_SYNTHESIS
+        else:
+            reason = (
+                EDITORIAL_SYNTHESIS_REASON_INSUFFICIENT_SELECTED_EVIDENCE
+                if len(selected_items) == 1
+                else EDITORIAL_SYNTHESIS_REASON_ONLY_SIGNAL_INVENTORY
+            )
+        return _non_ready_editorial_synthesis_result(
+            selected_evidence_ids,
+            reason,
+            "Recognized signals did not form an approved evidence relationship.",
+        )
+
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda relationship: (-relationship.score, relationship.priority),
+    )
+    dominant_relationship = sorted_candidates[0]
+    tied = [
+        relationship
+        for relationship in sorted_candidates[1:]
+        if relationship.score == dominant_relationship.score
+        and relationship.priority == dominant_relationship.priority
+        and relationship.thesis != dominant_relationship.thesis
+    ]
+    if tied:
+        return EditorialSynthesisResult(
+            status=EDITORIAL_SYNTHESIS_STATUS_NON_READY,
+            dominant_relationship=None,
+            candidate_relationships=sorted_candidates,
+            selected_evidence_ids=selected_evidence_ids,
+            non_ready_reason=EDITORIAL_SYNTHESIS_REASON_AMBIGUOUS_DOMINANT_RELATIONSHIP,
+            non_ready_detail="Multiple incompatible relationships tied for dominance.",
+        )
+
+    result = EditorialSynthesisResult(
+        status=EDITORIAL_SYNTHESIS_STATUS_READY,
+        dominant_relationship=dominant_relationship,
+        candidate_relationships=sorted_candidates,
+        selected_evidence_ids=selected_evidence_ids,
+    )
+    validate_editorial_synthesis_result(result)
+    return result
+
+
+def _build_reader_takeaway_for_selected_items(
+    selected_items: list[ContextualEvidence],
+    angle_decision: AngleDecision,
+) -> str:
+    synthesis_result = build_editorial_synthesis_result_for_selected_items(
+        selected_items
+    )
+    if (
+        synthesis_result.status == EDITORIAL_SYNTHESIS_STATUS_READY
+        and synthesis_result.dominant_relationship is not None
+    ):
+        relationship = synthesis_result.dominant_relationship
+        return _practical_point_for_relationship(relationship)
+    return (
+        "The reader takeaway should follow the author position: "
+        f"{angle_decision.author_position}"
+    )
+
+
+def _build_evidence_relationship_candidates(
+    selected_items: list[ContextualEvidence],
+    signal_evidence_ids: dict[str, list[str]],
+) -> list[EvidenceRelationship]:
+    topic_label = _topic_label_for_selected_items(selected_items)
+    candidates: list[EvidenceRelationship] = []
+
+    candidates.extend(
+        _build_growth_vs_constraint_candidates(
+            selected_items,
+            signal_evidence_ids,
+            topic_label,
+        )
+    )
+    candidates.extend(
+        _build_interest_vs_confidence_candidates(
+            selected_items,
+            signal_evidence_ids,
+            topic_label,
+        )
+    )
+    candidates.extend(
+        _build_forecast_vs_current_condition_candidates(
+            selected_items,
+            signal_evidence_ids,
+            topic_label,
+        )
+    )
+    candidates.extend(
+        _build_expectation_vs_behavior_candidates(
+            selected_items,
+            signal_evidence_ids,
+            topic_label,
+        )
+    )
+    return candidates
+
+
+def _build_growth_vs_constraint_candidates(
+    selected_items: list[ContextualEvidence],
+    signal_evidence_ids: dict[str, list[str]],
+    topic_label: str,
+) -> list[EvidenceRelationship]:
+    growth_ids = _ids_for_labels(
+        signal_evidence_ids,
+        ["adoption interest", "market forecast"],
+    )
+    constraint_ids = _ids_for_labels(
+        signal_evidence_ids,
+        ["security confidence", "price positioning"],
+    )
+    if not growth_ids or not constraint_ids:
+        return []
+
+    thesis = (
+        f"The stronger {topic_label} angle is not that adoption or forecasts "
+        "settle the market story, but that visible growth evidence remains "
+        "conditional on confidence and risk evidence."
+    )
+    relationship = EvidenceRelationship(
+        relationship_type="growth_vs_constraint",
+        left_label="growth evidence",
+        right_label="confidence and risk evidence",
+        left_evidence_ids=growth_ids,
+        right_evidence_ids=constraint_ids,
+        supporting_evidence_ids=_unique_preserving_order(growth_ids + constraint_ids),
+        qualifier=_qualifier_for_evidence_ids(selected_items, growth_ids + constraint_ids),
+        thesis=thesis,
+        reader_problem=(
+            "Readers may treat ownership, investment intent, or market forecasts "
+            "as one clean growth story before checking the confidence and risk evidence."
+        ),
+        author_position=(
+            f"The author position is that {topic_label} growth should be read as "
+            "conditional: adoption and forecasts matter, but security concerns, "
+            "volatility, and positioning risk still shape what the evidence can support."
+        ),
+        main_tension=(
+            "The tension is between visible growth evidence and unresolved "
+            "confidence or risk evidence."
+        ),
+        score=_relationship_score(selected_items, growth_ids, constraint_ids),
+        priority=RELATIONSHIP_PRIORITY["growth_vs_constraint"],
+    )
+    return [relationship]
+
+
+def _build_interest_vs_confidence_candidates(
+    selected_items: list[ContextualEvidence],
+    signal_evidence_ids: dict[str, list[str]],
+    topic_label: str,
+) -> list[EvidenceRelationship]:
+    interest_ids = _ids_for_labels(signal_evidence_ids, ["adoption interest"])
+    confidence_ids = _ids_for_labels(signal_evidence_ids, ["security confidence"])
+    if not interest_ids or not confidence_ids:
+        return []
+
+    relationship = EvidenceRelationship(
+        relationship_type="interest_vs_confidence",
+        left_label="participation interest",
+        right_label="confidence barrier",
+        left_evidence_ids=interest_ids,
+        right_evidence_ids=confidence_ids,
+        supporting_evidence_ids=_unique_preserving_order(interest_ids + confidence_ids),
+        qualifier=_qualifier_for_evidence_ids(
+            selected_items,
+            interest_ids + confidence_ids,
+        ),
+        thesis=(
+            f"The stronger {topic_label} angle is that participation interest "
+            "can rise before confidence catches up."
+        ),
+        reader_problem=(
+            "Readers may treat participation interest as proof of broad trust "
+            "before checking the confidence barrier."
+        ),
+        author_position=(
+            f"The author position is that {topic_label} participation should not "
+            "be confused with durable confidence."
+        ),
+        main_tension=(
+            "The tension is between visible participation interest and unresolved "
+            "confidence barriers."
+        ),
+        score=_relationship_score(selected_items, interest_ids, confidence_ids),
+        priority=RELATIONSHIP_PRIORITY["interest_vs_confidence"],
+    )
+    return [relationship]
+
+
+def _build_forecast_vs_current_condition_candidates(
+    selected_items: list[ContextualEvidence],
+    signal_evidence_ids: dict[str, list[str]],
+    topic_label: str,
+) -> list[EvidenceRelationship]:
+    forecast_ids = _ids_for_labels(signal_evidence_ids, ["market forecast"])
+    condition_ids = _ids_for_labels(signal_evidence_ids, ["price positioning"])
+    if not forecast_ids or not condition_ids:
+        return []
+
+    relationship = EvidenceRelationship(
+        relationship_type="forecast_vs_current_condition",
+        left_label="long-range forecast",
+        right_label="current positioning risk",
+        left_evidence_ids=forecast_ids,
+        right_evidence_ids=condition_ids,
+        supporting_evidence_ids=_unique_preserving_order(forecast_ids + condition_ids),
+        qualifier=_qualifier_for_evidence_ids(
+            selected_items,
+            forecast_ids + condition_ids,
+        ),
+        thesis=(
+            f"The stronger {topic_label} angle is that a long-range forecast does "
+            "not erase the qualified short-term positioning evidence."
+        ),
+        reader_problem=(
+            "Readers may treat a projected growth path as a current-market answer "
+            "even when current positioning remains qualified."
+        ),
+        author_position=(
+            f"The author position is that {topic_label} forecasts and current "
+            "positioning evidence answer different questions."
+        ),
+        main_tension=(
+            "The tension is between projected long-range growth and qualified "
+            "current positioning evidence."
+        ),
+        score=_relationship_score(selected_items, forecast_ids, condition_ids),
+        priority=RELATIONSHIP_PRIORITY["forecast_vs_current_condition"],
+    )
+    return [relationship]
+
+
+def _build_expectation_vs_behavior_candidates(
+    selected_items: list[ContextualEvidence],
+    signal_evidence_ids: dict[str, list[str]],
+    topic_label: str,
+) -> list[EvidenceRelationship]:
+    candidates: list[EvidenceRelationship] = []
+    relationship_pairs = [
+        (
+            "workplace expectations",
+            "inclusion",
+            "workplace rules",
+            "inclusive work design",
+            (
+                "Workplace expectations are not durable on their own; they need "
+                "inclusive work design to become usable."
+            ),
+        ),
+        (
+            "pricing strategy",
+            "freelance client positioning",
+            "pricing strategy",
+            "client positioning",
+            (
+                "Freelance pricing works best as a positioning choice, not just "
+                "as a number on an offer."
+            ),
+        ),
+        (
+            "education impact",
+            "adoption interest",
+            "education impact",
+            "learner adoption",
+            (
+                "Education impact becomes more concrete when learner adoption is "
+                "visible, but adoption alone does not explain educational value."
+            ),
+        ),
+        (
+            "work decisions",
+            "surface outcomes",
+            "visible decisions",
+            "surface polish",
+            (
+                "proof of judgment comes from visible decisions, not surface polish."
+            ),
+        ),
+        (
+            "technology reliability",
+            "security confidence",
+            "technology reliability",
+            "security confidence",
+            (
+                "technology reliability matters alongside confidence, not just "
+                "as an efficiency claim."
+            ),
+        ),
+    ]
+    for left_signal, right_signal, left_label, right_label, thesis in relationship_pairs:
+        left_ids = _ids_for_labels(signal_evidence_ids, [left_signal])
+        right_ids = _ids_for_labels(signal_evidence_ids, [right_signal])
+        if not left_ids or not right_ids:
+            continue
+        relationship = EvidenceRelationship(
+            relationship_type="expectation_vs_behavior",
+            left_label=left_label,
+            right_label=right_label,
+            left_evidence_ids=left_ids,
+            right_evidence_ids=right_ids,
+            supporting_evidence_ids=_unique_preserving_order(left_ids + right_ids),
+            qualifier=_qualifier_for_evidence_ids(selected_items, left_ids + right_ids),
+            thesis=f"The stronger {topic_label} angle is that {thesis}",
+            reader_problem=(
+                f"Readers may treat {left_label} as the whole story before "
+                f"checking {right_label}."
+            ),
+            author_position=(
+                f"The author position is that {topic_label} needs both "
+                f"{left_label} and {right_label} to become a useful takeaway."
+            ),
+            main_tension=(
+                f"The tension is between {left_label} and {right_label}."
+            ),
+            score=_relationship_score(selected_items, left_ids, right_ids),
+            priority=RELATIONSHIP_PRIORITY["expectation_vs_behavior"],
+        )
+        candidates.append(relationship)
+    return candidates
+
+
+def _validated_relationship_candidates(
+    relationships: list[EvidenceRelationship],
+) -> tuple[list[EvidenceRelationship], list[str]]:
+    valid_relationships: list[EvidenceRelationship] = []
+    rejected_reasons: list[str] = []
+    for relationship in relationships:
+        try:
+            validate_evidence_relationship(relationship)
+        except LinkedInPostPipelineContractError as exc:
+            if "unsupported causal strengthening" in str(exc):
+                rejected_reasons.append(
+                    EDITORIAL_SYNTHESIS_REASON_UNSAFE_CAUSAL_SYNTHESIS
+                )
+            continue
+        valid_relationships.append(relationship)
+    return valid_relationships, _unique_preserving_order(rejected_reasons)
+
+
+def validate_evidence_relationship(relationship: EvidenceRelationship) -> None:
+    _require_non_empty_string(
+        relationship.relationship_type,
+        "EvidenceRelationship.relationship_type",
+    )
+    _require_non_empty_string(relationship.left_label, "EvidenceRelationship.left_label")
+    _require_non_empty_string(
+        relationship.right_label,
+        "EvidenceRelationship.right_label",
+    )
+    _require_non_empty_string(relationship.thesis, "EvidenceRelationship.thesis")
+    _require_non_empty_string(
+        relationship.reader_problem,
+        "EvidenceRelationship.reader_problem",
+    )
+    _require_non_empty_string(
+        relationship.author_position,
+        "EvidenceRelationship.author_position",
+    )
+    _require_non_empty_string(
+        relationship.main_tension,
+        "EvidenceRelationship.main_tension",
+    )
+    _require_unique_non_empty_string_list(
+        relationship.left_evidence_ids,
+        "EvidenceRelationship.left_evidence_ids",
+    )
+    _require_unique_non_empty_string_list(
+        relationship.right_evidence_ids,
+        "EvidenceRelationship.right_evidence_ids",
+    )
+    _require_unique_non_empty_string_list(
+        relationship.supporting_evidence_ids,
+        "EvidenceRelationship.supporting_evidence_ids",
+    )
+    if not set(relationship.left_evidence_ids).issubset(
+        set(relationship.supporting_evidence_ids)
+    ):
+        raise LinkedInPostPipelineContractError(
+            "EvidenceRelationship.left_evidence_ids must be included in supporting_evidence_ids."
+        )
+    if not set(relationship.right_evidence_ids).issubset(
+        set(relationship.supporting_evidence_ids)
+    ):
+        raise LinkedInPostPipelineContractError(
+            "EvidenceRelationship.right_evidence_ids must be included in supporting_evidence_ids."
+        )
+    if (
+        len(set(relationship.supporting_evidence_ids)) < 2
+        and set(relationship.left_evidence_ids) != set(relationship.right_evidence_ids)
+    ):
+        raise LinkedInPostPipelineContractError(
+            "EvidenceRelationship must use at least two selected evidence items unless one item supports both sides."
+        )
+    if _contains_unsupported_causal_strengthening(
+        "\n".join(
+            [
+                relationship.thesis,
+                relationship.reader_problem,
+                relationship.author_position,
+                relationship.main_tension,
+            ]
+        )
+    ):
+        raise LinkedInPostPipelineContractError(
+            "EvidenceRelationship must not introduce unsupported causal strengthening."
+        )
+    if relationship.score < 0:
+        raise LinkedInPostPipelineContractError(
+            "EvidenceRelationship.score must be non-negative."
+        )
+    if relationship.priority <= 0:
+        raise LinkedInPostPipelineContractError(
+            "EvidenceRelationship.priority must be positive."
+        )
+
+
+def validate_editorial_synthesis_result(result: EditorialSynthesisResult) -> None:
+    if result.status not in {
+        EDITORIAL_SYNTHESIS_STATUS_READY,
+        EDITORIAL_SYNTHESIS_STATUS_NON_READY,
+    }:
+        raise LinkedInPostPipelineContractError(
+            "EditorialSynthesisResult.status must be READY or NON_READY."
+        )
+    for relationship in result.candidate_relationships:
+        validate_evidence_relationship(relationship)
+    if result.status == EDITORIAL_SYNTHESIS_STATUS_READY:
+        _require_unique_non_empty_string_list(
+            result.selected_evidence_ids,
+            "EditorialSynthesisResult.selected_evidence_ids",
+        )
+        if result.non_ready_reason or result.non_ready_detail:
+            raise LinkedInPostPipelineContractError(
+                "Ready EditorialSynthesisResult must not include non-ready fields."
+            )
+        if result.dominant_relationship is None:
+            raise LinkedInPostPipelineContractError(
+                "Ready EditorialSynthesisResult must include a dominant relationship."
+            )
+        validate_evidence_relationship(result.dominant_relationship)
+        selected_evidence_ids = set(result.selected_evidence_ids)
+        _require_relationship_ids_subset_selected(
+            result.dominant_relationship,
+            selected_evidence_ids,
+            "EditorialSynthesisResult.dominant_relationship",
+        )
+        if result.dominant_relationship not in result.candidate_relationships:
+            raise LinkedInPostPipelineContractError(
+                "Ready EditorialSynthesisResult dominant relationship must be included in candidate_relationships."
+            )
+        for index, relationship in enumerate(result.candidate_relationships):
+            _require_relationship_ids_subset_selected(
+                relationship,
+                selected_evidence_ids,
+                f"EditorialSynthesisResult.candidate_relationships[{index}]",
+            )
+        return
+    _require_string_list(
+        result.selected_evidence_ids,
+        "EditorialSynthesisResult.selected_evidence_ids",
+    )
+    if len(set(result.selected_evidence_ids)) != len(result.selected_evidence_ids):
+        raise LinkedInPostPipelineContractError(
+            "EditorialSynthesisResult.selected_evidence_ids must not contain duplicate strings."
+        )
+    if result.dominant_relationship is not None:
+        raise LinkedInPostPipelineContractError(
+            "Non-ready EditorialSynthesisResult must not include a dominant relationship."
+        )
+    selected_evidence_ids = set(result.selected_evidence_ids)
+    for index, relationship in enumerate(result.candidate_relationships):
+        _require_relationship_ids_subset_selected(
+            relationship,
+            selected_evidence_ids,
+            f"EditorialSynthesisResult.candidate_relationships[{index}]",
+        )
+    _require_non_empty_string(
+        result.non_ready_reason,
+        "EditorialSynthesisResult.non_ready_reason",
+    )
+    if result.non_ready_reason not in EDITORIAL_SYNTHESIS_NON_READY_REASONS:
+        allowed = ", ".join(sorted(EDITORIAL_SYNTHESIS_NON_READY_REASONS))
+        raise LinkedInPostPipelineContractError(
+            "EditorialSynthesisResult.non_ready_reason must be one of: "
+            f"{allowed}."
+        )
+
+
+def _require_relationship_ids_subset_selected(
+    relationship: EvidenceRelationship,
+    selected_evidence_ids: set[str],
+    field_name: str,
+) -> None:
+    relationship_ids = set(
+        relationship.left_evidence_ids
+        + relationship.right_evidence_ids
+        + relationship.supporting_evidence_ids
+    )
+    unknown_ids = sorted(relationship_ids - selected_evidence_ids)
+    if unknown_ids:
+        raise LinkedInPostPipelineContractError(
+            f"{field_name} contains evidence IDs outside selected_evidence_ids: "
+            f"{unknown_ids}."
+        )
+
+
+def _non_ready_editorial_synthesis_result(
+    selected_evidence_ids: list[str],
+    reason: str,
+    detail: str,
+) -> EditorialSynthesisResult:
+    return EditorialSynthesisResult(
+        status=EDITORIAL_SYNTHESIS_STATUS_NON_READY,
+        dominant_relationship=None,
+        candidate_relationships=[],
+        selected_evidence_ids=selected_evidence_ids,
+        non_ready_reason=reason,
+        non_ready_detail=detail,
+    )
+
+
+def _editorial_signal_evidence_ids_for_selected_items(
+    selected_items: list[ContextualEvidence],
+) -> dict[str, list[str]]:
+    signal_evidence_ids: dict[str, list[str]] = {}
+    has_market_context = any(
+        _contains_market_context(
+            _source_grounded_editorial_text_blob_for_evidence_item(item)
+        )
+        for item in selected_items
+    )
+    for item in selected_items:
+        item_text = _source_grounded_editorial_text_blob_for_evidence_item(item)
+        for label, keywords in EDITORIAL_SIGNAL_KEYWORDS:
+            if _is_market_specific_signal_label(label) and not has_market_context:
+                continue
+            if any(keyword in item_text for keyword in keywords):
+                signal_evidence_ids.setdefault(label, []).append(item.evidence_id)
+    return {
+        label: _unique_preserving_order(evidence_ids)
+        for label, evidence_ids in signal_evidence_ids.items()
+    }
+
+
+def _ids_for_labels(
+    signal_evidence_ids: dict[str, list[str]],
+    labels: list[str],
+) -> list[str]:
+    evidence_ids: list[str] = []
+    for label in labels:
+        evidence_ids.extend(signal_evidence_ids.get(label, []))
+    return _unique_preserving_order(evidence_ids)
+
+
+def _relationship_score(
+    selected_items: list[ContextualEvidence],
+    left_evidence_ids: list[str],
+    right_evidence_ids: list[str],
+) -> int:
+    supporting_ids = _unique_preserving_order(left_evidence_ids + right_evidence_ids)
+    items_by_id = {item.evidence_id: item for item in selected_items}
+    score = len(supporting_ids) * 4
+    if set(left_evidence_ids).intersection(right_evidence_ids):
+        score += 3
+    source_indexes = {
+        items_by_id[evidence_id].source_index
+        for evidence_id in supporting_ids
+        if evidence_id in items_by_id
+    }
+    if len(source_indexes) > 1:
+        score += 2
+    for evidence_id in supporting_ids:
+        item = items_by_id.get(evidence_id)
+        if item is not None and _is_metric_or_qualified_item(item):
+            score += 1
+    return score
+
+
+def _is_metric_or_qualified_item(item: ContextualEvidence) -> bool:
+    item_text = _source_evidence_support_text_blob_for_evidence_item(item)
+    return any(term in item_text for term in METRIC_OR_QUALIFIER_TERMS)
+
+
+def _qualifier_for_evidence_ids(
+    selected_items: list[ContextualEvidence],
+    evidence_ids: list[str],
+) -> str:
+    values: list[str] = []
+    items_by_id = {item.evidence_id: item for item in selected_items}
+    for evidence_id in evidence_ids:
+        item = items_by_id.get(evidence_id)
+        if item is None:
+            continue
+        item_text = _source_evidence_support_text_blob_for_evidence_item(item)
+        for qualifier in ["projected", "likely", "may", "suggest", "concern", "risk"]:
+            if qualifier in item_text and qualifier not in values:
+                values.append(qualifier)
+    return ", ".join(values)
+
+
+def _practical_point_for_relationship(relationship: EvidenceRelationship) -> str:
+    if relationship.relationship_type == "growth_vs_constraint":
+        return (
+            "Before treating the market story as settled, check whether growth "
+            "evidence is being qualified by confidence or risk evidence."
+        )
+    if relationship.relationship_type == "forecast_vs_current_condition":
+        return (
+            "Use the forecast as long-range context and keep current positioning "
+            "qualified."
+        )
+    return (
+        f"Turn the post toward the relationship between {relationship.left_label} "
+        f"and {relationship.right_label}."
+    )
+
+
+def _contains_unsupported_causal_strengthening(text: str) -> bool:
+    lowered = text.lower()
+    forbidden_phrases = [
+        "causes",
+        "caused",
+        "drives",
+        "driven by",
+        "guarantees",
+        "will lead to",
+        "leads to",
+        "lead to",
+        "will create",
+        "will prevent",
+        "prevents downturns",
+        "prevents declines",
+        "creates stability",
+        "led to stability",
+    ]
+    return any(phrase in lowered for phrase in forbidden_phrases)
+
+
+def _topic_label_for_selected_items(selected_items: list[ContextualEvidence]) -> str:
+    combined_text = " ".join(
+        _editorial_text_blob_for_evidence_item(item) for item in selected_items
+    )
+    if any(term in combined_text for term in ("bitcoin", "crypto", "cryptocurrency")):
+        return "crypto-market"
+    if any(term in combined_text for term in ("remote", "hybrid", "workplace")):
+        return "workplace"
+    if any(term in combined_text for term in ("education", "students", "teens")):
+        return "education"
+    if "freelanc" in combined_text:
+        return "freelancing"
+    return "reader"
+
+
+def _is_market_specific_signal_label(label: str) -> bool:
+    return label in {
+        "security confidence",
+        "market forecast",
+        "price positioning",
+    }
+
+
+def _contains_market_context(text: str) -> bool:
+    return any(
+        term in text
+        for term in (
+            "bitcoin",
+            "crypto",
+            "cryptocurrency",
+            "finance",
+            "financial",
+            "investment",
+            "investor",
+            "trading",
+            "trader",
+        )
+    )
+
+
+def _is_market_projection_or_positioning(item: ContextualEvidence | ArticleEvidence) -> bool:
+    item_text = _source_evidence_support_text_blob_for_evidence_item(item)
+    explicit_projection_terms = (
+        "forecast",
+        "forecasted",
+        "projected",
+        "projection",
+        "cagr",
+        "compound annual growth",
+    )
+    explicit_positioning_terms = (
+        "bottomed",
+        "downside",
+        "bear case",
+        "bull case",
+        "pessimistic trader",
+        "trader sentiment",
+    )
+    if any(term in item_text for term in explicit_projection_terms):
+        return True
+    if any(term in item_text for term in explicit_positioning_terms):
+        return True
+    has_market_context = any(
+        term in item_text
+        for term in (
+            "bitcoin",
+            "crypto",
+            "cryptocurrency",
+            "finance",
+            "financial",
+            "investment",
+            "investor",
+            "market",
+            "stock",
+            "trading",
+            "trader",
+        )
+    )
+    return has_market_context and "price" in item_text
+
+
+def _editorial_text_blob_for_evidence_item(
+    item: ContextualEvidence | ArticleEvidence,
+) -> str:
+    values = [item.source_title, item.evidence_text, item.evidence_type]
+    if isinstance(item, ContextualEvidence):
+        values.extend(
+            [
+                item.what_it_says,
+                item.supports_argument,
+            ]
+        )
+    return " ".join(values).lower()
+
+
+def _source_grounded_editorial_text_blob_for_evidence_item(
+    item: ContextualEvidence | ArticleEvidence,
+) -> str:
+    values = [item.source_title, item.evidence_text]
+    if isinstance(item, ContextualEvidence):
+        values.append(item.what_it_says)
+    return " ".join(values).lower()
+
+
+def _source_evidence_support_text_blob_for_evidence_item(
+    item: ContextualEvidence | ArticleEvidence,
+) -> str:
+    values = [item.source_title, item.evidence_text]
+    if isinstance(item, ContextualEvidence):
+        values.extend([item.what_it_says, item.supports_argument])
+    return " ".join(values).lower()
 
 
 def _select_angle_supporting_evidence(
@@ -1146,38 +2139,18 @@ def _build_angle_to_avoid(
     return _unique_preserving_order(values)
 
 
-def _contains_finance_or_investment_context(
-    selected_items: list[ContextualEvidence],
-) -> bool:
-    finance_terms = [
-        "bitcoin",
-        "crypto",
-        "cryptocurrency",
-        "financial advice",
-        "investment",
-        "investor",
-        "portfolio",
-        "trading",
-    ]
-    selected_text = " ".join(
-        " ".join(
-            [
-                item.source_title,
-                item.evidence_text,
-                item.supports_argument,
-                item.do_not_use_for,
-                item.risk_of_misuse,
-            ]
-        )
-        for item in selected_items
-    ).lower()
-    return any(term in selected_text for term in finance_terms)
-
-
 def _brief_role_for_contextual_evidence(item: ContextualEvidence) -> str:
+    best_use = item.best_use_in_post
+    supports_argument = item.supports_argument
+    if best_use == "practical_point" and _is_market_projection_or_positioning(item):
+        best_use = "proof"
+        supports_argument = (
+            "Treat market projection or positioning evidence as context for the "
+            "thesis, not as a reader instruction."
+        )
     return (
-        f"Use this evidence as {item.best_use_in_post} support. "
-        f"{item.supports_argument}"
+        f"Use this evidence as {best_use} support. "
+        f"{supports_argument}"
     )
 
 
@@ -1272,6 +2245,8 @@ __all__ = [
     "BriefEvidenceUse",
     "ContextualEvidence",
     "ContextualEvidencePack",
+    "EditorialSynthesisResult",
+    "EvidenceRelationship",
     "FinalPostPayload",
     "LinkedInPostPipelineContractError",
     "PipelineInput",
@@ -1282,6 +2257,7 @@ __all__ = [
     "build_angle_decision_from_contextual_evidence_pack",
     "build_article_evidence_pack_from_pipeline_input",
     "build_contextual_evidence_pack_from_article_evidence_pack",
+    "build_editorial_synthesis_result_for_selected_items",
     "build_final_post_payload_from_post_brief",
     "build_pipeline_input_from_digest",
     "build_post_brief_from_angle_decision",
@@ -1292,6 +2268,8 @@ __all__ = [
     "validate_article_evidence_pack_for_pipeline_input",
     "validate_contextual_evidence_pack",
     "validate_contextual_evidence_pack_for_article_evidence",
+    "validate_editorial_synthesis_result",
+    "validate_evidence_relationship",
     "validate_final_post_payload",
     "validate_final_post_payload_for_post_brief",
     "validate_linkedin_post_stage_relationships",
