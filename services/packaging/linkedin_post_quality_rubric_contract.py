@@ -1,6 +1,7 @@
 """Versioned rubric payload for future LinkedIn post quality evaluation."""
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -152,3 +153,104 @@ def get_quality_evaluator_rubric_payload() -> QualityEvaluatorRubricPayload:
         required_minimums=dict(_REQUIRED_MINIMUMS),
         automatic_fail_conditions=tuple(_AUTOMATIC_FAIL_CONDITIONS),
     )
+
+
+def normalize_quality_evaluator_rubric_payload(
+    rubric: QualityEvaluatorRubricPayload | dict[str, Any],
+) -> QualityEvaluatorRubricPayload:
+    """Return the canonical rubric payload required by prompt rendering."""
+
+    if isinstance(rubric, QualityEvaluatorRubricPayload):
+        return rubric
+    if not isinstance(rubric, dict):
+        raise ValueError("quality evaluator rubric must be a rubric payload or dictionary.")
+
+    required_fields = {
+        "rubric_version",
+        "source_document",
+        "criteria",
+        "score_min",
+        "score_max",
+        "total_min",
+        "total_max",
+        "pass_threshold",
+        "required_minimums",
+        "automatic_fail_conditions",
+    }
+    missing_fields = sorted(required_fields - rubric.keys())
+    if missing_fields:
+        raise ValueError(
+            f"quality evaluator rubric is missing required fields: {missing_fields}."
+        )
+
+    automatic_fail_conditions = rubric["automatic_fail_conditions"]
+    if not isinstance(automatic_fail_conditions, (list, tuple)):
+        raise ValueError(
+            "quality evaluator rubric automatic_fail_conditions must be a list or tuple."
+        )
+
+    criteria = _require_string_dict(rubric["criteria"], "criteria")
+    missing_criteria = sorted(set(QUALITY_CRITERIA) - criteria.keys())
+    extra_criteria = sorted(criteria.keys() - set(QUALITY_CRITERIA))
+    if missing_criteria or extra_criteria:
+        raise ValueError(
+            "quality evaluator rubric criteria must match the canonical full shape."
+        )
+
+    required_minimums = _require_int_dict(
+        rubric["required_minimums"],
+        "required_minimums",
+    )
+    canonical_required_minimums = dict(_REQUIRED_MINIMUMS)
+    missing_minimums = sorted(canonical_required_minimums.keys() - required_minimums.keys())
+    extra_minimums = sorted(required_minimums.keys() - canonical_required_minimums.keys())
+    if missing_minimums or extra_minimums:
+        raise ValueError(
+            "quality evaluator rubric required_minimums must match the canonical full shape."
+        )
+
+    return QualityEvaluatorRubricPayload(
+        rubric_version=_require_string(rubric["rubric_version"], "rubric_version"),
+        source_document=_require_string(rubric["source_document"], "source_document"),
+        criteria=criteria,
+        score_min=_require_int(rubric["score_min"], "score_min"),
+        score_max=_require_int(rubric["score_max"], "score_max"),
+        total_min=_require_int(rubric["total_min"], "total_min"),
+        total_max=_require_int(rubric["total_max"], "total_max"),
+        pass_threshold=_require_int(rubric["pass_threshold"], "pass_threshold"),
+        required_minimums=required_minimums,
+        automatic_fail_conditions=tuple(
+            _require_string(item, "automatic_fail_conditions")
+            for item in automatic_fail_conditions
+        ),
+    )
+
+
+def _require_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"quality evaluator rubric {field_name} must be a string.")
+    return value
+
+
+def _require_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"quality evaluator rubric {field_name} must be an integer.")
+    return value
+
+
+def _require_string_dict(value: Any, field_name: str) -> dict[str, str]:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"quality evaluator rubric {field_name} must be a dictionary.")
+    result: dict[str, str] = {}
+    for key, item in copy.deepcopy(value).items():
+        result[_require_string(key, field_name)] = _require_string(item, field_name)
+    return result
+
+
+def _require_int_dict(value: Any, field_name: str) -> dict[str, int]:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"quality evaluator rubric {field_name} must be a dictionary.")
+    result: dict[str, int] = {}
+    for key, item in copy.deepcopy(value).items():
+        result[_require_string(key, field_name)] = _require_int(item, field_name)
+    return result

@@ -94,6 +94,29 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         self.assertIsNone(raw_response.execution_error)
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
+    def test_execution_uses_injected_client_without_constructing_openai_client(
+        self,
+        mock_openai_client,
+    ) -> None:
+        request = _request()
+        fake_client = RecordingQualityEvaluatorClient(
+            SimpleNamespace(
+                text='{"pass": true}',
+                raw={"id": "fake-evaluator"},
+                usage={"total_tokens": 7},
+            )
+        )
+
+        raw_response = execute_quality_evaluator_prompt(request, client=fake_client)
+
+        mock_openai_client.assert_not_called()
+        self.assertEqual(fake_client.call_count, 1)
+        self.assertEqual(fake_client.kwargs["max_output_tokens"], 900)
+        self.assertIs(fake_client.kwargs["json_mode"], False)
+        self.assertEqual(raw_response.raw_text, '{"pass": true}')
+        self.assertEqual(raw_response.raw_provider_response, {"id": "fake-evaluator"})
+
+    @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
     def test_execution_forwards_prompt_text_and_input_text_unchanged(
         self,
         mock_openai_client,
@@ -380,6 +403,18 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         self.assertNotIn("TargetedRepairPlan", source)
         self.assertNotIn("RepairAgent", source)
         self.assertNotIn("run_final_post_deterministic_gate", source)
+
+
+class RecordingQualityEvaluatorClient:
+    def __init__(self, response: SimpleNamespace) -> None:
+        self.response = response
+        self.call_count = 0
+        self.kwargs: dict = {}
+
+    def generate_text(self, **kwargs) -> SimpleNamespace:
+        self.call_count += 1
+        self.kwargs = kwargs
+        return self.response
 
 
 def _request(

@@ -91,6 +91,8 @@ def build_quality_evaluator_execution_request(
 
 def execute_quality_evaluator_prompt(
     request: QualityEvaluatorExecutionRequest,
+    *,
+    client: Any | None = None,
 ) -> QualityEvaluatorRawResponse:
     prompt_metadata = _prompt_metadata_from_render(request.rendered_prompt_input)
     execution_error = _execution_request_error(request)
@@ -105,7 +107,8 @@ def execute_quality_evaluator_prompt(
 
     prompt = _build_provider_prompt(request)
     try:
-        response = OpenAIClient(model=request.model).generate_text(
+        text_client = client if client is not None else OpenAIClient(model=request.model)
+        response = text_client.generate_text(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
             json_mode=False,

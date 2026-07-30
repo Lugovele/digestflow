@@ -34,6 +34,7 @@ from services.packaging.linkedin_post_quality_review_contract import (
 from services.packaging.linkedin_post_quality_rubric_contract import (
     QualityEvaluatorRubricPayload,
     get_quality_evaluator_rubric_payload,
+    normalize_quality_evaluator_rubric_payload,
 )
 
 
@@ -303,6 +304,71 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         payload = get_quality_evaluator_rubric_payload()
 
         self.assertIn("source_document", payload.to_dict())
+
+    def test_normalize_rubric_payload_accepts_existing_payload_unchanged(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        normalized = normalize_quality_evaluator_rubric_payload(payload)
+
+        self.assertIs(normalized, payload)
+
+    def test_normalize_rubric_payload_accepts_full_serialized_payload(self) -> None:
+        payload_dict = get_quality_evaluator_rubric_payload().to_dict()
+
+        normalized = normalize_quality_evaluator_rubric_payload(payload_dict)
+
+        self.assertIsInstance(normalized, QualityEvaluatorRubricPayload)
+        self.assertEqual(normalized.to_dict(), payload_dict)
+
+    def test_normalize_rubric_payload_rejects_prompt_only_dict(self) -> None:
+        prompt_only = get_quality_evaluator_rubric_payload().to_prompt_dict()
+
+        with self.assertRaisesRegex(ValueError, "missing required fields"):
+            normalize_quality_evaluator_rubric_payload(prompt_only)
+
+    def test_normalize_rubric_payload_rejects_placeholder_dict(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing required fields"):
+            normalize_quality_evaluator_rubric_payload({})
+
+    def test_normalize_rubric_payload_rejects_partial_nested_criteria(self) -> None:
+        payload_dict = get_quality_evaluator_rubric_payload().to_dict()
+        payload_dict["criteria"] = {"hook": payload_dict["criteria"]["hook"]}
+
+        with self.assertRaisesRegex(ValueError, "criteria must match"):
+            normalize_quality_evaluator_rubric_payload(payload_dict)
+
+    def test_normalize_rubric_payload_rejects_partial_nested_minimums(self) -> None:
+        payload_dict = get_quality_evaluator_rubric_payload().to_dict()
+        payload_dict["required_minimums"] = {
+            "hook": payload_dict["required_minimums"]["hook"]
+        }
+
+        with self.assertRaisesRegex(ValueError, "required_minimums must match"):
+            normalize_quality_evaluator_rubric_payload(payload_dict)
+
+    def test_normalize_rubric_payload_defensively_copies_nested_values(self) -> None:
+        payload_dict = get_quality_evaluator_rubric_payload().to_dict()
+
+        normalized = normalize_quality_evaluator_rubric_payload(payload_dict)
+        payload_dict["criteria"]["hook"] = "changed"
+        payload_dict["required_minimums"]["hook"] = 1
+        payload_dict["automatic_fail_conditions"].append("changed")
+
+        self.assertNotEqual(normalized.criteria["hook"], "changed")
+        self.assertEqual(normalized.required_minimums["hook"], 4)
+        self.assertNotIn("changed", normalized.automatic_fail_conditions)
+
+    def test_normalize_rubric_payload_accepts_tuple_automatic_fail_conditions(
+        self,
+    ) -> None:
+        payload_dict = get_quality_evaluator_rubric_payload().to_dict()
+        payload_dict["automatic_fail_conditions"] = tuple(
+            payload_dict["automatic_fail_conditions"]
+        )
+
+        normalized = normalize_quality_evaluator_rubric_payload(payload_dict)
+
+        self.assertIsInstance(normalized.automatic_fail_conditions, tuple)
 
     def test_serialized_mutation_does_not_mutate_source_payload(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
