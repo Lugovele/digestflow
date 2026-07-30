@@ -1,0 +1,40 @@
+{
+  "post_brief": {
+    "opening_direction": "Start with the practical tension behind hybrid work policies.",
+    "pattern_interrupt": "The policy document matters less than the operating habits it creates.",
+    "core_point": "Hybrid work needs clear expectations, inclusive norms, and active attention to isolation.",
+    "evidence_to_use": [
+      {
+        "evidence_id": "ev-remote-policy",
+        "evidence_text": "A remote work policy should define expectations, communication norms, and responsibilities so distributed teams can work with fewer misunderstandings.",
+        "role_in_post": "proof"
+      },
+      {
+        "evidence_id": "ev-inclusion",
+        "evidence_text": "Inclusive workplace guidance treats diversity broadly, including race, gender, age, sexual orientation, and socioeconomic status.",
+        "role_in_post": "context"
+      },
+      {
+        "evidence_id": "ev-isolation",
+        "evidence_text": "Research on the long-term shift to remote work highlights increased feelings of isolation, especially for people living alone.",
+        "role_in_post": "practical_point"
+      }
+    ],
+    "practical_point": "Make hybrid policy a living operating system, not a static document.",
+    "ending_direction": "Close by tying clarity, inclusion, and isolation into one leadership responsibility.",
+    "cta_direction": "Ask what hybrid teams should clarify first."
+  },
+  "angle_decision": {
+    "controlling_angle": "Hybrid policies only work when they connect operational clarity with human support.",
+    "reader_problem": "Leaders often write remote work rules without addressing the habits and support systems that make the rules usable.",
+    "author_position": "Treat hybrid policy as a leadership system for clarity, inclusion, and isolation risk.",
+    "main_tension": "A policy can look complete while still leaving people unclear, excluded, or isolated.",
+    "angle_to_avoid": "Do not frame hybrid work as a generic flexibility perk.",
+    "supporting_evidence_ids": [
+      "ev-remote-policy",
+      "ev-inclusion",
+      "ev-isolation"
+    ]
+  },
+  "repair_prompt_text": "You are the FinalPostRepairWriter. Rewrite the candidate FinalPostPayload according to the supplied repair instruction only. Preserve selected evidence boundaries, do not add facts, and return only FinalPostPayload-compatible JSON."
+}
