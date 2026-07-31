@@ -17,6 +17,7 @@ from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_READY,
     FinalPostQualityEvaluationState,
     build_final_post_attempt_outcome_from_gate_and_quality,
+    build_final_post_attempt_outcome_from_gate_grounding_and_quality,
 )
 from services.packaging.linkedin_post_attempt_outcome import (
     OUTCOME_ACCEPTED,
@@ -32,6 +33,13 @@ from services.packaging.linkedin_post_flow_decision import FinalPostDecisionCont
 from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
+)
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    GROUNDING_STATUS_FAIL,
+    GROUNDING_STATUS_NOT_READY,
+    GROUNDING_STATUS_PASS,
+    FinalPostSemanticGroundingState,
+    normalize_semantic_grounding_review_result,
 )
 
 
@@ -79,6 +87,62 @@ class LinkedInPostAttemptAdjudicationTests(SimpleTestCase):
         self.assertIsNone(outcome.accepted_result)
         self.assertIsNone(outcome.terminal_result)
         self.assertEqual(outcome.repair_plan, {"repair_type": "editorial"})
+
+    def test_grounding_failure_blocks_acceptance_even_when_quality_would_pass(self) -> None:
+        payload = _valid_payload()
+        outcome = build_final_post_attempt_outcome_from_gate_grounding_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            semantic_grounding=_semantic_state(passed=False),
+            quality_evaluation=_quality_state(_quality_review(passed=True)),
+            attempt_index=0,
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_REPAIR_REQUIRED)
+        self.assertEqual(outcome.decision.action, "repair_editorial")
+        self.assertEqual(outcome.decision.repair_type, "semantic_grounding")
+        self.assertIsNone(outcome.accepted_result)
+        self.assertIsNone(outcome.attempt.quality_review)
+        self.assertEqual(outcome.repair_plan["failed_claim_ids"], ["c1"])
+
+    def test_grounding_technical_failure_returns_not_ready_without_quality_review(self) -> None:
+        payload = _valid_payload()
+        outcome = build_final_post_attempt_outcome_from_gate_grounding_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            semantic_grounding=FinalPostSemanticGroundingState(
+                status=GROUNDING_STATUS_NOT_READY,
+                grounding_review=None,
+                error_code="parse_failed",
+                error_message="malformed grounding JSON",
+            ),
+            quality_evaluation=_quality_state(_quality_review(passed=True)),
+            attempt_index=0,
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_NOT_READY)
+        self.assertFalse(outcome.repair_required)
+        self.assertIsNone(outcome.attempt.quality_review)
+        self.assertIn("parse_failed", outcome.reason)
+
+    def test_grounding_pass_delegates_to_editorial_quality_outcome(self) -> None:
+        payload = _valid_payload()
+        outcome = build_final_post_attempt_outcome_from_gate_grounding_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            semantic_grounding=_semantic_state(passed=True),
+            quality_evaluation=_quality_state(
+                _quality_review(passed=False, failed_criteria=["cta"])
+            ),
+            attempt_index=0,
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_REPAIR_REQUIRED)
+        self.assertEqual(outcome.decision.repair_type, "editorial")
+        self.assertEqual(outcome.attempt.quality_review["failed_criteria"], ["cta"])
 
     def test_human_review_flags_return_human_review_outcome(self) -> None:
         payload = _valid_payload()
@@ -381,6 +445,41 @@ def _quality_state(quality_review: dict) -> FinalPostQualityEvaluationState:
     return FinalPostQualityEvaluationState(
         status=QUALITY_EVALUATION_READY,
         quality_review=quality_review,
+    )
+
+
+def _semantic_state(*, passed: bool) -> FinalPostSemanticGroundingState:
+    review = normalize_semantic_grounding_review_result(
+        {
+            "pass": passed,
+            "claims": [
+                {
+                    "claim_id": "c1",
+                    "field_name": "post_text",
+                    "value_index": None,
+                    "claim_text": "Final post text.",
+                    "claim_type": "author_interpretation",
+                    "support_status": "supported" if passed else "unsupported",
+                    "severity": "info" if passed else "major",
+                    "supported_evidence_ids": ["a0-summary"],
+                    "required_qualifications": [],
+                    "missing_qualifications": [],
+                    "rationale": "Grounding rationale.",
+                    "repair_hint": "" if passed else "Remove unsupported claim.",
+                }
+            ],
+            "failed_claim_ids": [] if passed else ["c1"],
+            "automatic_fail_reason": "" if passed else "unsupported claim",
+            "requires_human_review": False,
+            "human_review_reason": "",
+            "repairable": True,
+            "repair_instructions": [] if passed else ["Remove unsupported claim."],
+        },
+        selected_evidence_ids=["a0-summary"],
+    )
+    return FinalPostSemanticGroundingState(
+        status=GROUNDING_STATUS_PASS if passed else GROUNDING_STATUS_FAIL,
+        grounding_review=review,
     )
 
 

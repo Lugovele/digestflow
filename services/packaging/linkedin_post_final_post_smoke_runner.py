@@ -48,6 +48,9 @@ from services.packaging.linkedin_post_prompt_renderers import (
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
+from services.packaging.linkedin_post_quality_evaluator_execution import (
+    DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS,
+)
 
 
 SMOKE_MODE_STANDALONE = "standalone"
@@ -71,7 +74,8 @@ MAX_QUALITY_EVALUATOR_CALLS_CONTROLLED_REPAIR = 2
 MAX_REPAIR_WRITER_CALLS = 1
 
 DEFAULT_CANDIDATE_MAX_OUTPUT_TOKENS = 1200
-DEFAULT_QUALITY_MAX_OUTPUT_TOKENS = 900
+DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 2400
+DEFAULT_QUALITY_MAX_OUTPUT_TOKENS = DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS
 DEFAULT_REPAIR_MAX_OUTPUT_TOKENS = 1200
 
 PLACEHOLDER_API_KEYS = {"", "sk-your-key", "your-openai-api-key-here"}
@@ -98,11 +102,14 @@ class FinalPostSmokeRunRequest:
     output_dir: Path | None = None
     candidate_provider: str | None = None
     candidate_model: str | None = None
+    semantic_grounding_provider: str | None = None
+    semantic_grounding_model: str | None = None
     quality_evaluator_provider: str | None = None
     quality_evaluator_model: str | None = None
     repair_provider: str | None = None
     repair_model: str | None = None
     candidate_max_output_tokens: int = DEFAULT_CANDIDATE_MAX_OUTPUT_TOKENS
+    semantic_grounding_max_output_tokens: int = DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
     quality_evaluator_max_output_tokens: int = DEFAULT_QUALITY_MAX_OUTPUT_TOKENS
     repair_max_output_tokens: int = DEFAULT_REPAIR_MAX_OUTPUT_TOKENS
 
@@ -163,6 +170,7 @@ def run_final_post_smoke(
     request: FinalPostSmokeRunRequest,
     *,
     candidate_writer_client: Any | None = None,
+    semantic_grounding_client: Any | None = None,
     quality_evaluator_client: Any | None = None,
     repair_writer_client: Any | None = None,
 ) -> FinalPostSmokeRunResult:
@@ -179,6 +187,7 @@ def run_final_post_smoke(
                         request,
                         prepared,
                         candidate_writer_client=candidate_writer_client,
+                        semantic_grounding_client=semantic_grounding_client,
                         quality_evaluator_client=quality_evaluator_client,
                     )
                 else:
@@ -186,6 +195,7 @@ def run_final_post_smoke(
                         request,
                         prepared,
                         candidate_writer_client=candidate_writer_client,
+                        semantic_grounding_client=semantic_grounding_client,
                         quality_evaluator_client=quality_evaluator_client,
                         repair_writer_client=repair_writer_client,
                     )
@@ -215,6 +225,10 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
     quality_contract = get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)
     candidate_prompt_text = _read_prompt_text(candidate_contract.prompt_path)
     quality_prompt_text = _read_prompt_text(quality_contract.prompt_path)
+    semantic_grounding_prompt_path = (
+        "prompts/linkedin/final_post_semantic_grounding_evaluator.txt"
+    )
+    semantic_grounding_prompt_text = _read_prompt_text(semantic_grounding_prompt_path)
 
     try:
         candidate_input = build_candidate_writer_input(
@@ -230,6 +244,10 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
         "candidate_writer": {
             "provider": _resolve_provider(request.candidate_provider),
             "model": _resolve_model(request.candidate_model),
+        },
+        "semantic_grounding": {
+            "provider": _resolve_provider(request.semantic_grounding_provider),
+            "model": _resolve_model(request.semantic_grounding_model),
         },
         "quality_evaluator": {
             "provider": _resolve_provider(request.quality_evaluator_provider),
@@ -257,6 +275,10 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
         candidate_writer_provider=provider_models["candidate_writer"]["provider"],
         candidate_writer_model=provider_models["candidate_writer"]["model"],
         candidate_writer_max_output_tokens=request.candidate_max_output_tokens,
+        semantic_grounding_prompt_text=semantic_grounding_prompt_text,
+        semantic_grounding_provider=provider_models["semantic_grounding"]["provider"],
+        semantic_grounding_model=provider_models["semantic_grounding"]["model"],
+        semantic_grounding_max_output_tokens=request.semantic_grounding_max_output_tokens,
         quality_evaluator_provider=provider_models["quality_evaluator"]["provider"],
         quality_evaluator_model=provider_models["quality_evaluator"]["model"],
         quality_evaluator_max_output_tokens=request.quality_evaluator_max_output_tokens,
@@ -300,6 +322,7 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
         "provider_models": provider_models,
         "prompt_paths": {
             "candidate_writer": candidate_contract.prompt_path,
+            "semantic_grounding": semantic_grounding_prompt_path,
             "quality_evaluator": quality_contract.prompt_path,
             "repair_writer": "fixture:repair_prompt_text"
             if request.mode == SMOKE_MODE_CONTROLLED_REPAIR
@@ -313,6 +336,7 @@ def _run_standalone_smoke(
     prepared: dict[str, Any],
     *,
     candidate_writer_client: Any | None,
+    semantic_grounding_client: Any | None,
     quality_evaluator_client: Any | None,
 ) -> FinalPostSmokeRunResult:
     result = execute_final_post_standalone_attempt(
@@ -321,6 +345,7 @@ def _run_standalone_smoke(
         angle_decision=prepared["angle_decision"],
         selected_evidence_ids=prepared["selected_evidence_ids"],
         candidate_writer_client=candidate_writer_client,
+        semantic_grounding_client=semantic_grounding_client,
         quality_evaluator_client=quality_evaluator_client,
     )
     return _result_from_standalone(request, prepared, result)
@@ -331,6 +356,7 @@ def _run_controlled_repair_smoke(
     prepared: dict[str, Any],
     *,
     candidate_writer_client: Any | None,
+    semantic_grounding_client: Any | None,
     quality_evaluator_client: Any | None,
     repair_writer_client: Any | None,
 ) -> FinalPostSmokeRunResult:
@@ -340,6 +366,7 @@ def _run_controlled_repair_smoke(
         angle_decision=prepared["angle_decision"],
         selected_evidence_ids=prepared["selected_evidence_ids"],
         candidate_writer_client=candidate_writer_client,
+        semantic_grounding_client=semantic_grounding_client,
         quality_evaluator_client=quality_evaluator_client,
         repair_writer_client=repair_writer_client,
     )
@@ -674,6 +701,11 @@ def _validate_api_key() -> None:
 def _invocation_budget(mode: str) -> dict[str, int]:
     return {
         "candidate_writer": MAX_CANDIDATE_WRITER_CALLS,
+        "semantic_grounding": (
+            MAX_QUALITY_EVALUATOR_CALLS_CONTROLLED_REPAIR
+            if mode == SMOKE_MODE_CONTROLLED_REPAIR
+            else MAX_QUALITY_EVALUATOR_CALLS_STANDALONE
+        ),
         "quality_evaluator": (
             MAX_QUALITY_EVALUATOR_CALLS_CONTROLLED_REPAIR
             if mode == SMOKE_MODE_CONTROLLED_REPAIR
@@ -690,6 +722,7 @@ def _invocation_budget(mode: str) -> dict[str, int]:
 def _zero_invocation_counts() -> dict[str, int]:
     return {
         "candidate_writer": 0,
+        "semantic_grounding": 0,
         "quality_evaluator": 0,
         "repair_writer": 0,
     }
@@ -698,6 +731,7 @@ def _zero_invocation_counts() -> dict[str, int]:
 def _invocation_counts_from_standalone(result: Any) -> dict[str, int]:
     return {
         "candidate_writer": int(getattr(result, "candidate_writer_invocation_count", 0) or 0),
+        "semantic_grounding": int(getattr(result, "semantic_grounding_invocation_count", 0) or 0),
         "quality_evaluator": int(getattr(result, "quality_evaluator_invocation_count", 0) or 0),
         "repair_writer": int(getattr(result, "repair_invocation_count", 0) or 0),
     }
@@ -706,9 +740,22 @@ def _invocation_counts_from_standalone(result: Any) -> dict[str, int]:
 def _invocation_counts_from_controlled_repair(result: Any) -> dict[str, int]:
     return {
         "candidate_writer": int(getattr(result, "candidate_writer_invocation_count", 0) or 0),
+        "semantic_grounding": _controlled_semantic_grounding_invocation_count(result),
         "quality_evaluator": int(getattr(result, "quality_evaluator_invocation_count", 0) or 0),
         "repair_writer": int(getattr(result, "repair_invocation_count", 0) or 0),
     }
+
+
+def _controlled_semantic_grounding_invocation_count(result: Any) -> int:
+    explicit_count = getattr(result, "semantic_grounding_invocation_count", None)
+    if explicit_count is not None:
+        return int(explicit_count or 0)
+    initial_result = getattr(result, "initial_attempt_result", None)
+    initial_count = int(
+        getattr(initial_result, "semantic_grounding_invocation_count", 0) or 0
+    )
+    repaired_count = 1 if getattr(result, "repaired_semantic_grounding_raw_response", None) else 0
+    return initial_count + repaired_count
 
 
 def _accepted_payload_from_standalone(result: Any) -> dict[str, Any] | None:
@@ -780,6 +827,11 @@ def _sanitize_standalone_result(
             "quality_evaluator_invocation_count",
             0,
         ),
+        "semantic_grounding_invocation_count": getattr(
+            result,
+            "semantic_grounding_invocation_count",
+            0,
+        ),
         "repair_invocation_count": getattr(result, "repair_invocation_count", 0),
         "final_attempt_outcome": _final_attempt_outcome_summary(result),
         "candidate_payload": _candidate_payload_summary(
@@ -787,6 +839,7 @@ def _sanitize_standalone_result(
             include_post_text=include_raw_responses,
         ),
         "quality_review": _quality_review_summary(result),
+        "semantic_grounding_review": _semantic_grounding_review_summary(result),
         **(
             {"raw_texts": _raw_texts_from_standalone(result)}
             if include_raw_responses
@@ -818,6 +871,9 @@ def _sanitize_controlled_result(
             "quality_evaluator_invocation_count",
             0,
         ),
+        "semantic_grounding_invocation_count": _controlled_semantic_grounding_invocation_count(
+            result
+        ),
         "repair_invocation_count": getattr(result, "repair_invocation_count", 0),
         "initial_attempt": _sanitize_standalone_result(
             getattr(result, "initial_attempt_result", None),
@@ -829,6 +885,9 @@ def _sanitize_controlled_result(
         ),
         "repaired_quality_review": _quality_review_summary_from_state(
             getattr(result, "repaired_quality_evaluation_state", None)
+        ),
+        "repaired_semantic_grounding_review": _semantic_grounding_review_summary_from_state(
+            getattr(result, "repaired_semantic_grounding_state", None)
         ),
         **(
             {"raw_texts": _raw_texts_from_controlled(result)}
@@ -917,6 +976,37 @@ def _quality_review_summary_from_state(quality_state: Any) -> dict[str, Any] | N
         "total_score": quality_review.get("total_score"),
         "failed_criteria": copy.deepcopy(quality_review.get("failed_criteria") or []),
         "automatic_fail_reason": quality_review.get("automatic_fail_reason"),
+        "criterion_rationales": copy.deepcopy(
+            quality_review.get("criterion_rationales") or {}
+        ),
+    }
+
+
+def _semantic_grounding_review_summary(result: Any) -> dict[str, Any] | None:
+    return _semantic_grounding_review_summary_from_state(
+        getattr(result, "semantic_grounding_state", None)
+    )
+
+
+def _semantic_grounding_review_summary_from_state(
+    semantic_state: Any,
+) -> dict[str, Any] | None:
+    grounding_review = getattr(semantic_state, "grounding_review", None)
+    if grounding_review is None:
+        return None
+    return {
+        "pass": getattr(grounding_review, "passed", None),
+        "blocking_claim_ids": list(getattr(grounding_review, "blocking_claim_ids", ()) or ()),
+        "automatic_fail_reason": getattr(
+            grounding_review,
+            "automatic_fail_reason",
+            "",
+        ),
+        "requires_human_review": getattr(
+            grounding_review,
+            "requires_human_review",
+            None,
+        ),
     }
 
 
@@ -924,6 +1014,10 @@ def _raw_texts_from_standalone(result: Any) -> dict[str, str]:
     return {
         "candidate_writer": str(
             getattr(getattr(result, "candidate_writer_raw_response", None), "raw_text", "")
+            or ""
+        ),
+        "semantic_grounding": str(
+            getattr(getattr(result, "semantic_grounding_raw_response", None), "raw_text", "")
             or ""
         ),
         "quality_evaluator": str(
@@ -940,6 +1034,10 @@ def _raw_texts_from_controlled(result: Any) -> dict[str, Any]:
         ),
         "repair_writer": str(
             getattr(getattr(result, "repair_writer_raw_response", None), "raw_text", "")
+            or ""
+        ),
+        "repaired_semantic_grounding": str(
+            getattr(getattr(result, "repaired_semantic_grounding_raw_response", None), "raw_text", "")
             or ""
         ),
         "repaired_quality_evaluator": str(

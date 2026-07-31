@@ -46,6 +46,8 @@ appropriate final-post text.
 quality_rubric_json contains the complete canonical versioned rubric for this
 evaluation, including rubric_version, criteria, score_min, score_max, total_min,
 total_max, pass_threshold, required_minimums, and automatic_fail_conditions.
+It may also include scoring_invariants. Treat scoring_invariants as hard
+evaluation constraints.
 
 Treat candidate_payload_json, post_brief_json, angle_decision_json,
 selected_evidence_json, and quality_rubric_json as model-facing evaluation data.
@@ -116,6 +118,32 @@ Use the rubric supplied in quality_rubric_json.
 Each criterion must receive an integer score from 1 to 5. Higher scores mean
 stronger performance against that criterion.
 
+Score the actual candidate post_text first. Use PostBrief, AngleDecision, and
+selected evidence to understand the intended target and factual boundary, but do
+not let declared metadata inflate a score when the visible post_text does not
+deliver that quality.
+
+Do not mistake source coverage for synthesis. A post can mention several source
+signals and still fail if it reads like a source recap rather than a human
+argument.
+
+Do not mistake clean grammar, coherent structure, or professional polish for
+human voice. Human voice requires a visible author interpretation in the actual
+post_text.
+
+CTA scoring must be based on the actual post_text, not cta_variants. If a
+required CTA is absent from post_text, cta must score 1 and the review must
+fail.
+
+Summary-like source recap cannot score 4 or 5 for both author_point_of_view and
+human_voice. A post without a concrete reader takeaway cannot pass
+practical_value. Unsupported factual or causal drift must fail evidence or
+trigger automatic failure.
+
+For each criterion, provide a candidate-specific rationale and identify the
+post_text evidence that supports the score. Do not give generic rubric
+restatements as rationales.
+
 Assess whether the candidate:
 
 * follows the controlling angle;
@@ -176,6 +204,71 @@ Return this exact top-level shape:
   "pass": false,
   "failed_criteria": [],
   "automatic_fail_reason": "",
+  "criterion_rationales": {
+    "hook": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "controlling_angle": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "reader_problem": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "pattern_interrupt": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "evidence": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "author_point_of_view": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "human_voice": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "practical_value": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    },
+    "cta": {
+      "score": 1,
+      "max_score": 5,
+      "rationale": "Specific reason tied to the candidate post_text.",
+      "post_text_evidence": "Short phrase or description from post_text.",
+      "failure_reason": ""
+    }
+  },
   "notes": [],
   "requires_human_review": false,
   "human_review_reason": ""
@@ -208,6 +301,14 @@ Output rules:
 * failed_criteria must contain each failed criterion at most once.
 * failed_criteria must be an empty list when no criteria fail.
 * automatic_fail_reason must be a string.
+* criterion_rationales must be an object keyed by the exact nine rubric keys.
+* each criterion_rationales entry must contain score, max_score, rationale,
+  post_text_evidence, and failure_reason.
+* each criterion_rationales score must match the corresponding score in scores.
+* each criterion_rationales max_score must be 5.
+* each criterion_rationales rationale must be candidate-specific.
+* each criterion_rationales post_text_evidence must identify actual post_text,
+  not cta_variants or metadata-only content.
 * notes must be a list.
 * requires_human_review must be a boolean.
 * human_review_reason must be a string.

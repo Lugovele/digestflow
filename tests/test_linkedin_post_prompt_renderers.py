@@ -22,9 +22,11 @@ from services.packaging.linkedin_post_prompt_renderers import (
     QualityEvaluatorPromptRender,
     RepairWriterPromptRender,
     SELECTED_EVIDENCE_PROMPT_FIELDS,
+    SemanticGroundingPromptRender,
     render_candidate_writer_prompt_input,
     render_quality_evaluator_prompt_input,
     render_repair_writer_prompt_input,
+    render_semantic_grounding_prompt_input,
 )
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
@@ -37,6 +39,14 @@ QUALITY_EVALUATOR_VARIABLES = (
     "angle_decision_json",
     "selected_evidence_json",
     "quality_rubric_json",
+)
+
+SEMANTIC_GROUNDING_VARIABLES = (
+    "candidate_payload_json",
+    "post_brief_json",
+    "angle_decision_json",
+    "selected_evidence_json",
+    "grounding_rules_json",
 )
 
 REPAIR_WRITER_VARIABLES = (
@@ -275,6 +285,137 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             set(FINAL_POST_PAYLOAD_PROMPT_FIELDS),
             {field.name for field in fields(FinalPostPayload)},
         )
+
+    def test_render_semantic_grounding_prompt_input_returns_contract(self) -> None:
+        render = render_semantic_grounding_prompt_input(_post_editorial_input())
+
+        self.assertIsInstance(render, SemanticGroundingPromptRender)
+
+    def test_semantic_grounding_variables_are_exact_and_ordered(self) -> None:
+        render = render_semantic_grounding_prompt_input(_post_editorial_input())
+
+        self.assertEqual(tuple(render.variables), SEMANTIC_GROUNDING_VARIABLES)
+
+    def test_semantic_grounding_preserves_selected_evidence_order_and_text(self) -> None:
+        editorial_input = _post_editorial_input(
+            selected_evidence=(
+                {
+                    "evidence_id": "a2-summary",
+                    "evidence_text": "K33 says Bitcoin likely bottomed at $60K; risk remains.",
+                    "role_in_post": "qualification",
+                },
+                {
+                    "evidence_id": "a0-summary",
+                    "evidence_text": "Security concerns and volatility limit broader adoption.",
+                    "role_in_post": "constraint",
+                },
+            )
+        )
+
+        render = render_semantic_grounding_prompt_input(editorial_input)
+        selected_evidence = json.loads(render.variables["selected_evidence_json"])
+
+        self.assertEqual(
+            [item["evidence_id"] for item in selected_evidence],
+            ["a2-summary", "a0-summary"],
+        )
+        self.assertEqual(
+            selected_evidence[0]["evidence_text"],
+            "K33 says Bitcoin likely bottomed at $60K; risk remains.",
+        )
+        self.assertEqual(selected_evidence[0]["role_in_post"], "qualification")
+
+    def test_semantic_grounding_prompt_filters_runtime_metadata(self) -> None:
+        editorial_input = _post_editorial_input(
+            candidate_payload={
+                **_candidate_payload(),
+                "provider": "provider-sentinel",
+                "model": "model-sentinel",
+                "token_usage": {"total_tokens": 12},
+                "raw_provider_response": {"id": "raw-sentinel"},
+                "raw_articles": ["raw-article-sentinel"],
+            }
+        )
+
+        render = render_semantic_grounding_prompt_input(editorial_input)
+        rendered = "\n".join([*render.variables.values(), render.input_text])
+
+        self.assertNotIn("provider-sentinel", rendered)
+        self.assertNotIn("model-sentinel", rendered)
+        self.assertNotIn("raw-sentinel", rendered)
+        self.assertNotIn("raw-article-sentinel", rendered)
+        self.assertIn("selected evidence", rendered)
+
+    def test_semantic_grounding_prompt_filters_brief_and_angle_to_selected_context(
+        self,
+    ) -> None:
+        editorial_input = _post_editorial_input(
+            post_brief={
+                **_post_editorial_input().post_brief,
+                "raw_articles": ["brief-raw-article-sentinel"],
+                "debug": {"trace": "brief-debug-sentinel"},
+                "runtime_metadata": "brief-runtime-sentinel",
+                "evidence_to_use": [
+                    {
+                        "evidence_id": "a0-summary",
+                        "evidence_text": "Remote teams need clear operating agreements.",
+                        "role_in_post": "opening support",
+                        "raw_article": "selected-raw-article-sentinel",
+                        "debug": "selected-debug-sentinel",
+                    },
+                    {
+                        "evidence_id": "a1-kp0",
+                        "evidence_text": "Isolation can rise when remote work is unmanaged.",
+                        "role_in_post": "practical tension",
+                    },
+                    {
+                        "evidence_id": "unselected-ev",
+                        "evidence_text": "Unselected evidence sentinel.",
+                        "role_in_post": "must_not_enter_prompt",
+                    },
+                ],
+            },
+            angle_decision={
+                **_post_editorial_input().angle_decision,
+                "supporting_evidence_ids": ["a0-summary", "unselected-ev", "a1-kp0"],
+                "raw_articles": ["angle-raw-article-sentinel"],
+                "debug": {"trace": "angle-debug-sentinel"},
+                "provider_metadata": "angle-provider-sentinel",
+                "unselected_evidence": "angle-unselected-evidence-sentinel",
+            },
+        )
+
+        render = render_semantic_grounding_prompt_input(editorial_input)
+        post_brief = json.loads(render.variables["post_brief_json"])
+        angle_decision = json.loads(render.variables["angle_decision_json"])
+        rendered_text = "\n".join([*render.variables.values(), render.input_text])
+
+        self.assertEqual(
+            [item["evidence_id"] for item in post_brief["evidence_to_use"]],
+            ["a0-summary", "a1-kp0"],
+        )
+        self.assertEqual(
+            angle_decision["supporting_evidence_ids"],
+            ["a0-summary", "a1-kp0"],
+        )
+        for item in post_brief["evidence_to_use"]:
+            self.assertEqual(set(item), set(SELECTED_EVIDENCE_PROMPT_FIELDS))
+        for forbidden in (
+            "brief-raw-article-sentinel",
+            "brief-debug-sentinel",
+            "brief-runtime-sentinel",
+            "selected-raw-article-sentinel",
+            "selected-debug-sentinel",
+            "unselected-ev",
+            "Unselected evidence sentinel.",
+            "must_not_enter_prompt",
+            "angle-raw-article-sentinel",
+            "angle-debug-sentinel",
+            "angle-provider-sentinel",
+            "angle-unselected-evidence-sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
 
     def test_quality_evaluator_candidate_payload_json_filters_extra_fields(self) -> None:
         extra_candidate_fields = {

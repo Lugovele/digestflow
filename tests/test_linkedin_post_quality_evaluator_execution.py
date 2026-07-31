@@ -11,6 +11,9 @@ from django.test import override_settings
 
 from services.packaging import linkedin_post_quality_evaluator_execution
 from services.packaging.linkedin_post_quality_evaluator_execution import (
+    DEFAULT_JSON_MODE,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    MIN_MAX_OUTPUT_TOKENS,
     QualityEvaluatorExecutionRequest,
     QualityEvaluatorRawResponse,
     build_quality_evaluator_execution_request,
@@ -37,6 +40,8 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         self.assertIsInstance(request, QualityEvaluatorExecutionRequest)
         self.assertEqual(request.provider, "openai")
         self.assertEqual(request.model, "quality-model")
+        self.assertEqual(request.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS)
+        self.assertIs(request.json_mode, DEFAULT_JSON_MODE)
         self.assertEqual(request.execution_metadata, {"attempt": 1})
 
     def test_execution_request_to_dict_defensively_copies_metadata(self) -> None:
@@ -84,7 +89,8 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         mock_openai_client.return_value.generate_text.assert_called_once_with(
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
-            json_mode=False,
+            json_mode=True,
+            allow_json_mode_fallback=False,
         )
         self.assertEqual(raw_response.raw_text, provider_response.text)
         self.assertEqual(raw_response.provider, "openai")
@@ -111,8 +117,9 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
 
         mock_openai_client.assert_not_called()
         self.assertEqual(fake_client.call_count, 1)
-        self.assertEqual(fake_client.kwargs["max_output_tokens"], 900)
-        self.assertIs(fake_client.kwargs["json_mode"], False)
+        self.assertEqual(fake_client.kwargs["max_output_tokens"], DEFAULT_MAX_OUTPUT_TOKENS)
+        self.assertIs(fake_client.kwargs["json_mode"], True)
+        self.assertIs(fake_client.kwargs["allow_json_mode_fallback"], False)
         self.assertEqual(raw_response.raw_text, '{"pass": true}')
         self.assertEqual(raw_response.raw_provider_response, {"id": "fake-evaluator"})
 
@@ -150,30 +157,42 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         mock_openai,
     ) -> None:
         request = _request()
-        create_calls = []
-
-        def create_response(**kwargs):
-            create_calls.append(kwargs)
-            if len(create_calls) == 1:
-                raise RuntimeError("json mode unavailable")
-            return SimpleNamespace(
-                output_text="fallback success",
-                model_dump=lambda: {"id": "retried"},
-                usage=SimpleNamespace(
-                    input_tokens=1,
-                    output_tokens=1,
-                    total_tokens=2,
-                ),
-            )
-
-        mock_openai.return_value.responses.create.side_effect = create_response
+        mock_openai.return_value.responses.create.side_effect = RuntimeError(
+            "json mode unavailable"
+        )
 
         raw_response = execute_quality_evaluator_prompt(request)
 
-        self.assertEqual(len(create_calls), 1)
+        mock_openai.return_value.responses.create.assert_called_once()
         self.assertEqual(raw_response.raw_text, "")
         self.assertEqual(raw_response.execution_error, "provider invocation failed")
-        self.assertNotIn("text", create_calls[0])
+
+    @override_settings(OPENAI_API_KEY="test-key", OPENAI_TIMEOUT_SECONDS=30)
+    @patch("apps.ai.client.OpenAI")
+    def test_execution_boundary_invokes_client_once_with_json_mode(
+        self,
+        mock_openai,
+    ) -> None:
+        request = _request()
+        mock_openai.return_value.responses.create.return_value = SimpleNamespace(
+            output_text='{"pass": true}',
+            model_dump=lambda: {"id": "json-mode"},
+            usage=SimpleNamespace(
+                input_tokens=1,
+                output_tokens=1,
+                total_tokens=2,
+            ),
+        )
+
+        raw_response = execute_quality_evaluator_prompt(request)
+
+        mock_openai.return_value.responses.create.assert_called_once()
+        self.assertEqual(
+            mock_openai.return_value.responses.create.call_args.kwargs["text"],
+            {"format": {"type": "json_object"}},
+        )
+        self.assertEqual(raw_response.raw_text, '{"pass": true}')
+        self.assertIsNone(raw_response.execution_error)
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
     def test_execution_does_not_mutate_render_or_request_metadata(
@@ -271,7 +290,7 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         self,
         mock_openai_client,
     ) -> None:
-        invalid_values = (True, False, "900", None, 0, -1)
+        invalid_values = (True, False, "2400", None, 0, -1)
 
         for invalid_value in invalid_values:
             with self.subTest(max_output_tokens=invalid_value):
@@ -286,6 +305,39 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
                 )
                 self.assertEqual(raw_response.raw_text, "")
 
+        mock_openai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
+    def test_too_small_max_output_tokens_returns_execution_error_without_provider_call(
+        self,
+        mock_openai_client,
+    ) -> None:
+        for invalid_value in (1, 900, MIN_MAX_OUTPUT_TOKENS - 1):
+            with self.subTest(max_output_tokens=invalid_value):
+                raw_response = execute_quality_evaluator_prompt(
+                    _request(max_output_tokens=invalid_value)
+                )
+
+                self.assertEqual(
+                    raw_response.execution_error,
+                    f"invalid quality evaluator max_output_tokens: must be at least {MIN_MAX_OUTPUT_TOKENS}",
+                )
+                self.assertEqual(raw_response.raw_text, "")
+
+        mock_openai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
+    def test_invalid_json_mode_returns_execution_error_without_provider_call(
+        self,
+        mock_openai_client,
+    ) -> None:
+        raw_response = execute_quality_evaluator_prompt(_request(json_mode="true"))
+
+        self.assertEqual(
+            raw_response.execution_error,
+            "invalid quality evaluator json_mode: must be a boolean",
+        )
+        self.assertEqual(raw_response.raw_text, "")
         mock_openai_client.assert_not_called()
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.OpenAIClient")
@@ -423,7 +475,8 @@ def _request(
     prompt_text: str = "Quality evaluator prompt.",
     provider: str = "openai",
     model: str = "quality-model",
-    max_output_tokens: object = 900,
+    max_output_tokens: object = DEFAULT_MAX_OUTPUT_TOKENS,
+    json_mode: object = DEFAULT_JSON_MODE,
     execution_metadata: dict | None = None,
 ) -> QualityEvaluatorExecutionRequest:
     return QualityEvaluatorExecutionRequest(
@@ -432,6 +485,7 @@ def _request(
         provider=provider,
         model=model,
         max_output_tokens=max_output_tokens,
+        json_mode=json_mode,
         execution_metadata=execution_metadata,
     )
 

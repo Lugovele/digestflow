@@ -23,6 +23,8 @@ from services.packaging.linkedin_post_controlled_repair_contract import (
     FAILURE_REPAIR_WRITER_PROVIDER,
     FAILURE_REPAIR_WRITER_REQUEST,
     FAILURE_REPAIRED_DETERMINISTIC_GATE,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING_NORMALIZATION,
     FAILURE_REPAIRED_QUALITY_EVALUATOR_EMPTY_RESPONSE,
     FAILURE_REPAIRED_QUALITY_EVALUATOR_PARSE,
     FAILURE_REPAIRED_QUALITY_EVALUATOR_PROVIDER,
@@ -55,6 +57,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=True)))
             ),
@@ -82,6 +85,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -104,6 +108,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                     json.dumps(_candidate_payload(post_text="This leaks ev-1."))
                 )
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -124,12 +129,12 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(
                     json.dumps(
                         _quality_review_payload(
-                            passed=False,
-                            failed_criteria=["evidence"],
+                            passed=True,
                             blocking_factuality_ambiguity=True,
                         )
                     )
@@ -152,6 +157,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -173,6 +179,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -209,6 +216,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             angle_decision=angle_decision,
             selected_evidence_ids=("ev-1", "ev-2"),
             candidate_writer_client=candidate_client,
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             repair_writer_client=repair_client,
         )
@@ -219,6 +227,8 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(candidate_client.call_count, 1)
         self.assertEqual(repair_client.call_count, 1)
         self.assertEqual(evaluator_client.call_count, 2)
+        self.assertEqual(evaluator_client.max_output_tokens, 2400)
+        self.assertTrue(evaluator_client.json_mode)
         self.assertEqual(result.candidate_writer_invocation_count, 1)
         self.assertEqual(result.repair_invocation_count, 1)
         self.assertEqual(result.quality_evaluator_invocation_count, 2)
@@ -243,6 +253,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False))),
                 _provider_response(json.dumps(_quality_review_payload(passed=True))),
@@ -264,6 +275,142 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             "ev-1",
         )
 
+    def test_semantic_grounding_failure_is_eligible_for_one_controlled_repair(
+        self,
+    ) -> None:
+        semantic_client = QueuedFakeClient(
+            _provider_response(json.dumps(_semantic_review_payload(passed=False))),
+            _provider_response(json.dumps(_semantic_review_payload(passed=True))),
+        )
+        evaluator_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Grounded repaired text."))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.repair_eligibility.status, REPAIR_ELIGIBLE)
+        self.assertIn("semantic_grounding repair", result.repair_eligibility.reason)
+        self.assertTrue(result.repair_executed)
+        self.assertEqual(semantic_client.call_count, 2)
+        self.assertEqual(evaluator_client.call_count, 1)
+        self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(result.semantic_grounding_invocation_count, 2)
+        self.assertEqual(result.quality_evaluator_invocation_count, 1)
+        self.assertEqual(result.terminal_outcome, OUTCOME_ACCEPTED)
+        self.assertEqual(
+            result.repair_prompt_render.variables["repair_instruction_json"],
+            json.dumps(
+                {
+                    "repair_type": "semantic_grounding",
+                    "failed_claim_ids": ["c1"],
+                    "repair_scope": "human-facing FinalPostPayload fields",
+                    "repair_instruction": "Remove unsupported wording.",
+                    "decision_reason": "semantic grounding failed: unsupported claim",
+                    "preserve": [
+                        "selected evidence only",
+                        "AngleDecision.controlling_angle",
+                        "source qualifications such as likely, may, projected, and risk remains",
+                        "valid FinalPostPayload JSON",
+                    ],
+                    "avoid": [
+                        "new facts",
+                        "stronger certainty than selected evidence",
+                        "unsupported causal language",
+                        "recovery/stability/optimism drift",
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+
+    def test_repaired_semantic_grounding_failure_skips_second_quality_review(
+        self,
+    ) -> None:
+        semantic_client = QueuedFakeClient(
+            _provider_response(json.dumps(_semantic_review_payload(passed=False))),
+            _provider_response(json.dumps(_semantic_review_payload(passed=False))),
+        )
+        evaluator_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Still ungrounded."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertTrue(result.repair_executed)
+        self.assertEqual(result.failure_code, FAILURE_REPAIRED_SEMANTIC_GROUNDING)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 2)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertIsNotNone(result.repaired_semantic_grounding_state)
+        self.assertIsNone(result.repaired_quality_evaluation_state)
+        self.assertEqual(result.terminal_outcome, OUTCOME_NOT_READY)
+
+    def test_repaired_grounding_pass_with_human_review_flag_skips_second_quality_review(
+        self,
+    ) -> None:
+        invalid_human_review_pass = _semantic_review_payload(passed=True)
+        invalid_human_review_pass["requires_human_review"] = True
+        invalid_human_review_pass["human_review_reason"] = (
+            "Needs human factuality review."
+        )
+        semantic_client = QueuedFakeClient(
+            _provider_response(json.dumps(_semantic_review_payload(passed=False))),
+            _provider_response(json.dumps(invalid_human_review_pass)),
+        )
+        evaluator_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Repaired text."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertTrue(result.repair_executed)
+        self.assertEqual(
+            result.failure_code,
+            FAILURE_REPAIRED_SEMANTIC_GROUNDING_NORMALIZATION,
+        )
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 2)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertIsNotNone(result.repaired_semantic_grounding_state)
+        self.assertIsNone(result.repaired_quality_evaluation_state)
+        self.assertEqual(result.terminal_outcome, OUTCOME_NOT_READY)
+
     def test_repaired_deterministic_gate_failure_skips_second_quality_review(self) -> None:
         evaluator_client = QueuedFakeClient(
             _provider_response(json.dumps(_quality_review_payload(passed=False)))
@@ -279,6 +426,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             repair_writer_client=repair_client,
             **_flow_kwargs(),
@@ -300,6 +448,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False))),
                 _provider_response(json.dumps(_quality_review_payload(passed=False))),
@@ -323,6 +472,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -344,6 +494,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -363,6 +514,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -379,6 +531,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -395,6 +548,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
@@ -418,6 +572,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             repair_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json(post_text="Repaired text."))
@@ -435,6 +590,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False))),
                 _provider_response(""),
@@ -457,6 +613,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False))),
                 _provider_response("{not-json"),
@@ -479,6 +636,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False))),
                 _provider_response(json.dumps(invalid_review)),
@@ -530,11 +688,13 @@ class QueuedFakeClient:
         prompt: str,
         max_output_tokens: int,
         json_mode: bool,
+        allow_json_mode_fallback: bool = True,
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
+        self.allow_json_mode_fallback = allow_json_mode_fallback
         if not self.responses:
             raise AssertionError("No queued fake response available.")
         return self.responses.pop(0)
@@ -612,9 +772,13 @@ def _attempt_request(
         candidate_writer_provider=candidate_writer_provider,
         candidate_writer_model="candidate-model",
         candidate_writer_max_output_tokens=1200,
+        semantic_grounding_prompt_text="Semantic grounding prompt text.",
+        semantic_grounding_provider="openai",
+        semantic_grounding_model="semantic-model",
+        semantic_grounding_max_output_tokens=None,
         quality_evaluator_provider="openai",
         quality_evaluator_model="quality-model",
-        quality_evaluator_max_output_tokens=900,
+        quality_evaluator_max_output_tokens=None,
         policy=policy or FinalPostDecisionPolicy(max_total_attempts=2),
     )
 
@@ -660,6 +824,41 @@ def _provider_response(raw_text: str) -> SimpleNamespace:
     )
 
 
+def _passing_semantic_client() -> QueuedFakeClient:
+    return QueuedFakeClient(
+        _provider_response(json.dumps(_semantic_review_payload(passed=True))),
+        _provider_response(json.dumps(_semantic_review_payload(passed=True))),
+    )
+
+
+def _semantic_review_payload(*, passed: bool = True) -> dict:
+    return {
+        "pass": passed,
+        "claims": [
+            {
+                "claim_id": "c1",
+                "field_name": "post_text",
+                "value_index": None,
+                "claim_text": "Initial candidate text from fake provider.",
+                "claim_type": "author_interpretation",
+                "support_status": "supported" if passed else "unsupported",
+                "severity": "info" if passed else "major",
+                "supported_evidence_ids": ["ev-1"],
+                "required_qualifications": [],
+                "missing_qualifications": [],
+                "rationale": "Grounded in selected evidence.",
+                "repair_hint": "" if passed else "Remove unsupported wording.",
+            }
+        ],
+        "failed_claim_ids": [] if passed else ["c1"],
+        "automatic_fail_reason": "" if passed else "unsupported claim",
+        "requires_human_review": False,
+        "human_review_reason": "",
+        "repairable": True,
+        "repair_instructions": [] if passed else ["Remove unsupported wording."],
+    }
+
+
 def _candidate_json(
     *,
     post_text: str = "Initial candidate text from fake provider.",
@@ -700,24 +899,39 @@ def _quality_review_payload(
     failed_criteria: list[str] | None = None,
     blocking_factuality_ambiguity: bool = False,
 ) -> dict:
+    scores = {
+        "hook": 4,
+        "controlling_angle": 4,
+        "reader_problem": 4,
+        "pattern_interrupt": 4,
+        "evidence": 4,
+        "author_point_of_view": 4,
+        "human_voice": 5 if passed else 3,
+        "practical_value": 4,
+        "cta": 4,
+    }
     return {
-        "scores": {
-            "hook": 4,
-            "controlling_angle": 4,
-            "reader_problem": 4,
-            "pattern_interrupt": 4,
-            "evidence": 4,
-            "author_point_of_view": 4,
-            "human_voice": 5 if passed else 3,
-            "practical_value": 4,
-            "cta": 4,
-        },
-        "total_score": 37 if total_score is None else total_score,
+        "scores": scores,
+        "total_score": sum(scores.values()) if total_score is None else total_score,
         "pass": passed,
         "failed_criteria": failed_criteria or ([] if passed else ["human_voice"]),
         "automatic_fail_reason": "",
         "notes": ["Evaluator note."],
+        "criterion_rationales": _criterion_rationales(scores),
         "blocking_factuality_ambiguity": blocking_factuality_ambiguity,
+    }
+
+
+def _criterion_rationales(scores: dict[str, int]) -> dict[str, dict[str, object]]:
+    return {
+        criterion: {
+            "score": score,
+            "max_score": 5,
+            "rationale": f"{criterion} rationale tied to the candidate text.",
+            "post_text_evidence": f"{criterion} evidence from post_text.",
+            "failure_reason": "",
+        }
+        for criterion, score in scores.items()
     }
 
 

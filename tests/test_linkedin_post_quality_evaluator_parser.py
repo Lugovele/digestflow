@@ -273,12 +273,51 @@ class LinkedInQualityEvaluatorParserTests(SimpleTestCase):
         self.assertIs(normalized["pass"], True)
         self.assertEqual(normalized["total_score"], 37)
 
+    def test_parse_and_normalize_preserves_criterion_rationales(self) -> None:
+        rationales = _criterion_rationales()
+
+        normalized = parse_and_normalize_quality_evaluator_response(
+            _raw_response(
+                json.dumps(_canonical_review(criterion_rationales=rationales))
+            )
+        )
+
+        self.assertEqual(normalized["criterion_rationales"], rationales)
+
+    def test_parse_and_normalize_complete_large_rationale_response(self) -> None:
+        rationales = {
+            criterion: {
+                "score": score,
+                "max_score": 5,
+                "rationale": (
+                    f"{criterion} rationale ties the score to a concrete "
+                    "candidate sentence, the controlling angle, and the "
+                    "selected evidence boundary without adding new facts."
+                ),
+                "post_text_evidence": (
+                    f"{criterion} short excerpt from the actual post_text."
+                ),
+                "failure_reason": "",
+            }
+            for criterion, score in _scores().items()
+        }
+
+        normalized = parse_and_normalize_quality_evaluator_response(
+            _raw_response(
+                json.dumps(_canonical_review(criterion_rationales=rationales))
+            )
+        )
+
+        self.assertEqual(normalized["criterion_rationales"], rationales)
+        self.assertEqual(set(normalized["criterion_rationales"]), set(_scores()))
+
     def test_parse_and_normalize_valid_quality_fail_response(self) -> None:
         normalized = parse_and_normalize_quality_evaluator_response(
             _raw_response(
                 json.dumps(
                     _canonical_review(
                         passed=False,
+                        scores={**_scores(), "human_voice": 3},
                         total_score=35,
                         failed_criteria=["human_voice"],
                     )
@@ -450,14 +489,21 @@ def _canonical_review(
     failed_criteria: list[str] | None = None,
     automatic_fail_reason: str = "",
     notes: list[str] | None = None,
+    criterion_rationales: dict | None = None,
 ) -> dict:
+    resolved_scores = scores or _scores()
     return {
-        "scores": scores or _scores(),
+        "scores": resolved_scores,
         "total_score": total_score,
         "pass": passed,
         "failed_criteria": failed_criteria or [],
         "automatic_fail_reason": automatic_fail_reason,
         "notes": notes or ["Ready."],
+        "criterion_rationales": (
+            _criterion_rationales(resolved_scores)
+            if criterion_rationales is None
+            else criterion_rationales
+        ),
     }
 
 
@@ -472,4 +518,20 @@ def _scores() -> dict[str, int]:
         "human_voice": 5,
         "practical_value": 4,
         "cta": 4,
+    }
+
+
+def _criterion_rationales(
+    scores: dict[str, int] | None = None,
+) -> dict[str, dict[str, object]]:
+    resolved_scores = _scores() if scores is None else scores
+    return {
+        criterion: {
+            "score": score,
+            "max_score": 5,
+            "rationale": f"{criterion} rationale tied to the candidate post_text.",
+            "post_text_evidence": f"{criterion} phrase from post_text.",
+            "failure_reason": "",
+        }
+        for criterion, score in resolved_scores.items()
     }

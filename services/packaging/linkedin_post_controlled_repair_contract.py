@@ -27,6 +27,22 @@ FAILURE_REPAIR_WRITER_EMPTY_RESPONSE = "repair_writer_empty_response"
 FAILURE_REPAIR_WRITER_PARSE = "repair_writer_parse_failure"
 FAILURE_REPAIR_WRITER_ADAPTATION = "repair_writer_adaptation_failure"
 FAILURE_REPAIRED_DETERMINISTIC_GATE = "repaired_deterministic_gate_failure"
+FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST = (
+    "repaired_semantic_grounding_request_failure"
+)
+FAILURE_REPAIRED_SEMANTIC_GROUNDING_PROVIDER = (
+    "repaired_semantic_grounding_provider_failure"
+)
+FAILURE_REPAIRED_SEMANTIC_GROUNDING_EMPTY_RESPONSE = (
+    "repaired_semantic_grounding_empty_response"
+)
+FAILURE_REPAIRED_SEMANTIC_GROUNDING_PARSE = (
+    "repaired_semantic_grounding_parse_failure"
+)
+FAILURE_REPAIRED_SEMANTIC_GROUNDING_NORMALIZATION = (
+    "repaired_semantic_grounding_normalization_failure"
+)
+FAILURE_REPAIRED_SEMANTIC_GROUNDING = "repaired_semantic_grounding_failure"
 FAILURE_REPAIRED_QUALITY_EVALUATOR_REQUEST = (
     "repaired_quality_evaluator_request_failure"
 )
@@ -97,6 +113,9 @@ class FinalPostControlledRepairResult:
     parsed_repair_candidate: dict[str, Any] | None = None
     repaired_candidate_output: object | dict | None = None
     repaired_deterministic_gate_output: object | dict | None = None
+    repaired_semantic_grounding_prompt_render: object | dict | None = None
+    repaired_semantic_grounding_raw_response: object | dict | None = None
+    repaired_semantic_grounding_state: object | dict | None = None
     repaired_post_editorial_input: object | dict | None = None
     repaired_quality_evaluator_prompt_render: object | dict | None = None
     repaired_quality_evaluator_raw_response: object | dict | None = None
@@ -109,6 +128,7 @@ class FinalPostControlledRepairResult:
     failure_code: str | None = None
     failure_message: str = ""
     candidate_writer_invocation_count: int = 0
+    semantic_grounding_invocation_count: int = 0
     repair_invocation_count: int = 0
     quality_evaluator_invocation_count: int = 0
 
@@ -133,6 +153,15 @@ class FinalPostControlledRepairResult:
             "repaired_deterministic_gate_output": _serialize_repair_value(
                 self.repaired_deterministic_gate_output
             ),
+            "repaired_semantic_grounding_prompt_render": _serialize_repair_value(
+                self.repaired_semantic_grounding_prompt_render
+            ),
+            "repaired_semantic_grounding_raw_response": _serialize_repair_value(
+                self.repaired_semantic_grounding_raw_response
+            ),
+            "repaired_semantic_grounding_state": _serialize_repair_value(
+                self.repaired_semantic_grounding_state
+            ),
             "repaired_post_editorial_input": _serialize_repair_value(
                 self.repaired_post_editorial_input
             ),
@@ -155,6 +184,9 @@ class FinalPostControlledRepairResult:
             "failure_code": self.failure_code,
             "failure_message": self.failure_message,
             "candidate_writer_invocation_count": self.candidate_writer_invocation_count,
+            "semantic_grounding_invocation_count": (
+                self.semantic_grounding_invocation_count
+            ),
             "repair_invocation_count": self.repair_invocation_count,
             "quality_evaluator_invocation_count": self.quality_evaluator_invocation_count,
         }

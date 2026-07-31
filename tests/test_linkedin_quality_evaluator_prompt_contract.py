@@ -103,6 +103,7 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
                 "pass_threshold",
                 "required_minimums",
                 "automatic_fail_conditions",
+                "scoring_invariants",
             ],
         )
 
@@ -240,6 +241,7 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
                 "\"pass\"",
                 "\"failed_criteria\"",
                 "\"automatic_fail_reason\"",
+                "\"criterion_rationales\"",
                 "\"notes\"",
                 "\"requires_human_review\"",
                 "\"human_review_reason\"",
@@ -266,9 +268,28 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
                 "\"pass\" must be a boolean",
                 "failed_criteria must be a list",
                 "automatic_fail_reason must be a string",
+                "criterion_rationales must be an object keyed by the exact nine rubric keys",
+                "each criterion_rationales entry must contain score, max_score, rationale, post_text_evidence, and failure_reason",
                 "notes must be a list",
                 "requires_human_review must be a boolean",
                 "human_review_reason must be a string",
+            ],
+        )
+
+    def test_quality_evaluator_prompt_requires_criterion_specific_audit_rationales(self) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "for each criterion, provide a candidate-specific rationale",
+                "identify the post_text evidence that supports the score",
+                "do not give generic rubric restatements as rationales",
+                "each criterion_rationales score must match the corresponding score in scores",
+                "each criterion_rationales max_score must be 5",
+                "each criterion_rationales rationale must be candidate-specific",
+                "each criterion_rationales post_text_evidence must identify actual post_text",
             ],
         )
 
@@ -302,6 +323,58 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
             prompt,
             [
                 "\"pass\" must be false when hook, controlling_angle, author_point_of_view, human_voice, or evidence is below its documented minimum",
+            ],
+        )
+
+    def test_quality_evaluator_prompt_scores_actual_post_text_not_payload_metadata(self) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "score the actual candidate post_text first",
+                "do not let declared metadata inflate a score",
+                "when the visible post_text does not deliver that quality",
+            ],
+        )
+
+    def test_quality_evaluator_prompt_scores_cta_only_from_post_text(self) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "cta scoring must be based on the actual post_text, not cta_variants",
+                "if a required cta is absent from post_text, cta must score 1",
+                "the review must fail",
+            ],
+        )
+
+    def test_quality_evaluator_prompt_rejects_summary_polish_as_quality_proxy(self) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "do not mistake source coverage for synthesis",
+                "reads like a source recap rather than a human argument",
+                "do not mistake clean grammar, coherent structure, or professional polish for human voice",
+                "summary-like source recap cannot score 4 or 5 for both author_point_of_view and human_voice",
+                "a post without a concrete reader takeaway cannot pass practical_value",
+            ],
+        )
+
+    def test_quality_evaluator_prompt_requires_evidence_failure_for_causal_drift(self) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "unsupported factual or causal drift must fail evidence or trigger automatic failure",
             ],
         )
 

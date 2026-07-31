@@ -60,17 +60,34 @@ EXPECTED_REQUIRED_MINIMUMS = {
 
 EXPECTED_AUTOMATIC_FAIL_CONDITIONS = (
     "invents facts",
+    "invents cases",
+    "invents metrics",
     "invents personal experience",
     "uses external links in the body",
     "has no clear angle",
     "reads like a summary of articles",
+    "uses unsupported causal strengthening",
     "sounds like generic AI-generated content",
     "reads like a corporate memo instead of a human LinkedIn post",
     "has no human author voice",
     "makes source terminology the main angle by accident",
     "exceeds 1300 characters",
     "relies on generic phrases as the main argument",
+    "has no required CTA in post_text",
     "has more than one CTA",
+    "leaks internal process language into reader-facing text",
+)
+
+EXPECTED_SCORING_INVARIANTS = (
+    "CTA scoring must be based on the actual post_text, not cta_variants.",
+    "When a required CTA is absent from post_text, cta must score 1 and the review must fail.",
+    "Summary-like source recap cannot score 4 or 5 for both author_point_of_view and human_voice.",
+    "A post without a concrete reader takeaway cannot pass practical_value.",
+    "Unsupported factual or causal drift must fail evidence or trigger automatic failure.",
+    "Source coverage is not the same as synthesis.",
+    "Clean grammar and coherent structure are not sufficient for human_voice.",
+    "Declared brief or angle metadata must not inflate scores when post_text does not deliver it.",
+    "Any automatic failure forces pass to false regardless of total_score.",
 )
 
 DECISION_ACTIONS = (
@@ -179,6 +196,29 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
 
         self.assertTrue(payload.automatic_fail_conditions)
 
+    def test_scoring_invariants_are_present(self) -> None:
+        payload = get_quality_evaluator_rubric_payload()
+
+        self.assertEqual(payload.scoring_invariants, EXPECTED_SCORING_INVARIANTS)
+
+    def test_scoring_invariants_capture_false_positive_regressions(self) -> None:
+        invariants = " ".join(get_quality_evaluator_rubric_payload().scoring_invariants)
+
+        for phrase in (
+            "actual post_text",
+            "not cta_variants",
+            "source recap",
+            "author_point_of_view and human_voice",
+            "concrete reader takeaway",
+            "causal drift",
+            "Source coverage is not the same as synthesis",
+            "Clean grammar and coherent structure",
+            "metadata must not inflate scores",
+            "automatic failure forces pass to false",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, invariants)
+
     def test_automatic_failures_contain_no_routing_action_names(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
         text = " ".join(payload.automatic_fail_conditions)
@@ -207,6 +247,10 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
             payload_dict["automatic_fail_conditions"],
             list(EXPECTED_AUTOMATIC_FAIL_CONDITIONS),
         )
+        self.assertEqual(
+            payload_dict["scoring_invariants"],
+            list(EXPECTED_SCORING_INVARIANTS),
+        )
         self.assertEqual(payload_dict["pass_threshold"], 36)
 
     def test_to_prompt_dict_returns_dictionary(self) -> None:
@@ -229,6 +273,7 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
                 "pass_threshold",
                 "required_minimums",
                 "automatic_fail_conditions",
+                "scoring_invariants",
             ),
         )
 
@@ -256,6 +301,10 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
             prompt_dict["automatic_fail_conditions"],
             list(EXPECTED_AUTOMATIC_FAIL_CONDITIONS),
         )
+        self.assertEqual(
+            prompt_dict["scoring_invariants"],
+            list(EXPECTED_SCORING_INVARIANTS),
+        )
 
     def test_to_prompt_dict_is_json_serializable(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
@@ -276,10 +325,12 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         prompt_dict["criteria"]["hook"] = "changed"
         prompt_dict["required_minimums"]["hook"] = 1
         prompt_dict["automatic_fail_conditions"].append("changed")
+        prompt_dict["scoring_invariants"].append("changed")
 
         self.assertNotEqual(payload.criteria["hook"], "changed")
         self.assertEqual(payload.required_minimums["hook"], 4)
         self.assertNotIn("changed", payload.automatic_fail_conditions)
+        self.assertNotIn("changed", payload.scoring_invariants)
 
     def test_repeated_to_prompt_dict_calls_return_independent_nested_values(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
@@ -289,16 +340,19 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         first["criteria"]["hook"] = "changed"
         first["required_minimums"]["hook"] = 1
         first["automatic_fail_conditions"].append("changed")
+        first["scoring_invariants"].append("changed")
 
         self.assertNotEqual(second["criteria"]["hook"], "changed")
         self.assertEqual(second["required_minimums"]["hook"], 4)
         self.assertNotIn("changed", second["automatic_fail_conditions"])
+        self.assertNotIn("changed", second["scoring_invariants"])
         self.assertIsNot(first["criteria"], second["criteria"])
         self.assertIsNot(first["required_minimums"], second["required_minimums"])
         self.assertIsNot(
             first["automatic_fail_conditions"],
             second["automatic_fail_conditions"],
         )
+        self.assertIsNot(first["scoring_invariants"], second["scoring_invariants"])
 
     def test_to_dict_still_includes_provenance(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
@@ -353,10 +407,12 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         payload_dict["criteria"]["hook"] = "changed"
         payload_dict["required_minimums"]["hook"] = 1
         payload_dict["automatic_fail_conditions"].append("changed")
+        payload_dict["scoring_invariants"].append("changed")
 
         self.assertNotEqual(normalized.criteria["hook"], "changed")
         self.assertEqual(normalized.required_minimums["hook"], 4)
         self.assertNotIn("changed", normalized.automatic_fail_conditions)
+        self.assertNotIn("changed", normalized.scoring_invariants)
 
     def test_normalize_rubric_payload_accepts_tuple_automatic_fail_conditions(
         self,
@@ -377,10 +433,12 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         payload_dict["criteria"]["hook"] = "changed"
         payload_dict["required_minimums"]["hook"] = 1
         payload_dict["automatic_fail_conditions"].append("changed")
+        payload_dict["scoring_invariants"].append("changed")
 
         self.assertNotEqual(payload.criteria["hook"], "changed")
         self.assertEqual(payload.required_minimums["hook"], 4)
         self.assertNotIn("changed", payload.automatic_fail_conditions)
+        self.assertNotIn("changed", payload.scoring_invariants)
 
     def test_repeated_factory_results_are_independent(self) -> None:
         first = get_quality_evaluator_rubric_payload()

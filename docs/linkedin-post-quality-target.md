@@ -389,14 +389,19 @@ A post passes if:
 A post fails automatically if it:
 
 - invents facts;
+- invents cases;
+- invents metrics;
 - invents personal experience;
 - uses external links in the body;
 - has no clear angle;
 - reads like a summary of articles;
+- uses unsupported causal strengthening;
 - sounds like generic AI-generated content;
 - reads like a corporate memo instead of a human LinkedIn post;
 - has no human author voice;
 - makes source terminology the main angle by accident;
 - exceeds 1300 characters;
 - relies on generic phrases as the main argument;
-- has more than one CTA.
+- has no required CTA in post_text;
+- has more than one CTA;
+- leaks internal process language into reader-facing text.

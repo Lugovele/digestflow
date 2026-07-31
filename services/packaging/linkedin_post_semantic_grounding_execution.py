@@ -1,7 +1,7 @@
-"""Provider execution boundary for the LinkedIn quality evaluator prompt.
+"""Provider execution boundary for the semantic grounding evaluator.
 
-This module executes an already-rendered Quality Evaluator prompt and captures
-the raw provider response. It does not parse JSON, normalize quality reviews,
+This module executes an already-rendered semantic-grounding prompt and captures
+the raw provider response. It does not parse JSON, normalize grounding reviews,
 route decisions, repair payloads, persist data, or connect to runtime packaging.
 """
 from __future__ import annotations
@@ -14,9 +14,6 @@ from django.conf import settings
 
 from apps.ai.client import OpenAIClient
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
-from services.packaging.linkedin_post_prompt_renderers import (
-    QualityEvaluatorPromptRender,
-)
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 2400
@@ -26,8 +23,8 @@ SUPPORTED_PROVIDER = "openai"
 
 
 @dataclass(frozen=True)
-class QualityEvaluatorExecutionRequest:
-    rendered_prompt_input: QualityEvaluatorPromptRender
+class SemanticGroundingExecutionRequest:
+    rendered_prompt_input: object
     prompt_text: str
     provider: str
     model: str
@@ -48,7 +45,7 @@ class QualityEvaluatorExecutionRequest:
 
 
 @dataclass(frozen=True)
-class QualityEvaluatorRawResponse:
+class SemanticGroundingRawResponse:
     raw_text: str
     provider: str
     model: str
@@ -74,8 +71,8 @@ class QualityEvaluatorRawResponse:
         return result
 
 
-def build_quality_evaluator_execution_request(
-    rendered_prompt_input: QualityEvaluatorPromptRender,
+def build_semantic_grounding_execution_request(
+    rendered_prompt_input: object,
     *,
     prompt_text: str,
     provider: str | None = None,
@@ -83,8 +80,8 @@ def build_quality_evaluator_execution_request(
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     json_mode: bool = DEFAULT_JSON_MODE,
     execution_metadata: dict[str, Any] | None = None,
-) -> QualityEvaluatorExecutionRequest:
-    return QualityEvaluatorExecutionRequest(
+) -> SemanticGroundingExecutionRequest:
+    return SemanticGroundingExecutionRequest(
         rendered_prompt_input=rendered_prompt_input,
         prompt_text=prompt_text,
         provider=_resolve_provider(provider),
@@ -95,15 +92,15 @@ def build_quality_evaluator_execution_request(
     )
 
 
-def execute_quality_evaluator_prompt(
-    request: QualityEvaluatorExecutionRequest,
+def execute_semantic_grounding_prompt(
+    request: SemanticGroundingExecutionRequest,
     *,
     client: Any | None = None,
-) -> QualityEvaluatorRawResponse:
+) -> SemanticGroundingRawResponse:
     prompt_metadata = _prompt_metadata_from_render(request.rendered_prompt_input)
-    execution_error = _execution_request_error(request)
+    execution_error = get_semantic_grounding_execution_request_error(request)
     if execution_error is not None:
-        return QualityEvaluatorRawResponse(
+        return SemanticGroundingRawResponse(
             raw_text="",
             provider=request.provider,
             model=request.model,
@@ -111,7 +108,7 @@ def execute_quality_evaluator_prompt(
             execution_error=execution_error,
         )
 
-    prompt = _build_provider_prompt(request)
+    prompt = f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}"
     try:
         text_client = client if client is not None else OpenAIClient(model=request.model)
         response = text_client.generate_text(
@@ -120,8 +117,8 @@ def execute_quality_evaluator_prompt(
             json_mode=request.json_mode,
             allow_json_mode_fallback=False,
         )
-    except Exception as exc:  # pragma: no cover - covered with fake failure.
-        return QualityEvaluatorRawResponse(
+    except Exception:  # pragma: no cover - covered with fake failure.
+        return SemanticGroundingRawResponse(
             raw_text="",
             provider=request.provider,
             model=request.model,
@@ -131,7 +128,7 @@ def execute_quality_evaluator_prompt(
 
     raw_text = response.text
     if raw_text is None or not str(raw_text).strip():
-        return QualityEvaluatorRawResponse(
+        return SemanticGroundingRawResponse(
             raw_text=str(raw_text or ""),
             provider=request.provider,
             model=request.model,
@@ -141,7 +138,7 @@ def execute_quality_evaluator_prompt(
             execution_error="empty provider response",
         )
 
-    return QualityEvaluatorRawResponse(
+    return SemanticGroundingRawResponse(
         raw_text=str(raw_text),
         provider=request.provider,
         model=request.model,
@@ -149,6 +146,37 @@ def execute_quality_evaluator_prompt(
         usage=copy.deepcopy(response.usage),
         raw_provider_response=copy.deepcopy(response.raw),
     )
+
+
+def get_semantic_grounding_execution_request_error(
+    request: SemanticGroundingExecutionRequest,
+) -> str | None:
+    if not request.provider:
+        return "missing semantic grounding provider"
+    if request.provider != SUPPORTED_PROVIDER:
+        return f"unsupported semantic grounding provider: {request.provider}"
+    if not request.model:
+        return "missing semantic grounding model"
+    if isinstance(request.max_output_tokens, bool) or not isinstance(
+        request.max_output_tokens,
+        int,
+    ):
+        return "invalid semantic grounding max_output_tokens: must be a positive integer"
+    if request.max_output_tokens <= 0:
+        return "invalid semantic grounding max_output_tokens: must be a positive integer"
+    if request.max_output_tokens < MIN_MAX_OUTPUT_TOKENS:
+        return (
+            "invalid semantic grounding max_output_tokens: must be at least "
+            f"{MIN_MAX_OUTPUT_TOKENS}"
+        )
+    if not isinstance(request.json_mode, bool):
+        return "invalid semantic grounding json_mode: must be a boolean"
+    if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
+        return "missing semantic grounding prompt text"
+    rendered_input_text = getattr(request.rendered_prompt_input, "input_text", None)
+    if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
+        return "missing semantic grounding rendered input text"
+    return None
 
 
 def _resolve_provider(provider: str | None) -> str:
@@ -161,56 +189,15 @@ def _resolve_model(model: str | None) -> str:
     return str(resolved or "").strip()
 
 
-def _execution_request_error(request: QualityEvaluatorExecutionRequest) -> str | None:
-    return get_quality_evaluator_execution_request_error(request)
-
-
-def get_quality_evaluator_execution_request_error(
-    request: QualityEvaluatorExecutionRequest,
-) -> str | None:
-    if not request.provider:
-        return "missing quality evaluator provider"
-    if request.provider != SUPPORTED_PROVIDER:
-        return f"unsupported quality evaluator provider: {request.provider}"
-    if not request.model:
-        return "missing quality evaluator model"
-    if isinstance(request.max_output_tokens, bool) or not isinstance(
-        request.max_output_tokens,
-        int,
-    ):
-        return "invalid quality evaluator max_output_tokens: must be a positive integer"
-    if request.max_output_tokens <= 0:
-        return "invalid quality evaluator max_output_tokens: must be a positive integer"
-    if request.max_output_tokens < MIN_MAX_OUTPUT_TOKENS:
-        return (
-            "invalid quality evaluator max_output_tokens: must be at least "
-            f"{MIN_MAX_OUTPUT_TOKENS}"
-        )
-    if not isinstance(request.json_mode, bool):
-        return "invalid quality evaluator json_mode: must be a boolean"
-    if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
-        return "missing quality evaluator prompt text"
-    rendered_input_text = request.rendered_prompt_input.input_text
-    if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
-        return "missing quality evaluator rendered input text"
-    return None
-
-
-def _build_provider_prompt(request: QualityEvaluatorExecutionRequest) -> str:
-    return f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}"
-
-
-def _prompt_metadata_from_render(
-    render: QualityEvaluatorPromptRender,
-) -> PromptMetadata | None:
+def _prompt_metadata_from_render(render: object) -> PromptMetadata | None:
     if (
-        render.prompt_name is None
-        and render.prompt_version is None
-        and render.prompt_path is None
+        getattr(render, "prompt_name", None) is None
+        and getattr(render, "prompt_version", None) is None
+        and getattr(render, "prompt_path", None) is None
     ):
         return None
     return PromptMetadata(
-        prompt_name=render.prompt_name or "",
-        prompt_version=render.prompt_version or "",
-        prompt_path=render.prompt_path,
+        prompt_name=getattr(render, "prompt_name", "") or "",
+        prompt_version=getattr(render, "prompt_version", "") or "",
+        prompt_path=getattr(render, "prompt_path", None),
     )

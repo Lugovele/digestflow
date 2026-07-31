@@ -51,27 +51,31 @@ _CRITERION_DEFINITIONS = (
     (
         "evidence",
         "Evaluate whether selected evidence supports the angle without taking "
-        "over the post or turning it into a source summary.",
+        "over the post, turning it into a source summary, or adding causal "
+        "claims not supported by selected evidence.",
     ),
     (
         "author_point_of_view",
         "Evaluate whether the author interprets the evidence with a clear "
-        "judgment or thesis instead of neutrally reporting facts.",
+        "judgment or thesis in the post text instead of neutrally reporting "
+        "facts or repeating source relationships.",
     ),
     (
         "human_voice",
         "Evaluate whether the post sounds natural, specific, and human rather "
-        "than corporate, template-like, or generic AI-generated text.",
+        "than corporate, template-like, summary-like, or generic AI-generated "
+        "text.",
     ),
     (
         "practical_value",
         "Evaluate whether the post gives one useful takeaway the reader can "
-        "apply.",
+        "apply instead of ending with broad market interpretation or generic "
+        "advice.",
     ),
     (
         "cta",
         "Evaluate whether the post has one open question or call to action "
-        "that naturally follows from the post.",
+        "inside post_text that naturally follows from the post.",
     ),
 )
 
@@ -85,17 +89,34 @@ _REQUIRED_MINIMUMS = (
 
 _AUTOMATIC_FAIL_CONDITIONS = (
     "invents facts",
+    "invents cases",
+    "invents metrics",
     "invents personal experience",
     "uses external links in the body",
     "has no clear angle",
     "reads like a summary of articles",
+    "uses unsupported causal strengthening",
     "sounds like generic AI-generated content",
     "reads like a corporate memo instead of a human LinkedIn post",
     "has no human author voice",
     "makes source terminology the main angle by accident",
     "exceeds 1300 characters",
     "relies on generic phrases as the main argument",
+    "has no required CTA in post_text",
     "has more than one CTA",
+    "leaks internal process language into reader-facing text",
+)
+
+_SCORING_INVARIANTS = (
+    "CTA scoring must be based on the actual post_text, not cta_variants.",
+    "When a required CTA is absent from post_text, cta must score 1 and the review must fail.",
+    "Summary-like source recap cannot score 4 or 5 for both author_point_of_view and human_voice.",
+    "A post without a concrete reader takeaway cannot pass practical_value.",
+    "Unsupported factual or causal drift must fail evidence or trigger automatic failure.",
+    "Source coverage is not the same as synthesis.",
+    "Clean grammar and coherent structure are not sufficient for human_voice.",
+    "Declared brief or angle metadata must not inflate scores when post_text does not deliver it.",
+    "Any automatic failure forces pass to false regardless of total_score.",
 )
 
 
@@ -111,6 +132,7 @@ class QualityEvaluatorRubricPayload:
     pass_threshold: int
     required_minimums: dict[str, int]
     automatic_fail_conditions: tuple[str, ...]
+    scoring_invariants: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +146,7 @@ class QualityEvaluatorRubricPayload:
             "pass_threshold": self.pass_threshold,
             "required_minimums": dict(self.required_minimums),
             "automatic_fail_conditions": list(self.automatic_fail_conditions),
+            "scoring_invariants": list(self.scoring_invariants),
         }
 
     def to_prompt_dict(self) -> dict[str, Any]:
@@ -137,6 +160,7 @@ class QualityEvaluatorRubricPayload:
             "pass_threshold": self.pass_threshold,
             "required_minimums": dict(self.required_minimums),
             "automatic_fail_conditions": list(self.automatic_fail_conditions),
+            "scoring_invariants": list(self.scoring_invariants),
         }
 
 
@@ -152,6 +176,7 @@ def get_quality_evaluator_rubric_payload() -> QualityEvaluatorRubricPayload:
         pass_threshold=PASS_THRESHOLD,
         required_minimums=dict(_REQUIRED_MINIMUMS),
         automatic_fail_conditions=tuple(_AUTOMATIC_FAIL_CONDITIONS),
+        scoring_invariants=tuple(_SCORING_INVARIANTS),
     )
 
 
@@ -176,6 +201,7 @@ def normalize_quality_evaluator_rubric_payload(
         "pass_threshold",
         "required_minimums",
         "automatic_fail_conditions",
+        "scoring_invariants",
     }
     missing_fields = sorted(required_fields - rubric.keys())
     if missing_fields:
@@ -187,6 +213,11 @@ def normalize_quality_evaluator_rubric_payload(
     if not isinstance(automatic_fail_conditions, (list, tuple)):
         raise ValueError(
             "quality evaluator rubric automatic_fail_conditions must be a list or tuple."
+        )
+    scoring_invariants = rubric["scoring_invariants"]
+    if not isinstance(scoring_invariants, (list, tuple)):
+        raise ValueError(
+            "quality evaluator rubric scoring_invariants must be a list or tuple."
         )
 
     criteria = _require_string_dict(rubric["criteria"], "criteria")
@@ -222,6 +253,10 @@ def normalize_quality_evaluator_rubric_payload(
         automatic_fail_conditions=tuple(
             _require_string(item, "automatic_fail_conditions")
             for item in automatic_fail_conditions
+        ),
+        scoring_invariants=tuple(
+            _require_string(item, "scoring_invariants")
+            for item in scoring_invariants
         ),
     )
 

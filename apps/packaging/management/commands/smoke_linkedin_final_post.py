@@ -7,6 +7,8 @@ import sys
 from django.core.management.base import BaseCommand
 
 from services.packaging.linkedin_post_final_post_smoke_runner import (
+    DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    DEFAULT_QUALITY_MAX_OUTPUT_TOKENS,
     SMOKE_MODE_CONTROLLED_REPAIR,
     SMOKE_MODE_STANDALONE,
     FinalPostSmokeRunRequest,
@@ -52,12 +54,23 @@ class Command(BaseCommand):
         )
         parser.add_argument("--candidate-provider")
         parser.add_argument("--candidate-model")
+        parser.add_argument("--grounding-provider")
+        parser.add_argument("--grounding-model")
         parser.add_argument("--evaluator-provider")
         parser.add_argument("--evaluator-model")
         parser.add_argument("--repair-provider")
         parser.add_argument("--repair-model")
         parser.add_argument("--candidate-max-output-tokens", type=int, default=1200)
-        parser.add_argument("--evaluator-max-output-tokens", type=int, default=900)
+        parser.add_argument(
+            "--grounding-max-output-tokens",
+            type=int,
+            default=DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        )
+        parser.add_argument(
+            "--evaluator-max-output-tokens",
+            type=int,
+            default=DEFAULT_QUALITY_MAX_OUTPUT_TOKENS,
+        )
         parser.add_argument("--repair-max-output-tokens", type=int, default=1200)
 
     def handle(self, *args, **options):
@@ -70,11 +83,16 @@ class Command(BaseCommand):
             expect_repair=bool(options["expect_repair"]),
             candidate_provider=options.get("candidate_provider"),
             candidate_model=options.get("candidate_model"),
+            semantic_grounding_provider=options.get("grounding_provider"),
+            semantic_grounding_model=options.get("grounding_model"),
             quality_evaluator_provider=options.get("evaluator_provider"),
             quality_evaluator_model=options.get("evaluator_model"),
             repair_provider=options.get("repair_provider"),
             repair_model=options.get("repair_model"),
             candidate_max_output_tokens=options["candidate_max_output_tokens"],
+            semantic_grounding_max_output_tokens=options[
+                "grounding_max_output_tokens"
+            ],
             quality_evaluator_max_output_tokens=options[
                 "evaluator_max_output_tokens"
             ],

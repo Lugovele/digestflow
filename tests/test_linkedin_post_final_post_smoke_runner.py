@@ -13,6 +13,7 @@ from django.core.management import call_command
 from django.test import SimpleTestCase
 from django.test import override_settings
 
+from apps.packaging.management.commands import smoke_linkedin_final_post
 from services.packaging import linkedin_post_final_post_smoke_runner
 from services.packaging.linkedin_post_final_post_smoke_runner import (
     EXIT_CONFIG_ERROR,
@@ -81,8 +82,35 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.status, SMOKE_STATUS_COMPLETED)
         self.assertEqual(result.final_post_text, "Accepted smoke post.")
         self.assertEqual(result.invocation_counts["candidate_writer"], 1)
+        self.assertEqual(result.invocation_counts["semantic_grounding"], 1)
         self.assertEqual(result.invocation_counts["quality_evaluator"], 1)
         self.assertEqual(result.invocation_counts["repair_writer"], 0)
+        self.assertEqual(
+            result.sanitized_result["quality_review"]["criterion_rationales"],
+            {"human_voice": {"rationale": "Human voice is specific."}},
+        )
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_semantic_grounding_summary_uses_blocking_claim_ids_only(self) -> None:
+        fake_result = _standalone_result()
+        fake_result.semantic_grounding_state.grounding_review.blocking_claim_ids = (
+            "c1",
+            "c2",
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+            )
+
+        semantic_summary = result.sanitized_result["semantic_grounding_review"]
+
+        self.assertEqual(semantic_summary["blocking_claim_ids"], ["c1", "c2"])
+        self.assertNotIn("failed_claim_ids", semantic_summary)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_controlled_repair_mode_delegates_once_to_public_api(self) -> None:
@@ -110,6 +138,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.status, SMOKE_STATUS_COMPLETED)
         self.assertTrue(result.repair_executed)
         self.assertEqual(result.invocation_counts["candidate_writer"], 1)
+        self.assertEqual(result.invocation_counts["semantic_grounding"], 2)
         self.assertEqual(result.invocation_counts["quality_evaluator"], 2)
         self.assertEqual(result.invocation_counts["repair_writer"], 1)
         self.assertEqual(result.final_post_text, "Accepted repaired smoke post.")
@@ -426,8 +455,101 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
 
         text = output.getvalue()
         self.assertIn("=== INVOCATION BUDGET ===", text)
+        self.assertIn("semantic_grounding", text)
         self.assertIn(SMOKE_STATUS_DRY_RUN, text)
         self.assertIn("production_runtime_wiring: False", text)
+
+    def test_command_defaults_use_expanded_grounding_and_quality_token_budgets(
+        self,
+    ) -> None:
+        output = _StringOutput()
+
+        with patch.object(
+            smoke_linkedin_final_post,
+            "run_final_post_smoke",
+            return_value=linkedin_post_final_post_smoke_runner.FinalPostSmokeRunResult(
+                status=SMOKE_STATUS_COMPLETED,
+                exit_code=EXIT_OK,
+                mode=SMOKE_MODE_STANDALONE,
+                input_path=str(FIXTURE_PATH),
+                provider_models={},
+                invocation_budget={},
+                invocation_counts={},
+                dry_run=True,
+                repair_enabled=False,
+                repair_executed=False,
+                initial_outcome=None,
+                final_outcome=None,
+                accepted=True,
+                final_post_text="",
+                deterministic_gate_passed=True,
+                quality_passed=True,
+                safe_failure_code=None,
+                safe_failure_message="",
+                saved_output_path=None,
+                sanitized_result={},
+            ),
+        ) as smoke:
+            call_command(
+                "smoke_linkedin_final_post",
+                "--input",
+                str(FIXTURE_PATH),
+                stdout=output,
+            )
+
+        smoke.assert_called_once()
+        request = smoke.call_args.args[0]
+        self.assertEqual(request.semantic_grounding_max_output_tokens, 2400)
+        self.assertEqual(request.quality_evaluator_max_output_tokens, 2400)
+
+    def test_command_accepts_grounding_provider_model_and_token_options(
+        self,
+    ) -> None:
+        output = _StringOutput()
+
+        with patch.object(
+            smoke_linkedin_final_post,
+            "run_final_post_smoke",
+            return_value=linkedin_post_final_post_smoke_runner.FinalPostSmokeRunResult(
+                status=SMOKE_STATUS_DRY_RUN,
+                exit_code=EXIT_OK,
+                mode=SMOKE_MODE_STANDALONE,
+                input_path=str(FIXTURE_PATH),
+                provider_models={},
+                invocation_budget={},
+                invocation_counts={},
+                dry_run=True,
+                repair_enabled=False,
+                repair_executed=False,
+                initial_outcome=None,
+                final_outcome=None,
+                accepted=False,
+                final_post_text="",
+                deterministic_gate_passed=None,
+                quality_passed=None,
+                safe_failure_code=None,
+                safe_failure_message="",
+                saved_output_path=None,
+                sanitized_result={},
+            ),
+        ) as smoke:
+            call_command(
+                "smoke_linkedin_final_post",
+                "--input",
+                str(FIXTURE_PATH),
+                "--grounding-provider",
+                "openai",
+                "--grounding-model",
+                "grounding-model",
+                "--grounding-max-output-tokens",
+                "2600",
+                stdout=output,
+            )
+
+        request = smoke.call_args.args[0]
+        self.assertEqual(request.semantic_grounding_provider, "openai")
+        self.assertEqual(request.semantic_grounding_model, "grounding-model")
+        self.assertEqual(request.semantic_grounding_max_output_tokens, 2600)
 
 
 def _standalone_result(
@@ -456,6 +578,7 @@ def _standalone_result(
             )
         ],
         candidate_writer_invocation_count=1,
+        semantic_grounding_invocation_count=0 if failure_code else 1,
         quality_evaluator_invocation_count=0 if failure_code else 1,
         repair_invocation_count=0,
         deterministic_gate_output=SimpleNamespace(
@@ -466,7 +589,22 @@ def _standalone_result(
             ),
         ),
         quality_evaluation_state=SimpleNamespace(
-            quality_review={"pass": failure_code is None, "total_score": 37}
+            quality_review={
+                "pass": failure_code is None,
+                "total_score": 37,
+                "criterion_rationales": {
+                    "human_voice": {"rationale": "Human voice is specific."}
+                },
+            }
+        ),
+        semantic_grounding_state=SimpleNamespace(
+            grounding_review=SimpleNamespace(
+                passed=failure_code is None,
+                failed_claim_ids=(),
+                blocking_claim_ids=(),
+                automatic_fail_reason="",
+                requires_human_review=False,
+            )
         ),
         final_attempt_outcome=SimpleNamespace(
             outcome="accepted" if failure_code is None else "not_ready",
@@ -491,6 +629,10 @@ def _standalone_result(
         ),
         candidate_writer_raw_response=SimpleNamespace(
             raw_text="candidate raw text",
+            raw_provider_response={"secret": "secret-provider-metadata"},
+        ),
+        semantic_grounding_raw_response=SimpleNamespace(
+            raw_text="semantic grounding raw text",
             raw_provider_response={"secret": "secret-provider-metadata"},
         ),
         quality_evaluator_raw_response=SimpleNamespace(
@@ -527,6 +669,7 @@ def _controlled_result(*, repair_executed: bool) -> SimpleNamespace:
         failure_code=None,
         failure_message="",
         candidate_writer_invocation_count=1,
+        semantic_grounding_invocation_count=2 if repair_executed else 1,
         quality_evaluator_invocation_count=2 if repair_executed else 1,
         repair_invocation_count=1 if repair_executed else 0,
         repaired_deterministic_gate_output=(
@@ -545,12 +688,30 @@ def _controlled_result(*, repair_executed: bool) -> SimpleNamespace:
             if repair_executed
             else None
         ),
+        repaired_semantic_grounding_state=(
+            SimpleNamespace(
+                grounding_review=SimpleNamespace(
+                    passed=True,
+                    failed_claim_ids=(),
+                    blocking_claim_ids=(),
+                    automatic_fail_reason="",
+                    requires_human_review=False,
+                )
+            )
+            if repair_executed
+            else None
+        ),
         repaired_candidate_output=(
             SimpleNamespace(payload=_full_payload("Accepted repaired smoke post."))
             if repair_executed
             else None
         ),
         repair_writer_raw_response=SimpleNamespace(raw_text="repair raw text"),
+        repaired_semantic_grounding_raw_response=(
+            SimpleNamespace(raw_text="repaired semantic grounding raw text")
+            if repair_executed
+            else None
+        ),
         repaired_quality_evaluator_raw_response=SimpleNamespace(
             raw_text="repaired quality raw text"
         ),

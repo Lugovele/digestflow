@@ -36,6 +36,7 @@ from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_READY,
     FinalPostQualityEvaluationState,
     build_final_post_attempt_outcome_from_gate_and_quality,
+    build_final_post_attempt_outcome_from_gate_grounding_and_quality,
 )
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_ADAPTATION,
@@ -49,6 +50,12 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_QUALITY_EVALUATOR_PROVIDER,
     FAILURE_QUALITY_EVALUATOR_REQUEST,
     FAILURE_QUALITY_REVIEW_NORMALIZATION,
+    FAILURE_SEMANTIC_GROUNDING,
+    FAILURE_SEMANTIC_GROUNDING_EMPTY_RESPONSE,
+    FAILURE_SEMANTIC_GROUNDING_NORMALIZATION,
+    FAILURE_SEMANTIC_GROUNDING_PARSE,
+    FAILURE_SEMANTIC_GROUNDING_PROVIDER,
+    FAILURE_SEMANTIC_GROUNDING_REQUEST,
     STAGE_ATTEMPT_ADJUDICATION,
     STAGE_ATTEMPT_OUTCOME,
     STAGE_CANDIDATE_WRITER_ADAPTATION,
@@ -56,6 +63,10 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     STAGE_CANDIDATE_WRITER_PARSE,
     STAGE_CANDIDATE_WRITER_REQUEST,
     STAGE_DETERMINISTIC_GATE,
+    STAGE_SEMANTIC_GROUNDING_EXECUTION,
+    STAGE_SEMANTIC_GROUNDING_NORMALIZATION,
+    STAGE_SEMANTIC_GROUNDING_PARSE,
+    STAGE_SEMANTIC_GROUNDING_REQUEST,
     STAGE_QUALITY_EVALUATOR_EXECUTION,
     STAGE_QUALITY_EVALUATOR_PARSE,
     STAGE_QUALITY_EVALUATOR_REQUEST,
@@ -71,13 +82,16 @@ from services.packaging.linkedin_post_flow_input_builders import (
     build_post_editorial_input,
 )
 from services.packaging.linkedin_post_prompt_renderers import (
+    render_semantic_grounding_prompt_input,
     render_quality_evaluator_prompt_input,
 )
 from services.packaging.linkedin_post_quality_evaluator_execution import (
+    DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS,
     QualityEvaluatorExecutionRequest,
     QualityEvaluatorRawResponse,
     build_quality_evaluator_execution_request,
     execute_quality_evaluator_prompt,
+    get_quality_evaluator_execution_request_error,
 )
 from services.packaging.linkedin_post_quality_evaluator_parser import (
     ERROR_NORMALIZATION_FAILED,
@@ -86,6 +100,26 @@ from services.packaging.linkedin_post_quality_evaluator_parser import (
 )
 from services.packaging.linkedin_post_quality_rubric_contract import (
     normalize_quality_evaluator_rubric_payload,
+)
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    GROUNDING_STATUS_FAIL,
+    GROUNDING_STATUS_NEEDS_HUMAN_REVIEW,
+    GROUNDING_STATUS_NOT_READY,
+    GROUNDING_STATUS_PASS,
+    FinalPostSemanticGroundingState,
+)
+from services.packaging.linkedin_post_semantic_grounding_execution import (
+    DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    SemanticGroundingExecutionRequest,
+    SemanticGroundingRawResponse,
+    build_semantic_grounding_execution_request,
+    execute_semantic_grounding_prompt,
+    get_semantic_grounding_execution_request_error,
+)
+from services.packaging.linkedin_post_semantic_grounding_parser import (
+    ERROR_NORMALIZATION_FAILED as SEMANTIC_GROUNDING_ERROR_NORMALIZATION_FAILED,
+    SemanticGroundingResponseParseError,
+    parse_and_normalize_semantic_grounding_response,
 )
 
 
@@ -108,6 +142,7 @@ def execute_final_post_standalone_candidate_attempt(
                     FAILURE_CANDIDATE_WRITER_REQUEST,
                     request_error,
                 ),
+                _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
             ),
             failure_stage=STAGE_CANDIDATE_WRITER_REQUEST,
@@ -131,6 +166,7 @@ def execute_final_post_standalone_candidate_attempt(
                     failure_code,
                     raw_response.execution_error,
                 ),
+                _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
             ),
             completed_stage=STAGE_CANDIDATE_WRITER_REQUEST,
@@ -154,6 +190,7 @@ def execute_final_post_standalone_candidate_attempt(
                     FAILURE_CANDIDATE_WRITER_PARSE,
                     str(exc),
                 ),
+                _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
             ),
             completed_stage=STAGE_CANDIDATE_WRITER_EXECUTION,
@@ -181,6 +218,7 @@ def execute_final_post_standalone_candidate_attempt(
                     FAILURE_CANDIDATE_WRITER_ADAPTATION,
                     str(exc),
                 ),
+                _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
             ),
             completed_stage=STAGE_CANDIDATE_WRITER_PARSE,
@@ -209,6 +247,7 @@ def execute_final_post_standalone_candidate_attempt(
                     FAILURE_DETERMINISTIC_GATE,
                     _gate_failure_message(deterministic_gate_output),
                 ),
+                _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
             ),
             completed_stage=STAGE_CANDIDATE_WRITER_ADAPTATION,
@@ -249,6 +288,7 @@ def execute_final_post_standalone_attempt(
     angle_decision: object | dict,
     selected_evidence_ids: Sequence[str],
     candidate_writer_client: Any | None = None,
+    semantic_grounding_client: Any | None = None,
     quality_evaluator_client: Any | None = None,
 ) -> FinalPostStandaloneAttemptResult:
     """Run one standalone attempt through quality evaluation and adjudication."""
@@ -268,7 +308,7 @@ def execute_final_post_standalone_attempt(
             candidate_output=candidate_result.candidate_writer_output,
             gate_output=candidate_result.deterministic_gate_output,
         )
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         quality_state = FinalPostQualityEvaluationState(
             status=QUALITY_EVALUATION_NOT_RUN,
             quality_review=None,
@@ -285,6 +325,140 @@ def execute_final_post_standalone_attempt(
             failure_code=FAILURE_QUALITY_EVALUATOR_REQUEST,
             failure_message=str(exc),
             quality_evaluator_invocation_count=0,
+            semantic_grounding_completed=False,
+        )
+
+    try:
+        semantic_prompt_render = render_semantic_grounding_prompt_input(
+            post_editorial_input,
+        )
+        semantic_request = _build_semantic_grounding_request(
+            request,
+            semantic_prompt_render,
+        )
+        semantic_request_error = _semantic_grounding_request_error(semantic_request)
+    except ValueError as exc:
+        semantic_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            error_message=str(exc),
+        )
+        return _semantic_failure_result(
+            candidate_result=candidate_result,
+            post_editorial_input=post_editorial_input,
+            semantic_grounding_prompt_render=None,
+            semantic_grounding_raw_response=None,
+            semantic_grounding_state=semantic_state,
+            stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
+            failure_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            failure_message=str(exc),
+            semantic_grounding_invocation_count=0,
+        )
+
+    if semantic_request_error is not None:
+        semantic_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            error_message=semantic_request_error,
+        )
+        return _semantic_failure_result(
+            candidate_result=candidate_result,
+            post_editorial_input=post_editorial_input,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=None,
+            semantic_grounding_state=semantic_state,
+            stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
+            failure_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            failure_message=semantic_request_error,
+            semantic_grounding_invocation_count=0,
+        )
+
+    semantic_raw_response = execute_semantic_grounding_prompt(
+        semantic_request,
+        client=semantic_grounding_client,
+    )
+    if semantic_raw_response.execution_error:
+        failure_code = _semantic_grounding_execution_failure_code(
+            semantic_raw_response
+        )
+        semantic_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=failure_code,
+            error_message=semantic_raw_response.execution_error,
+        )
+        return _semantic_failure_result(
+            candidate_result=candidate_result,
+            post_editorial_input=post_editorial_input,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=semantic_raw_response,
+            semantic_grounding_state=semantic_state,
+            stage=STAGE_SEMANTIC_GROUNDING_EXECUTION,
+            failure_code=failure_code,
+            failure_message=semantic_raw_response.execution_error,
+            semantic_grounding_invocation_count=1,
+        )
+
+    try:
+        semantic_review = parse_and_normalize_semantic_grounding_response(
+            semantic_raw_response,
+            selected_evidence_ids=tuple(selected_evidence_ids),
+        )
+    except SemanticGroundingResponseParseError as exc:
+        failure_stage = (
+            STAGE_SEMANTIC_GROUNDING_NORMALIZATION
+            if exc.code == SEMANTIC_GROUNDING_ERROR_NORMALIZATION_FAILED
+            else STAGE_SEMANTIC_GROUNDING_PARSE
+        )
+        failure_code = (
+            FAILURE_SEMANTIC_GROUNDING_NORMALIZATION
+            if exc.code == SEMANTIC_GROUNDING_ERROR_NORMALIZATION_FAILED
+            else FAILURE_SEMANTIC_GROUNDING_PARSE
+        )
+        semantic_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=failure_code,
+            error_message=str(exc),
+        )
+        return _semantic_failure_result(
+            candidate_result=candidate_result,
+            post_editorial_input=post_editorial_input,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=semantic_raw_response,
+            semantic_grounding_state=semantic_state,
+            stage=failure_stage,
+            failure_code=failure_code,
+            failure_message=str(exc),
+            semantic_grounding_invocation_count=1,
+        )
+
+    semantic_state = FinalPostSemanticGroundingState(
+        status=(
+            GROUNDING_STATUS_PASS
+            if semantic_review.passed
+            else (
+                GROUNDING_STATUS_NEEDS_HUMAN_REVIEW
+                if semantic_review.requires_human_review
+                else GROUNDING_STATUS_FAIL
+            )
+        ),
+        grounding_review=semantic_review,
+    )
+    if semantic_state.status != GROUNDING_STATUS_PASS:
+        return _semantic_failure_result(
+            candidate_result=candidate_result,
+            post_editorial_input=post_editorial_input,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=semantic_raw_response,
+            semantic_grounding_state=semantic_state,
+            stage=STAGE_SEMANTIC_GROUNDING_NORMALIZATION,
+            failure_code=FAILURE_SEMANTIC_GROUNDING,
+            failure_message=_semantic_grounding_failure_message(semantic_state),
+            semantic_grounding_invocation_count=1,
+            domain_review_failure=True,
         )
 
     try:
@@ -317,6 +491,10 @@ def execute_final_post_standalone_attempt(
             failure_code=FAILURE_QUALITY_EVALUATOR_REQUEST,
             failure_message=str(exc),
             quality_evaluator_invocation_count=0,
+            semantic_grounding_prompt_render=locals().get("semantic_prompt_render"),
+            semantic_grounding_raw_response=locals().get("semantic_raw_response"),
+            semantic_grounding_state=locals().get("semantic_state"),
+            semantic_grounding_invocation_count=1,
         )
 
     if quality_request_error is not None:
@@ -336,6 +514,10 @@ def execute_final_post_standalone_attempt(
             failure_code=FAILURE_QUALITY_EVALUATOR_REQUEST,
             failure_message=quality_request_error,
             quality_evaluator_invocation_count=0,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=semantic_raw_response,
+            semantic_grounding_state=semantic_state,
+            semantic_grounding_invocation_count=1,
         )
 
     quality_raw_response = execute_quality_evaluator_prompt(
@@ -360,6 +542,10 @@ def execute_final_post_standalone_attempt(
             failure_code=failure_code,
             failure_message=quality_raw_response.execution_error,
             quality_evaluator_invocation_count=1,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=semantic_raw_response,
+            semantic_grounding_state=semantic_state,
+            semantic_grounding_invocation_count=1,
         )
 
     try:
@@ -397,6 +583,10 @@ def execute_final_post_standalone_attempt(
             failure_code=failure_code,
             failure_message=str(exc),
             quality_evaluator_invocation_count=1,
+            semantic_grounding_prompt_render=semantic_prompt_render,
+            semantic_grounding_raw_response=semantic_raw_response,
+            semantic_grounding_state=semantic_state,
+            semantic_grounding_invocation_count=1,
         )
 
     quality_state = FinalPostQualityEvaluationState(
@@ -421,7 +611,7 @@ def execute_final_post_standalone_attempt(
     return FinalPostStandaloneAttemptResult(
         request=request,
         stage_statuses=(
-            *_successful_candidate_statuses(),
+            *_successful_grounding_statuses(),
             _succeeded_status(STAGE_QUALITY_EVALUATOR_REQUEST),
             _succeeded_status(STAGE_QUALITY_EVALUATOR_EXECUTION),
             _succeeded_status(STAGE_QUALITY_EVALUATOR_PARSE),
@@ -440,6 +630,10 @@ def execute_final_post_standalone_attempt(
         quality_evaluation_state=quality_state,
         final_attempt_outcome=final_attempt_outcome,
         candidate_writer_invocation_count=candidate_result.candidate_writer_invocation_count,
+        semantic_grounding_prompt_render=semantic_prompt_render,
+        semantic_grounding_raw_response=semantic_raw_response,
+        semantic_grounding_state=semantic_state,
+        semantic_grounding_invocation_count=1,
         quality_evaluator_invocation_count=1,
     )
 
@@ -471,9 +665,27 @@ def _build_quality_evaluator_request(
         provider=request.quality_evaluator_provider,
         model=request.quality_evaluator_model,
         max_output_tokens=(
-            900
+            DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS
             if request.quality_evaluator_max_output_tokens is None
             else request.quality_evaluator_max_output_tokens
+        ),
+        execution_metadata=request.execution_metadata,
+    )
+
+
+def _build_semantic_grounding_request(
+    request: FinalPostAttemptRequest,
+    semantic_prompt_render: Any,
+) -> SemanticGroundingExecutionRequest:
+    return build_semantic_grounding_execution_request(
+        semantic_prompt_render,
+        prompt_text=request.semantic_grounding_prompt_text,
+        provider=request.semantic_grounding_provider,
+        model=request.semantic_grounding_model,
+        max_output_tokens=(
+            DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
+            if request.semantic_grounding_max_output_tokens is None
+            else request.semantic_grounding_max_output_tokens
         ),
         execution_metadata=request.execution_metadata,
     )
@@ -509,28 +721,13 @@ def _candidate_writer_request_error(
 def _quality_evaluator_request_error(
     request: QualityEvaluatorExecutionRequest,
 ) -> str | None:
-    if not request.provider:
-        return "missing quality evaluator provider"
-    if request.provider != "openai":
-        return f"unsupported quality evaluator provider: {request.provider}"
-    if not request.model:
-        return "missing quality evaluator model"
-    if isinstance(request.max_output_tokens, bool) or not isinstance(
-        request.max_output_tokens,
-        int,
-    ):
-        return "invalid quality evaluator max_output_tokens: must be a positive integer"
-    if request.max_output_tokens <= 0:
-        return "invalid quality evaluator max_output_tokens: must be a positive integer"
-    if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
-        return "missing quality evaluator prompt text"
-    rendered_input_text = getattr(request.rendered_prompt_input, "input_text", None)
-    if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
-        return "missing quality evaluator rendered input text"
-    for metadata_field in ("prompt_name", "prompt_version", "prompt_path"):
-        if not hasattr(request.rendered_prompt_input, metadata_field):
-            return f"missing quality evaluator render metadata: {metadata_field}"
-    return None
+    return get_quality_evaluator_execution_request_error(request)
+
+
+def _semantic_grounding_request_error(
+    request: SemanticGroundingExecutionRequest,
+) -> str | None:
+    return get_semantic_grounding_execution_request_error(request)
 
 
 def _request_with_failure_safe_candidate_writer_render(
@@ -660,6 +857,11 @@ def _quality_failure_result(
     failure_code: str,
     failure_message: str,
     quality_evaluator_invocation_count: int,
+    semantic_grounding_prompt_render: Any | None = None,
+    semantic_grounding_raw_response: Any | None = None,
+    semantic_grounding_state: FinalPostSemanticGroundingState | None = None,
+    semantic_grounding_invocation_count: int = 0,
+    semantic_grounding_completed: bool = True,
 ) -> FinalPostStandaloneAttemptResult:
     final_attempt_outcome = build_final_post_attempt_outcome_from_gate_and_quality(
         post_brief=(
@@ -685,6 +887,7 @@ def _quality_failure_result(
             stage,
             failure_code,
             failure_message,
+            semantic_grounding_completed=semantic_grounding_completed,
         ),
         completed_stage=_completed_stage_before_quality_failure(stage),
         failure_stage=stage,
@@ -694,13 +897,106 @@ def _quality_failure_result(
         parsed_candidate=candidate_result.parsed_candidate,
         candidate_writer_output=candidate_result.candidate_writer_output,
         deterministic_gate_output=candidate_result.deterministic_gate_output,
+        semantic_grounding_prompt_render=semantic_grounding_prompt_render,
+        semantic_grounding_raw_response=semantic_grounding_raw_response,
+        semantic_grounding_state=semantic_grounding_state,
         post_editorial_input=post_editorial_input,
         quality_evaluator_prompt_render=quality_evaluator_prompt_render,
         quality_evaluator_raw_response=quality_evaluator_raw_response,
         quality_evaluation_state=quality_evaluation_state,
         final_attempt_outcome=final_attempt_outcome,
         candidate_writer_invocation_count=candidate_result.candidate_writer_invocation_count,
+        semantic_grounding_invocation_count=semantic_grounding_invocation_count,
         quality_evaluator_invocation_count=quality_evaluator_invocation_count,
+    )
+
+
+def _semantic_failure_result(
+    *,
+    candidate_result: FinalPostStandaloneAttemptResult,
+    post_editorial_input: Any | None,
+    semantic_grounding_prompt_render: Any | None,
+    semantic_grounding_raw_response: SemanticGroundingRawResponse | None,
+    semantic_grounding_state: FinalPostSemanticGroundingState,
+    stage: str,
+    failure_code: str,
+    failure_message: str,
+    semantic_grounding_invocation_count: int,
+    domain_review_failure: bool = False,
+) -> FinalPostStandaloneAttemptResult:
+    quality_state = FinalPostQualityEvaluationState(
+        status=QUALITY_EVALUATION_NOT_RUN,
+        quality_review=None,
+        error_code=failure_code,
+        error_message=failure_message,
+    )
+    final_attempt_outcome = build_final_post_attempt_outcome_from_gate_grounding_and_quality(
+        post_brief=(
+            post_editorial_input.post_brief
+            if post_editorial_input is not None
+            else {}
+        ),
+        candidate_output=candidate_result.candidate_writer_output,
+        gate_output=candidate_result.deterministic_gate_output,
+        semantic_grounding=semantic_grounding_state,
+        quality_evaluation=quality_state,
+        attempt_index=candidate_result.request.attempt_index,
+        attempt_history=candidate_result.request.attempt_history,
+        policy=candidate_result.request.policy,
+        alternative_model_available=candidate_result.request.alternative_model_available,
+        target_model_provider=candidate_result.request.target_model_provider,
+        target_model_name=candidate_result.request.target_model_name,
+        created_at=candidate_result.request.created_at,
+        parent_attempt_index=candidate_result.request.parent_attempt_index,
+    )
+    if domain_review_failure:
+        return FinalPostStandaloneAttemptResult(
+            request=candidate_result.request,
+            stage_statuses=_semantic_review_outcome_stage_statuses(),
+            completed_stage=STAGE_ATTEMPT_OUTCOME,
+            failure_stage=None,
+            failure_code=None,
+            failure_message="",
+            candidate_writer_raw_response=candidate_result.candidate_writer_raw_response,
+            parsed_candidate=candidate_result.parsed_candidate,
+            candidate_writer_output=candidate_result.candidate_writer_output,
+            deterministic_gate_output=candidate_result.deterministic_gate_output,
+            semantic_grounding_prompt_render=semantic_grounding_prompt_render,
+            semantic_grounding_raw_response=semantic_grounding_raw_response,
+            semantic_grounding_state=semantic_grounding_state,
+            post_editorial_input=post_editorial_input,
+            quality_evaluation_state=quality_state,
+            final_attempt_outcome=final_attempt_outcome,
+            candidate_writer_invocation_count=(
+                candidate_result.candidate_writer_invocation_count
+            ),
+            semantic_grounding_invocation_count=semantic_grounding_invocation_count,
+            quality_evaluator_invocation_count=0,
+        )
+    return FinalPostStandaloneAttemptResult(
+        request=candidate_result.request,
+        stage_statuses=_semantic_failure_stage_statuses(
+            stage,
+            failure_code,
+            failure_message,
+        ),
+        completed_stage=_completed_stage_before_semantic_failure(stage),
+        failure_stage=stage,
+        failure_code=failure_code,
+        failure_message=failure_message,
+        candidate_writer_raw_response=candidate_result.candidate_writer_raw_response,
+        parsed_candidate=candidate_result.parsed_candidate,
+        candidate_writer_output=candidate_result.candidate_writer_output,
+        deterministic_gate_output=candidate_result.deterministic_gate_output,
+        semantic_grounding_prompt_render=semantic_grounding_prompt_render,
+        semantic_grounding_raw_response=semantic_grounding_raw_response,
+        semantic_grounding_state=semantic_grounding_state,
+        post_editorial_input=post_editorial_input,
+        quality_evaluation_state=quality_state,
+        final_attempt_outcome=final_attempt_outcome,
+        candidate_writer_invocation_count=candidate_result.candidate_writer_invocation_count,
+        semantic_grounding_invocation_count=semantic_grounding_invocation_count,
+        quality_evaluator_invocation_count=0,
     )
 
 
@@ -714,10 +1010,22 @@ def _successful_candidate_statuses() -> tuple[FinalPostAttemptStageStatus, ...]:
     )
 
 
+def _successful_grounding_statuses() -> tuple[FinalPostAttemptStageStatus, ...]:
+    return (
+        *_successful_candidate_statuses(),
+        _succeeded_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
+        _succeeded_status(STAGE_SEMANTIC_GROUNDING_EXECUTION),
+        _succeeded_status(STAGE_SEMANTIC_GROUNDING_PARSE),
+        _succeeded_status(STAGE_SEMANTIC_GROUNDING_NORMALIZATION),
+    )
+
+
 def _quality_failure_stage_statuses(
     stage: str,
     failure_code: str,
     failure_message: str,
+    *,
+    semantic_grounding_completed: bool = True,
 ) -> tuple[FinalPostAttemptStageStatus, ...]:
     quality_successes_by_failure_stage = {
         STAGE_QUALITY_EVALUATOR_REQUEST: (),
@@ -734,13 +1042,61 @@ def _quality_failure_stage_statuses(
             STAGE_QUALITY_EVALUATOR_PARSE,
         ),
     }
+    grounding_statuses = (
+        _successful_grounding_statuses()
+        if semantic_grounding_completed
+        else (
+            *_successful_candidate_statuses(),
+            _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
+        )
+    )
     return (
-        *_successful_candidate_statuses(),
+        *grounding_statuses,
         *(
             _succeeded_status(success_stage)
             for success_stage in quality_successes_by_failure_stage.get(stage, ())
         ),
         _failed_status(stage, failure_code, failure_message),
+    )
+
+
+def _semantic_failure_stage_statuses(
+    stage: str,
+    failure_code: str,
+    failure_message: str,
+) -> tuple[FinalPostAttemptStageStatus, ...]:
+    semantic_successes_by_failure_stage = {
+        STAGE_SEMANTIC_GROUNDING_REQUEST: (),
+        STAGE_SEMANTIC_GROUNDING_EXECUTION: (
+            STAGE_SEMANTIC_GROUNDING_REQUEST,
+        ),
+        STAGE_SEMANTIC_GROUNDING_PARSE: (
+            STAGE_SEMANTIC_GROUNDING_REQUEST,
+            STAGE_SEMANTIC_GROUNDING_EXECUTION,
+        ),
+        STAGE_SEMANTIC_GROUNDING_NORMALIZATION: (
+            STAGE_SEMANTIC_GROUNDING_REQUEST,
+            STAGE_SEMANTIC_GROUNDING_EXECUTION,
+            STAGE_SEMANTIC_GROUNDING_PARSE,
+        ),
+    }
+    return (
+        *_successful_candidate_statuses(),
+        *(
+            _succeeded_status(success_stage)
+            for success_stage in semantic_successes_by_failure_stage.get(stage, ())
+        ),
+        _failed_status(stage, failure_code, failure_message),
+        _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
+    )
+
+
+def _semantic_review_outcome_stage_statuses() -> tuple[FinalPostAttemptStageStatus, ...]:
+    return (
+        *_successful_grounding_statuses(),
+        _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
+        _succeeded_status(STAGE_ATTEMPT_ADJUDICATION),
+        _succeeded_status(STAGE_ATTEMPT_OUTCOME),
     )
 
 
@@ -754,6 +1110,39 @@ def _completed_stage_before_quality_failure(stage: str) -> str:
     if stage == STAGE_QUALITY_REVIEW_NORMALIZATION:
         return STAGE_QUALITY_EVALUATOR_PARSE
     return STAGE_DETERMINISTIC_GATE
+
+
+def _completed_stage_before_semantic_failure(stage: str) -> str:
+    if stage == STAGE_SEMANTIC_GROUNDING_REQUEST:
+        return STAGE_DETERMINISTIC_GATE
+    if stage == STAGE_SEMANTIC_GROUNDING_EXECUTION:
+        return STAGE_SEMANTIC_GROUNDING_REQUEST
+    if stage == STAGE_SEMANTIC_GROUNDING_PARSE:
+        return STAGE_SEMANTIC_GROUNDING_EXECUTION
+    if stage == STAGE_SEMANTIC_GROUNDING_NORMALIZATION:
+        return STAGE_SEMANTIC_GROUNDING_PARSE
+    return STAGE_DETERMINISTIC_GATE
+
+
+def _semantic_grounding_execution_failure_code(
+    raw_response: SemanticGroundingRawResponse,
+) -> str:
+    if raw_response.execution_error == "empty provider response":
+        return FAILURE_SEMANTIC_GROUNDING_EMPTY_RESPONSE
+    return FAILURE_SEMANTIC_GROUNDING_PROVIDER
+
+
+def _semantic_grounding_failure_message(
+    semantic_state: FinalPostSemanticGroundingState,
+) -> str:
+    review = semantic_state.grounding_review
+    if review is None:
+        return "semantic grounding failed"
+    if review.automatic_fail_reason:
+        return review.automatic_fail_reason
+    if review.blocking_claim_ids:
+        return "failed claims: " + ", ".join(review.blocking_claim_ids)
+    return "semantic grounding failed"
 
 
 def _succeeded_status(stage: str) -> FinalPostAttemptStageStatus:

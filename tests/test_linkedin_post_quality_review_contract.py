@@ -44,10 +44,17 @@ class LinkedInPostQualityReviewContractTests(SimpleTestCase):
         self.assertEqual(normalized, {**review, "scores": _scores()})
         self.assertIsNot(normalized, review)
 
+    def test_canonical_dict_missing_criterion_rationales_fails(self) -> None:
+        review = _canonical_review()
+        review.pop("criterion_rationales")
+
+        with self.assertRaisesRegex(ValueError, "missing criterion_rationales"):
+            normalize_quality_review_result(review)
+
     def test_legacy_pipeline_pass_result_converts_to_pass(self) -> None:
         review = PipelineQualityReviewResult(
             scores=_scores(),
-            total_score=35,
+            total_score=37,
             pass_result=False,
             failed_criteria=["human_voice"],
             automatic_fail_reason="",
@@ -99,7 +106,7 @@ class LinkedInPostQualityReviewContractTests(SimpleTestCase):
 
     def test_integer_score_is_accepted(self) -> None:
         normalized = normalize_quality_review_result(
-            _canonical_review(scores={**_scores(), "hook": 5})
+            _canonical_review(scores={**_scores(), "hook": 5}, total_score=38)
         )
 
         self.assertEqual(normalized["scores"]["hook"], 5)
@@ -165,16 +172,23 @@ class LinkedInPostQualityReviewContractTests(SimpleTestCase):
             )
 
     def test_total_score_is_preserved_exactly(self) -> None:
-        normalized = normalize_quality_review_result(_canonical_review(total_score=36))
-
-        self.assertEqual(normalized["total_score"], 36)
-
-    def test_total_score_is_not_recomputed(self) -> None:
         normalized = normalize_quality_review_result(
-            _canonical_review(scores={key: 5 for key in CANONICAL_QUALITY_SCORE_KEYS}, total_score=36)
+            _canonical_review(
+                scores={**_scores(), "practical_value": 4},
+                total_score=36,
+            )
         )
 
         self.assertEqual(normalized["total_score"], 36)
+
+    def test_total_score_must_equal_score_sum(self) -> None:
+        with self.assertRaisesRegex(ValueError, "total_score must equal the sum"):
+            normalize_quality_review_result(
+                _canonical_review(
+                    scores={key: 5 for key in CANONICAL_QUALITY_SCORE_KEYS},
+                    total_score=36,
+                )
+            )
 
     def test_boolean_total_score_fails(self) -> None:
         with self.assertRaisesRegex(ValueError, "total_score must be an integer"):
@@ -211,17 +225,88 @@ class LinkedInPostQualityReviewContractTests(SimpleTestCase):
 
     def test_failed_criteria_are_preserved(self) -> None:
         normalized = normalize_quality_review_result(
-            _canonical_review(failed_criteria=("hook", "human_voice"))
+            _canonical_review(passed=False, failed_criteria=("hook", "human_voice"))
         )
 
         self.assertEqual(normalized["failed_criteria"], ["hook", "human_voice"])
 
     def test_automatic_fail_reason_is_preserved(self) -> None:
         normalized = normalize_quality_review_result(
-            _canonical_review(automatic_fail_reason="unsupported claim")
+            _canonical_review(
+                passed=False,
+                automatic_fail_reason="unsupported claim",
+            )
         )
 
         self.assertEqual(normalized["automatic_fail_reason"], "unsupported claim")
+
+    def test_pass_true_with_automatic_fail_reason_fails(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "pass cannot be true when automatic_fail_reason is set",
+        ):
+            normalize_quality_review_result(
+                _canonical_review(automatic_fail_reason="summary-like source recap")
+            )
+
+    def test_pass_true_below_threshold_fails(self) -> None:
+        weak_scores = {**_scores(), "reader_problem": 4, "practical_value": 4}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "pass cannot be true below the pass threshold",
+        ):
+            normalize_quality_review_result(
+                _canonical_review(scores=weak_scores, total_score=35)
+            )
+
+    def test_pass_true_with_required_minimum_failure_fails(self) -> None:
+        weak_scores = {**_scores(), "human_voice": 3}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "failed_criteria must include criteria below required minimums",
+        ):
+            normalize_quality_review_result(
+                _canonical_review(scores=weak_scores, total_score=36)
+            )
+
+    def test_pass_true_with_failed_criteria_fails(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "pass cannot be true when failed_criteria is non-empty",
+        ):
+            normalize_quality_review_result(
+                _canonical_review(failed_criteria=["human_voice"])
+            )
+
+    def test_failed_criteria_must_be_canonical(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unexpected criteria"):
+            normalize_quality_review_result(
+                _canonical_review(
+                    passed=False,
+                    failed_criteria=["generic_voice"],
+                )
+            )
+
+    def test_criterion_rationales_are_preserved_when_supplied(self) -> None:
+        rationales = _criterion_rationales()
+
+        normalized = normalize_quality_review_result(
+            _canonical_review(criterion_rationales=rationales)
+        )
+
+        self.assertEqual(normalized["criterion_rationales"], rationales)
+        self.assertIsNot(normalized["criterion_rationales"], rationales)
+
+    def test_criterion_rationale_scores_must_match_scores(self) -> None:
+        rationales = _criterion_rationales()
+        rationales["hook"]["score"] = 5
+
+        with self.assertRaisesRegex(ValueError, "criterion_rationales scores must match"):
+            normalize_quality_review_result(
+                _canonical_review(criterion_rationales=rationales)
+            )
 
     def test_notes_are_preserved_when_supplied(self) -> None:
         normalized = normalize_quality_review_result(
@@ -317,6 +402,7 @@ class LinkedInPostQualityReviewContractTests(SimpleTestCase):
     def test_input_dict_and_nested_values_are_not_mutated(self) -> None:
         review = _canonical_review(
             scores=_scores(),
+            passed=False,
             failed_criteria=["human_voice"],
             notes=["Original note."],
         )
@@ -398,7 +484,7 @@ def _handoff_review() -> HandoffQualityReviewResult:
 def _legacy_review_dict() -> dict:
     return {
         "scores": _scores(),
-        "total_score": 35,
+        "total_score": 37,
         "pass_result": False,
         "failed_criteria": ["human_voice"],
         "automatic_fail_reason": "",
@@ -414,6 +500,11 @@ def _canonical_review(**overrides) -> dict:
         "automatic_fail_reason": "",
     }
     review.update(overrides)
+    if "criterion_rationales" not in overrides:
+        scores = review["scores"]
+        review["criterion_rationales"] = _criterion_rationales(
+            scores if isinstance(scores, dict) else None
+        )
     if "passed" in review:
         review["pass"] = review.pop("passed")
     return review
@@ -423,13 +514,29 @@ def _scores() -> dict[str, int]:
     return {
         "hook": 4,
         "controlling_angle": 4,
-        "reader_problem": 4,
+        "reader_problem": 5,
         "pattern_interrupt": 4,
         "evidence": 3,
         "author_point_of_view": 4,
         "human_voice": 4,
-        "practical_value": 4,
+        "practical_value": 5,
         "cta": 4,
+    }
+
+
+def _criterion_rationales(
+    scores: dict[str, int] | None = None,
+) -> dict[str, dict[str, object]]:
+    resolved_scores = _scores() if scores is None else scores
+    return {
+        criterion: {
+            "score": score,
+            "max_score": 5,
+            "rationale": f"{criterion} rationale tied to the candidate text.",
+            "post_text_evidence": f"{criterion} evidence from post_text.",
+            "failure_reason": "",
+        }
+        for criterion, score in resolved_scores.items()
     }
 
 

@@ -20,6 +20,8 @@ from services.packaging.linkedin_post_deterministic_orchestration import (
 )
 from services.packaging.linkedin_post_flow_contracts import (
     ACTION_NOT_READY,
+    ACTION_NEEDS_HUMAN_REVIEW,
+    ACTION_REPAIR_EDITORIAL,
     FinalPostAttemptHistory,
     FinalPostDecision,
 )
@@ -30,6 +32,14 @@ from services.packaging.linkedin_post_flow_decision import (
 from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
+)
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    GROUNDING_STATUS_FAIL,
+    GROUNDING_STATUS_NEEDS_HUMAN_REVIEW,
+    GROUNDING_STATUS_NOT_READY,
+    GROUNDING_STATUS_PASS,
+    SEMANTIC_GROUNDING_STATUSES,
+    FinalPostSemanticGroundingState,
 )
 
 
@@ -49,6 +59,11 @@ QUALITY_EVALUATION_STATUSES = (
     QUALITY_EVALUATION_NOT_RUN,
     *QUALITY_EVALUATION_FAILURE_STATUSES,
 )
+
+SEMANTIC_GROUNDING_READY = GROUNDING_STATUS_PASS
+SEMANTIC_GROUNDING_FAILED = GROUNDING_STATUS_FAIL
+SEMANTIC_GROUNDING_NOT_READY = GROUNDING_STATUS_NOT_READY
+SEMANTIC_GROUNDING_NEEDS_HUMAN_REVIEW = GROUNDING_STATUS_NEEDS_HUMAN_REVIEW
 
 
 @dataclass(frozen=True)
@@ -126,12 +141,80 @@ def build_final_post_attempt_outcome_from_gate_and_quality(
     )
 
 
+def build_final_post_attempt_outcome_from_gate_grounding_and_quality(
+    *,
+    post_brief: object | dict,
+    candidate_output: CandidateWriterOutput,
+    gate_output: DeterministicGateOutput,
+    semantic_grounding: FinalPostSemanticGroundingState,
+    quality_evaluation: FinalPostQualityEvaluationState,
+    attempt_index: int,
+    attempt_history: FinalPostAttemptHistory | None = None,
+    policy: FinalPostDecisionPolicy | None = None,
+    alternative_model_available: bool = False,
+    target_model_provider: str | None = None,
+    target_model_name: str | None = None,
+    repair_plan: dict | None = None,
+    created_at: str | None = None,
+    parent_attempt_index: int | None = None,
+    decision_controller: FinalPostDecisionController | None = None,
+) -> FinalPostAttemptOutcome:
+    """Adjudicate one attempt after deterministic, grounding, and quality gates."""
+
+    _validate_semantic_grounding_state(semantic_grounding)
+    if not _grounding_passed(semantic_grounding):
+        _validate_candidate_gate_payload_continuity(candidate_output, gate_output)
+        history = attempt_history or FinalPostAttemptHistory(attempts=[])
+        decision = _decision_from_semantic_grounding(semantic_grounding)
+        decision_ready_result = FinalPostDecisionReadyResult(
+            post_brief=post_brief,
+            candidate_output=candidate_output,
+            gate_output=gate_output,
+            decision=decision,
+            quality_review=None,
+            attempt_history=history,
+        )
+        return build_final_post_attempt_outcome(
+            decision_ready_result=decision_ready_result,
+            attempt_index=attempt_index,
+            repair_plan=repair_plan or _grounding_repair_plan(semantic_grounding),
+            created_at=created_at,
+            parent_attempt_index=parent_attempt_index,
+        )
+
+    return build_final_post_attempt_outcome_from_gate_and_quality(
+        post_brief=post_brief,
+        candidate_output=candidate_output,
+        gate_output=gate_output,
+        quality_evaluation=quality_evaluation,
+        attempt_index=attempt_index,
+        attempt_history=attempt_history,
+        policy=policy,
+        alternative_model_available=alternative_model_available,
+        target_model_provider=target_model_provider,
+        target_model_name=target_model_name,
+        repair_plan=repair_plan,
+        created_at=created_at,
+        parent_attempt_index=parent_attempt_index,
+        decision_controller=decision_controller,
+    )
+
+
 def _validate_quality_evaluation_state(
     quality_evaluation: FinalPostQualityEvaluationState,
 ) -> None:
     if quality_evaluation.status not in QUALITY_EVALUATION_STATUSES:
         raise ValueError(
             f"Unsupported FinalPostQualityEvaluationState.status: {quality_evaluation.status}"
+        )
+
+
+def _validate_semantic_grounding_state(
+    semantic_grounding: FinalPostSemanticGroundingState,
+) -> None:
+    if semantic_grounding.status not in SEMANTIC_GROUNDING_STATUSES:
+        raise ValueError(
+            f"Unsupported FinalPostSemanticGroundingState.status: {semantic_grounding.status}"
         )
 
 
@@ -162,6 +245,103 @@ def _gate_passed(gate_output: DeterministicGateOutput) -> bool:
         and gate_output.diagnostics.system_linkedin_ready
         and gate_output.diagnostics.deterministic_checks_passed
     )
+
+
+def _grounding_passed(semantic_grounding: FinalPostSemanticGroundingState) -> bool:
+    review = semantic_grounding.grounding_review
+    return (
+        semantic_grounding.status == GROUNDING_STATUS_PASS
+        and review is not None
+        and review.passed
+    )
+
+
+def _decision_from_semantic_grounding(
+    semantic_grounding: FinalPostSemanticGroundingState,
+) -> FinalPostDecision:
+    if semantic_grounding.status == GROUNDING_STATUS_NEEDS_HUMAN_REVIEW:
+        return FinalPostDecision(
+            action=ACTION_NEEDS_HUMAN_REVIEW,
+            reason=_semantic_grounding_reason(semantic_grounding),
+            repair_type=None,
+            target_model_provider=None,
+            target_model_name=None,
+            needs_human_review=True,
+        )
+    if semantic_grounding.status == GROUNDING_STATUS_FAIL:
+        review = semantic_grounding.grounding_review
+        if review is not None and review.repairable and not review.requires_human_review:
+            # The flow contract currently has a generic repair action. The
+            # semantic-specific routing key is the repair_type below.
+            return FinalPostDecision(
+                action=ACTION_REPAIR_EDITORIAL,
+                reason=_semantic_grounding_reason(semantic_grounding),
+                repair_type="semantic_grounding",
+                target_model_provider=None,
+                target_model_name=None,
+                needs_human_review=False,
+            )
+        if review is not None and review.requires_human_review:
+            return FinalPostDecision(
+                action=ACTION_NEEDS_HUMAN_REVIEW,
+                reason=_semantic_grounding_reason(semantic_grounding),
+                repair_type=None,
+                target_model_provider=None,
+                target_model_name=None,
+                needs_human_review=True,
+            )
+    return FinalPostDecision(
+        action=ACTION_NOT_READY,
+        reason=_semantic_grounding_reason(semantic_grounding),
+        repair_type=None,
+        target_model_provider=None,
+        target_model_name=None,
+        needs_human_review=False,
+    )
+
+
+def _semantic_grounding_reason(
+    semantic_grounding: FinalPostSemanticGroundingState,
+) -> str:
+    if semantic_grounding.error_code:
+        reason = f"semantic grounding {semantic_grounding.status}: {semantic_grounding.error_code}"
+        if semantic_grounding.error_message:
+            reason = f"{reason} ({semantic_grounding.error_message})"
+        return reason
+    review = semantic_grounding.grounding_review
+    if review is None:
+        return f"semantic grounding {semantic_grounding.status}"
+    if review.automatic_fail_reason:
+        return f"semantic grounding failed: {review.automatic_fail_reason}"
+    if review.blocking_claim_ids:
+        return "semantic grounding failed claims: " + ", ".join(review.blocking_claim_ids)
+    if review.requires_human_review:
+        return review.human_review_reason or "semantic grounding needs human review"
+    return f"semantic grounding {semantic_grounding.status}"
+
+
+def _grounding_repair_plan(
+    semantic_grounding: FinalPostSemanticGroundingState,
+) -> dict | None:
+    review = semantic_grounding.grounding_review
+    if review is None or not review.repairable:
+        return None
+    return {
+        "repair_type": "semantic_grounding",
+        "failed_claim_ids": list(review.blocking_claim_ids),
+        "repair_instruction": "; ".join(review.repair_instructions),
+        "preserve": [
+            "selected evidence",
+            "AngleDecision.controlling_angle",
+            "valid FinalPostPayload JSON",
+        ],
+        "avoid": [
+            "new facts",
+            "stronger certainty than the evidence",
+            "unsupported causal language",
+            "recovery/stability/optimism drift",
+        ],
+    }
 
 
 def _not_ready_decision_from_quality_evaluation(

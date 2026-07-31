@@ -19,6 +19,7 @@ from services.packaging.linkedin_post_attempt_adjudication import (
 )
 from services.packaging.linkedin_post_attempt_outcome import (
     OUTCOME_ACCEPTED,
+    OUTCOME_NEEDS_HUMAN_REVIEW,
     OUTCOME_NOT_READY,
     OUTCOME_REPAIR_REQUIRED,
     OUTCOME_TRY_ALTERNATIVE_MODEL,
@@ -30,6 +31,11 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_PROVIDER,
     FAILURE_CANDIDATE_WRITER_REQUEST,
     FAILURE_DETERMINISTIC_GATE,
+    FAILURE_SEMANTIC_GROUNDING_EMPTY_RESPONSE,
+    FAILURE_SEMANTIC_GROUNDING_NORMALIZATION,
+    FAILURE_SEMANTIC_GROUNDING_PARSE,
+    FAILURE_SEMANTIC_GROUNDING_PROVIDER,
+    FAILURE_SEMANTIC_GROUNDING_REQUEST,
     FAILURE_QUALITY_EVALUATOR_EMPTY_RESPONSE,
     FAILURE_QUALITY_EVALUATOR_PARSE,
     FAILURE_QUALITY_EVALUATOR_PROVIDER,
@@ -40,6 +46,10 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     STAGE_CANDIDATE_WRITER_PARSE,
     STAGE_CANDIDATE_WRITER_REQUEST,
     STAGE_DETERMINISTIC_GATE,
+    STAGE_SEMANTIC_GROUNDING_EXECUTION,
+    STAGE_SEMANTIC_GROUNDING_NORMALIZATION,
+    STAGE_SEMANTIC_GROUNDING_PARSE,
+    STAGE_SEMANTIC_GROUNDING_REQUEST,
     STAGE_QUALITY_EVALUATOR_EXECUTION,
     STAGE_QUALITY_EVALUATOR_PARSE,
     STAGE_QUALITY_EVALUATOR_REQUEST,
@@ -356,13 +366,15 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         result = execute_final_post_standalone_attempt(
             _request(execution_metadata={"runtime_sentinel": "audit-only"}),
             candidate_writer_client=candidate_client,
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
 
         self.assertEqual(candidate_client.call_count, 1)
         self.assertEqual(evaluator_client.call_count, 1)
-        self.assertFalse(evaluator_client.json_mode)
+        self.assertTrue(evaluator_client.json_mode)
+        self.assertEqual(evaluator_client.max_output_tokens, 2400)
         self.assertEqual(result.completed_stage, "attempt_outcome")
         self.assertIsNone(result.failure_code)
         self.assertEqual(result.quality_evaluator_invocation_count, 1)
@@ -388,6 +400,10 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 (STAGE_CANDIDATE_WRITER_PARSE, STATUS_SUCCEEDED),
                 (STAGE_CANDIDATE_WRITER_ADAPTATION, STATUS_SUCCEEDED),
                 (STAGE_DETERMINISTIC_GATE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_REQUEST, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_EXECUTION, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_PARSE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_NORMALIZATION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_REQUEST, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_EXECUTION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_PARSE, STATUS_SUCCEEDED),
@@ -405,6 +421,27 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             result.quality_evaluator_prompt_render.variables["candidate_payload_json"],
         )
 
+    def test_full_attempt_preserves_explicit_quality_evaluator_token_override(
+        self,
+    ) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        execute_final_post_standalone_attempt(
+            _request(quality_evaluator_max_output_tokens=2200),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(evaluator_client.max_output_tokens, 2200)
+        self.assertTrue(evaluator_client.json_mode)
+
     def test_full_attempt_gate_failure_skips_evaluator(self) -> None:
         leaking_payload = _candidate_payload(
             post_text="This leaks ev-1 into human text."
@@ -419,6 +456,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         result = execute_final_post_standalone_attempt(
             _request(),
             candidate_writer_client=candidate_client,
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
@@ -430,6 +468,258 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertIsNone(result.quality_evaluation_state)
         self.assertIsNone(result.final_attempt_outcome)
 
+    def test_full_attempt_grounding_request_failure_invokes_no_grounding_or_quality(
+        self,
+    ) -> None:
+        grounding_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_semantic_review_payload(passed=True)))
+        )
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(semantic_grounding_provider=""),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(grounding_client.call_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_REQUEST)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_REQUEST)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertEqual(result.semantic_grounding_state.status, "not_ready")
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+
+    def test_full_attempt_grounding_provider_failure_skips_quality(self) -> None:
+        grounding_client = FailingCandidateWriterClient(RuntimeError("secret"))
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(grounding_client.call_count, 1)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_PROVIDER)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_EXECUTION)
+        self.assertEqual(result.semantic_grounding_invocation_count, 1)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertNotIn("secret", result.failure_message)
+
+    def test_full_attempt_empty_grounding_response_is_distinct(self) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response("   ")
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_EMPTY_RESPONSE)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_EXECUTION)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.semantic_grounding_state.status, "not_ready")
+
+    def test_full_attempt_grounding_parse_failure_is_distinct(self) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response("{not-json")
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_PARSE)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_PARSE)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+
+    def test_full_attempt_grounding_normalization_failure_is_distinct(self) -> None:
+        invalid_review = _semantic_review_payload(passed=True)
+        invalid_review["claims"][0]["supported_evidence_ids"] = ["not-selected"]
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(invalid_review))
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_NORMALIZATION)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_NORMALIZATION)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertIn(
+            "semantic grounding response failed review normalization",
+            result.failure_message,
+        )
+
+    def test_full_attempt_grounding_pass_with_human_review_flag_is_normalization_failure(
+        self,
+    ) -> None:
+        invalid_review = _semantic_review_payload(passed=True)
+        invalid_review["requires_human_review"] = True
+        invalid_review["human_review_reason"] = "Needs human factuality review."
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(invalid_review))
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_NORMALIZATION)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_NORMALIZATION)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertIsNone(result.quality_evaluator_raw_response)
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+
+    def test_full_attempt_grounding_failure_returns_claim_specific_repair(self) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(_semantic_review_payload(passed=False)))
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertIsNone(result.failure_code)
+        self.assertIsNone(result.failure_stage)
+        self.assertEqual(result.completed_stage, "attempt_outcome")
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_REPAIR_REQUIRED)
+        self.assertEqual(
+            result.final_attempt_outcome.decision.repair_type,
+            "semantic_grounding",
+        )
+        self.assertEqual(
+            result.final_attempt_outcome.repair_plan["failed_claim_ids"],
+            ["c1"],
+        )
+        self.assertEqual(
+            result.semantic_grounding_state.grounding_review.blocking_claim_ids,
+            ("c1",),
+        )
+
+    def test_full_attempt_grounding_human_review_skips_quality(self) -> None:
+        human_review_payload = _semantic_review_payload(passed=False)
+        human_review_payload["requires_human_review"] = True
+        human_review_payload["human_review_reason"] = "candidate contradicts evidence"
+        human_review_payload["repairable"] = False
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(human_review_payload))
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertIsNone(result.failure_code)
+        self.assertIsNone(result.failure_stage)
+        self.assertEqual(
+            result.final_attempt_outcome.outcome,
+            OUTCOME_NEEDS_HUMAN_REVIEW,
+        )
+        self.assertTrue(result.final_attempt_outcome.decision.needs_human_review)
+
+    def test_bitcoin_causal_drift_grounding_failure_blocks_quality_evaluator(
+        self,
+    ) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            post_brief=_bitcoin_post_brief(),
+            angle_decision=_bitcoin_angle_decision(),
+            selected_evidence_ids=("a0-summary", "a1-kp0", "a2-summary"),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(_bitcoin_candidate_payload()))
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(_bitcoin_drift_grounding_payload()))
+            ),
+            quality_evaluator_client=evaluator_client,
+        )
+
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertIsNone(result.failure_code)
+        self.assertIsNone(result.failure_stage)
+        self.assertEqual(result.completed_stage, "attempt_outcome")
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_REPAIR_REQUIRED)
+        self.assertEqual(
+            result.semantic_grounding_state.grounding_review.blocking_claim_ids,
+            ("c-optimism", "c-stability", "c-recovery", "c-growth"),
+        )
+        self.assertIn(
+            "caution influences recovery",
+            result.semantic_grounding_state.grounding_review.claim_reviews[2].claim_text,
+        )
+
     def test_full_attempt_valid_quality_fail_returns_repair_required_outcome(
         self,
     ) -> None:
@@ -438,12 +728,13 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(
                 _provider_response(
                     json.dumps(
                         _quality_review_payload(
                             passed=False,
-                            total_score=34,
+                            total_score=35,
                             failed_criteria=["human_voice"],
                         )
                     )
@@ -474,12 +765,13 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(
                 _provider_response(
                     json.dumps(
                         _quality_review_payload(
                             passed=False,
-                            total_score=34,
+                            total_score=35,
                             failed_criteria=["human_voice"],
                         )
                     )
@@ -514,6 +806,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
@@ -524,6 +817,29 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
         self.assertEqual(result.quality_evaluation_state.status, "not_run")
         self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+
+    def test_full_attempt_too_small_evaluator_budget_fails_before_provider(
+        self,
+    ) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(quality_evaluator_max_output_tokens=1999),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
+        self.assertIn("must be at least 2000", result.failure_message)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
 
     def test_full_attempt_invalid_rubric_preserves_built_post_editorial_input(
         self,
@@ -538,6 +854,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=True)))
             ),
@@ -550,6 +867,54 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.post_editorial_input.post_brief, _post_brief())
         self.assertIsNone(result.quality_evaluator_prompt_render)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
+
+    def test_full_attempt_post_editorial_input_failure_skips_semantic_grounding(
+        self,
+    ) -> None:
+        semantic_client = _passing_semantic_client()
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            post_brief={
+                "core_point": "Clear remote work policies need human operating habits.",
+                "evidence_to_use": [
+                    {
+                        "evidence_id": "ev-mismatch",
+                        "evidence_text": "Unselected evidence should not fit.",
+                        "role_in_post": "proof",
+                    }
+                ],
+            },
+            angle_decision=_angle_decision(),
+            selected_evidence_ids=("ev-1",),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(semantic_client.call_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertIsNone(result.semantic_grounding_raw_response)
+        self.assertIsNone(result.semantic_grounding_state)
+        self.assertEqual(
+            [(status.stage, status.status) for status in result.stage_statuses],
+            [
+                (STAGE_CANDIDATE_WRITER_REQUEST, STATUS_SUCCEEDED),
+                (STAGE_CANDIDATE_WRITER_EXECUTION, STATUS_SUCCEEDED),
+                (STAGE_CANDIDATE_WRITER_PARSE, STATUS_SUCCEEDED),
+                (STAGE_CANDIDATE_WRITER_ADAPTATION, STATUS_SUCCEEDED),
+                (STAGE_DETERMINISTIC_GATE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_REQUEST, STATUS_SKIPPED),
+                (STAGE_QUALITY_EVALUATOR_REQUEST, STATUS_FAILED),
+            ],
+        )
 
     def test_full_attempt_evaluator_provider_failure_preserves_raw_failure_state(
         self,
@@ -565,6 +930,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 candidate_writer_client=FakeCandidateWriterClient(
                     _provider_response(_candidate_json())
                 ),
+                semantic_grounding_client=_passing_semantic_client(),
                 quality_evaluator_client=evaluator_client,
                 **_full_attempt_kwargs(),
             )
@@ -584,6 +950,10 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 (STAGE_CANDIDATE_WRITER_PARSE, STATUS_SUCCEEDED),
                 (STAGE_CANDIDATE_WRITER_ADAPTATION, STATUS_SUCCEEDED),
                 (STAGE_DETERMINISTIC_GATE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_REQUEST, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_EXECUTION, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_PARSE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_NORMALIZATION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_REQUEST, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_EXECUTION, STATUS_FAILED),
             ],
@@ -595,6 +965,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(_provider_response("")),
             **_full_attempt_kwargs(),
         )
@@ -610,6 +981,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(
                 _provider_response("{not-json")
             ),
@@ -628,6 +1000,10 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 (STAGE_CANDIDATE_WRITER_PARSE, STATUS_SUCCEEDED),
                 (STAGE_CANDIDATE_WRITER_ADAPTATION, STATUS_SUCCEEDED),
                 (STAGE_DETERMINISTIC_GATE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_REQUEST, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_EXECUTION, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_PARSE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_NORMALIZATION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_REQUEST, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_EXECUTION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_PARSE, STATUS_FAILED),
@@ -643,6 +1019,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(
                 _provider_response(json.dumps(invalid_review))
             ),
@@ -664,6 +1041,10 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 (STAGE_CANDIDATE_WRITER_PARSE, STATUS_SUCCEEDED),
                 (STAGE_CANDIDATE_WRITER_ADAPTATION, STATUS_SUCCEEDED),
                 (STAGE_DETERMINISTIC_GATE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_REQUEST, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_EXECUTION, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_PARSE, STATUS_SUCCEEDED),
+                (STAGE_SEMANTIC_GROUNDING_NORMALIZATION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_REQUEST, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_EXECUTION, STATUS_SUCCEEDED),
                 (STAGE_QUALITY_EVALUATOR_PARSE, STATUS_SUCCEEDED),
@@ -691,6 +1072,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 candidate_writer_client=FakeCandidateWriterClient(
                     _provider_response(_candidate_json())
                 ),
+                semantic_grounding_client=_passing_semantic_client(),
                 quality_evaluator_client=FakeCandidateWriterClient(
                     _provider_response(json.dumps(_quality_review_payload(passed=True)))
                 ),
@@ -715,6 +1097,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             candidate_writer_client=FakeCandidateWriterClient(
                 _provider_response(_candidate_json())
             ),
+            semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=FakeCandidateWriterClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=True)))
             ),
@@ -760,11 +1143,13 @@ class FakeCandidateWriterClient:
         prompt: str,
         max_output_tokens: int,
         json_mode: bool,
+        allow_json_mode_fallback: bool = True,
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
+        self.allow_json_mode_fallback = allow_json_mode_fallback
         return self.response
 
 
@@ -784,9 +1169,12 @@ def _request(
     candidate_writer_provider: str | None = "openai",
     candidate_writer_model: str | None = "candidate-model",
     candidate_writer_max_output_tokens: object = 1200,
+    semantic_grounding_provider: str | None = "openai",
+    semantic_grounding_model: str | None = "semantic-model",
+    semantic_grounding_max_output_tokens: object = None,
     quality_evaluator_provider: str | None = "openai",
     quality_evaluator_model: str | None = "quality-model",
-    quality_evaluator_max_output_tokens: object = 900,
+    quality_evaluator_max_output_tokens: object = None,
     quality_rubric: object | dict | None = None,
     policy: object | dict | None = None,
     alternative_model_available: bool = False,
@@ -810,6 +1198,10 @@ def _request(
         candidate_writer_provider=candidate_writer_provider,
         candidate_writer_model=candidate_writer_model,
         candidate_writer_max_output_tokens=candidate_writer_max_output_tokens,
+        semantic_grounding_prompt_text="Semantic grounding prompt text.",
+        semantic_grounding_provider=semantic_grounding_provider,
+        semantic_grounding_model=semantic_grounding_model,
+        semantic_grounding_max_output_tokens=semantic_grounding_max_output_tokens,
         quality_evaluator_provider=quality_evaluator_provider,
         quality_evaluator_model=quality_evaluator_model,
         quality_evaluator_max_output_tokens=quality_evaluator_max_output_tokens,
@@ -842,6 +1234,40 @@ def _provider_response(raw_text: str) -> SimpleNamespace:
         raw={"id": "resp-1", "metadata_sentinel": "provider-metadata"},
         usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
     )
+
+
+def _passing_semantic_client() -> FakeCandidateWriterClient:
+    return FakeCandidateWriterClient(
+        _provider_response(json.dumps(_semantic_review_payload(passed=True)))
+    )
+
+
+def _semantic_review_payload(*, passed: bool = True) -> dict:
+    return {
+        "pass": passed,
+        "claims": [
+            {
+                "claim_id": "c1",
+                "field_name": "post_text",
+                "value_index": None,
+                "claim_text": "Real candidate text from fake provider.",
+                "claim_type": "author_interpretation",
+                "support_status": "supported" if passed else "unsupported",
+                "severity": "info" if passed else "major",
+                "supported_evidence_ids": ["ev-1"],
+                "required_qualifications": [],
+                "missing_qualifications": [],
+                "rationale": "Grounded in selected evidence.",
+                "repair_hint": "" if passed else "Remove unsupported wording.",
+            }
+        ],
+        "failed_claim_ids": [] if passed else ["c1"],
+        "automatic_fail_reason": "" if passed else "unsupported claim",
+        "requires_human_review": False,
+        "human_review_reason": "",
+        "repairable": True,
+        "repair_instructions": [] if passed else ["Remove unsupported wording."],
+    }
 
 
 def _candidate_json() -> str:
@@ -899,29 +1325,168 @@ def _angle_decision() -> dict:
     }
 
 
+def _bitcoin_post_brief() -> dict:
+    return {
+        "core_point": "Bitcoin signals require careful qualification.",
+        "evidence_to_use": [
+            {
+                "evidence_id": "a0-summary",
+                "evidence_text": (
+                    "30% U.S. crypto ownership; 61% intend to invest more; "
+                    "security concerns and volatility limit broader adoption."
+                ),
+                "role_in_post": "market_context",
+            },
+            {
+                "evidence_id": "a1-kp0",
+                "evidence_text": "16.99% CAGR projected from 2025 to 2035.",
+                "role_in_post": "growth_projection",
+            },
+            {
+                "evidence_id": "a2-summary",
+                "evidence_text": (
+                    "K33 says Bitcoin likely bottomed at $60K; pessimistic "
+                    "positioning may limit deeper downside; risk remains."
+                ),
+                "role_in_post": "qualification",
+            },
+        ],
+    }
+
+
+def _bitcoin_angle_decision() -> dict:
+    return {
+        "controlling_angle": "Bitcoin market signals need qualified interpretation.",
+        "author_position": "Do not turn likelihood and risk into certainty.",
+    }
+
+
+def _bitcoin_candidate_payload() -> dict:
+    return _candidate_payload(
+        post_text=(
+            "Even as optimism builds and some stability emerges, many traders "
+            "remain watchful, with caution influencing the pace of recovery "
+            "and the path of future growth."
+        )
+    )
+
+
+def _bitcoin_drift_grounding_payload() -> dict:
+    return {
+        "pass": False,
+        "claims": [
+            {
+                "claim_id": "c-optimism",
+                "field_name": "post_text",
+                "value_index": None,
+                "claim_text": "optimism builds",
+                "claim_type": "market_condition",
+                "support_status": "unsupported",
+                "severity": "major",
+                "supported_evidence_ids": [],
+                "required_qualifications": [],
+                "missing_qualifications": [],
+                "rationale": "The selected evidence does not say optimism builds.",
+                "repair_hint": "Remove optimism unless directly grounded.",
+            },
+            {
+                "claim_id": "c-stability",
+                "field_name": "post_text",
+                "value_index": None,
+                "claim_text": "some stability emerges",
+                "claim_type": "forecast_or_projection",
+                "support_status": "missing_required_qualification",
+                "severity": "major",
+                "supported_evidence_ids": ["a2-summary"],
+                "required_qualifications": ["likely", "may", "risk remains"],
+                "missing_qualifications": ["likely", "may", "risk remains"],
+                "rationale": "Likely bottoming and possible downside limits became stability.",
+                "repair_hint": "Preserve likely/may/risk framing.",
+            },
+            {
+                "claim_id": "c-recovery",
+                "field_name": "post_text",
+                "value_index": None,
+                "claim_text": "caution influences recovery pace",
+                "claim_type": "causal_claim",
+                "support_status": "causal_overreach",
+                "severity": "blocking",
+                "supported_evidence_ids": ["a2-summary"],
+                "required_qualifications": ["may"],
+                "missing_qualifications": ["may"],
+                "rationale": "The evidence does not support a causal recovery claim.",
+                "repair_hint": "Remove recovery-causality wording.",
+            },
+            {
+                "claim_id": "c-growth",
+                "field_name": "post_text",
+                "value_index": None,
+                "claim_text": "caution influences future growth",
+                "claim_type": "causal_claim",
+                "support_status": "causal_overreach",
+                "severity": "blocking",
+                "supported_evidence_ids": ["a1-kp0", "a2-summary"],
+                "required_qualifications": ["projected", "may"],
+                "missing_qualifications": ["projected", "may"],
+                "rationale": "Projected CAGR and trader positioning do not establish this cause.",
+                "repair_hint": "Separate projected growth from trader-positioning risk.",
+            },
+        ],
+        "failed_claim_ids": [
+            "c-optimism",
+            "c-stability",
+            "c-recovery",
+            "c-growth",
+        ],
+        "automatic_fail_reason": "unsupported and strengthened Bitcoin claims",
+        "requires_human_review": False,
+        "human_review_reason": "",
+        "repairable": True,
+        "repair_instructions": [
+            "Remove optimism/stability/recovery/growth causal drift.",
+            "Keep likely, may, projected, and risk remains qualifications.",
+        ],
+    }
+
+
 def _quality_review_payload(
     *,
     passed: bool = True,
-    total_score: int = 37,
+    total_score: int | None = None,
     failed_criteria: list[str] | None = None,
 ) -> dict:
+    scores = {
+        "hook": 4,
+        "controlling_angle": 4,
+        "reader_problem": 4,
+        "pattern_interrupt": 4,
+        "evidence": 4,
+        "author_point_of_view": 4,
+        "human_voice": 5 if passed else 3,
+        "practical_value": 4,
+        "cta": 4,
+    }
     return {
-        "scores": {
-            "hook": 4,
-            "controlling_angle": 4,
-            "reader_problem": 4,
-            "pattern_interrupt": 4,
-            "evidence": 4,
-            "author_point_of_view": 4,
-            "human_voice": 5 if passed else 3,
-            "practical_value": 4,
-            "cta": 4,
-        },
-        "total_score": total_score,
+        "scores": scores,
+        "total_score": sum(scores.values()) if total_score is None else total_score,
         "pass": passed,
         "failed_criteria": failed_criteria or [],
         "automatic_fail_reason": "",
         "notes": ["Evaluator note."],
+        "criterion_rationales": _criterion_rationales(scores),
+    }
+
+
+def _criterion_rationales(scores: dict[str, int]) -> dict[str, dict[str, object]]:
+    return {
+        criterion: {
+            "score": score,
+            "max_score": 5,
+            "rationale": f"{criterion} rationale tied to the candidate text.",
+            "post_text_evidence": f"{criterion} evidence from post_text.",
+            "failure_reason": "",
+        }
+        for criterion, score in scores.items()
     }
 
 

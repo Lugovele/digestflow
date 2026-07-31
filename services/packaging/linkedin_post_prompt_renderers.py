@@ -87,6 +87,24 @@ class QualityEvaluatorPromptRender:
 
 
 @dataclass(frozen=True)
+class SemanticGroundingPromptRender:
+    prompt_name: str | None
+    prompt_version: str | None
+    prompt_path: str | None
+    variables: dict[str, str]
+    input_text: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_name": self.prompt_name,
+            "prompt_version": self.prompt_version,
+            "prompt_path": self.prompt_path,
+            "variables": dict(self.variables),
+            "input_text": self.input_text,
+        }
+
+
+@dataclass(frozen=True)
 class RepairWriterPromptRender:
     prompt_name: str | None
     prompt_version: str | None
@@ -167,7 +185,7 @@ def render_repair_writer_prompt_input(
             {
                 "attempt_index": attempt_index,
                 "max_attempts": max_attempts,
-                "repair_type": "editorial",
+                "repair_type": repair_instruction.get("repair_type", "editorial"),
             }
         ),
     }
@@ -207,6 +225,44 @@ def render_quality_evaluator_prompt_input(
         prompt_path=prompt_metadata.prompt_path if prompt_metadata else None,
         variables=variables,
         input_text=_build_quality_evaluator_input_text(variables),
+    )
+
+
+def render_semantic_grounding_prompt_input(
+    editorial_input: PostEditorialInput,
+    prompt_metadata: PromptMetadata | None = None,
+) -> SemanticGroundingPromptRender:
+    selected_evidence_ids = _selected_evidence_ids_for_repair_prompt(
+        editorial_input.selected_evidence
+    )
+    variables = {
+        "candidate_payload_json": _stable_json(
+            _candidate_payload_for_quality_prompt(editorial_input.candidate_payload)
+        ),
+        "post_brief_json": _stable_json(
+            _post_brief_for_repair_prompt(
+                editorial_input.post_brief,
+                selected_evidence_ids,
+            )
+        ),
+        "angle_decision_json": _stable_json(
+            _angle_decision_for_repair_prompt(
+                editorial_input.angle_decision,
+                selected_evidence_ids,
+            )
+        ),
+        "selected_evidence_json": _stable_json(
+            _selected_evidence_for_quality_prompt(editorial_input.selected_evidence)
+        ),
+        "grounding_rules_json": _stable_json(_semantic_grounding_rules()),
+    }
+
+    return SemanticGroundingPromptRender(
+        prompt_name=prompt_metadata.prompt_name if prompt_metadata else None,
+        prompt_version=prompt_metadata.prompt_version if prompt_metadata else None,
+        prompt_path=prompt_metadata.prompt_path if prompt_metadata else None,
+        variables=variables,
+        input_text=_build_semantic_grounding_input_text(variables),
     )
 
 
@@ -380,5 +436,38 @@ def _build_quality_evaluator_input_text(variables: dict[str, str]) -> str:
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
         ("QUALITY_RUBRIC_JSON", variables["quality_rubric_json"]),
+    ]
+    return "\n\n".join(f"## {title}\n{body}" for title, body in sections)
+
+
+def _semantic_grounding_rules() -> dict[str, Any]:
+    return {
+        "atomic_claim": (
+            "One assessable assertion from human-facing post text; split "
+            "compound sentences into separate claims."
+        ),
+        "qualification_invariants": [
+            "projected remains projected",
+            "likely remains attributed likelihood",
+            "may remains possibility",
+            "risk remains risk",
+            "analysis remains attributed analysis",
+        ],
+        "causal_fidelity": [
+            "Do not turn coexistence into cause.",
+            "Do not turn forecasts into outcomes.",
+            "Do not turn positioning or risk into stability, recovery, optimism, or growth.",
+        ],
+        "selected_evidence_only": True,
+    }
+
+
+def _build_semantic_grounding_input_text(variables: dict[str, str]) -> str:
+    sections = [
+        ("CANDIDATE_PAYLOAD_JSON", variables["candidate_payload_json"]),
+        ("POST_BRIEF_JSON", variables["post_brief_json"]),
+        ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
+        ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
+        ("GROUNDING_RULES_JSON", variables["grounding_rules_json"]),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)

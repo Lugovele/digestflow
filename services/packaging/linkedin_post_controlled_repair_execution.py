@@ -39,6 +39,12 @@ from services.packaging.linkedin_post_controlled_repair_contract import (
     FAILURE_REPAIR_WRITER_PROVIDER,
     FAILURE_REPAIR_WRITER_REQUEST,
     FAILURE_REPAIRED_DETERMINISTIC_GATE,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING_EMPTY_RESPONSE,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING_NORMALIZATION,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING_PARSE,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING_PROVIDER,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST,
     FAILURE_REPAIRED_QUALITY_EVALUATOR_EMPTY_RESPONSE,
     FAILURE_REPAIRED_QUALITY_EVALUATOR_PARSE,
     FAILURE_REPAIRED_QUALITY_EVALUATOR_PROVIDER,
@@ -68,10 +74,13 @@ from services.packaging.linkedin_post_flow_input_builders import (
 from services.packaging.linkedin_post_prompt_renderers import (
     render_quality_evaluator_prompt_input,
     render_repair_writer_prompt_input,
+    render_semantic_grounding_prompt_input,
 )
 from services.packaging.linkedin_post_quality_evaluator_execution import (
+    DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS,
     build_quality_evaluator_execution_request,
     execute_quality_evaluator_prompt,
+    get_quality_evaluator_execution_request_error,
 )
 from services.packaging.linkedin_post_quality_evaluator_parser import (
     ERROR_NORMALIZATION_FAILED,
@@ -85,6 +94,24 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
 )
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    GROUNDING_STATUS_FAIL,
+    GROUNDING_STATUS_NEEDS_HUMAN_REVIEW,
+    GROUNDING_STATUS_NOT_READY,
+    GROUNDING_STATUS_PASS,
+    FinalPostSemanticGroundingState,
+)
+from services.packaging.linkedin_post_semantic_grounding_execution import (
+    DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    build_semantic_grounding_execution_request,
+    execute_semantic_grounding_prompt,
+    get_semantic_grounding_execution_request_error,
+)
+from services.packaging.linkedin_post_semantic_grounding_parser import (
+    ERROR_NORMALIZATION_FAILED as SEMANTIC_GROUNDING_ERROR_NORMALIZATION_FAILED,
+    SemanticGroundingResponseParseError,
+    parse_and_normalize_semantic_grounding_response,
+)
 
 
 REPAIR_ATTEMPT_INDEX = 1
@@ -97,6 +124,7 @@ def execute_final_post_controlled_repair_attempt(
     angle_decision: object | dict,
     selected_evidence_ids: tuple[str, ...] | list[str],
     candidate_writer_client: Any | None = None,
+    semantic_grounding_client: Any | None = None,
     quality_evaluator_client: Any | None = None,
     repair_writer_client: Any | None = None,
 ) -> FinalPostControlledRepairResult:
@@ -109,6 +137,7 @@ def execute_final_post_controlled_repair_attempt(
         angle_decision=angle_decision,
         selected_evidence_ids=evidence_ids,
         candidate_writer_client=candidate_writer_client,
+        semantic_grounding_client=semantic_grounding_client,
         quality_evaluator_client=quality_evaluator_client,
     )
     eligibility = _repair_eligibility(request, initial_result)
@@ -246,6 +275,42 @@ def execute_final_post_controlled_repair_attempt(
             repair_invocation_count=1,
         )
 
+    grounding_result = _run_repaired_semantic_grounding(
+        request=request,
+        post_brief=post_brief,
+        angle_decision=angle_decision,
+        repaired_candidate_output=repaired_candidate_output,
+        repaired_gate=repaired_gate,
+        selected_evidence_ids=evidence_ids,
+        semantic_grounding_client=semantic_grounding_client,
+    )
+    if grounding_result["failure_code"] is not None:
+        return _repair_failure_result(
+            request=request,
+            initial_result=initial_result,
+            eligibility=eligibility,
+            failure_code=grounding_result["failure_code"],
+            failure_stage=grounding_result["failure_stage"],
+            failure_message=grounding_result["failure_message"],
+            repair_prompt_render=repair_prompt_render,
+            repair_writer_raw_response=repair_raw_response,
+            parsed_repair_candidate=parsed_repair_candidate,
+            repaired_candidate_output=repaired_candidate_output,
+            repaired_deterministic_gate_output=repaired_gate,
+            repaired_semantic_grounding_prompt_render=grounding_result["prompt_render"],
+            repaired_semantic_grounding_raw_response=grounding_result["raw_response"],
+            repaired_semantic_grounding_state=grounding_result["grounding_state"],
+            repaired_post_editorial_input=grounding_result["post_editorial_input"],
+            repair_invocation_count=1,
+            semantic_grounding_invocation_count=(
+                initial_result.semantic_grounding_invocation_count
+                + grounding_result["semantic_grounding_invocation_count"]
+            ),
+            quality_evaluator_invocation_count=(
+                initial_result.quality_evaluator_invocation_count
+            ),
+        )
+
     quality_result = _run_repaired_quality_evaluation(
         request=request,
         post_brief=post_brief,
@@ -272,6 +337,10 @@ def execute_final_post_controlled_repair_attempt(
             repaired_quality_evaluator_raw_response=quality_result["raw_response"],
             repaired_quality_evaluation_state=quality_result["quality_state"],
             repair_invocation_count=1,
+            semantic_grounding_invocation_count=(
+                initial_result.semantic_grounding_invocation_count
+                + grounding_result["semantic_grounding_invocation_count"]
+            ),
             quality_evaluator_invocation_count=(
                 initial_result.quality_evaluator_invocation_count
                 + quality_result["quality_invocation_count"]
@@ -309,6 +378,9 @@ def execute_final_post_controlled_repair_attempt(
         parsed_repair_candidate=copy.deepcopy(parsed_repair_candidate),
         repaired_candidate_output=repaired_candidate_output,
         repaired_deterministic_gate_output=repaired_gate,
+        repaired_semantic_grounding_prompt_render=grounding_result["prompt_render"],
+        repaired_semantic_grounding_raw_response=grounding_result["raw_response"],
+        repaired_semantic_grounding_state=grounding_result["grounding_state"],
         repaired_post_editorial_input=quality_result["post_editorial_input"],
         repaired_quality_evaluator_prompt_render=quality_result["prompt_render"],
         repaired_quality_evaluator_raw_response=quality_result["raw_response"],
@@ -318,6 +390,10 @@ def execute_final_post_controlled_repair_attempt(
         terminal_outcome=repaired_outcome.outcome,
         terminal_reason=repaired_outcome.reason,
         candidate_writer_invocation_count=initial_result.candidate_writer_invocation_count,
+        semantic_grounding_invocation_count=(
+            initial_result.semantic_grounding_invocation_count
+            + grounding_result["semantic_grounding_invocation_count"]
+        ),
         repair_invocation_count=1,
         quality_evaluator_invocation_count=(
             initial_result.quality_evaluator_invocation_count
@@ -347,17 +423,6 @@ def _repair_eligibility(
         return _ineligible("initial deterministic gate missing")
     if not _gate_passed(initial_result.deterministic_gate_output):
         return _ineligible("initial deterministic gate failed")
-    if initial_result.quality_evaluation_state is None:
-        return _ineligible("initial quality evaluation missing")
-    if initial_result.quality_evaluation_state.status != QUALITY_EVALUATION_READY:
-        return _ineligible(
-            f"initial quality evaluation {initial_result.quality_evaluation_state.status}"
-        )
-    quality_review = initial_result.quality_evaluation_state.quality_review
-    if not isinstance(quality_review, dict):
-        return _ineligible("initial quality review missing")
-    if _quality_review_needs_human_review(quality_review):
-        return _ineligible("initial quality review needs human review")
     if initial_result.final_attempt_outcome is None:
         return _ineligible("initial attempt outcome missing")
     if initial_result.final_attempt_outcome.outcome != OUTCOME_REPAIR_REQUIRED:
@@ -365,8 +430,20 @@ def _repair_eligibility(
             f"initial outcome is {initial_result.final_attempt_outcome.outcome}"
         )
     decision = initial_result.final_attempt_outcome.decision
-    if decision.repair_type != "editorial":
-        return _ineligible("initial decision is not editorial repair")
+    if decision.repair_type == "editorial":
+        if initial_result.quality_evaluation_state is None:
+            return _ineligible("initial quality evaluation missing")
+        if initial_result.quality_evaluation_state.status != QUALITY_EVALUATION_READY:
+            return _ineligible(
+                f"initial quality evaluation {initial_result.quality_evaluation_state.status}"
+            )
+        quality_review = initial_result.quality_evaluation_state.quality_review
+        if not isinstance(quality_review, dict):
+            return _ineligible("initial quality review missing")
+        if _quality_review_needs_human_review(quality_review):
+            return _ineligible("initial quality review needs human review")
+    elif decision.repair_type != "semantic_grounding":
+        return _ineligible("initial decision is not repairable by controlled repair")
     if not isinstance(request.repair_prompt_text, str) or not request.repair_prompt_text.strip():
         return _ineligible("missing repair writer prompt text")
     if not request.repair_provider:
@@ -376,7 +453,7 @@ def _repair_eligibility(
     return FinalPostRepairEligibility(
         status=REPAIR_ELIGIBLE,
         eligible=True,
-        reason="initial attempt eligible for one editorial repair",
+        reason=f"initial attempt eligible for one {decision.repair_type} repair",
     )
 
 
@@ -419,6 +496,7 @@ def _ineligible_result(
         failure_code=failure_code,
         failure_message="" if accepted_payload is not None else eligibility.reason,
         candidate_writer_invocation_count=initial_result.candidate_writer_invocation_count,
+        semantic_grounding_invocation_count=initial_result.semantic_grounding_invocation_count,
         repair_invocation_count=0,
         quality_evaluator_invocation_count=initial_result.quality_evaluator_invocation_count,
     )
@@ -437,11 +515,15 @@ def _repair_failure_result(
     parsed_repair_candidate: dict[str, Any] | None = None,
     repaired_candidate_output: Any | None = None,
     repaired_deterministic_gate_output: Any | None = None,
+    repaired_semantic_grounding_prompt_render: Any | None = None,
+    repaired_semantic_grounding_raw_response: Any | None = None,
+    repaired_semantic_grounding_state: Any | None = None,
     repaired_post_editorial_input: Any | None = None,
     repaired_quality_evaluator_prompt_render: Any | None = None,
     repaired_quality_evaluator_raw_response: Any | None = None,
     repaired_quality_evaluation_state: Any | None = None,
     repair_invocation_count: int = 0,
+    semantic_grounding_invocation_count: int | None = None,
     quality_evaluator_invocation_count: int | None = None,
 ) -> FinalPostControlledRepairResult:
     return FinalPostControlledRepairResult(
@@ -454,6 +536,9 @@ def _repair_failure_result(
         parsed_repair_candidate=copy.deepcopy(parsed_repair_candidate),
         repaired_candidate_output=repaired_candidate_output,
         repaired_deterministic_gate_output=repaired_deterministic_gate_output,
+        repaired_semantic_grounding_prompt_render=repaired_semantic_grounding_prompt_render,
+        repaired_semantic_grounding_raw_response=repaired_semantic_grounding_raw_response,
+        repaired_semantic_grounding_state=repaired_semantic_grounding_state,
         repaired_post_editorial_input=repaired_post_editorial_input,
         repaired_quality_evaluator_prompt_render=repaired_quality_evaluator_prompt_render,
         repaired_quality_evaluator_raw_response=repaired_quality_evaluator_raw_response,
@@ -464,6 +549,11 @@ def _repair_failure_result(
         failure_code=failure_code,
         failure_message=failure_message,
         candidate_writer_invocation_count=initial_result.candidate_writer_invocation_count,
+        semantic_grounding_invocation_count=(
+            semantic_grounding_invocation_count
+            if semantic_grounding_invocation_count is not None
+            else initial_result.semantic_grounding_invocation_count
+        ),
         repair_invocation_count=repair_invocation_count,
         quality_evaluator_invocation_count=(
             quality_evaluator_invocation_count
@@ -502,7 +592,7 @@ def _run_repaired_quality_evaluation(
             provider=request.initial_attempt_request.quality_evaluator_provider,
             model=request.initial_attempt_request.quality_evaluator_model,
             max_output_tokens=(
-                900
+                DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS
                 if request.initial_attempt_request.quality_evaluator_max_output_tokens
                 is None
                 else request.initial_attempt_request.quality_evaluator_max_output_tokens
@@ -617,6 +707,166 @@ def _run_repaired_quality_evaluation(
     }
 
 
+def _run_repaired_semantic_grounding(
+    *,
+    request: FinalPostControlledRepairRequest,
+    post_brief: object | dict,
+    angle_decision: object | dict,
+    repaired_candidate_output: Any,
+    repaired_gate: Any,
+    selected_evidence_ids: tuple[str, ...],
+    semantic_grounding_client: Any | None,
+) -> dict[str, Any]:
+    try:
+        post_editorial_input = build_post_editorial_input(
+            post_brief=post_brief,
+            angle_decision=angle_decision,
+            candidate_output=repaired_candidate_output,
+            gate_output=repaired_gate,
+        )
+        prompt_render = render_semantic_grounding_prompt_input(post_editorial_input)
+        semantic_request = build_semantic_grounding_execution_request(
+            prompt_render,
+            prompt_text=request.initial_attempt_request.semantic_grounding_prompt_text,
+            provider=request.initial_attempt_request.semantic_grounding_provider,
+            model=request.initial_attempt_request.semantic_grounding_model,
+            max_output_tokens=(
+                DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
+                if request.initial_attempt_request.semantic_grounding_max_output_tokens
+                is None
+                else request.initial_attempt_request.semantic_grounding_max_output_tokens
+            ),
+            execution_metadata=request.initial_attempt_request.execution_metadata,
+        )
+    except (TypeError, ValueError) as exc:
+        grounding_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST,
+            error_message=str(exc),
+        )
+        return _semantic_error(
+            failure_code=FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST,
+            failure_stage="repaired_semantic_grounding_request",
+            failure_message=str(exc),
+            grounding_state=grounding_state,
+            post_editorial_input=locals().get("post_editorial_input"),
+            prompt_render=locals().get("prompt_render"),
+            raw_response=None,
+            invocation_count=0,
+        )
+
+    request_error = get_semantic_grounding_execution_request_error(semantic_request)
+    if request_error is not None:
+        grounding_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST,
+            error_message=request_error,
+        )
+        return _semantic_error(
+            failure_code=FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST,
+            failure_stage="repaired_semantic_grounding_request",
+            failure_message=request_error,
+            grounding_state=grounding_state,
+            post_editorial_input=post_editorial_input,
+            prompt_render=prompt_render,
+            raw_response=None,
+            invocation_count=0,
+        )
+
+    raw_response = execute_semantic_grounding_prompt(
+        semantic_request,
+        client=semantic_grounding_client,
+    )
+    if raw_response.execution_error:
+        failure_code = _repaired_semantic_execution_failure_code(raw_response)
+        grounding_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=failure_code,
+            error_message=raw_response.execution_error,
+        )
+        return _semantic_error(
+            failure_code=failure_code,
+            failure_stage="repaired_semantic_grounding_execution",
+            failure_message=raw_response.execution_error,
+            grounding_state=grounding_state,
+            post_editorial_input=post_editorial_input,
+            prompt_render=prompt_render,
+            raw_response=raw_response,
+            invocation_count=1,
+        )
+
+    try:
+        grounding_review = parse_and_normalize_semantic_grounding_response(
+            raw_response,
+            selected_evidence_ids=selected_evidence_ids,
+        )
+    except SemanticGroundingResponseParseError as exc:
+        normalization_failed = exc.code == SEMANTIC_GROUNDING_ERROR_NORMALIZATION_FAILED
+        failure_code = (
+            FAILURE_REPAIRED_SEMANTIC_GROUNDING_NORMALIZATION
+            if normalization_failed
+            else FAILURE_REPAIRED_SEMANTIC_GROUNDING_PARSE
+        )
+        grounding_state = FinalPostSemanticGroundingState(
+            status=GROUNDING_STATUS_NOT_READY,
+            grounding_review=None,
+            error_code=failure_code,
+            error_message=str(exc),
+        )
+        return _semantic_error(
+            failure_code=failure_code,
+            failure_stage=(
+                "repaired_semantic_grounding_normalization"
+                if normalization_failed
+                else "repaired_semantic_grounding_parse"
+            ),
+            failure_message=str(exc),
+            grounding_state=grounding_state,
+            post_editorial_input=post_editorial_input,
+            prompt_render=prompt_render,
+            raw_response=raw_response,
+            invocation_count=1,
+        )
+
+    grounding_state = FinalPostSemanticGroundingState(
+        status=(
+            GROUNDING_STATUS_PASS
+            if grounding_review.passed
+            else (
+                GROUNDING_STATUS_NEEDS_HUMAN_REVIEW
+                if grounding_review.requires_human_review
+                else GROUNDING_STATUS_FAIL
+            )
+        ),
+        grounding_review=grounding_review,
+    )
+    if grounding_state.status != GROUNDING_STATUS_PASS:
+        return _semantic_error(
+            failure_code=FAILURE_REPAIRED_SEMANTIC_GROUNDING,
+            failure_stage="repaired_semantic_grounding_normalization",
+            failure_message=_semantic_grounding_failure_message(grounding_state),
+            grounding_state=grounding_state,
+            post_editorial_input=post_editorial_input,
+            prompt_render=prompt_render,
+            raw_response=raw_response,
+            invocation_count=1,
+        )
+
+    return {
+        "failure_code": None,
+        "failure_stage": None,
+        "failure_message": "",
+        "post_editorial_input": post_editorial_input,
+        "prompt_render": prompt_render,
+        "raw_response": raw_response,
+        "grounding_state": grounding_state,
+        "semantic_grounding_invocation_count": 1,
+    }
+
+
 def _quality_error(
     *,
     failure_code: str,
@@ -637,6 +887,29 @@ def _quality_error(
         "raw_response": raw_response,
         "quality_state": quality_state,
         "quality_invocation_count": invocation_count,
+    }
+
+
+def _semantic_error(
+    *,
+    failure_code: str,
+    failure_stage: str,
+    failure_message: str,
+    grounding_state: FinalPostSemanticGroundingState,
+    post_editorial_input: Any | None,
+    prompt_render: Any | None,
+    raw_response: Any | None,
+    invocation_count: int,
+) -> dict[str, Any]:
+    return {
+        "failure_code": failure_code,
+        "failure_stage": failure_stage,
+        "failure_message": failure_message,
+        "grounding_state": grounding_state,
+        "post_editorial_input": post_editorial_input,
+        "prompt_render": prompt_render,
+        "raw_response": raw_response,
+        "semantic_grounding_invocation_count": invocation_count,
     }
 
 
@@ -682,7 +955,15 @@ def _deterministic_findings(initial_result: Any) -> dict[str, Any]:
 
 
 def _quality_findings(initial_result: Any) -> dict[str, Any]:
-    quality_review = initial_result.quality_evaluation_state.quality_review
+    quality_state = getattr(initial_result, "quality_evaluation_state", None)
+    quality_review = getattr(quality_state, "quality_review", None)
+    if not isinstance(quality_review, dict):
+        return {
+            "status": getattr(quality_state, "status", "not_run"),
+            "pass": None,
+            "failed_criteria": [],
+            "notes": [],
+        }
     scores = quality_review.get("scores") or {}
     failed_minimums = {
         criterion: scores.get(criterion)
@@ -701,6 +982,39 @@ def _quality_findings(initial_result: Any) -> dict[str, Any]:
 
 
 def _repair_instruction(initial_result: Any) -> dict[str, Any]:
+    decision = initial_result.final_attempt_outcome.decision
+    if decision.repair_type == "semantic_grounding":
+        grounding_review = getattr(
+            getattr(initial_result, "semantic_grounding_state", None),
+            "grounding_review",
+            None,
+        )
+        return {
+            "repair_type": "semantic_grounding",
+            "failed_claim_ids": (
+                list(getattr(grounding_review, "blocking_claim_ids", ()))
+                if grounding_review is not None
+                else []
+            ),
+            "repair_scope": "human-facing FinalPostPayload fields",
+            "repair_instruction": _semantic_grounding_repair_instruction(
+                grounding_review,
+                decision.reason,
+            ),
+            "decision_reason": decision.reason,
+            "preserve": [
+                "selected evidence only",
+                "AngleDecision.controlling_angle",
+                "source qualifications such as likely, may, projected, and risk remains",
+                "valid FinalPostPayload JSON",
+            ],
+            "avoid": [
+                "new facts",
+                "stronger certainty than selected evidence",
+                "unsupported causal language",
+                "recovery/stability/optimism drift",
+            ],
+        }
     return {
         "repair_type": "editorial",
         "failed_criterion": _primary_failed_criterion(initial_result),
@@ -718,6 +1032,20 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
             "scaffold/source-summary phrasing",
         ],
     }
+
+
+def _semantic_grounding_repair_instruction(
+    grounding_review: Any | None,
+    fallback_reason: str,
+) -> str:
+    instructions = (
+        list(getattr(grounding_review, "repair_instructions", ()) or ())
+        if grounding_review is not None
+        else []
+    )
+    if instructions:
+        return "; ".join(instructions)
+    return fallback_reason
 
 
 def _primary_failed_criterion(initial_result: Any) -> str:
@@ -770,25 +1098,7 @@ def _repair_writer_request_error(request: Any) -> str | None:
 
 
 def _quality_evaluator_request_error(request: Any) -> str | None:
-    if not request.provider:
-        return "missing quality evaluator provider"
-    if request.provider != "openai":
-        return f"unsupported quality evaluator provider: {request.provider}"
-    if not request.model:
-        return "missing quality evaluator model"
-    if isinstance(request.max_output_tokens, bool) or not isinstance(
-        request.max_output_tokens,
-        int,
-    ):
-        return "invalid quality evaluator max_output_tokens: must be a positive integer"
-    if request.max_output_tokens <= 0:
-        return "invalid quality evaluator max_output_tokens: must be a positive integer"
-    if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
-        return "missing quality evaluator prompt text"
-    rendered_input_text = request.rendered_prompt_input.input_text
-    if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
-        return "missing quality evaluator rendered input text"
-    return None
+    return get_quality_evaluator_execution_request_error(request)
 
 
 def _repair_writer_execution_failure_code(raw_response: Any) -> str:
@@ -797,10 +1107,29 @@ def _repair_writer_execution_failure_code(raw_response: Any) -> str:
     return FAILURE_REPAIR_WRITER_PROVIDER
 
 
+def _repaired_semantic_execution_failure_code(raw_response: Any) -> str:
+    if raw_response.execution_error == "empty provider response":
+        return FAILURE_REPAIRED_SEMANTIC_GROUNDING_EMPTY_RESPONSE
+    return FAILURE_REPAIRED_SEMANTIC_GROUNDING_PROVIDER
+
+
 def _repaired_quality_execution_failure_code(raw_response: Any) -> str:
     if raw_response.execution_error == "empty provider response":
         return FAILURE_REPAIRED_QUALITY_EVALUATOR_EMPTY_RESPONSE
     return FAILURE_REPAIRED_QUALITY_EVALUATOR_PROVIDER
+
+
+def _semantic_grounding_failure_message(
+    semantic_state: FinalPostSemanticGroundingState,
+) -> str:
+    review = semantic_state.grounding_review
+    if review is None:
+        return "semantic grounding failed"
+    if review.automatic_fail_reason:
+        return review.automatic_fail_reason
+    if review.blocking_claim_ids:
+        return "failed claims: " + ", ".join(review.blocking_claim_ids)
+    return "semantic grounding failed"
 
 
 def _quality_review_needs_human_review(quality_review: dict[str, Any]) -> bool:

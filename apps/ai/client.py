@@ -34,6 +34,7 @@ class OpenAIClient:
         prompt: str,
         max_output_tokens: int = 1200,
         json_mode: bool = False,
+        allow_json_mode_fallback: bool = True,
     ) -> AIResponse:
         request_kwargs: dict[str, Any] = {
             "model": self.model,
@@ -46,7 +47,7 @@ class OpenAIClient:
         try:
             response = self.client.responses.create(**request_kwargs)
         except Exception:
-            if not json_mode:
+            if not json_mode or not allow_json_mode_fallback:
                 raise
             response = self.client.responses.create(
                 model=self.model,
