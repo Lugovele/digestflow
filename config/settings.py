@@ -91,6 +91,7 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # Legacy shared model setting. PostFlow stage-specific settings below should be
 # preferred by new staged pipeline code; keep this as a compatibility fallback.
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
