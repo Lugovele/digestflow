@@ -19,6 +19,12 @@ SUPPORTED_AI_PROVIDERS = (
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_ANTHROPIC,
 )
+AI_THINKING_MODE_PROVIDER_DEFAULT = "provider_default"
+AI_THINKING_MODE_DISABLED = "disabled"
+SUPPORTED_AI_THINKING_MODES = (
+    AI_THINKING_MODE_PROVIDER_DEFAULT,
+    AI_THINKING_MODE_DISABLED,
+)
 GEMINI_OPENAI_COMPATIBLE_BASE_URL = (
     "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
@@ -80,7 +86,14 @@ class OpenAICompatibleClient:
         max_output_tokens: int = 1200,
         json_mode: bool = False,
         allow_json_mode_fallback: bool = True,
+        thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
     ) -> AIResponse:
+        thinking_mode_error = get_ai_provider_thinking_mode_error(
+            provider=self.provider,
+            thinking_mode=thinking_mode,
+        )
+        if thinking_mode_error is not None:
+            raise ValueError(thinking_mode_error)
         if self.provider == AI_PROVIDER_GEMINI:
             return self._generate_chat_completion(
                 prompt=prompt,
@@ -178,12 +191,23 @@ class AnthropicMessagesClient:
         max_output_tokens: int = 1200,
         json_mode: bool = False,
         allow_json_mode_fallback: bool = True,
+        thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
     ) -> AIResponse:
+        normalized_thinking_mode = _normalize_thinking_mode(thinking_mode)
+        thinking_mode_error = get_ai_provider_thinking_mode_error(
+            provider=self.provider,
+            thinking_mode=normalized_thinking_mode,
+        )
+        if thinking_mode_error is not None:
+            raise ValueError(thinking_mode_error)
+
         request_body: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_output_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if normalized_thinking_mode == AI_THINKING_MODE_DISABLED:
+            request_body["thinking"] = {"type": "disabled"}
         if json_mode:
             request_body["system"] = (
                 "Return only valid JSON. Do not include markdown fences or commentary."
@@ -318,6 +342,27 @@ def get_ai_client_configuration_error(
     return get_ai_provider_credential_error(provider, stage_name=stage_name)
 
 
+def get_ai_provider_thinking_mode_error(
+    *,
+    provider: str,
+    thinking_mode: str | None,
+    stage_name: str = "AI",
+) -> str | None:
+    normalized_provider = normalize_ai_provider(provider)
+    normalized_thinking_mode = _normalize_thinking_mode(thinking_mode)
+    if normalized_thinking_mode not in SUPPORTED_AI_THINKING_MODES:
+        return f"unsupported {stage_name} thinking_mode: {normalized_thinking_mode}"
+    if (
+        normalized_provider != AI_PROVIDER_ANTHROPIC
+        and normalized_thinking_mode != AI_THINKING_MODE_PROVIDER_DEFAULT
+    ):
+        return (
+            f"unsupported {stage_name} thinking_mode for provider "
+            f"{normalized_provider}: {normalized_thinking_mode}"
+        )
+    return None
+
+
 def build_ai_client(provider: str, model: str) -> OpenAICompatibleClient | AnthropicMessagesClient:
     normalized_model = str(model or "").strip()
     configuration_error = get_ai_client_configuration_error(provider, normalized_model)
@@ -359,6 +404,10 @@ def _provider_api_key_env_name(provider: str) -> str:
     if provider == AI_PROVIDER_ANTHROPIC:
         return "ANTHROPIC_API_KEY"
     return "OPENAI_API_KEY"
+
+
+def _normalize_thinking_mode(thinking_mode: str | None) -> str:
+    return str(thinking_mode or AI_THINKING_MODE_PROVIDER_DEFAULT).strip().lower()
 
 
 def _is_valid_anthropic_response_shape(raw: Any) -> bool:

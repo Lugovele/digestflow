@@ -5,6 +5,10 @@ from types import MappingProxyType
 
 from django.test import SimpleTestCase
 
+from apps.ai.client import (
+    AI_THINKING_MODE_DISABLED,
+    AI_THINKING_MODE_PROVIDER_DEFAULT,
+)
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_MODEL_ROLES,
     FINAL_POST_ROLE_CANDIDATE_WRITER,
@@ -17,6 +21,7 @@ from services.packaging.linkedin_post_model_role_policy import (
     SAFE_POLICY_VALUE_MAX_LENGTH,
     get_allowed_final_post_provider_models,
     get_final_post_role_provider_model_policy_failure,
+    get_final_post_role_thinking_mode,
     normalize_final_post_model_role,
     validate_final_post_role_provider_model,
 )
@@ -219,3 +224,48 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
             ],
             ("gemini-3.6-flash",),
         )
+
+    def test_candidate_writer_disables_anthropic_sonnet_5_thinking(self) -> None:
+        self.assertEqual(
+            get_final_post_role_thinking_mode(
+                role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+                provider="anthropic",
+                model="claude-sonnet-5",
+            ),
+            AI_THINKING_MODE_DISABLED,
+        )
+
+    def test_semantic_grounding_preserves_anthropic_provider_default_thinking(
+        self,
+    ) -> None:
+        self.assertEqual(
+            get_final_post_role_thinking_mode(
+                role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+                provider="anthropic",
+                model="claude-sonnet-5",
+            ),
+            AI_THINKING_MODE_PROVIDER_DEFAULT,
+        )
+
+    def test_other_valid_role_provider_model_pairs_use_provider_default_thinking(
+        self,
+    ) -> None:
+        cases = (
+            (FINAL_POST_ROLE_CANDIDATE_WRITER, "openai", "gpt-4.1-2025-04-14"),
+            (FINAL_POST_ROLE_CANDIDATE_WRITER, "gemini", "gemini-3.6-flash"),
+            (FINAL_POST_ROLE_SEMANTIC_GROUNDING, "openai", "gpt-4.1-2025-04-14"),
+            (FINAL_POST_ROLE_SEMANTIC_GROUNDING, "gemini", "gemini-3.6-flash"),
+            (FINAL_POST_ROLE_QUALITY_EVALUATOR, "openai", "gpt-4.1-2025-04-14"),
+            (FINAL_POST_ROLE_REPAIR_WRITER, "openai", "gpt-4.1-2025-04-14"),
+        )
+
+        for role, provider, model in cases:
+            with self.subTest(role=role, provider=provider):
+                self.assertEqual(
+                    get_final_post_role_thinking_mode(
+                        role=role,
+                        provider=provider,
+                        model=model,
+                    ),
+                    AI_THINKING_MODE_PROVIDER_DEFAULT,
+                )

@@ -81,6 +81,10 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
 from services.packaging.linkedin_post_flow_input_builders import (
     build_post_editorial_input,
 )
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_CANDIDATE_WRITER,
+    get_final_post_role_provider_model_policy_failure,
+)
 from services.packaging.linkedin_post_prompt_renderers import (
     render_semantic_grounding_prompt_input,
     render_quality_evaluator_prompt_input,
@@ -696,10 +700,15 @@ def _candidate_writer_request_error(
 ) -> str | None:
     if not request.provider:
         return "missing candidate writer provider"
-    if request.provider != "openai":
-        return f"unsupported candidate writer provider: {request.provider}"
     if not request.model:
         return "missing candidate writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,

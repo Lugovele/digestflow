@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from apps.ai.client import AI_THINKING_MODE_DISABLED
 from services.packaging import linkedin_post_final_post_attempt_execution
 from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_EXECUTION_FAILED,
@@ -89,6 +90,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         )
 
         self.assertEqual(fake_client.call_count, 1)
+        self.assertEqual(fake_client.thinking_mode, "provider_default")
         self.assertEqual(result.completed_stage, STAGE_DETERMINISTIC_GATE)
         self.assertIsNone(result.failure_code)
         self.assertEqual(result.candidate_writer_invocation_count, 1)
@@ -114,6 +116,27 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             "metadata-sentinel",
             json.dumps(result.candidate_writer_output.payload, sort_keys=True),
         )
+
+    def test_anthropic_candidate_writer_reaches_execution_with_disabled_thinking(
+        self,
+    ) -> None:
+        fake_client = FakeCandidateWriterClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_standalone_candidate_attempt(
+            _request(
+                candidate_writer_provider="anthropic",
+                candidate_writer_model="claude-sonnet-5",
+                candidate_writer_max_output_tokens=4000,
+            ),
+            selected_evidence_ids=("ev-1", "ev-2"),
+            candidate_writer_client=fake_client,
+        )
+
+        self.assertEqual(fake_client.call_count, 1)
+        self.assertEqual(fake_client.max_output_tokens, 4000)
+        self.assertEqual(fake_client.thinking_mode, AI_THINKING_MODE_DISABLED)
+        self.assertEqual(result.completed_stage, STAGE_DETERMINISTIC_GATE)
+        self.assertIsNone(result.failure_code)
 
     def test_request_configuration_failure_invokes_client_zero_times(self) -> None:
         fake_client = FakeCandidateWriterClient(_provider_response(_candidate_json()))
@@ -1144,12 +1167,14 @@ class FakeCandidateWriterClient:
         max_output_tokens: int,
         json_mode: bool,
         allow_json_mode_fallback: bool = True,
+        thinking_mode: str = "provider_default",
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
         self.allow_json_mode_fallback = allow_json_mode_fallback
+        self.thinking_mode = thinking_mode
         return self.response
 
 
@@ -1167,13 +1192,13 @@ def _request(
     *,
     candidate_writer_render: object | None = None,
     candidate_writer_provider: str | None = "openai",
-    candidate_writer_model: str | None = "candidate-model",
+    candidate_writer_model: str | None = "gpt-4.1-2025-04-14",
     candidate_writer_max_output_tokens: object = 1200,
     semantic_grounding_provider: str | None = "openai",
-    semantic_grounding_model: str | None = "semantic-model",
+    semantic_grounding_model: str | None = "gpt-4.1-2025-04-14",
     semantic_grounding_max_output_tokens: object = None,
     quality_evaluator_provider: str | None = "openai",
-    quality_evaluator_model: str | None = "quality-model",
+    quality_evaluator_model: str | None = "gpt-4.1-2025-04-14",
     quality_evaluator_max_output_tokens: object = None,
     quality_rubric: object | dict | None = None,
     policy: object | dict | None = None,

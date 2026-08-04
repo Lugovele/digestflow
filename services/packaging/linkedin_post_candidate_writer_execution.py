@@ -13,11 +13,16 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import build_ai_client
+from apps.ai.client import (
+    AI_THINKING_MODE_PROVIDER_DEFAULT,
+    build_ai_client,
+    get_ai_provider_thinking_mode_error,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_CANDIDATE_WRITER,
     get_final_post_role_provider_model_policy_failure,
+    get_final_post_role_thinking_mode,
 )
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
@@ -35,6 +40,7 @@ class CandidateWriterExecutionRequest:
     provider: str
     model: str
     max_output_tokens: int = DEFAULT_CANDIDATE_WRITER_MAX_OUTPUT_TOKENS
+    thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT
     execution_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +50,7 @@ class CandidateWriterExecutionRequest:
             "provider": self.provider,
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
+            "thinking_mode": self.thinking_mode,
             "execution_metadata": copy.deepcopy(self.execution_metadata),
         }
 
@@ -85,14 +92,26 @@ def build_candidate_writer_execution_request(
     provider: str | None = None,
     model: str | None = None,
     max_output_tokens: int = DEFAULT_CANDIDATE_WRITER_MAX_OUTPUT_TOKENS,
+    thinking_mode: str | None = None,
     execution_metadata: dict[str, Any] | None = None,
 ) -> CandidateWriterExecutionRequest:
+    resolved_provider = _resolve_provider(provider)
+    resolved_model = _resolve_model(model)
+    resolved_thinking_mode = (
+        str(thinking_mode or "").strip().lower()
+        if thinking_mode is not None
+        else _resolve_thinking_mode(
+            provider=resolved_provider,
+            model=resolved_model,
+        )
+    )
     return CandidateWriterExecutionRequest(
         rendered_prompt_input=rendered_prompt_input,
         prompt_text=prompt_text,
-        provider=_resolve_provider(provider),
-        model=_resolve_model(model),
+        provider=resolved_provider,
+        model=resolved_model,
         max_output_tokens=max_output_tokens,
+        thinking_mode=resolved_thinking_mode,
         execution_metadata=copy.deepcopy(execution_metadata),
     )
 
@@ -139,6 +158,7 @@ def execute_candidate_writer_prompt(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
+            thinking_mode=request.thinking_mode,
         )
     except Exception:  # pragma: no cover - covered with fake failure.
         return CandidateWriterRawResponse(
@@ -184,6 +204,21 @@ def _resolve_model(model: str | None) -> str:
     return str(resolved or "").strip()
 
 
+def _resolve_thinking_mode(*, provider: str, model: str) -> str:
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+        provider=provider,
+        model=model,
+    )
+    if policy_failure is not None:
+        return AI_THINKING_MODE_PROVIDER_DEFAULT
+    return get_final_post_role_thinking_mode(
+        role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+        provider=provider,
+        model=model,
+    )
+
+
 def _execution_request_error(request: CandidateWriterExecutionRequest) -> str | None:
     if not request.provider:
         return "missing candidate writer provider"
@@ -196,6 +231,13 @@ def _execution_request_error(request: CandidateWriterExecutionRequest) -> str | 
     )
     if policy_failure is not None:
         return str(policy_failure)
+    thinking_mode_error = get_ai_provider_thinking_mode_error(
+        provider=request.provider,
+        thinking_mode=request.thinking_mode,
+        stage_name=STAGE_NAME,
+    )
+    if thinking_mode_error is not None:
+        return thinking_mode_error
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,

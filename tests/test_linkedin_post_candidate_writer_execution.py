@@ -10,6 +10,10 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 from django.test import override_settings
 
+from apps.ai.client import (
+    AI_THINKING_MODE_DISABLED,
+    AI_THINKING_MODE_PROVIDER_DEFAULT,
+)
 from services.packaging import linkedin_post_candidate_writer_execution
 from services.packaging.linkedin_post_candidate_writer_execution import (
     CandidateWriterExecutionRequest,
@@ -38,6 +42,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertIsInstance(request, CandidateWriterExecutionRequest)
         self.assertEqual(request.provider, "openai")
         self.assertEqual(request.model, "gpt-4.1-2025-04-14")
+        self.assertEqual(request.thinking_mode, AI_THINKING_MODE_PROVIDER_DEFAULT)
         self.assertEqual(request.execution_metadata, {"attempt": 1})
 
     def test_execution_request_to_dict_defensively_copies_metadata(self) -> None:
@@ -47,6 +52,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         serialized["execution_metadata"]["attempt"]["index"] = 2
 
         self.assertEqual(request.execution_metadata, {"attempt": {"index": 1}})
+        self.assertEqual(serialized["thinking_mode"], AI_THINKING_MODE_PROVIDER_DEFAULT)
 
     def test_raw_response_to_dict_preserves_raw_text_and_metadata(self) -> None:
         response = CandidateWriterRawResponse(
@@ -92,6 +98,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
+            thinking_mode=AI_THINKING_MODE_PROVIDER_DEFAULT,
         )
         self.assertEqual(raw_response.raw_text, provider_response.text)
         self.assertEqual(raw_response.provider, "openai")
@@ -276,6 +283,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
+            thinking_mode=AI_THINKING_MODE_PROVIDER_DEFAULT,
         )
         self.assertEqual(raw_response.provider, "gemini")
         self.assertEqual(raw_response.model, "gemini-3.6-flash")
@@ -286,7 +294,12 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self,
         mock_build_ai_client,
     ) -> None:
-        request = _request(provider="anthropic", model="claude-sonnet-5")
+        request = build_candidate_writer_execution_request(
+            _render(),
+            prompt_text="Candidate writer prompt.",
+            provider="anthropic",
+            model="claude-sonnet-5",
+        )
         mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text='{"post_text": "Claude candidate"}',
             raw={"id": "claude-response"},
@@ -303,10 +316,54 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
+            thinking_mode=AI_THINKING_MODE_DISABLED,
         )
         self.assertEqual(raw_response.provider, "anthropic")
         self.assertEqual(raw_response.model, "claude-sonnet-5")
         self.assertIsNone(raw_response.execution_error)
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_anthropic_candidate_writer_resolves_disabled_thinking_mode(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_candidate_writer_execution_request(
+            _render(),
+            prompt_text="Candidate writer prompt.",
+            provider="anthropic",
+            model="claude-sonnet-5",
+            max_output_tokens=4000,
+        )
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text": "Claude candidate"}',
+            raw={"id": "claude-response"},
+            usage={"total_tokens": 11},
+        )
+
+        execute_candidate_writer_prompt(request)
+
+        self.assertEqual(request.thinking_mode, AI_THINKING_MODE_DISABLED)
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=4000,
+            json_mode=False,
+            thinking_mode=AI_THINKING_MODE_DISABLED,
+        )
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_non_anthropic_candidate_writer_rejects_non_default_thinking_mode(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        raw_response = execute_candidate_writer_prompt(
+            _request(provider="openai", thinking_mode=AI_THINKING_MODE_DISABLED)
+        )
+
+        self.assertEqual(
+            raw_response.execution_error,
+            "unsupported candidate writer thinking_mode for provider openai: disabled",
+        )
+        mock_build_ai_client.assert_not_called()
 
     @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_missing_provider_returns_distinct_execution_error_without_provider_call(
@@ -487,6 +544,7 @@ def _request(
     provider: str = "openai",
     model: str = "gpt-4.1-2025-04-14",
     max_output_tokens: object = 1200,
+    thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
     execution_metadata: dict | None = None,
 ) -> CandidateWriterExecutionRequest:
     return CandidateWriterExecutionRequest(
@@ -495,6 +553,7 @@ def _request(
         provider=provider,
         model=model,
         max_output_tokens=max_output_tokens,
+        thinking_mode=thinking_mode,
         execution_metadata=execution_metadata,
     )
 

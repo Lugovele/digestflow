@@ -9,6 +9,8 @@ from django.test import override_settings
 from apps.ai.client import (
     AI_PROVIDER_ANTHROPIC,
     AI_PROVIDER_GEMINI,
+    AI_THINKING_MODE_DISABLED,
+    AI_THINKING_MODE_PROVIDER_DEFAULT,
     ANTHROPIC_API_VERSION,
     ANTHROPIC_MESSAGES_ENDPOINT,
     GEMINI_OPENAI_COMPATIBLE_BASE_URL,
@@ -17,6 +19,7 @@ from apps.ai.client import (
     get_ai_client_configuration_error,
     get_ai_provider_config,
     get_ai_provider_model_error,
+    get_ai_provider_thinking_mode_error,
     _extract_usage,
     estimate_cost_usd,
 )
@@ -285,11 +288,81 @@ class AIProviderConfigTests(SimpleTestCase):
         self.assertEqual(body["model"], "claude-sonnet-5")
         self.assertEqual(body["max_tokens"], 400)
         self.assertEqual(body["messages"], [{"role": "user", "content": "Prompt"}])
+        self.assertNotIn("thinking", body)
         self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 17)
         self.assertEqual(result.text, "Claude text")
         self.assertEqual(
             result.usage,
             {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_generation_can_disable_thinking_without_changing_max_tokens(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {"content": [{"type": "text", "text": "Claude text"}], "usage": {}}
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        client.generate_text(
+            "Prompt",
+            max_output_tokens=4000,
+            thinking_mode=AI_THINKING_MODE_DISABLED,
+        )
+
+        body = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(body["max_tokens"], 4000)
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        mock_urlopen.assert_called_once()
+
+    @override_settings(OPENAI_API_KEY="openai-test-key", OPENAI_TIMEOUT_SECONDS=30)
+    @patch("apps.ai.client.OpenAI")
+    def test_openai_rejects_non_default_thinking_mode_before_invocation(
+        self,
+        mock_openai,
+    ):
+        client = build_ai_client("openai", "gpt-4.1-2025-04-14")
+
+        with self.assertRaisesRegex(ValueError, "unsupported AI thinking_mode"):
+            client.generate_text("Prompt", thinking_mode=AI_THINKING_MODE_DISABLED)
+
+        mock_openai.return_value.responses.create.assert_not_called()
+        mock_openai.return_value.chat.completions.create.assert_not_called()
+
+    @override_settings(GEMINI_API_KEY="gemini-test-key", OPENAI_TIMEOUT_SECONDS=30)
+    @patch("apps.ai.client.OpenAI")
+    def test_gemini_rejects_non_default_thinking_mode_before_invocation(
+        self,
+        mock_openai,
+    ):
+        client = build_ai_client("gemini", "gemini-3.6-flash")
+
+        with self.assertRaisesRegex(ValueError, "unsupported AI thinking_mode"):
+            client.generate_text("Prompt", thinking_mode=AI_THINKING_MODE_DISABLED)
+
+        mock_openai.return_value.responses.create.assert_not_called()
+        mock_openai.return_value.chat.completions.create.assert_not_called()
+
+    def test_provider_default_thinking_mode_is_always_supported(self):
+        for provider in ("openai", "gemini", "anthropic"):
+            with self.subTest(provider=provider):
+                self.assertIsNone(
+                    get_ai_provider_thinking_mode_error(
+                        provider=provider,
+                        thinking_mode=AI_THINKING_MODE_PROVIDER_DEFAULT,
+                    )
+                )
+
+    def test_unknown_thinking_mode_is_rejected(self):
+        self.assertEqual(
+            get_ai_provider_thinking_mode_error(
+                provider="anthropic",
+                thinking_mode="turbo-think",
+            ),
+            "unsupported AI thinking_mode: turbo-think",
         )
 
     @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")

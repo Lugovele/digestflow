@@ -13,6 +13,8 @@ from apps.ai.client import (
     AI_PROVIDER_ANTHROPIC,
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_OPENAI,
+    AI_THINKING_MODE_DISABLED,
+    AI_THINKING_MODE_PROVIDER_DEFAULT,
     ANTHROPIC_SUPPORTED_MODELS,
     GEMINI_SUPPORTED_MODELS,
 )
@@ -64,6 +66,20 @@ FINAL_POST_ROLE_PROVIDER_MODEL_POLICY: Mapping[str, Mapping[str, tuple[str, ...]
             FINAL_POST_ROLE_REPAIR_WRITER: MappingProxyType(
                 {
                     AI_PROVIDER_OPENAI: (OPENAI_FINAL_POST_MODEL,),
+                }
+            ),
+        }
+    )
+)
+
+FINAL_POST_ROLE_THINKING_MODE_POLICY: Mapping[str, Mapping[str, Mapping[str, str]]] = (
+    MappingProxyType(
+        {
+            FINAL_POST_ROLE_CANDIDATE_WRITER: MappingProxyType(
+                {
+                    AI_PROVIDER_ANTHROPIC: MappingProxyType(
+                        {"claude-sonnet-5": AI_THINKING_MODE_DISABLED}
+                    ),
                 }
             ),
         }
@@ -149,6 +165,27 @@ def validate_final_post_role_provider_model(
     )
     if failure is not None:
         raise ValueError(str(failure))
+
+
+def get_final_post_role_thinking_mode(
+    *,
+    role: str,
+    provider: str,
+    model: str,
+) -> str:
+    validate_final_post_role_provider_model(
+        role=role,
+        provider=provider,
+        model=model,
+    )
+    normalized_role = normalize_final_post_model_role(role)
+    normalized_provider = _safe_policy_value(provider).lower()
+    normalized_model = _safe_policy_value(model)
+    return (
+        FINAL_POST_ROLE_THINKING_MODE_POLICY.get(normalized_role, {})
+        .get(normalized_provider, {})
+        .get(normalized_model, AI_THINKING_MODE_PROVIDER_DEFAULT)
+    )
 
 
 def _safe_policy_value(value: str) -> str:
