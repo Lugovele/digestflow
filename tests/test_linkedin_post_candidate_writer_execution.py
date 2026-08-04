@@ -27,7 +27,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
     def test_execution_request_construction_uses_postflow_post_settings(self) -> None:
         with override_settings(
             POSTFLOW_POST_PROVIDER="openai",
-            POSTFLOW_POST_MODEL="candidate-model",
+            POSTFLOW_POST_MODEL="gpt-4.1-2025-04-14",
         ):
             request = build_candidate_writer_execution_request(
                 _render(),
@@ -37,7 +37,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
 
         self.assertIsInstance(request, CandidateWriterExecutionRequest)
         self.assertEqual(request.provider, "openai")
-        self.assertEqual(request.model, "candidate-model")
+        self.assertEqual(request.model, "gpt-4.1-2025-04-14")
         self.assertEqual(request.execution_metadata, {"attempt": 1})
 
     def test_execution_request_to_dict_defensively_copies_metadata(self) -> None:
@@ -52,7 +52,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         response = CandidateWriterRawResponse(
             raw_text='{"post_text": "Draft"}',
             provider="openai",
-            model="candidate-model",
+            model="gpt-4.1-2025-04-14",
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 12},
             raw_provider_response={"id": "resp_1"},
@@ -69,10 +69,10 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertEqual(response.raw_provider_response, {"id": "resp_1"})
         self.assertEqual(response.execution_metadata, {"attempt": {"index": 1}})
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_successful_execution_calls_provider_once_and_returns_raw_response(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         request = _request()
         provider_response = SimpleNamespace(
@@ -80,27 +80,30 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             raw={"id": "resp_123", "status": "completed"},
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         )
-        mock_openai_client.return_value.generate_text.return_value = provider_response
+        mock_build_ai_client.return_value.generate_text.return_value = provider_response
 
         raw_response = execute_candidate_writer_prompt(request)
 
-        mock_openai_client.assert_called_once_with(model="candidate-model")
-        mock_openai_client.return_value.generate_text.assert_called_once_with(
+        mock_build_ai_client.assert_called_once_with(
+            provider="openai",
+            model="gpt-4.1-2025-04-14",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
         )
         self.assertEqual(raw_response.raw_text, provider_response.text)
         self.assertEqual(raw_response.provider, "openai")
-        self.assertEqual(raw_response.model, "candidate-model")
+        self.assertEqual(raw_response.model, "gpt-4.1-2025-04-14")
         self.assertEqual(raw_response.usage, provider_response.usage)
         self.assertEqual(raw_response.raw_provider_response, provider_response.raw)
         self.assertIsNone(raw_response.execution_error)
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_execution_forwards_prompt_text_and_input_text_unchanged(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         unicode_word = (
             "\u0447\u0435\u043b\u043e\u0432\u0435\u0447"
@@ -111,7 +114,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         )
         prompt_text = "Resolved candidate prompt text.\nDo not change this."
         request = _request(render=render, prompt_text=prompt_text)
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text="Raw output",
             raw={},
             usage={},
@@ -119,7 +122,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
 
         execute_candidate_writer_prompt(request)
 
-        called_prompt = mock_openai_client.return_value.generate_text.call_args.kwargs[
+        called_prompt = mock_build_ai_client.return_value.generate_text.call_args.kwargs[
             "prompt"
         ]
         self.assertEqual(called_prompt, f"{prompt_text}\n\n{render.input_text}")
@@ -156,16 +159,16 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.execution_error, "provider invocation failed")
         self.assertNotIn("text", create_calls[0])
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_execution_does_not_mutate_render_request_or_metadata(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         render = _render()
         request = _request(render=render, execution_metadata={"attempt": {"index": 1}})
         render_before = copy.deepcopy(render)
         request_before = copy.deepcopy(request)
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text="Raw output",
             raw={},
             usage={},
@@ -176,16 +179,16 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertEqual(render, render_before)
         self.assertEqual(request, request_before)
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_empty_response_returns_execution_error_without_parsing(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         empty_values = (None, "", "   ", "\r\n")
 
         for empty_value in empty_values:
             with self.subTest(raw_text=empty_value):
-                mock_openai_client.return_value.generate_text.return_value = (
+                mock_build_ai_client.return_value.generate_text.return_value = (
                     SimpleNamespace(
                         text=empty_value,
                         raw={"id": "empty"},
@@ -202,14 +205,14 @@ class CandidateWriterExecutionTests(SimpleTestCase):
                 )
                 self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_provider_failure_returns_sanitized_execution_error(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         request = _request()
         request_before = copy.deepcopy(request)
-        mock_openai_client.return_value.generate_text.side_effect = RuntimeError(
+        mock_build_ai_client.return_value.generate_text.side_effect = RuntimeError(
             "secret provider details"
         )
 
@@ -220,40 +223,110 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertNotIn("secret provider details", raw_response.to_dict().values())
         self.assertEqual(request, request_before)
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_provider_value_error_returns_sanitized_execution_error(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        mock_build_ai_client.return_value.generate_text.side_effect = ValueError(
+            "secret provider details"
+        )
+
+        raw_response = execute_candidate_writer_prompt(_request())
+
+        self.assertEqual(raw_response.raw_text, "")
+        self.assertEqual(raw_response.execution_error, "provider invocation failed")
+        self.assertNotIn("secret provider details", json.dumps(raw_response.to_dict()))
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_unsupported_provider_returns_execution_error_without_provider_call(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_response = execute_candidate_writer_prompt(
-            _request(provider="gemini", model="candidate-model")
+            _request(provider="unknown", model="gpt-4.1-2025-04-14")
         )
 
         self.assertEqual(
             raw_response.execution_error,
-            "unsupported candidate writer provider: gemini",
+            "unsupported PostFlow final post role/provider/model: role=candidate_writer provider=unknown model=gpt-4.1-2025-04-14",
         )
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_gemini_candidate_writer_delegates_to_generic_client_once(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = _request(provider="gemini", model="gemini-3.6-flash")
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text": "Gemini candidate"}',
+            raw={"id": "gemini-response"},
+            usage={"total_tokens": 11},
+        )
+
+        raw_response = execute_candidate_writer_prompt(request)
+
+        mock_build_ai_client.assert_called_once_with(
+            provider="gemini",
+            model="gemini-3.6-flash",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=False,
+        )
+        self.assertEqual(raw_response.provider, "gemini")
+        self.assertEqual(raw_response.model, "gemini-3.6-flash")
+        self.assertIsNone(raw_response.execution_error)
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_anthropic_candidate_writer_delegates_to_generic_client_once(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = _request(provider="anthropic", model="claude-sonnet-5")
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text": "Claude candidate"}',
+            raw={"id": "claude-response"},
+            usage={"total_tokens": 11},
+        )
+
+        raw_response = execute_candidate_writer_prompt(request)
+
+        mock_build_ai_client.assert_called_once_with(
+            provider="anthropic",
+            model="claude-sonnet-5",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=False,
+        )
+        self.assertEqual(raw_response.provider, "anthropic")
+        self.assertEqual(raw_response.model, "claude-sonnet-5")
+        self.assertIsNone(raw_response.execution_error)
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_missing_provider_returns_distinct_execution_error_without_provider_call(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_response = execute_candidate_writer_prompt(
-            _request(provider="", model="candidate-model")
+            _request(provider="", model="gpt-4.1-2025-04-14")
         )
 
         self.assertEqual(
             raw_response.execution_error,
             "missing candidate writer provider",
         )
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_invalid_max_output_tokens_returns_execution_error_without_provider_call(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         invalid_values = (True, False, "1200", None, 0, -1)
 
@@ -270,12 +343,12 @@ class CandidateWriterExecutionTests(SimpleTestCase):
                 )
                 self.assertEqual(raw_response.raw_text, "")
 
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_missing_prompt_content_returns_execution_error_without_provider_call(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_response = execute_candidate_writer_prompt(_request(prompt_text=" "))
 
@@ -283,12 +356,12 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             raw_response.execution_error,
             "missing candidate writer prompt text",
         )
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_blank_rendered_input_text_returns_execution_error_without_provider_call(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_response = execute_candidate_writer_prompt(
             _request(render=_render(input_text=" \n\t "))
@@ -299,25 +372,25 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             "missing candidate writer rendered input text",
         )
         self.assertEqual(raw_response.raw_text, "")
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_missing_model_returns_execution_error_without_provider_call(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_response = execute_candidate_writer_prompt(_request(model=""))
 
         self.assertEqual(raw_response.execution_error, "missing candidate writer model")
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_raw_markdown_fenced_json_is_preserved_unparsed(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_text = '```json\n{"post_text": "Candidate"}\n```'
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text=raw_text,
             raw={},
             usage={},
@@ -328,10 +401,10 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.raw_text, raw_text)
         self.assertNotIn("payload", raw_response.to_dict())
 
-    @patch("services.packaging.linkedin_post_candidate_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_unicode_raw_response_is_preserved(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         raw_text = (
             '{"post_text": "'
@@ -339,7 +412,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             "\u0442\u0435\u043a\u0441\u0442\u0430"
             '"}'
         )
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text=raw_text,
             raw={},
             usage={},
@@ -353,7 +426,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         response = CandidateWriterRawResponse(
             raw_text="Raw",
             provider="openai",
-            model="candidate-model",
+            model="gpt-4.1-2025-04-14",
         )
 
         serialized = response.to_dict()
@@ -364,7 +437,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         response = CandidateWriterRawResponse(
             raw_text='{"post_text": "Candidate"}',
             provider="openai",
-            model="candidate-model",
+            model="gpt-4.1-2025-04-14",
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 10},
             raw_provider_response={"id": "resp"},
@@ -373,7 +446,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
 
         serialized = json.dumps(response.to_dict(), sort_keys=True)
 
-        self.assertIn("candidate-model", serialized)
+        self.assertIn("gpt-4.1-2025-04-14", serialized)
 
     def test_execution_module_has_no_parser_gate_decision_repair_or_runtime_dependencies(
         self,
@@ -412,7 +485,7 @@ def _request(
     render: CandidateWriterPromptRender | None = None,
     prompt_text: str = "Candidate writer prompt.",
     provider: str = "openai",
-    model: str = "candidate-model",
+    model: str = "gpt-4.1-2025-04-14",
     max_output_tokens: object = 1200,
     execution_metadata: dict | None = None,
 ) -> CandidateWriterExecutionRequest:

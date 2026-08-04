@@ -25,7 +25,7 @@ class RepairWriterExecutionTests(SimpleTestCase):
     def test_execution_request_construction_uses_postflow_post_settings(self) -> None:
         with override_settings(
             POSTFLOW_POST_PROVIDER="openai",
-            POSTFLOW_POST_MODEL="repair-model",
+            POSTFLOW_POST_MODEL="gpt-4.1-2025-04-14",
         ):
             request = build_repair_writer_execution_request(
                 _render(),
@@ -35,14 +35,14 @@ class RepairWriterExecutionTests(SimpleTestCase):
 
         self.assertIsInstance(request, RepairWriterExecutionRequest)
         self.assertEqual(request.provider, "openai")
-        self.assertEqual(request.model, "repair-model")
+        self.assertEqual(request.model, "gpt-4.1-2025-04-14")
         self.assertEqual(request.execution_metadata, {"attempt": 1})
 
     def test_raw_response_to_dict_preserves_raw_text_and_metadata(self) -> None:
         response = RepairWriterRawResponse(
             raw_text='{"post_text": "Repaired"}',
             provider="openai",
-            model="repair-model",
+            model="gpt-4.1-2025-04-14",
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 12},
             raw_provider_response={"id": "resp_1"},
@@ -59,10 +59,10 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertEqual(response.raw_provider_response, {"id": "resp_1"})
         self.assertEqual(response.execution_metadata, {"attempt": {"index": 1}})
 
-    @patch("services.packaging.linkedin_post_repair_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_successful_execution_calls_provider_once_and_returns_raw_response(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         request = _request()
         provider_response = SimpleNamespace(
@@ -70,31 +70,34 @@ class RepairWriterExecutionTests(SimpleTestCase):
             raw={"id": "resp_123"},
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         )
-        mock_openai_client.return_value.generate_text.return_value = provider_response
+        mock_build_ai_client.return_value.generate_text.return_value = provider_response
 
         raw_response = execute_repair_writer_prompt(request)
 
-        mock_openai_client.assert_called_once_with(model="repair-model")
-        mock_openai_client.return_value.generate_text.assert_called_once_with(
+        mock_build_ai_client.assert_called_once_with(
+            provider="openai",
+            model="gpt-4.1-2025-04-14",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
         )
         self.assertEqual(raw_response.raw_text, provider_response.text)
         self.assertEqual(raw_response.provider, "openai")
-        self.assertEqual(raw_response.model, "repair-model")
+        self.assertEqual(raw_response.model, "gpt-4.1-2025-04-14")
         self.assertIsNone(raw_response.execution_error)
 
-    @patch("services.packaging.linkedin_post_repair_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_execution_does_not_mutate_render_request_or_metadata(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
         render = _render()
         request = _request(render=render, execution_metadata={"attempt": {"index": 1}})
         render_before = copy.deepcopy(render)
         request_before = copy.deepcopy(request)
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text="Raw output",
             raw={},
             usage={},
@@ -105,12 +108,12 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertEqual(render, render_before)
         self.assertEqual(request, request_before)
 
-    @patch("services.packaging.linkedin_post_repair_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_empty_response_returns_execution_error_without_parsing(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
-        mock_openai_client.return_value.generate_text.return_value = SimpleNamespace(
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
             text=" ",
             raw={"id": "empty"},
             usage={"total_tokens": 3},
@@ -121,12 +124,12 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.execution_error, "empty provider response")
         self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
 
-    @patch("services.packaging.linkedin_post_repair_writer_execution.OpenAIClient")
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_provider_failure_returns_sanitized_execution_error(
         self,
-        mock_openai_client,
+        mock_build_ai_client,
     ) -> None:
-        mock_openai_client.return_value.generate_text.side_effect = RuntimeError(
+        mock_build_ai_client.return_value.generate_text.side_effect = RuntimeError(
             "secret provider details"
         )
 
@@ -136,13 +139,28 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.execution_error, "provider invocation failed")
         self.assertNotIn("secret provider details", json.dumps(raw_response.to_dict()))
 
-    @patch("services.packaging.linkedin_post_repair_writer_execution.OpenAIClient")
-    def test_request_errors_do_not_call_provider(self, mock_openai_client) -> None:
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_provider_value_error_returns_sanitized_execution_error(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        mock_build_ai_client.return_value.generate_text.side_effect = ValueError(
+            "secret provider details"
+        )
+
+        raw_response = execute_repair_writer_prompt(_request())
+
+        self.assertEqual(raw_response.raw_text, "")
+        self.assertEqual(raw_response.execution_error, "provider invocation failed")
+        self.assertNotIn("secret provider details", json.dumps(raw_response.to_dict()))
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_request_errors_do_not_call_provider(self, mock_build_ai_client) -> None:
         invalid_requests = (
             (_request(provider=""), "missing repair writer provider"),
             (
                 _request(provider="gemini"),
-                "unsupported repair writer provider: gemini",
+                "unsupported PostFlow final post role/provider/model: role=repair_writer provider=gemini model=gpt-4.1-2025-04-14",
             ),
             (_request(model=""), "missing repair writer model"),
             (
@@ -162,13 +180,44 @@ class RepairWriterExecutionTests(SimpleTestCase):
 
                 self.assertEqual(raw_response.execution_error, expected_error)
 
-        mock_openai_client.assert_not_called()
+        mock_build_ai_client.assert_not_called()
+
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_gemini_repair_writer_config_returns_error_without_provider_call(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        raw_response = execute_repair_writer_prompt(
+            _request(provider="gemini", model="gemini-3.6-flash")
+        )
+
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            raw_response.execution_error,
+        )
+        mock_build_ai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_anthropic_repair_writer_config_returns_error_without_provider_call(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        raw_response = execute_repair_writer_prompt(
+            _request(provider="anthropic", model="claude-sonnet-5")
+        )
+
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            raw_response.execution_error,
+        )
+        mock_build_ai_client.assert_not_called()
 
     def test_response_to_dict_is_json_serializable(self) -> None:
         response = RepairWriterRawResponse(
             raw_text='{"post_text": "Repaired"}',
             provider="openai",
-            model="repair-model",
+            model="gpt-4.1-2025-04-14",
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 10},
             raw_provider_response={"id": "resp"},
@@ -177,7 +226,7 @@ class RepairWriterExecutionTests(SimpleTestCase):
 
         serialized = json.dumps(response.to_dict(), sort_keys=True)
 
-        self.assertIn("repair-model", serialized)
+        self.assertIn("gpt-4.1-2025-04-14", serialized)
 
     def test_execution_module_has_no_parser_gate_decision_or_runtime_dependencies(
         self,
@@ -214,7 +263,7 @@ def _request(
     render: RepairWriterPromptRender | None = None,
     prompt_text: str = "Repair writer prompt.",
     provider: str = "openai",
-    model: str = "repair-model",
+    model: str = "gpt-4.1-2025-04-14",
     max_output_tokens: object = 1200,
     execution_metadata: dict | None = None,
 ) -> RepairWriterExecutionRequest:

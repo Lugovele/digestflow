@@ -13,13 +13,17 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import OpenAIClient
+from apps.ai.client import build_ai_client
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_REPAIR_WRITER,
+    get_final_post_role_provider_model_policy_failure,
+)
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 
 
 DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 1200
-SUPPORTED_PROVIDER = "openai"
+STAGE_NAME = "repair writer"
 
 
 @dataclass(frozen=True)
@@ -110,8 +114,25 @@ def execute_repair_writer_prompt(
         )
 
     prompt = _build_provider_prompt(request)
+    if client is not None:
+        text_client = client
+    else:
+        try:
+            text_client = build_ai_client(
+                provider=request.provider,
+                model=request.model,
+            )
+        except ValueError as exc:
+            return RepairWriterRawResponse(
+                raw_text="",
+                provider=request.provider,
+                model=request.model,
+                prompt_metadata=prompt_metadata,
+                execution_error=str(exc),
+                execution_metadata=execution_metadata,
+            )
+
     try:
-        text_client = client if client is not None else OpenAIClient(model=request.model)
         response = text_client.generate_text(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
@@ -164,10 +185,15 @@ def _resolve_model(model: str | None) -> str:
 def _execution_request_error(request: RepairWriterExecutionRequest) -> str | None:
     if not request.provider:
         return "missing repair writer provider"
-    if request.provider != SUPPORTED_PROVIDER:
-        return f"unsupported repair writer provider: {request.provider}"
     if not request.model:
         return "missing repair writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_REPAIR_WRITER,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,
