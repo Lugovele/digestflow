@@ -295,6 +295,18 @@ class AIProviderConfigTests(SimpleTestCase):
             result.usage,
             {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
         )
+        self.assertEqual(
+            result.provider_response_metadata,
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "stop_reason": None,
+                "content_block_types": ["text"],
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "thinking_tokens": None,
+            },
+        )
 
     @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
     @patch("apps.ai.client.urlopen")
@@ -581,17 +593,195 @@ class AIProviderConfigTests(SimpleTestCase):
 
     @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
     @patch("apps.ai.client.urlopen")
-    def test_anthropic_missing_text_error_is_sanitized(self, mock_urlopen):
+    def test_anthropic_malformed_content_block_shape_is_sanitized(self, mock_urlopen):
         mock_urlopen.return_value = _AnthropicResponse(
-            {"content": [{"type": "tool_use", "name": "lookup"}], "usage": {}}
+            {"content": [{"text": "missing type"}]}
         )
         client = build_ai_client("anthropic", "claude-sonnet-5")
 
         with self.assertRaisesRegex(
             RuntimeError,
-            "anthropic provider response did not contain text",
+            "anthropic provider response shape was invalid",
         ):
             client.generate_text("Prompt")
+
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_malformed_text_block_shape_is_sanitized(self, mock_urlopen):
+        invalid_text_values = (None, 123, True, {"text": "secret"})
+
+        for invalid_text in invalid_text_values:
+            with self.subTest(invalid_text=invalid_text):
+                mock_urlopen.reset_mock()
+                mock_urlopen.return_value = _AnthropicResponse(
+                    {"content": [{"type": "text", "text": invalid_text}]}
+                )
+                client = build_ai_client("anthropic", "claude-sonnet-5")
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "anthropic provider response shape was invalid",
+                ):
+                    client.generate_text("Prompt")
+
+                mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_malformed_usage_shape_is_sanitized(self, mock_urlopen):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "content": [{"type": "text", "text": "Claude text"}],
+                "usage": {"input_tokens": 2, "output_tokens": "secret"},
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "anthropic provider response shape was invalid",
+        ):
+            client.generate_text("Prompt")
+
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_metadata_bounds_content_block_type_values(self, mock_urlopen):
+        long_block_type = "custom-" + ("secret-" * 40)
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "model": "claude-sonnet-5",
+                "stop_reason": "end_turn",
+                "content": [{"type": long_block_type}],
+                "usage": {"input_tokens": 1, "output_tokens": 0},
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt")
+
+        block_type = result.provider_response_metadata["content_block_types"][0]
+        self.assertEqual(block_type, long_block_type[:120])
+        self.assertLessEqual(len(block_type), 120)
+        self.assertNotIn("secret-" * 25, json.dumps(result.provider_response_metadata))
+
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_non_text_valid_response_returns_empty_text_with_safe_metadata(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "model": "claude-sonnet-5",
+                "stop_reason": "end_turn",
+                "content": [{"type": "tool_use", "name": "lookup"}],
+                "usage": {"input_tokens": 7, "output_tokens": 0},
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt")
+
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.raw, {})
+        self.assertEqual(
+            result.usage,
+            {"prompt_tokens": 7, "completion_tokens": 0, "total_tokens": 7},
+        )
+        self.assertEqual(
+            result.provider_response_metadata,
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "stop_reason": "end_turn",
+                "content_block_types": ["tool_use"],
+                "input_tokens": 7,
+                "output_tokens": 0,
+                "thinking_tokens": None,
+            },
+        )
+        serialized = json.dumps(result.provider_response_metadata, sort_keys=True)
+        self.assertNotIn("lookup", serialized)
+        self.assertNotIn("Prompt", serialized)
+        self.assertNotIn("x-api-key", serialized)
+
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_thinking_only_valid_response_returns_empty_text_with_safe_metadata(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "model": "claude-sonnet-5",
+                "stop_reason": "max_tokens",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "secret provider thinking text",
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 11,
+                    "output_tokens": 13,
+                    "thinking_tokens": 13,
+                },
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt")
+
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.raw, {})
+        self.assertEqual(
+            result.provider_response_metadata,
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "stop_reason": "max_tokens",
+                "content_block_types": ["thinking"],
+                "input_tokens": 11,
+                "output_tokens": 13,
+                "thinking_tokens": 13,
+            },
+        )
+        serialized = json.dumps(result.provider_response_metadata, sort_keys=True)
+        self.assertNotIn("secret provider thinking text", serialized)
+        self.assertNotIn("Prompt", serialized)
+
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_empty_content_valid_response_returns_empty_text_with_metadata(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "model": "claude-sonnet-5",
+                "stop_reason": "end_turn",
+                "content": [],
+                "usage": {"input_tokens": 3, "output_tokens": 0},
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt")
+
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.raw, {})
+        self.assertEqual(result.provider_response_metadata["content_block_types"], [])
+        self.assertEqual(result.provider_response_metadata["stop_reason"], "end_turn")
 
         mock_urlopen.assert_called_once()
 

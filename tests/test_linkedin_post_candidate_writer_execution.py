@@ -62,17 +62,20 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 12},
             raw_provider_response={"id": "resp_1"},
+            provider_response_metadata={"stop_reason": "end_turn"},
             execution_metadata={"attempt": {"index": 1}},
         )
 
         serialized = response.to_dict()
         serialized["usage"]["total_tokens"] = 99
         serialized["raw_provider_response"]["id"] = "changed"
+        serialized["provider_response_metadata"]["stop_reason"] = "changed"
         serialized["execution_metadata"]["attempt"]["index"] = 2
 
         self.assertEqual(serialized["raw_text"], '{"post_text": "Draft"}')
         self.assertEqual(response.usage, {"total_tokens": 12})
         self.assertEqual(response.raw_provider_response, {"id": "resp_1"})
+        self.assertEqual(response.provider_response_metadata, {"stop_reason": "end_turn"})
         self.assertEqual(response.execution_metadata, {"attempt": {"index": 1}})
 
     @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
@@ -211,6 +214,44 @@ class CandidateWriterExecutionTests(SimpleTestCase):
                     "empty provider response",
                 )
                 self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_empty_ai_response_maps_to_empty_provider_response_with_safe_metadata(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_candidate_writer_execution_request(
+            _render(),
+            prompt_text="Candidate writer prompt.",
+            provider="anthropic",
+            model="claude-sonnet-5",
+        )
+        provider_metadata = {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5",
+            "stop_reason": "max_tokens",
+            "content_block_types": ["thinking"],
+            "input_tokens": 11,
+            "output_tokens": 13,
+            "thinking_tokens": 13,
+        }
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text="",
+            raw={},
+            usage={"prompt_tokens": 11, "completion_tokens": 13, "total_tokens": 24},
+            provider_response_metadata=provider_metadata,
+        )
+
+        raw_response = execute_candidate_writer_prompt(request)
+
+        self.assertEqual(raw_response.raw_text, "")
+        self.assertEqual(raw_response.execution_error, "empty provider response")
+        self.assertEqual(raw_response.raw_provider_response, {})
+        self.assertEqual(raw_response.provider_response_metadata, provider_metadata)
+        self.assertNotEqual(raw_response.execution_error, "provider invocation failed")
+        serialized = json.dumps(raw_response.to_dict(), sort_keys=True)
+        self.assertNotIn("secret provider thinking text", serialized)
+        mock_build_ai_client.return_value.generate_text.assert_called_once()
 
     @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_provider_failure_returns_sanitized_execution_error(

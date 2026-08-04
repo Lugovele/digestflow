@@ -46,6 +46,7 @@ class AIResponse:
     text: str
     raw: dict[str, Any]
     usage: dict[str, int | None]
+    provider_response_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -238,9 +239,17 @@ class AnthropicMessagesClient:
         if not _is_valid_anthropic_response_shape(raw):
             raise RuntimeError("anthropic provider response shape was invalid") from None
         text = _extract_anthropic_text(raw)
-        if not text:
-            raise RuntimeError("anthropic provider response did not contain text") from None
-        return AIResponse(text=text, raw=raw, usage=_extract_anthropic_usage(raw))
+        usage = _extract_anthropic_usage(raw)
+        metadata = _build_anthropic_provider_response_metadata(
+            raw,
+            model=self.model,
+        )
+        return AIResponse(
+            text=text,
+            raw=raw if text else {},
+            usage=usage,
+            provider_response_metadata=metadata,
+        )
 
 
 def normalize_ai_provider(provider: str | None) -> str:
@@ -411,7 +420,29 @@ def _normalize_thinking_mode(thinking_mode: str | None) -> str:
 
 
 def _is_valid_anthropic_response_shape(raw: Any) -> bool:
-    return isinstance(raw, dict) and isinstance(raw.get("content"), list)
+    if not isinstance(raw, dict):
+        return False
+    content = raw.get("content")
+    if not isinstance(content, list):
+        return False
+    for block in content:
+        if not isinstance(block, dict):
+            return False
+        block_type = block.get("type")
+        if not isinstance(block_type, str) or not block_type.strip():
+            return False
+        if block_type == "text" and not isinstance(block.get("text"), str):
+            return False
+    usage = raw.get("usage", {})
+    if not isinstance(usage, dict):
+        return False
+    for usage_key in ("input_tokens", "output_tokens", "thinking_tokens"):
+        value = usage.get(usage_key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            return False
+    return True
 
 
 def _extract_anthropic_text(raw: dict[str, Any]) -> str:
@@ -439,6 +470,43 @@ def _extract_anthropic_usage(raw: dict[str, Any]) -> dict[str, int | None]:
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
     }
+
+
+def _build_anthropic_provider_response_metadata(
+    raw: dict[str, Any],
+    *,
+    model: str,
+) -> dict[str, Any]:
+    usage = raw.get("usage", {})
+    block_types: list[str] = []
+    for block in raw.get("content", []):
+        block_type = _safe_metadata_text(block.get("type"))
+        if block_type and block_type not in block_types:
+            block_types.append(block_type)
+    return {
+        "provider": AI_PROVIDER_ANTHROPIC,
+        "model": _safe_metadata_text(raw.get("model")) or model,
+        "stop_reason": _safe_metadata_text(raw.get("stop_reason")),
+        "content_block_types": block_types[:20],
+        "input_tokens": _safe_metadata_int(usage.get("input_tokens")),
+        "output_tokens": _safe_metadata_int(usage.get("output_tokens")),
+        "thinking_tokens": _safe_metadata_int(usage.get("thinking_tokens")),
+    }
+
+
+def _safe_metadata_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(str(value).split())
+    if not normalized:
+        return None
+    return normalized[:120]
+
+
+def _safe_metadata_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _extract_usage(response: Any, raw: dict[str, Any]) -> dict[str, int | None]:
