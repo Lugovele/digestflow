@@ -1,3 +1,5 @@
+import json
+import traceback
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -5,7 +7,10 @@ from django.test import SimpleTestCase
 from django.test import override_settings
 
 from apps.ai.client import (
+    AI_PROVIDER_ANTHROPIC,
     AI_PROVIDER_GEMINI,
+    ANTHROPIC_API_VERSION,
+    ANTHROPIC_MESSAGES_ENDPOINT,
     GEMINI_OPENAI_COMPATIBLE_BASE_URL,
     OpenAIClient,
     build_ai_client,
@@ -131,6 +136,14 @@ class OpenAIClientGenerateTextTests(SimpleTestCase):
 
 
 class AIProviderConfigTests(SimpleTestCase):
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    def test_anthropic_provider_resolves_api_key(self):
+        config = get_ai_provider_config("anthropic")
+
+        self.assertEqual(config.provider, AI_PROVIDER_ANTHROPIC)
+        self.assertEqual(config.api_key, "anthropic-test-key")
+        self.assertIsNone(config.base_url)
+
     @override_settings(GEMINI_API_KEY="gemini-test-key")
     def test_gemini_provider_resolves_api_key_and_base_url(self):
         config = get_ai_provider_config("gemini")
@@ -229,6 +242,97 @@ class AIProviderConfigTests(SimpleTestCase):
 
         self.assertEqual(client.model, "gemini-3.6-flash")
 
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key", ANTHROPIC_TIMEOUT_SECONDS=17)
+    @patch("apps.ai.client.urlopen")
+    def test_build_ai_client_selects_anthropic_native_client(self, mock_urlopen):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {"content": [{"type": "text", "text": "Claude text"}], "usage": {}}
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt")
+
+        self.assertEqual(client.provider, "anthropic")
+        self.assertEqual(client.model, "claude-sonnet-5")
+        self.assertEqual(result.text, "Claude text")
+        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 17)
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key", ANTHROPIC_TIMEOUT_SECONDS=17)
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_generation_uses_native_messages_endpoint_headers_and_body(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "content": [{"type": "text", "text": "Claude text"}],
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt", max_output_tokens=400, json_mode=False)
+
+        mock_urlopen.assert_called_once()
+        request = mock_urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(request.full_url, ANTHROPIC_MESSAGES_ENDPOINT)
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.headers["X-api-key"], "anthropic-test-key")
+        self.assertEqual(request.headers["Anthropic-version"], ANTHROPIC_API_VERSION)
+        self.assertEqual(request.headers["Content-type"], "application/json")
+        self.assertEqual(body["model"], "claude-sonnet-5")
+        self.assertEqual(body["max_tokens"], 400)
+        self.assertEqual(body["messages"], [{"role": "user", "content": "Prompt"}])
+        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 17)
+        self.assertEqual(result.text, "Claude text")
+        self.assertEqual(
+            result.usage,
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_json_mode_uses_system_json_instruction(self, mock_urlopen):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {"content": [{"type": "text", "text": '{"pass": true}'}], "usage": {}}
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text(
+            "Prompt",
+            max_output_tokens=400,
+            json_mode=True,
+            allow_json_mode_fallback=False,
+        )
+
+        body = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertIn("Return only valid JSON", body["system"])
+        self.assertEqual(result.text, '{"pass": true}')
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_multiple_text_blocks_are_concatenated_in_order(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "content": [
+                    {"type": "text", "text": "first"},
+                    {"type": "text", "text": " second"},
+                ],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        result = client.generate_text("Prompt")
+
+        self.assertEqual(result.text, "first second")
+
     @override_settings(GEMINI_API_KEY="")
     def test_missing_gemini_key_returns_sanitized_configuration_error(self):
         error = get_ai_client_configuration_error(
@@ -244,6 +348,21 @@ class AIProviderConfigTests(SimpleTestCase):
         )
         self.assertNotIn("gemini-test-key", error)
 
+    @override_settings(ANTHROPIC_API_KEY="")
+    def test_missing_anthropic_key_returns_sanitized_configuration_error(self):
+        error = get_ai_client_configuration_error(
+            "anthropic",
+            "claude-sonnet-5",
+            stage_name="AI",
+        )
+
+        self.assertEqual(
+            error,
+            "ANTHROPIC_API_KEY must be configured with a real key before "
+            "AI provider execution",
+        )
+        self.assertNotIn("anthropic-test-key", error)
+
     def test_unsupported_provider_is_rejected_before_client_construction(self):
         self.assertEqual(
             get_ai_provider_model_error(
@@ -252,6 +371,27 @@ class AIProviderConfigTests(SimpleTestCase):
                 stage_name="AI",
             ),
             "unsupported AI provider: unknown",
+        )
+
+    def test_anthropic_provider_rejects_unsupported_claude_models(self):
+        error = get_ai_provider_model_error(
+            "anthropic",
+            "claude-3-5-sonnet",
+            stage_name="AI",
+        )
+
+        self.assertIn("AI provider/model mismatch", error)
+        self.assertIn("claude-sonnet-5", error)
+
+    def test_openai_provider_rejects_anthropic_model_before_invocation(self):
+        self.assertEqual(
+            get_ai_provider_model_error(
+                "openai",
+                "claude-sonnet-5",
+                stage_name="AI",
+            ),
+            "AI provider/model mismatch: provider openai cannot use "
+            "an Anthropic model",
         )
 
     def test_gemini_provider_rejects_openai_model_before_invocation(self):
@@ -285,3 +425,116 @@ class AIProviderConfigTests(SimpleTestCase):
             ),
             "AI provider/model mismatch: provider openai cannot use a Gemini model",
         )
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_http_error_is_sanitized_and_not_retried(self, mock_urlopen):
+        mock_urlopen.side_effect = OSError("secret anthropic provider body")
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(RuntimeError, "anthropic provider request failed") as cm:
+            client.generate_text("Prompt", json_mode=True)
+
+        formatted_traceback = "".join(
+            traceback.format_exception(
+                type(cm.exception),
+                cm.exception,
+                cm.exception.__traceback__,
+            )
+        )
+        self.assertNotIn("secret anthropic provider body", str(cm.exception))
+        self.assertIsNone(cm.exception.__cause__)
+        self.assertTrue(cm.exception.__suppress_context__)
+        self.assertNotIn("secret anthropic provider body", formatted_traceback)
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_network_error_is_sanitized_and_not_retried(self, mock_urlopen):
+        mock_urlopen.side_effect = TimeoutError("secret timeout details")
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(RuntimeError, "anthropic provider request failed") as cm:
+            client.generate_text("Prompt")
+
+        self.assertNotIn("secret timeout details", str(cm.exception))
+        self.assertIsNone(cm.exception.__cause__)
+        self.assertTrue(cm.exception.__suppress_context__)
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_invalid_json_error_does_not_chain_provider_body(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.return_value = _AnthropicResponse(
+            b'{"secret": "anthropic provider raw response"'
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "anthropic provider response was not valid JSON",
+        ) as cm:
+            client.generate_text("Prompt")
+
+        formatted_traceback = "".join(
+            traceback.format_exception(
+                type(cm.exception),
+                cm.exception,
+                cm.exception.__traceback__,
+            )
+        )
+        self.assertNotIn("anthropic provider raw response", str(cm.exception))
+        self.assertIsNone(cm.exception.__cause__)
+        self.assertTrue(cm.exception.__suppress_context__)
+        self.assertNotIn("anthropic provider raw response", formatted_traceback)
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_invalid_shape_error_is_sanitized(self, mock_urlopen):
+        mock_urlopen.return_value = _AnthropicResponse({"content": {"type": "text"}})
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "anthropic provider response shape was invalid",
+        ):
+            client.generate_text("Prompt")
+
+        mock_urlopen.assert_called_once()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_missing_text_error_is_sanitized(self, mock_urlopen):
+        mock_urlopen.return_value = _AnthropicResponse(
+            {"content": [{"type": "tool_use", "name": "lookup"}], "usage": {}}
+        )
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "anthropic provider response did not contain text",
+        ):
+            client.generate_text("Prompt")
+
+        mock_urlopen.assert_called_once()
+
+
+
+class _AnthropicResponse:
+    def __init__(self, payload: dict | bytes):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        if isinstance(self.payload, bytes):
+            return self.payload
+        return json.dumps(self.payload).encode("utf-8")

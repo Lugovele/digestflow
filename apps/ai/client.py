@@ -1,8 +1,11 @@
 """Небольшой AI-адаптер для сервисного слоя."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from django.conf import settings
 from openai import OpenAI
@@ -10,16 +13,25 @@ from openai import OpenAI
 
 AI_PROVIDER_OPENAI = "openai"
 AI_PROVIDER_GEMINI = "gemini"
-SUPPORTED_AI_PROVIDERS = (AI_PROVIDER_OPENAI, AI_PROVIDER_GEMINI)
+AI_PROVIDER_ANTHROPIC = "anthropic"
+SUPPORTED_AI_PROVIDERS = (
+    AI_PROVIDER_OPENAI,
+    AI_PROVIDER_GEMINI,
+    AI_PROVIDER_ANTHROPIC,
+)
 GEMINI_OPENAI_COMPATIBLE_BASE_URL = (
     "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 GEMINI_SUPPORTED_MODELS = ("gemini-3.6-flash",)
+ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_SUPPORTED_MODELS = ("claude-sonnet-5",)
 PLACEHOLDER_API_KEYS = {
     "",
     "sk-your-key",
     "your-openai-api-key-here",
     "your-gemini-api-key-here",
+    "your-anthropic-api-key-here",
 }
 
 
@@ -135,6 +147,78 @@ class OpenAIClient(OpenAICompatibleClient):
         )
 
 
+class AnthropicMessagesClient:
+    """Synchronous native Anthropic Messages client using AIResponse."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        timeout: int | None = None,
+    ) -> None:
+        self.model = model
+        self.provider = AI_PROVIDER_ANTHROPIC
+        self.api_key = api_key
+        self.timeout = (
+            timeout
+            if timeout is not None
+            else int(
+                getattr(
+                    settings,
+                    "ANTHROPIC_TIMEOUT_SECONDS",
+                    settings.OPENAI_TIMEOUT_SECONDS,
+                )
+            )
+        )
+
+    def generate_text(
+        self,
+        prompt: str,
+        max_output_tokens: int = 1200,
+        json_mode: bool = False,
+        allow_json_mode_fallback: bool = True,
+    ) -> AIResponse:
+        request_body: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_output_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if json_mode:
+            request_body["system"] = (
+                "Return only valid JSON. Do not include markdown fences or commentary."
+            )
+
+        request = Request(
+            ANTHROPIC_MESSAGES_ENDPOINT,
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                raw_bytes = response.read()
+        except (HTTPError, URLError, TimeoutError, OSError):
+            raise RuntimeError("anthropic provider request failed") from None
+
+        try:
+            raw = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise RuntimeError("anthropic provider response was not valid JSON") from None
+
+        if not _is_valid_anthropic_response_shape(raw):
+            raise RuntimeError("anthropic provider response shape was invalid") from None
+        text = _extract_anthropic_text(raw)
+        if not text:
+            raise RuntimeError("anthropic provider response did not contain text") from None
+        return AIResponse(text=text, raw=raw, usage=_extract_anthropic_usage(raw))
+
+
 def normalize_ai_provider(provider: str | None) -> str:
     return str(provider or "").strip().lower()
 
@@ -151,6 +235,11 @@ def get_ai_provider_config(provider: str) -> AIProviderConfig:
             provider=AI_PROVIDER_GEMINI,
             api_key=str(getattr(settings, "GEMINI_API_KEY", "") or "").strip(),
             base_url=GEMINI_OPENAI_COMPATIBLE_BASE_URL,
+        )
+    if normalized_provider == AI_PROVIDER_ANTHROPIC:
+        return AIProviderConfig(
+            provider=AI_PROVIDER_ANTHROPIC,
+            api_key=str(getattr(settings, "ANTHROPIC_API_KEY", "") or "").strip(),
         )
     raise ValueError(f"unsupported AI provider: {normalized_provider}")
 
@@ -177,10 +266,23 @@ def get_ai_provider_model_error(
             f"{stage_name} provider/model mismatch: provider gemini supports "
             + ", ".join(GEMINI_SUPPORTED_MODELS)
         )
+    if (
+        normalized_provider == AI_PROVIDER_ANTHROPIC
+        and normalized_model not in ANTHROPIC_SUPPORTED_MODELS
+    ):
+        return (
+            f"{stage_name} provider/model mismatch: provider anthropic supports "
+            + ", ".join(ANTHROPIC_SUPPORTED_MODELS)
+        )
     if normalized_provider == AI_PROVIDER_OPENAI and normalized_model.startswith("gemini-"):
         return (
             f"{stage_name} provider/model mismatch: provider openai cannot use "
             "a Gemini model"
+        )
+    if normalized_provider == AI_PROVIDER_OPENAI and normalized_model.startswith("claude-"):
+        return (
+            f"{stage_name} provider/model mismatch: provider openai cannot use "
+            "an Anthropic model"
         )
     return None
 
@@ -216,12 +318,24 @@ def get_ai_client_configuration_error(
     return get_ai_provider_credential_error(provider, stage_name=stage_name)
 
 
-def build_ai_client(provider: str, model: str) -> OpenAICompatibleClient:
+def build_ai_client(provider: str, model: str) -> OpenAICompatibleClient | AnthropicMessagesClient:
     normalized_model = str(model or "").strip()
     configuration_error = get_ai_client_configuration_error(provider, normalized_model)
     if configuration_error is not None:
         raise ValueError(configuration_error)
     config = get_ai_provider_config(provider)
+    if config.provider == AI_PROVIDER_ANTHROPIC:
+        return AnthropicMessagesClient(
+            api_key=config.api_key,
+            model=normalized_model,
+            timeout=int(
+                getattr(
+                    settings,
+                    "ANTHROPIC_TIMEOUT_SECONDS",
+                    settings.OPENAI_TIMEOUT_SECONDS,
+                )
+            ),
+        )
     return OpenAICompatibleClient(
         api_key=config.api_key,
         model=normalized_model,
@@ -242,7 +356,40 @@ def estimate_cost_usd(prompt_tokens: int | None, completion_tokens: int | None) 
 def _provider_api_key_env_name(provider: str) -> str:
     if provider == AI_PROVIDER_GEMINI:
         return "GEMINI_API_KEY"
+    if provider == AI_PROVIDER_ANTHROPIC:
+        return "ANTHROPIC_API_KEY"
     return "OPENAI_API_KEY"
+
+
+def _is_valid_anthropic_response_shape(raw: Any) -> bool:
+    return isinstance(raw, dict) and isinstance(raw.get("content"), list)
+
+
+def _extract_anthropic_text(raw: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for block in raw["content"]:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if text is not None:
+            parts.append(str(text))
+    return "".join(parts)
+
+
+def _extract_anthropic_usage(raw: dict[str, Any]) -> dict[str, int | None]:
+    usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
+    prompt_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+    completion_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
+    total_tokens = None
+    if prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
 
 
 def _extract_usage(response: Any, raw: dict[str, Any]) -> dict[str, int | None]:
