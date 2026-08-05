@@ -809,6 +809,7 @@ def _authorial_voice_directive() -> dict[str, object]:
         "why_distinction_matters": (
             "The distinction matters because remote work needs operating rules and support."
         ),
+        "personal_presence_requirement": "explicit_author_owned_statement_required",
         "first_person_policy": "allowed_not_required",
         "forbidden_author_claims": [
             "personal experience",

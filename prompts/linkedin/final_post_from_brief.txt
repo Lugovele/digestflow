@@ -38,6 +38,7 @@ Use these inputs:
 * PostBrief.evidence_to_use role_in_post values
 * AngleDecision.authorial_voice_directive
 * AUTHORIAL_VOICE_DIRECTIVE_JSON
+* PERSONAL_PRESENCE_INSTRUCTION
 * FINAL_POST_PAYLOAD_CONSTRAINTS_JSON
 * quality constraints supplied by the caller
 * forbidden claims and safety rules supplied by the caller
@@ -53,7 +54,10 @@ Exact evidence text is preserved upstream through PostBrief.
 Preserve AngleDecision.controlling_angle.
 
 Use AngleDecision.authorial_voice_directive as the source of truth for the
-authorial observation the post should make visible.
+author-owned judgment the post should express.
+
+Use PERSONAL_PRESENCE_INSTRUCTION as the resolved policy for whether the post
+must visibly assign that judgment to the author.
 
 Use only selected evidence from PostBrief.evidence_to_use.
 
@@ -139,6 +143,41 @@ Use rejected_reading to avoid or challenge the tempting reading that the selecte
 evidence does not support.
 
 Use why_distinction_matters to explain why the distinction matters to the reader.
+
+Use PERSONAL_PRESENCE_INSTRUCTION for the bounded personal-presence requirement.
+
+Use personal_presence_requirement only through PERSONAL_PRESENCE_INSTRUCTION;
+do not invent a separate personal-presence policy.
+
+Explicit personal presence means the post visibly assigns the interpretation to
+the author instead of only sounding like editorial copy.
+
+Use the directive to express what the author notices, what reading the author
+rejects, or why the distinction matters.
+
+When PERSONAL_PRESENCE_INSTRUCTION requires an explicit author-owned
+interpretive statement, post_text must include exactly one naturally integrated
+statement that visibly assigns the interpretation to the author.
+
+The required statement is an explicit author-owned interpretive statement.
+
+That statement must derive from authorial_observation, rejected_reading, or
+why_distinction_matters, and it must match AngleDecision.controlling_angle.
+
+An impersonal editorial judgment is not sufficient when explicit personal
+presence is required.
+
+First-person grammar alone is not sufficient; I think this is interesting is not
+a qualifying statement because it does not contain an evidence-derived judgment.
+
+I think this is interesting is not a qualifying statement.
+
+Do not mechanically prepend I think, in my opinion, personally, or similar
+phrasing just to simulate voice.
+
+Do not require the post to open with first person.
+
+Do not include more than one explicit ownership statement.
 
 Use first_person_policy only as a bounded permission. When first_person_policy is
 allowed_not_required, first person is allowed when natural but must not be forced.

@@ -77,6 +77,7 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
         self.assertIn("PostBrief", contract.input_contract)
         self.assertIn("AngleDecision", contract.input_contract)
         self.assertIn("AngleDecision.authorial_voice_directive", contract.input_contract)
+        self.assertIn("personal_presence_instruction", contract.input_contract)
         self.assertIn("selected evidence", contract.input_contract)
         self.assertIn("FinalPostPayload", access_contract.allowed_outputs)
         self.assertEqual(contract.output_contract, "FinalPostPayload")
@@ -89,6 +90,7 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
         self.assertEqual(contract.access_mode, access_contract.access_mode)
         self.assertIn("PostEditorialInput", access_contract.allowed_inputs)
         self.assertIn("PostEditorialInput", contract.input_contract)
+        self.assertIn("AngleDecision.authorial_voice_directive", contract.input_contract)
         self.assertIn("QualityReviewResult", access_contract.allowed_outputs)
         self.assertEqual(contract.output_contract, "QualityReviewResult")
 
@@ -97,7 +99,8 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
 
         self.assertEqual(
             contract.input_contract,
-            "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive + selected evidence",
+            "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive "
+            "+ personal_presence_instruction + selected evidence",
         )
 
     def test_prompt_output_contract_is_final_post_payload(self) -> None:
@@ -108,7 +111,10 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
     def test_quality_evaluator_prompt_contract_is_post_editorial_input_to_quality_review(self) -> None:
         contract = get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)
 
-        self.assertEqual(contract.input_contract, "PostEditorialInput")
+        self.assertEqual(
+            contract.input_contract,
+            "PostEditorialInput + AngleDecision.authorial_voice_directive",
+        )
         self.assertEqual(contract.output_contract, "QualityReviewResult")
 
     def test_prompt_status_is_baseline(self) -> None:

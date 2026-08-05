@@ -65,7 +65,8 @@ FINAL_POST_PROMPT_REGISTRY = (
         agent_role=ROLE_CANDIDATE_WRITER,
         access_mode=get_access_contract(ROLE_CANDIDATE_WRITER).access_mode,
         input_contract=(
-            "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive + selected evidence"
+            "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive "
+            "+ personal_presence_instruction + selected evidence"
         ),
         output_contract="FinalPostPayload",
         model_role=MODEL_ROLE_CANDIDATE_WRITER_PRIMARY,
@@ -77,7 +78,7 @@ FINAL_POST_PROMPT_REGISTRY = (
         prompt_path="prompts/linkedin/final_post_quality_evaluator.txt",
         agent_role=ROLE_QUALITY_EVALUATOR,
         access_mode=get_access_contract(ROLE_QUALITY_EVALUATOR).access_mode,
-        input_contract="PostEditorialInput",
+        input_contract="PostEditorialInput + AngleDecision.authorial_voice_directive",
         output_contract="QualityReviewResult",
         model_role=MODEL_ROLE_QUALITY_EVALUATOR_PRIMARY,
         status=PROMPT_STATUS_EXPERIMENTAL,

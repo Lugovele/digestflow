@@ -414,6 +414,8 @@ The `authorial_voice_directive` object must include:
 - `authorial_observation`: what the author notices in the selected evidence;
 - `rejected_reading`: the tempting but unsupported reading the writer must avoid;
 - `why_distinction_matters`: why the distinction matters for the reader;
+- `personal_presence_requirement`: bounded policy, currently
+  `explicit_author_owned_statement_required` for this final-post flow;
 - `first_person_policy`: currently `allowed_not_required`, meaning first person is permitted but not required;
 - `forbidden_author_claims`: author claims the writer must not invent, such as personal experience, professional authority, direct market exposure, client or customer stories, invented emotional reaction, or biographical claims.
 
@@ -424,7 +426,10 @@ Validation rules:
 - `author_position` must be visible;
 - supporting evidence IDs must refer to contextualized evidence;
 - `angle_to_avoid` should prevent likely drift;
-- `authorial_voice_directive` must derive from the selected evidence relationship and preserve author perspective without inventing biography, credentials, client work, market exposure, emotion, or personal experience.
+- `authorial_voice_directive` must derive from the selected evidence relationship and preserve author perspective without inventing biography, credentials, client work, market exposure, emotion, or personal experience;
+- `personal_presence_requirement` must be one of
+  `explicit_author_owned_statement_required`, `author_owned_statement_allowed`,
+  or `editorial_stance_only`.
 
 Must not contain:
 
@@ -449,6 +454,7 @@ Example JSON:
     "authorial_observation": "The author notices that polished output and visible judgment should not be treated as the same proof.",
     "rejected_reading": "Reject treating polished output as proof that judgment has been demonstrated.",
     "why_distinction_matters": "The distinction matters because readers need evidence of thinking, not another neutral recap of branding advice.",
+    "personal_presence_requirement": "explicit_author_owned_statement_required",
     "first_person_policy": "allowed_not_required",
     "forbidden_author_claims": [
       "personal experience",
@@ -600,6 +606,10 @@ Rules:
 - total score max is 45;
 - pass threshold is 36 out of 45;
 - required minimums are `hook >= 4`, `controlling_angle >= 4`, `author_point_of_view >= 4`, `human_voice >= 4`, and `evidence >= 3`;
+- under `explicit_author_owned_statement_required`, `author_point_of_view = 5`
+  requires exactly one qualifying explicit author-owned interpretive statement;
+- `human_voice` remains separate and evaluates naturalness, rhythm, clarity,
+  non-corporate language, and non-generic prose;
 - automatic fail reason should be explicit when present.
 
 Example JSON:

@@ -160,6 +160,15 @@ The pattern across the sources is not tool adoption. It is integration failure.
 
 The author interprets facts instead of just reporting them.
 
+When the current PostFlow authorial directive requires explicit personal
+presence, maximum Author Point Of View requires exactly one author-owned
+interpretive statement: a statement that visibly assigns an evidence-derived
+judgment to the author without inventing biography, experience, credentials,
+clients, direct exposure, or emotion.
+
+Author-owned interpretation is separate from Human Voice. A post can sound
+natural while still lacking explicit ownership of the judgment.
+
 Useful examples:
 
 ```text
@@ -339,19 +348,23 @@ Score each post from 1 to 5 on each criterion.
 
 ### Author Point Of View
 
-- 5 = clear interpretation, judgment, or thesis from the author.
-- 4 = visible point of view, but not very distinctive.
-- 3 = mild opinion.
+- 5 = exactly one explicit author-owned interpretive statement; substantive choice between competing readings; judgment tied to supplied evidence; no fabricated personal context.
+- 4 = visible point of view or strong article-like authored judgment, but limited or absent explicit personal presence.
+- 3 = strong thesis without clear ownership, summary with rhetorical framing, or generic first-person marker without substantive judgment.
 - 2 = mostly neutral reporting.
 - 1 = no author position.
 
 ### Human Voice
 
-- 5 = sounds natural, specific, and human; has clear author interpretation; avoids corporate or template phrasing.
+- 5 = sounds natural, specific, and human; avoids corporate or template phrasing.
 - 4 = mostly human and readable, with minor generic phrasing.
 - 3 = understandable but somewhat generic or polished.
 - 2 = corporate, summary-like, or overly safe.
 - 1 = clearly template-like, generic AI text, consultant-speak, or no human voice.
+
+Personal presence must not automatically increase Human Voice. Human Voice
+scores naturalness, rhythm, clarity, non-corporate language, and non-generic
+prose.
 
 ### Practical Value
 

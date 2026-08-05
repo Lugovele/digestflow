@@ -43,6 +43,7 @@ QUALITY_EVALUATOR_VARIABLES = (
     "candidate_payload_json",
     "post_brief_json",
     "angle_decision_json",
+    "authorial_voice_directive_json",
     "selected_evidence_json",
     "quality_rubric_json",
 )
@@ -102,6 +103,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
                 "post_brief_json",
                 "angle_decision_json",
                 "authorial_voice_directive_json",
+                "personal_presence_instruction",
                 "selected_evidence_json",
                 "candidate_writer_input_json",
                 "final_post_payload_constraints_json",
@@ -183,6 +185,59 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertEqual(directive, _authorial_voice_directive())
         self.assertIn("AUTHORIAL_VOICE_DIRECTIVE_JSON", render.input_text)
+
+    def test_candidate_writer_render_includes_personal_presence_instruction(
+        self,
+    ) -> None:
+        render = render_candidate_writer_prompt_input(_candidate_input())
+
+        self.assertIn("personal_presence_instruction", render.variables)
+        self.assertIn(
+            "Include exactly one naturally integrated author-owned interpretive statement",
+            render.variables["personal_presence_instruction"],
+        )
+        self.assertIn(
+            "An impersonal editorial judgment is not sufficient",
+            render.variables["personal_presence_instruction"],
+        )
+        self.assertIn("Use first person only when natural", render.variables["personal_presence_instruction"])
+        self.assertIn("PERSONAL_PRESENCE_INSTRUCTION", render.input_text)
+
+    def test_candidate_writer_render_rejects_missing_personal_presence_requirement(
+        self,
+    ) -> None:
+        directive = dict(_authorial_voice_directive())
+        directive.pop("personal_presence_requirement")
+        candidate_input = build_candidate_writer_input(
+            _post_brief(),
+            {
+                "controlling_angle": "Make remote work explicit.",
+                "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+                "authorial_voice_directive": directive,
+            },
+        )
+
+        with self.assertRaisesRegex(TypeError, "personal_presence_requirement"):
+            render_candidate_writer_prompt_input(candidate_input)
+
+    def test_candidate_writer_render_rejects_unknown_personal_presence_requirement(
+        self,
+    ) -> None:
+        directive = {
+            **_authorial_voice_directive(),
+            "personal_presence_requirement": "invented_policy",
+        }
+        candidate_input = build_candidate_writer_input(
+            _post_brief(),
+            {
+                "controlling_angle": "Make remote work explicit.",
+                "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+                "authorial_voice_directive": directive,
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "personal_presence_requirement"):
+            render_candidate_writer_prompt_input(candidate_input)
 
     def test_candidate_writer_render_rejects_missing_authorial_voice_directive(
         self,
@@ -272,7 +327,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertEqual(tuple(render.variables), QUALITY_EVALUATOR_VARIABLES)
 
-    def test_quality_evaluator_does_not_receive_explicit_authorial_voice_variable(
+    def test_quality_evaluator_receives_canonical_authorial_voice_directive(
         self,
     ) -> None:
         render = render_quality_evaluator_prompt_input(
@@ -280,12 +335,52 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             get_quality_evaluator_rubric_payload(),
         )
 
-        self.assertNotIn("authorial_voice_directive_json", render.variables)
-        self.assertNotIn("AUTHORIAL_VOICE_DIRECTIVE_JSON", render.input_text)
+        self.assertEqual(
+            json.loads(render.variables["authorial_voice_directive_json"]),
+            _authorial_voice_directive(),
+        )
+        self.assertIn("AUTHORIAL_VOICE_DIRECTIVE_JSON", render.input_text)
         self.assertNotIn(
             "authorial_voice_directive",
             render.variables["angle_decision_json"],
         )
+
+    def test_quality_evaluator_authorial_voice_directive_json_filters_extra_fields(
+        self,
+    ) -> None:
+        directive = {
+            **_authorial_voice_directive(),
+            "debug": "directive-debug-sentinel",
+            "provider_metadata": "directive-provider-sentinel",
+            "runtime_control": "directive-runtime-sentinel",
+        }
+        editorial_input = _post_editorial_input(
+            angle_decision={
+                **_post_editorial_input().angle_decision,
+                "authorial_voice_directive": directive,
+            }
+        )
+
+        render = render_quality_evaluator_prompt_input(
+            editorial_input,
+            get_quality_evaluator_rubric_payload(),
+        )
+        rendered_directive = json.loads(
+            render.variables["authorial_voice_directive_json"]
+        )
+        rendered_text = "\n".join([*render.variables.values(), render.input_text])
+
+        self.assertEqual(rendered_directive, _authorial_voice_directive())
+        for forbidden in (
+            "debug",
+            "provider_metadata",
+            "runtime_control",
+            "directive-debug-sentinel",
+            "directive-provider-sentinel",
+            "directive-runtime-sentinel",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_text)
 
     def test_quality_evaluator_variable_values_are_strings(self) -> None:
         render = render_quality_evaluator_prompt_input(
@@ -797,6 +892,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             "## CANDIDATE_PAYLOAD_JSON",
             "## POST_BRIEF_JSON",
             "## ANGLE_DECISION_JSON",
+            "## AUTHORIAL_VOICE_DIRECTIVE_JSON",
             "## SELECTED_EVIDENCE_JSON",
             "## QUALITY_RUBRIC_JSON",
         ]
@@ -1146,6 +1242,7 @@ def _authorial_voice_directive() -> dict[str, object]:
         "why_distinction_matters": (
             "The distinction matters because remote work needs operating rules and support."
         ),
+        "personal_presence_requirement": "explicit_author_owned_statement_required",
         "first_person_policy": "allowed_not_required",
         "forbidden_author_claims": [
             "personal experience",

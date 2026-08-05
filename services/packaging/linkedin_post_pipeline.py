@@ -43,6 +43,15 @@ REQUIRED_QUALITY_CHECKS = set(FINAL_POST_PAYLOAD_REQUIRED_QUALITY_CHECKS)
 
 AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED = "allowed_not_required"
 
+AUTHORIAL_PERSONAL_PRESENCE_REQUIRED = "explicit_author_owned_statement_required"
+AUTHORIAL_PERSONAL_PRESENCE_ALLOWED = "author_owned_statement_allowed"
+AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY = "editorial_stance_only"
+AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS = (
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+    AUTHORIAL_PERSONAL_PRESENCE_ALLOWED,
+    AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY,
+)
+
 AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS = (
     "personal experience",
     "professional authority",
@@ -155,6 +164,7 @@ class AuthorialVoiceDirective:
     authorial_observation: str
     rejected_reading: str
     why_distinction_matters: str
+    personal_presence_requirement: str
     first_person_policy: str
     forbidden_author_claims: tuple[str, ...]
 
@@ -453,6 +463,7 @@ def build_authorial_voice_directive_from_evidence_relationship(
             "The distinction matters because "
             f"{relationship.reader_problem[:1].lower()}{relationship.reader_problem[1:]}"
         ),
+        personal_presence_requirement=AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
         first_person_policy=AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
         forbidden_author_claims=AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
     )
@@ -892,6 +903,19 @@ def validate_authorial_voice_directive(
         directive.why_distinction_matters,
         "AngleDecision.authorial_voice_directive.why_distinction_matters",
     )
+    _require_non_empty_string(
+        directive.personal_presence_requirement,
+        "AngleDecision.authorial_voice_directive.personal_presence_requirement",
+    )
+    if (
+        directive.personal_presence_requirement
+        not in AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS
+    ):
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive.personal_presence_requirement "
+            "must be one of "
+            f"{', '.join(AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS)}."
+        )
     _require_non_empty_string(
         directive.first_person_policy,
         "AngleDecision.authorial_voice_directive.first_person_policy",
@@ -2363,6 +2387,10 @@ __all__ = [
     "ALLOWED_SPECIFICITY_LEVELS",
     "AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED",
     "AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS",
+    "AUTHORIAL_PERSONAL_PRESENCE_ALLOWED",
+    "AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY",
+    "AUTHORIAL_PERSONAL_PRESENCE_REQUIRED",
+    "AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS",
     "REQUIRED_QUALITY_CHECKS",
     "AngleDecision",
     "ArticleEvidence",

@@ -80,9 +80,40 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
                 "authorial_observation",
                 "rejected_reading",
                 "why_distinction_matters",
+                "personal_presence_requirement",
                 "first_person_policy",
                 "forbidden_author_claims",
-                "authorial observation",
+                "author-owned judgment",
+            ],
+        )
+
+    def test_candidate_writer_prompt_uses_personal_presence_instruction(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "PERSONAL_PRESENCE_INSTRUCTION",
+                "bounded personal-presence requirement",
+                "explicit author-owned interpretive statement",
+                "exactly one naturally integrated",
+                "visibly assigns the interpretation to the author",
+            ],
+        )
+
+    def test_candidate_writer_prompt_rejects_weak_personal_presence(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "An impersonal editorial judgment is not sufficient",
+                "First-person grammar alone is not sufficient",
+                "I think this is interesting is not a qualifying statement",
+                "Do not mechanically prepend I think",
+                "Do not include more than one explicit ownership statement",
             ],
         )
 
@@ -115,17 +146,6 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
                 "must not be forced",
             ],
         )
-
-    def test_candidate_writer_prompt_defers_later_author_presence_fields(self):
-        prompt = _normalized_prompt_text()
-
-        deferred_fields = (
-            "personal" + "_presence" + "_requirement",
-            "author" + "_owned" + "_statement" + "_policy",
-            "ownership" + "_mode",
-        )
-        for field_name in deferred_fields:
-            self.assertNotIn(field_name, prompt)
 
     def test_candidate_writer_prompt_declares_factuality_and_no_invention_rules(self):
         prompt = _normalized_prompt_text()

@@ -161,7 +161,7 @@ class LinkedInQualityEvaluatorCalibrationTests(SimpleTestCase):
     def test_strong_grounded_post_with_cta_can_pass_offline_contract(self) -> None:
         post_text = (
             "Crypto adoption is not one signal.\n\n"
-            "Ownership can rise while trust still lags. That is the useful "
+            "To me, ownership can rise while trust still lags. That is the useful "
             "read: growth forecasts, security worries, and market sentiment "
             "need to be judged separately before anyone calls the trend "
             "mainstream.\n\n"
@@ -187,6 +187,135 @@ class LinkedInQualityEvaluatorCalibrationTests(SimpleTestCase):
         self.assertEqual(normalized["total_score"], 36)
         self.assertEqual(normalized["failed_criteria"], [])
         self.assertEqual(normalized["automatic_fail_reason"], "")
+
+    def test_article_like_judgment_is_capped_below_author_point_of_view_five(
+        self,
+    ) -> None:
+        post_text = (
+            "But that story skips a step.\n\n"
+            "Treating one as evidence for the other is where the clean narrative "
+            "breaks down.\n\n"
+            "Which signal would you test before calling the trend durable?"
+        )
+        scores = {
+            "hook": 4,
+            "controlling_angle": 4,
+            "reader_problem": 4,
+            "pattern_interrupt": 4,
+            "evidence": 4,
+            "author_point_of_view": 4,
+            "human_voice": 5,
+            "practical_value": 4,
+            "cta": 4,
+        }
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(post_text, scores=scores, passed=True)
+        )
+
+        self.assertLessEqual(normalized["scores"]["author_point_of_view"], 4)
+        self.assertEqual(normalized["scores"]["human_voice"], 5)
+
+    def test_explicit_personal_presence_may_receive_author_point_of_view_five(
+        self,
+    ) -> None:
+        post_text = (
+            "What bothers me is not the growth data itself. It is how quickly "
+            "that data gets treated as proof that the underlying risk questions "
+            "have been resolved.\n\n"
+            "Which signal would you separate first?"
+        )
+        scores = {
+            "hook": 4,
+            "controlling_angle": 4,
+            "reader_problem": 4,
+            "pattern_interrupt": 4,
+            "evidence": 4,
+            "author_point_of_view": 5,
+            "human_voice": 4,
+            "practical_value": 4,
+            "cta": 4,
+        }
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(post_text, scores=scores, passed=True)
+        )
+
+        self.assertEqual(normalized["scores"]["author_point_of_view"], 5)
+        self.assertIs(normalized["pass"], True)
+
+    def test_generic_first_person_remains_weak_author_point_of_view(self) -> None:
+        post_text = (
+            "I think this is interesting.\n\n"
+            "Crypto adoption and risk signals should be considered together.\n\n"
+            "What do you think?"
+        )
+        scores = {
+            "hook": 2,
+            "controlling_angle": 3,
+            "reader_problem": 3,
+            "pattern_interrupt": 2,
+            "evidence": 3,
+            "author_point_of_view": 3,
+            "human_voice": 3,
+            "practical_value": 2,
+            "cta": 3,
+        }
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                post_text,
+                scores=scores,
+                failed_criteria=[
+                    "hook",
+                    "controlling_angle",
+                    "author_point_of_view",
+                    "human_voice",
+                    "practical_value",
+                ],
+            )
+        )
+
+        self.assertLessEqual(normalized["scores"]["author_point_of_view"], 3)
+        self.assertIn("author_point_of_view", normalized["failed_criteria"])
+
+    def test_fabricated_experience_is_penalized(self) -> None:
+        post_text = (
+            "In my experience, investors always make this mistake.\n\n"
+            "They treat ownership growth as proof that risk has disappeared.\n\n"
+            "Which signal would you test first?"
+        )
+        scores = {
+            "hook": 4,
+            "controlling_angle": 4,
+            "reader_problem": 4,
+            "pattern_interrupt": 4,
+            "evidence": 1,
+            "author_point_of_view": 2,
+            "human_voice": 3,
+            "practical_value": 3,
+            "cta": 4,
+        }
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                post_text,
+                scores=scores,
+                failed_criteria=[
+                    "evidence",
+                    "author_point_of_view",
+                    "human_voice",
+                    "practical_value",
+                ],
+                automatic_fail_reason="invents personal experience",
+            )
+        )
+
+        self.assertIs(normalized["pass"], False)
+        self.assertEqual(
+            normalized["automatic_fail_reason"],
+            "invents personal experience",
+        )
 
 
 def _review_fixture(

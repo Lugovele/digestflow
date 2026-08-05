@@ -1442,6 +1442,7 @@ def _angle_decision() -> dict:
     return {
         "controlling_angle": "Remote policies need clarity and inclusion.",
         "author_position": "Leaders should connect policy clarity with team trust.",
+        "authorial_voice_directive": _authorial_voice_directive(),
     }
 
 
@@ -1478,6 +1479,61 @@ def _bitcoin_angle_decision() -> dict:
     return {
         "controlling_angle": "Bitcoin market signals need qualified interpretation.",
         "author_position": "Do not turn likelihood and risk into certainty.",
+        "authorial_voice_directive": _bitcoin_authorial_voice_directive(),
+    }
+
+
+def _authorial_voice_directive() -> dict:
+    return {
+        "authorial_observation": (
+            "The author notices that remote policy clarity and isolation support "
+            "must be evaluated together."
+        ),
+        "rejected_reading": (
+            "Reject treating documented remote policies as proof that inclusion "
+            "and isolation risks are solved."
+        ),
+        "why_distinction_matters": (
+            "The distinction matters because sustainable remote work needs both "
+            "operating clarity and human support."
+        ),
+        "personal_presence_requirement": "explicit_author_owned_statement_required",
+        "first_person_policy": "allowed_not_required",
+        "forbidden_author_claims": [
+            "personal experience",
+            "professional authority",
+            "direct market exposure",
+            "client or customer stories",
+            "invented emotional reaction",
+            "biographical claims",
+        ],
+    }
+
+
+def _bitcoin_authorial_voice_directive() -> dict:
+    return {
+        "authorial_observation": (
+            "The author notices that Bitcoin growth signals still need risk "
+            "qualification."
+        ),
+        "rejected_reading": (
+            "Reject turning adoption data, projections, or bottoming signals "
+            "into certainty."
+        ),
+        "why_distinction_matters": (
+            "The distinction matters because market interest does not remove "
+            "security, volatility, or downside risk."
+        ),
+        "personal_presence_requirement": "explicit_author_owned_statement_required",
+        "first_person_policy": "allowed_not_required",
+        "forbidden_author_claims": [
+            "personal experience",
+            "professional authority",
+            "direct market exposure",
+            "client or customer stories",
+            "invented emotional reaction",
+            "biographical claims",
+        ],
     }
 
 

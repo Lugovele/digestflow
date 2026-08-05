@@ -14,6 +14,8 @@ from services.packaging.linkedin_post_final_post_payload_contract import (
 from services.packaging.linkedin_post_pipeline import (
     AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
     AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS,
     AngleDecision,
     ArticleEvidence,
     ArticleEvidencePack,
@@ -242,6 +244,10 @@ class AuthorialVoiceDirectiveContractTests(SimpleTestCase):
 
         validate_authorial_voice_directive(directive)
         self.assertEqual(
+            directive.personal_presence_requirement,
+            AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+        )
+        self.assertEqual(
             directive.first_person_policy,
             AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
         )
@@ -255,6 +261,7 @@ class AuthorialVoiceDirectiveContractTests(SimpleTestCase):
             ("authorial_observation", " "),
             ("rejected_reading", ""),
             ("why_distinction_matters", " "),
+            ("personal_presence_requirement", ""),
         )
 
         for field_name, field_value in cases:
@@ -266,6 +273,40 @@ class AuthorialVoiceDirectiveContractTests(SimpleTestCase):
                     field_name,
                 ):
                     validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_accepts_all_personal_presence_values(self) -> None:
+        for requirement in AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS:
+            with self.subTest(requirement=requirement):
+                directive = make_authorial_voice_directive(
+                    personal_presence_requirement=requirement,
+                )
+
+                validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_rejects_unknown_personal_presence_value(
+        self,
+    ) -> None:
+        directive = make_authorial_voice_directive(
+            personal_presence_requirement="invented_policy",
+        )
+
+        with self.assertRaisesRegex(
+            LinkedInPostPipelineContractError,
+            "personal_presence_requirement",
+        ):
+            validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_has_no_generic_personal_presence_default(
+        self,
+    ) -> None:
+        with self.assertRaises(TypeError):
+            AuthorialVoiceDirective(
+                authorial_observation="The author notices the tension.",
+                rejected_reading="Reject a clean story.",
+                why_distinction_matters="The distinction matters to readers.",
+                first_person_policy=AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+                forbidden_author_claims=AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+            )
 
     def test_authorial_voice_directive_rejects_invalid_first_person_policy(self) -> None:
         directive = make_authorial_voice_directive(first_person_policy="required")
@@ -331,6 +372,10 @@ class AuthorialVoiceDirectiveContractTests(SimpleTestCase):
             "the confidence and risk evidence.",
         )
         self.assertEqual(
+            directive.personal_presence_requirement,
+            AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+        )
+        self.assertEqual(
             directive.first_person_policy,
             AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
         )
@@ -345,6 +390,7 @@ class AuthorialVoiceDirectiveContractTests(SimpleTestCase):
         serialized = json.dumps(directive.__dict__, ensure_ascii=False, sort_keys=True)
 
         self.assertIn("authorial_observation", serialized)
+        self.assertIn("personal_presence_requirement", serialized)
         self.assertIn("forbidden_author_claims", serialized)
 
 
@@ -451,6 +497,7 @@ def make_authorial_voice_directive(
     why_distinction_matters: str = (
         "The distinction matters because readers need evidence of thinking, not a recap."
     ),
+    personal_presence_requirement: str = AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
     first_person_policy: str = AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
     forbidden_author_claims: tuple[str, ...] = AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
 ) -> AuthorialVoiceDirective:
@@ -458,6 +505,7 @@ def make_authorial_voice_directive(
         authorial_observation=authorial_observation,
         rejected_reading=rejected_reading,
         why_distinction_matters=why_distinction_matters,
+        personal_presence_requirement=personal_presence_requirement,
         first_person_policy=first_person_policy,
         forbidden_author_claims=forbidden_author_claims,
     )
