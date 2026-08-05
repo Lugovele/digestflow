@@ -12,6 +12,12 @@ import copy
 from typing import TYPE_CHECKING, Any
 
 from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_pipeline import (
     FinalPostPayload,
     LinkedInPostPipelineContractError,
@@ -74,9 +80,16 @@ REQUIRED_PROMPT_METADATA_ATTRIBUTES = (
 class CandidateWriterOutputAdaptationError(ValueError):
     """Raised when parsed Candidate Writer output cannot become a handoff."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        safe_details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.safe_details = copy.deepcopy(safe_details) if safe_details else {}
 
 
 def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str, Any]:
@@ -97,13 +110,21 @@ def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str
         raise CandidateWriterOutputAdaptationError(
             ERROR_MISSING_REQUIRED_FIELD,
             f"parsed candidate is missing required fields: {missing_fields}.",
+            safe_details={
+                "error_code": ERROR_MISSING_REQUIRED_FIELD,
+                "missing_fields": list(missing_fields),
+                "required_fields": list(REQUIRED_FINAL_POST_PAYLOAD_FIELDS),
+            },
         )
 
     canonical_payload = {
         field: _copy_canonical_field(parsed_candidate[field], field)
         for field in REQUIRED_FINAL_POST_PAYLOAD_FIELDS
     }
+    defaulted_optional_fields = []
     for field, default in OPTIONAL_FINAL_POST_PAYLOAD_DEFAULTS.items():
+        if field not in parsed_candidate:
+            defaulted_optional_fields.append(field)
         canonical_payload[field] = copy.deepcopy(parsed_candidate.get(field, default))
 
     try:
@@ -113,6 +134,11 @@ def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str
         raise CandidateWriterOutputAdaptationError(
             ERROR_INVALID_FINAL_POST_PAYLOAD,
             "parsed candidate does not satisfy FinalPostPayload structure.",
+            safe_details=_safe_validation_details(
+                canonical_payload,
+                exc,
+                defaulted_optional_fields=tuple(defaulted_optional_fields),
+            ),
         ) from exc
 
     return copy.deepcopy(final_post_payload_to_dict(final_post_payload))
@@ -168,6 +194,82 @@ def _copy_canonical_field(value: Any, field_name: str) -> Any:
             if key in value
         }
     return copy.deepcopy(value)
+
+
+def _safe_validation_details(
+    canonical_payload: dict[str, Any],
+    exc: Exception,
+    *,
+    defaulted_optional_fields: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    details = _safe_field_details(
+        canonical_payload,
+        defaulted_optional_fields=defaulted_optional_fields,
+    )
+    details["error_code"] = ERROR_INVALID_FINAL_POST_PAYLOAD
+    details["validation_error"] = str(exc)
+    return details
+
+
+def _safe_field_details(
+    canonical_payload: dict[str, Any],
+    *,
+    defaulted_optional_fields: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    post_text = canonical_payload.get("post_text")
+    hook_variants = canonical_payload.get("hook_variants")
+    cta_variants = canonical_payload.get("cta_variants")
+    hashtags = canonical_payload.get("hashtags")
+    quality_checks = canonical_payload.get("quality_checks")
+    carousel_outline = canonical_payload.get("carousel_outline")
+
+    details: dict[str, Any] = {
+        "post_text": {
+            "expected_type": "string",
+            "max_chars": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+            "input_type": type(post_text).__name__,
+        },
+        "hook_variants": {
+            "expected_type": "list[string]",
+            "min_count": FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
+            "input_type": type(hook_variants).__name__,
+        },
+        "cta_variants": {
+            "expected_type": "list[string]",
+            "min_count": FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+            "input_type": type(cta_variants).__name__,
+        },
+        "hashtags": {
+            "expected_type": "list[string]",
+            "min_count": FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+            "input_type": type(hashtags).__name__,
+        },
+        "quality_checks": {
+            "expected_type": "object",
+            "required_boolean_keys": sorted(REQUIRED_QUALITY_CHECKS),
+            "input_type": type(quality_checks).__name__,
+        },
+        "carousel_outline": {
+            "expected_type": "list",
+            "default_used_when_missing": "carousel_outline" in defaulted_optional_fields,
+            "input_type": type(carousel_outline).__name__,
+        },
+    }
+    if isinstance(post_text, str):
+        details["post_text"]["input_length"] = len(post_text)
+    if isinstance(hook_variants, list):
+        details["hook_variants"]["input_count"] = len(hook_variants)
+    if isinstance(cta_variants, list):
+        details["cta_variants"]["input_count"] = len(cta_variants)
+    if isinstance(hashtags, list):
+        details["hashtags"]["input_count"] = len(hashtags)
+    if isinstance(carousel_outline, list):
+        details["carousel_outline"]["input_count"] = len(carousel_outline)
+    if isinstance(quality_checks, dict):
+        details["quality_checks"]["provided_keys"] = sorted(
+            str(key) for key in quality_checks
+        )
+    return details
 
 
 def _require_attributes(value: Any, attribute_names: tuple[str, ...], label: str) -> None:

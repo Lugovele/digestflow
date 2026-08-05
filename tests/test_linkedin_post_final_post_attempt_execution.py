@@ -347,6 +347,24 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_PARSE)
         self.assertEqual(result.parsed_candidate, {"post_text": "Missing fields"})
         self.assertIsNone(result.candidate_writer_output)
+        failed_status = next(
+            status
+            for status in result.stage_statuses
+            if status.stage == STAGE_CANDIDATE_WRITER_ADAPTATION
+        )
+        self.assertEqual(
+            failed_status.metadata["adaptation_error_code"],
+            "missing_required_field",
+        )
+        self.assertEqual(
+            failed_status.metadata["safe_details"]["missing_fields"],
+            [
+                "hook_variants",
+                "cta_variants",
+                "hashtags",
+                "quality_checks",
+            ],
+        )
 
     def test_deterministic_gate_failure_preserves_candidate_text_and_skips_quality(
         self,

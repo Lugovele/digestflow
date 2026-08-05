@@ -9,6 +9,9 @@ from typing import Any
 
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    build_final_post_payload_constraints,
+)
 from services.packaging.linkedin_post_flow_input_builders import CandidateWriterInput
 from services.packaging.linkedin_post_quality_rubric_contract import (
     QualityEvaluatorRubricPayload,
@@ -136,6 +139,9 @@ def render_candidate_writer_prompt_input(
             candidate_input_dict["selected_evidence"]
         ),
         "candidate_writer_input_json": _stable_json(candidate_input_dict),
+        "final_post_payload_constraints_json": _stable_json(
+            build_final_post_payload_constraints()
+        ),
     }
     prompt_metadata = candidate_input.prompt_metadata
 
@@ -416,6 +422,10 @@ def _build_input_text(variables: dict[str, str]) -> str:
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
         ("CANDIDATE_WRITER_INPUT_JSON", variables["candidate_writer_input_json"]),
+        (
+            "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
+            variables["final_post_payload_constraints_json"],
+        ),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)
 

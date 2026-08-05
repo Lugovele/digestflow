@@ -223,6 +223,7 @@ def execute_final_post_standalone_candidate_attempt(
                     STAGE_CANDIDATE_WRITER_ADAPTATION,
                     FAILURE_CANDIDATE_WRITER_ADAPTATION,
                     str(exc),
+                    metadata=_candidate_writer_adaptation_failure_metadata(exc),
                 ),
                 _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
@@ -813,6 +814,17 @@ def _candidate_writer_failure_metadata(
     if raw_response.empty_text_classification is not None:
         metadata["empty_text_classification"] = raw_response.empty_text_classification
     return metadata or None
+
+
+def _candidate_writer_adaptation_failure_metadata(
+    exc: CandidateWriterOutputAdaptationError,
+) -> dict[str, Any] | None:
+    if not exc.safe_details:
+        return None
+    return {
+        "adaptation_error_code": exc.code,
+        "safe_details": copy.deepcopy(exc.safe_details),
+    }
 
 
 def _quality_evaluator_execution_failure_code(

@@ -9,6 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+    REQUIRED_QUALITY_CHECKS as FINAL_POST_PAYLOAD_REQUIRED_QUALITY_CHECKS,
+    build_final_post_payload_constraints,
+)
+
 
 ALLOWED_EVIDENCE_TYPES = {
     "fact",
@@ -30,11 +39,7 @@ ALLOWED_BEST_USE_VALUES = {
     "background_only",
 }
 
-REQUIRED_QUALITY_CHECKS = {
-    "uses_only_provided_facts",
-    "has_clear_point_of_view",
-    "linkedin_ready",
-}
+REQUIRED_QUALITY_CHECKS = set(FINAL_POST_PAYLOAD_REQUIRED_QUALITY_CHECKS)
 
 
 class LinkedInPostPipelineContractError(ValueError):
@@ -991,21 +996,26 @@ def validate_final_post_payload(payload: FinalPostPayload) -> None:
         raise LinkedInPostPipelineContractError("payload must be a FinalPostPayload.")
 
     _require_non_empty_string(payload.post_text, "FinalPostPayload.post_text")
-    if len(payload.post_text) > 1300:
+    if len(payload.post_text) > FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS:
         raise LinkedInPostPipelineContractError(
-            "FinalPostPayload.post_text must not exceed 1300 characters."
+            "FinalPostPayload.post_text must not exceed "
+            f"{FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS} characters."
         )
     _require_string_list(
         payload.hook_variants,
         "FinalPostPayload.hook_variants",
-        min_items=3,
+        min_items=FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
     )
     _require_string_list(
         payload.cta_variants,
         "FinalPostPayload.cta_variants",
-        min_items=3,
+        min_items=FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
     )
-    _require_string_list(payload.hashtags, "FinalPostPayload.hashtags", min_items=1)
+    _require_string_list(
+        payload.hashtags,
+        "FinalPostPayload.hashtags",
+        min_items=FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+    )
     if not isinstance(payload.carousel_outline, list):
         raise LinkedInPostPipelineContractError(
             "FinalPostPayload.carousel_outline must be a list."
@@ -2259,6 +2269,7 @@ __all__ = [
     "build_contextual_evidence_pack_from_article_evidence_pack",
     "build_editorial_synthesis_result_for_selected_items",
     "build_final_post_payload_from_post_brief",
+    "build_final_post_payload_constraints",
     "build_pipeline_input_from_digest",
     "build_post_brief_from_angle_decision",
     "final_post_payload_to_dict",

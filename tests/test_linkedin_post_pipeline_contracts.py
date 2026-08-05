@@ -1,10 +1,16 @@
 from copy import deepcopy
+import json
 from pathlib import Path
 
 from django.test import SimpleTestCase
 
 from apps.digests.models import Digest, DigestRun
 from apps.topics.models import Topic
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+    build_final_post_payload_constraints,
+)
 from services.packaging.linkedin_post_pipeline import (
     AngleDecision,
     ArticleEvidence,
@@ -198,6 +204,31 @@ def make_final_post_payload(
         },
         carousel_outline=[],
     )
+
+
+class FinalPostPayloadConstraintsContractTests(SimpleTestCase):
+    def test_final_post_payload_constraints_are_json_serializable(self) -> None:
+        constraints = build_final_post_payload_constraints()
+
+        serialized = json.dumps(constraints, ensure_ascii=False, sort_keys=True)
+
+        self.assertIn("post_text", serialized)
+        self.assertEqual(
+            constraints["post_text"]["hard_max_chars"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+
+    def test_final_post_payload_constraints_are_deterministic(self) -> None:
+        self.assertEqual(
+            build_final_post_payload_constraints(),
+            build_final_post_payload_constraints(),
+        )
+
+    def test_prompt_target_stays_inside_hard_maximum(self) -> None:
+        self.assertLessEqual(
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
 
 
 def make_article_evidence_pack(

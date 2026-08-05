@@ -12,6 +12,9 @@ from services.packaging.linkedin_final_post_diagnostics import FinalPostDiagnost
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
 from services.packaging.linkedin_post_editorial_boundary import PostGenerationMetadata
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    build_final_post_payload_constraints,
+)
 from services.packaging.linkedin_post_flow_input_builders import (
     build_candidate_writer_input,
 )
@@ -99,8 +102,20 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
                 "angle_decision_json",
                 "selected_evidence_json",
                 "candidate_writer_input_json",
+                "final_post_payload_constraints_json",
             },
         )
+
+    def test_candidate_writer_variables_include_canonical_payload_constraints(
+        self,
+    ) -> None:
+        render = render_candidate_writer_prompt_input(_candidate_input())
+
+        self.assertEqual(
+            json.loads(render.variables["final_post_payload_constraints_json"]),
+            build_final_post_payload_constraints(),
+        )
+        self.assertIn("FINAL_POST_PAYLOAD_CONSTRAINTS_JSON", render.input_text)
 
     def test_rendered_selected_evidence_preserves_id_order(self) -> None:
         render = render_candidate_writer_prompt_input(_candidate_input())

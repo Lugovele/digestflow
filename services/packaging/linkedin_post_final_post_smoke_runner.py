@@ -918,6 +918,7 @@ def _stage_statuses(result: Any) -> list[dict[str, Any]]:
             "status": getattr(status, "status", None),
             "error_code": getattr(status, "error_code", None),
             "error_message": _safe_message(getattr(status, "error_message", "")),
+            "metadata": _safe_stage_metadata(getattr(status, "metadata", None)),
         }
         for status in statuses
     ]
@@ -1020,6 +1021,39 @@ def _semantic_grounding_review_summary_from_state(
             "requires_human_review",
             None,
         ),
+    }
+
+
+def _safe_stage_metadata(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    safe_metadata: dict[str, Any] = {}
+    adaptation_error_code = metadata.get("adaptation_error_code")
+    if isinstance(adaptation_error_code, str) and adaptation_error_code.strip():
+        safe_metadata["adaptation_error_code"] = adaptation_error_code.strip()[:120]
+    safe_details = metadata.get("safe_details")
+    if isinstance(safe_details, dict):
+        safe_metadata["safe_details"] = _safe_adaptation_details(safe_details)
+    return safe_metadata or None
+
+
+def _safe_adaptation_details(details: dict[str, Any]) -> dict[str, Any]:
+    allowed_top_level = {
+        "error_code",
+        "validation_error",
+        "missing_fields",
+        "required_fields",
+        "post_text",
+        "hook_variants",
+        "cta_variants",
+        "hashtags",
+        "quality_checks",
+        "carousel_outline",
+    }
+    return {
+        key: _to_json_safe(value)
+        for key, value in details.items()
+        if key in allowed_top_level
     }
 
 

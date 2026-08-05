@@ -36,6 +36,7 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             [
                 "PostBrief",
                 "AngleDecision",
+                "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
                 "selected evidence",
                 "Use only selected evidence from PostBrief.evidence_to_use",
             ],
@@ -135,6 +136,30 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
                 "has_clear_point_of_view",
             ],
         )
+
+    def test_candidate_writer_prompt_uses_canonical_payload_constraints(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
+                "canonical structural contract",
+                "post_text.hard_max_chars",
+                "prompt_target_min_chars",
+                "prompt_target_max_chars",
+                "hook_variants.min_count",
+                "cta_variants.min_count",
+                "hashtags.min_count",
+            ],
+        )
+
+    def test_candidate_writer_prompt_does_not_duplicate_numeric_payload_limits(self):
+        prompt = _normalized_prompt_text()
+
+        self.assertNotIn("1300", prompt)
+        self.assertIn("final_post_payload_constraints_json", prompt)
 
     def test_candidate_writer_prompt_forbids_payload_debug_and_runtime_fields(self):
         prompt = _normalized_prompt_text()

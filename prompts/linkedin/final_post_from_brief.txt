@@ -36,6 +36,7 @@ Use these inputs:
 * PostBrief.evidence_to_use selected evidence IDs
 * PostBrief.evidence_to_use selected evidence text
 * PostBrief.evidence_to_use role_in_post values
+* FINAL_POST_PAYLOAD_CONSTRAINTS_JSON
 * quality constraints supplied by the caller
 * forbidden claims and safety rules supplied by the caller
 
@@ -110,7 +111,12 @@ selected evidence, evidence above, source-grounded, separate signals,
 keep claims attributed, avoid unsupported conclusions, according to one source,
 another source, research cited in a third source, or sources matter.
 
-Keep post_text under the existing final payload limit.
+Keep post_text within FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.hard_max_chars.
+
+Use the rendered target range in
+FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.prompt_target_min_chars and
+FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.prompt_target_max_chars as a writing
+target, while treating hard_max_chars as the absolute output limit.
 
 Write a finished LinkedIn post, not a brief, research summary, evidence report,
 repair instruction, debug note, or runtime log.
@@ -151,6 +157,16 @@ The JSON must include:
 * carousel_outline
 
 The output must be validator-compatible with the existing FinalPostPayload contract.
+
+Follow FINAL_POST_PAYLOAD_CONSTRAINTS_JSON as the canonical structural contract.
+
+Return at least FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.hook_variants.min_count
+hook_variants.
+
+Return at least FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.cta_variants.min_count
+cta_variants.
+
+Return at least FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.hashtags.min_count hashtags.
 
 Keep carousel_outline empty unless carousel support is explicitly added later.
 

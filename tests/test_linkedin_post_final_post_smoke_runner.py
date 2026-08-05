@@ -17,6 +17,13 @@ from apps.packaging.management.commands import smoke_linkedin_final_post
 from services.packaging.linkedin_post_candidate_writer_execution import (
     EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
 )
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
+from services.packaging.linkedin_post_final_post_attempt_contract import (
+    FAILURE_CANDIDATE_WRITER_ADAPTATION,
+    STAGE_CANDIDATE_WRITER_ADAPTATION,
+)
 from services.packaging import linkedin_post_final_post_smoke_runner
 from services.packaging.linkedin_post_final_post_smoke_runner import (
     EXIT_CONFIG_ERROR,
@@ -448,6 +455,59 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             "sk-secret-value",
             json.dumps(result.to_dict(), sort_keys=True),
         )
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_smoke_output_exposes_only_safe_adaptation_details(self) -> None:
+        fake_result = _standalone_result(
+            failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+            failure_message="parsed candidate does not satisfy FinalPostPayload structure.",
+        )
+        fake_result.stage_statuses = [
+            SimpleNamespace(
+                stage=STAGE_CANDIDATE_WRITER_ADAPTATION,
+                status="failed",
+                error_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                error_message=(
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                metadata={
+                    "adaptation_error_code": "invalid_final_post_payload",
+                    "safe_details": {
+                        "post_text": {
+                            "input_length": (
+                                FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1
+                            ),
+                            "max_chars": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+                        },
+                        "raw_text": "secret rejected candidate content",
+                    },
+                },
+            )
+        ]
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+            )
+
+        stage_metadata = result.sanitized_result["stage_statuses"][0]["metadata"]
+        self.assertEqual(
+            stage_metadata["adaptation_error_code"],
+            "invalid_final_post_payload",
+        )
+        self.assertEqual(
+            stage_metadata["safe_details"]["post_text"],
+            {
+                "input_length": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
+                "max_chars": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+            },
+        )
+        serialized = json.dumps(result.to_dict(), sort_keys=True)
+        self.assertNotIn("secret rejected candidate content", serialized)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_save_output_writes_sanitized_json_under_requested_debug_directory(

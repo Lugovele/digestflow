@@ -23,6 +23,12 @@ from services.packaging.linkedin_post_candidate_writer_output_adapter import (
     build_candidate_writer_output_from_parsed_response,
 )
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
 
 
@@ -101,6 +107,101 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             adapt_candidate_writer_payload(parsed)
 
         self.assertEqual(error.exception.code, ERROR_INVALID_FINAL_POST_PAYLOAD)
+        self.assertEqual(
+            error.exception.safe_details["quality_checks"]["provided_keys"],
+            [
+                "has_clear_point_of_view",
+                "linkedin_ready",
+                "uses_only_provided_facts",
+            ],
+        )
+
+    def test_missing_quality_check_key_fails_with_required_key_details(self) -> None:
+        parsed = _parsed_candidate(
+            quality_checks={
+                "linkedin_ready": True,
+                "has_clear_point_of_view": True,
+            }
+        )
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(parsed)
+
+        self.assertEqual(error.exception.code, ERROR_INVALID_FINAL_POST_PAYLOAD)
+        self.assertIn(
+            "uses_only_provided_facts",
+            error.exception.safe_details["quality_checks"]["required_boolean_keys"],
+        )
+
+    def test_post_text_over_hard_max_fails_with_safe_details(self) -> None:
+        rejected_content = "x" * (FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1)
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(_parsed_candidate(post_text=rejected_content))
+
+        self.assertEqual(error.exception.code, ERROR_INVALID_FINAL_POST_PAYLOAD)
+        self.assertEqual(
+            error.exception.safe_details["post_text"]["input_length"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
+        )
+        self.assertEqual(
+            error.exception.safe_details["post_text"]["max_chars"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+        self.assertNotIn(rejected_content, json.dumps(error.exception.safe_details))
+
+    def test_post_text_at_hard_max_succeeds(self) -> None:
+        payload = adapt_candidate_writer_payload(
+            _parsed_candidate(post_text="x" * FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS)
+        )
+
+        self.assertEqual(
+            len(payload["post_text"]),
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+
+    def test_too_few_hook_variants_fail_with_safe_count(self) -> None:
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(_parsed_candidate(hook_variants=["Only one"]))
+
+        self.assertEqual(error.exception.safe_details["hook_variants"]["input_count"], 1)
+        self.assertEqual(
+            error.exception.safe_details["hook_variants"]["min_count"],
+            FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
+        )
+
+    def test_too_few_cta_variants_fail_with_safe_count(self) -> None:
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(_parsed_candidate(cta_variants=["Only one"]))
+
+        self.assertEqual(error.exception.safe_details["cta_variants"]["input_count"], 1)
+        self.assertEqual(
+            error.exception.safe_details["cta_variants"]["min_count"],
+            FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+        )
+
+    def test_zero_hashtags_fail_with_safe_count(self) -> None:
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(_parsed_candidate(hashtags=[]))
+
+        self.assertEqual(error.exception.safe_details["hashtags"]["input_count"], 0)
+        self.assertEqual(
+            error.exception.safe_details["hashtags"]["min_count"],
+            FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+        )
+
+    def test_adaptation_safe_details_do_not_include_rejected_content(self) -> None:
+        parsed = _parsed_candidate(
+            post_text="secret rejected post text",
+            hook_variants=[],
+        )
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(parsed)
+
+        serialized = json.dumps(error.exception.safe_details, sort_keys=True)
+        self.assertIn("hook_variants", serialized)
+        self.assertNotIn("secret rejected post text", serialized)
 
     def test_adapter_reuses_final_post_payload_validation(self) -> None:
         with patch(
