@@ -43,6 +43,7 @@ from services.packaging.linkedin_post_flow_decision import FinalPostDecisionPoli
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
 )
+from services.packaging.linkedin_post_model_role_policy import OPENAI_FINAL_POST_MODEL
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
@@ -689,12 +690,14 @@ class QueuedFakeClient:
         max_output_tokens: int,
         json_mode: bool,
         allow_json_mode_fallback: bool = True,
+        **kwargs,
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
         self.allow_json_mode_fallback = allow_json_mode_fallback
+        self.extra_kwargs = copy.deepcopy(kwargs)
         if not self.responses:
             raise AssertionError("No queued fake response available.")
         return self.responses.pop(0)
@@ -737,7 +740,7 @@ def _controlled_request(
         ),
         repair_prompt_text="Repair Writer prompt text.",
         repair_provider=repair_provider,
-        repair_model="repair-model",
+        repair_model=OPENAI_FINAL_POST_MODEL,
         repair_max_output_tokens=1200,
         repair_enabled=repair_enabled,
         max_controlled_attempts=max_controlled_attempts,
@@ -770,14 +773,14 @@ def _attempt_request(
         attempt_index=0,
         max_attempts=max_attempts,
         candidate_writer_provider=candidate_writer_provider,
-        candidate_writer_model="candidate-model",
+        candidate_writer_model=OPENAI_FINAL_POST_MODEL,
         candidate_writer_max_output_tokens=1200,
         semantic_grounding_prompt_text="Semantic grounding prompt text.",
         semantic_grounding_provider="openai",
-        semantic_grounding_model="semantic-model",
+        semantic_grounding_model=OPENAI_FINAL_POST_MODEL,
         semantic_grounding_max_output_tokens=None,
         quality_evaluator_provider="openai",
-        quality_evaluator_model="quality-model",
+        quality_evaluator_model=OPENAI_FINAL_POST_MODEL,
         quality_evaluator_max_output_tokens=None,
         policy=policy or FinalPostDecisionPolicy(max_total_attempts=2),
     )
@@ -855,7 +858,16 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
         "requires_human_review": False,
         "human_review_reason": "",
         "repairable": True,
-        "repair_instructions": [] if passed else ["Remove unsupported wording."],
+        "repair_instructions": (
+            []
+            if passed
+            else [
+                {
+                    "claim_id": "c1",
+                    "instruction": "Remove unsupported wording.",
+                }
+            ]
+        ),
     }
 
 

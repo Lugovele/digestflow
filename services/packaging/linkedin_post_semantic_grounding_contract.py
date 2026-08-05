@@ -129,6 +129,18 @@ class SemanticGroundingClaimReview:
 
 
 @dataclass(frozen=True)
+class SemanticGroundingRepairInstruction:
+    claim_id: str
+    instruction: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "claim_id": self.claim_id,
+            "instruction": self.instruction,
+        }
+
+
+@dataclass(frozen=True)
 class SemanticGroundingReviewResult:
     passed: bool
     claim_reviews: tuple[SemanticGroundingClaimReview, ...]
@@ -137,7 +149,7 @@ class SemanticGroundingReviewResult:
     requires_human_review: bool = False
     human_review_reason: str = ""
     repairable: bool = True
-    repair_instructions: tuple[str, ...] = ()
+    repair_instructions: tuple[SemanticGroundingRepairInstruction, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -148,7 +160,9 @@ class SemanticGroundingReviewResult:
             "requires_human_review": self.requires_human_review,
             "human_review_reason": self.human_review_reason,
             "repairable": self.repairable,
-            "repair_instructions": list(self.repair_instructions),
+            "repair_instructions": [
+                instruction.to_dict() for instruction in self.repair_instructions
+            ],
         }
 
 
@@ -197,16 +211,16 @@ def normalize_semantic_grounding_review_result(
     automatic_fail_reason = _optional_string(payload, "automatic_fail_reason")
     requires_human_review = _optional_bool(payload, "requires_human_review", False)
     human_review_reason = _optional_string(payload, "human_review_reason")
-    repairable = _optional_bool(payload, "repairable", True)
-    repair_instructions = _string_tuple(
-        payload.get("repair_instructions", ()),
-        "repair_instructions",
-    )
-
     blocking_claim_ids = tuple(
         claim.claim_id
         for claim in claim_reviews
         if _claim_blocks_grounding(claim)
+    )
+    repairable = _optional_bool(payload, "repairable", True)
+    repair_instructions = _normalize_repair_instructions(
+        payload.get("repair_instructions", ()),
+        claim_reviews=claim_reviews,
+        blocking_claim_ids=blocking_claim_ids,
     )
     expected_failed = tuple(dict.fromkeys((*failed_claim_ids, *blocking_claim_ids)))
     if expected_failed and passed:
@@ -299,6 +313,49 @@ def _normalize_claim_reviews(
             )
         )
     return tuple(reviews)
+
+
+def _normalize_repair_instructions(
+    value: Any,
+    *,
+    claim_reviews: tuple[SemanticGroundingClaimReview, ...],
+    blocking_claim_ids: tuple[str, ...],
+) -> tuple[SemanticGroundingRepairInstruction, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list | tuple):
+        raise ValueError("semantic grounding repair_instructions must be a list.")
+
+    known_claim_ids = {claim.claim_id for claim in claim_reviews}
+    blocking_claim_id_set = set(blocking_claim_ids)
+    seen_claim_ids = set()
+    instructions = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(
+                "semantic grounding repair_instructions entries must be objects."
+            )
+        claim_id = _required_string(item, "claim_id")
+        if claim_id in seen_claim_ids:
+            raise ValueError(
+                f"semantic grounding duplicate repair instruction claim_id: {claim_id}"
+            )
+        if claim_id not in known_claim_ids:
+            raise ValueError(
+                f"semantic grounding repair instruction references unknown claim: {claim_id}"
+            )
+        if claim_id not in blocking_claim_id_set:
+            raise ValueError(
+                f"semantic grounding repair instruction references non-blocking claim: {claim_id}"
+            )
+        seen_claim_ids.add(claim_id)
+        instructions.append(
+            SemanticGroundingRepairInstruction(
+                claim_id=claim_id,
+                instruction=_required_string(item, "instruction"),
+            )
+        )
+    return tuple(instructions)
 
 
 def _claim_blocks_grounding(claim: SemanticGroundingClaimReview) -> bool:

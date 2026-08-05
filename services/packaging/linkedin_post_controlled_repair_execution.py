@@ -1044,7 +1044,7 @@ def _semantic_grounding_repair_instruction(
         else []
     )
     if instructions:
-        return "; ".join(instructions)
+        return "; ".join(instruction.instruction for instruction in instructions)
     return fallback_reason
 
 

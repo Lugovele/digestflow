@@ -12,6 +12,7 @@ from services.packaging.linkedin_post_semantic_grounding_contract import (
     SUPPORT_STATUS_SUPPORTED,
     SUPPORT_STATUS_UNSUPPORTED,
     FinalPostSemanticGroundingState,
+    SemanticGroundingRepairInstruction,
     SemanticGroundingReviewResult,
     normalize_semantic_grounding_review_result,
 )
@@ -61,7 +62,7 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
             ],
             failed_claim_ids=["c1"],
             automatic_fail_reason="missing required qualification",
-            repair_instructions=["Restore likely attribution."],
+            repair_instructions=[_repair_instruction("c1", "Restore likely attribution.")],
         )
 
         result = normalize_semantic_grounding_review_result(
@@ -72,6 +73,15 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
         self.assertFalse(result.passed)
         self.assertEqual(result.blocking_claim_ids, ("c1",))
         self.assertEqual(result.claim_reviews[0].missing_qualifications, ("likely",))
+        self.assertEqual(
+            result.repair_instructions,
+            (
+                SemanticGroundingRepairInstruction(
+                    claim_id="c1",
+                    instruction="Restore likely attribution.",
+                ),
+            ),
+        )
 
     def test_unselected_evidence_cannot_support_claim(self) -> None:
         payload = _review_payload(
@@ -144,6 +154,114 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 selected_evidence_ids=("a0-summary",),
             )
 
+    def test_valid_structured_repair_instruction_to_dict(self) -> None:
+        payload = _blocking_repair_payload(
+            repair_instructions=[_repair_instruction("c1", "Remove unsupported claim.")]
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertEqual(
+            result.to_dict()["repair_instructions"],
+            [{"claim_id": "c1", "instruction": "Remove unsupported claim."}],
+        )
+
+    def test_repair_instruction_empty_claim_id_is_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            repair_instructions=[_repair_instruction("", "Remove unsupported claim.")]
+        )
+
+        with self.assertRaisesRegex(ValueError, "claim_id"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repair_instruction_empty_instruction_is_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            repair_instructions=[_repair_instruction("c1", " ")]
+        )
+
+        with self.assertRaisesRegex(ValueError, "instruction"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repair_instruction_unknown_claim_is_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            repair_instructions=[
+                _repair_instruction("missing", "Remove unsupported claim.")
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "unknown claim"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repair_instruction_non_blocking_claim_is_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                ),
+                _claim(claim_id="c2", support_status=SUPPORT_STATUS_SUPPORTED),
+            ],
+            repair_instructions=[_repair_instruction("c2", "Revise advisory claim.")],
+        )
+
+        with self.assertRaisesRegex(ValueError, "non-blocking claim"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_duplicate_repair_instruction_claim_references_are_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            repair_instructions=[
+                _repair_instruction("c1", "Remove unsupported claim."),
+                _repair_instruction("c1", "Qualify unsupported claim."),
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "duplicate repair instruction claim_id"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_legacy_string_repair_instruction_payload_fails(self) -> None:
+        payload = _blocking_repair_payload(
+            repair_instructions=["Remove unsupported claim."]
+        )
+
+        with self.assertRaisesRegex(ValueError, "repair_instructions entries must be objects"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_automatic_fail_only_result_cannot_emit_repair_instructions(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            failed_claim_ids=[],
+            automatic_fail_reason="non-claim failure",
+            repairable=False,
+            repair_instructions=[_repair_instruction("c1", "Repair automatic failure.")],
+        )
+
+        with self.assertRaisesRegex(ValueError, "non-blocking claim"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
     def test_bitcoin_causal_drift_is_not_a_clean_grounding_pass(self) -> None:
         payload = {
             "pass": False,
@@ -191,7 +309,16 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
             "human_review_reason": "",
             "repairable": True,
             "repair_instructions": [
-                "Remove optimism, stability, recovery, and future growth drift."
+                _repair_instruction(
+                    "c1",
+                    "Remove unsupported optimism bridge claim.",
+                ),
+                _repair_instruction(
+                    "c2",
+                    "Keep K33's likelihood and risk language.",
+                ),
+                _repair_instruction("c3", "Remove recovery causality."),
+                _repair_instruction("c4", "Remove future growth causality."),
             ],
         }
 
@@ -251,6 +378,24 @@ def _review_payload(**overrides) -> dict:
     return payload
 
 
+def _blocking_repair_payload(**overrides) -> dict:
+    payload = _review_payload(
+        passed=False,
+        claims=[
+            _claim(
+                support_status=SUPPORT_STATUS_UNSUPPORTED,
+                severity="major",
+            )
+        ],
+        failed_claim_ids=["c1"],
+        automatic_fail_reason="unsupported claim",
+        repairable=True,
+        repair_instructions=[_repair_instruction("c1", "Remove unsupported claim.")],
+    )
+    payload.update(overrides)
+    return payload
+
+
 def _claim(**overrides) -> dict:
     claim = {
         "claim_id": "c1",
@@ -270,3 +415,10 @@ def _claim(**overrides) -> dict:
     if "evidence_ids" in claim:
         claim["supported_evidence_ids"] = claim.pop("evidence_ids")
     return claim
+
+
+def _repair_instruction(claim_id: str, instruction: str) -> dict:
+    return {
+        "claim_id": claim_id,
+        "instruction": instruction,
+    }

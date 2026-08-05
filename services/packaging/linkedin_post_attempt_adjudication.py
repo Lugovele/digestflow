@@ -329,7 +329,9 @@ def _grounding_repair_plan(
     return {
         "repair_type": "semantic_grounding",
         "failed_claim_ids": list(review.blocking_claim_ids),
-        "repair_instruction": "; ".join(review.repair_instructions),
+        "repair_instruction": "; ".join(
+            instruction.instruction for instruction in review.repair_instructions
+        ),
         "preserve": [
             "selected evidence",
             "AngleDecision.controlling_angle",

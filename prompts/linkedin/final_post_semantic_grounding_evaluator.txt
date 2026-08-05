@@ -56,7 +56,12 @@ Return only JSON compatible with this shape:
   "requires_human_review": false,
   "human_review_reason": "",
   "repairable": true,
-  "repair_instructions": ["Remove or qualify unsupported strengthened claims."]
+  "repair_instructions": [
+    {
+      "claim_id": "c1",
+      "instruction": "Remove or qualify unsupported strengthened claims."
+    }
+  ]
 }
 
 Allowed claim_type values:

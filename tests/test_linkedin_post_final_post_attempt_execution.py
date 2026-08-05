@@ -1358,7 +1358,16 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
         "requires_human_review": False,
         "human_review_reason": "",
         "repairable": True,
-        "repair_instructions": [] if passed else ["Remove unsupported wording."],
+        "repair_instructions": (
+            []
+            if passed
+            else [
+                {
+                    "claim_id": "c1",
+                    "instruction": "Remove unsupported wording.",
+                }
+            ]
+        ),
     }
 
 
@@ -1535,8 +1544,22 @@ def _bitcoin_drift_grounding_payload() -> dict:
         "human_review_reason": "",
         "repairable": True,
         "repair_instructions": [
-            "Remove optimism/stability/recovery/growth causal drift.",
-            "Keep likely, may, projected, and risk remains qualifications.",
+            {
+                "claim_id": "c-optimism",
+                "instruction": "Remove optimism causal drift.",
+            },
+            {
+                "claim_id": "c-stability",
+                "instruction": "Remove stability causal drift.",
+            },
+            {
+                "claim_id": "c-recovery",
+                "instruction": "Remove recovery causal drift.",
+            },
+            {
+                "claim_id": "c-growth",
+                "instruction": "Keep projected and may qualifications.",
+            },
         ],
     }
 

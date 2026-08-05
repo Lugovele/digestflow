@@ -60,6 +60,22 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
 
         self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
 
+    def test_legacy_string_repair_instruction_is_normalization_failure(self) -> None:
+        payload = _review_payload(passed=False)
+        payload["claims"][0]["support_status"] = "unsupported"
+        payload["claims"][0]["severity"] = "major"
+        payload["failed_claim_ids"] = ["c1"]
+        payload["automatic_fail_reason"] = "unsupported claim"
+        payload["repair_instructions"] = ["Remove unsupported claim."]
+
+        with self.assertRaises(SemanticGroundingResponseParseError) as error:
+            parse_and_normalize_semantic_grounding_response(
+                _raw(json.dumps(payload)),
+                selected_evidence_ids=("a0-summary",),
+            )
+
+        self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
+
 
 def _raw(raw_text: str) -> SemanticGroundingRawResponse:
     return SemanticGroundingRawResponse(
@@ -69,9 +85,9 @@ def _raw(raw_text: str) -> SemanticGroundingRawResponse:
     )
 
 
-def _review_payload() -> dict:
+def _review_payload(*, passed: bool = True) -> dict:
     return {
-        "pass": True,
+        "pass": passed,
         "claims": [
             {
                 "claim_id": "c1",
