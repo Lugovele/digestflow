@@ -745,6 +745,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         human_review_payload["requires_human_review"] = True
         human_review_payload["human_review_reason"] = "candidate contradicts evidence"
         human_review_payload["repairable"] = False
+        human_review_payload["repair_instructions"] = []
         evaluator_client = FakeCandidateWriterClient(
             _provider_response(json.dumps(_quality_review_payload(passed=True)))
         )
@@ -1357,7 +1358,7 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
         "automatic_fail_reason": "" if passed else "unsupported claim",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
+        "repairable": not passed,
         "repair_instructions": (
             []
             if passed

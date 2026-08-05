@@ -62,6 +62,7 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
             ],
             failed_claim_ids=["c1"],
             automatic_fail_reason="missing required qualification",
+            repairable=True,
             repair_instructions=[_repair_instruction("c1", "Restore likely attribution.")],
         )
 
@@ -103,6 +104,33 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 selected_evidence_ids=("a0-summary",),
             )
 
+    def test_pass_with_blocking_claim_is_rejected(self) -> None:
+        payload = _review_payload(
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                )
+            ],
+            failed_claim_ids=["c1"],
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "pass cannot be true with failed claims"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_pass_with_failed_claim_ids_is_rejected(self) -> None:
+        payload = _review_payload(failed_claim_ids=["c1"])
+
+        with self.assertRaisesRegex(ValueError, "failed_claim_ids must exactly match"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
     def test_human_review_cannot_be_clean_grounding_pass(self) -> None:
         payload = _review_payload(
             requires_human_review=True,
@@ -110,6 +138,43 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "human review is required"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_pass_with_repairable_true_is_rejected(self) -> None:
+        payload = _review_payload(repairable=True)
+
+        with self.assertRaisesRegex(ValueError, "pass cannot be true when repairable"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_pass_with_repair_instructions_is_rejected(self) -> None:
+        payload = _review_payload(
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                )
+            ],
+            failed_claim_ids=["c1"],
+            repairable=True,
+            repair_instructions=[_repair_instruction("c1", "Remove unsupported claim.")],
+        )
+
+        with self.assertRaisesRegex(ValueError, "pass cannot be true with failed claims"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_bare_fail_with_no_signal_is_rejected(self) -> None:
+        payload = _review_payload(passed=False, repairable=False)
+
+        with self.assertRaisesRegex(ValueError, "fail requires a failure signal"):
             normalize_semantic_grounding_review_result(
                 payload,
                 selected_evidence_ids=("a0-summary",),
@@ -139,12 +204,7 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
     def test_repairable_failed_grounding_requires_instructions_even_without_failed_claim_ids(
         self,
     ) -> None:
-        payload = _review_payload(
-            passed=False,
-            claims=[_claim()],
-            failed_claim_ids=[],
-            automatic_fail_reason="semantic grounding failed without claim IDs",
-            repairable=True,
+        payload = _blocking_repair_payload(
             repair_instructions=[],
         )
 
@@ -153,6 +213,161 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 payload,
                 selected_evidence_ids=("a0-summary",),
             )
+
+    def test_failed_claim_ids_missing_blocker_are_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            failed_claim_ids=[],
+            repairable=False,
+            repair_instructions=[],
+        )
+
+        with self.assertRaisesRegex(ValueError, "failed_claim_ids must exactly match"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_failed_claim_ids_with_extra_advisory_claim_are_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                ),
+                _claim(claim_id="c2", support_status=SUPPORT_STATUS_SUPPORTED),
+            ],
+            failed_claim_ids=["c1", "c2"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "failed_claim_ids must exactly match"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_duplicate_failed_claim_ids_are_rejected(self) -> None:
+        payload = _blocking_repair_payload(failed_claim_ids=["c1", "c1"])
+
+        with self.assertRaisesRegex(ValueError, "duplicate failed_claim_id"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_non_canonical_failed_claim_id_order_is_rejected(self) -> None:
+        payload = _blocking_repair_payload(
+            claims=[
+                _claim(
+                    claim_id="c1",
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                ),
+                _claim(
+                    claim_id="c2",
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                ),
+            ],
+            failed_claim_ids=["c2", "c1"],
+            repair_instructions=[
+                _repair_instruction("c1", "Remove first unsupported claim."),
+                _repair_instruction("c2", "Remove second unsupported claim."),
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "failed_claim_ids must exactly match"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_human_review_reason_when_review_false_is_rejected(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            automatic_fail_reason="manual context required",
+            requires_human_review=False,
+            human_review_reason="Needs human review.",
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "human_review_reason must be empty"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repairable_without_blockers_is_rejected(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            automatic_fail_reason="automatic failure",
+            repairable=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "repairable requires blocking claims"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repair_instructions_with_repairable_false_are_rejected(self) -> None:
+        payload = _blocking_repair_payload(repairable=False)
+
+        with self.assertRaisesRegex(ValueError, "repair_instructions require repairable"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_advisory_only_result_may_pass(self) -> None:
+        payload = _review_payload(
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="minor",
+                )
+            ]
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+
+    def test_automatic_fail_only_result_is_valid_when_not_repairable(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            automatic_fail_reason="non-claim automatic failure",
+            repairable=False,
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+        self.assertFalse(result.repairable)
+
+    def test_human_review_only_result_is_valid_when_reason_exists(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            requires_human_review=True,
+            human_review_reason="Needs human factuality review.",
+            repairable=False,
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(result.requires_human_review)
+        self.assertEqual(result.blocking_claim_ids, ())
 
     def test_valid_structured_repair_instruction_to_dict(self) -> None:
         payload = _blocking_repair_payload(
@@ -371,7 +586,7 @@ def _review_payload(**overrides) -> dict:
         "automatic_fail_reason": "",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
+        "repairable": False,
         "repair_instructions": [],
     }
     payload.update(overrides)

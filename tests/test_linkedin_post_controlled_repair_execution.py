@@ -857,7 +857,7 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
         "automatic_fail_reason": "" if passed else "unsupported claim",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
+        "repairable": not passed,
         "repair_instructions": (
             []
             if passed

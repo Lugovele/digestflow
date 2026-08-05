@@ -76,6 +76,40 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
 
         self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
 
+    def test_invalid_consistency_combinations_are_normalization_failures(self) -> None:
+        invalid_payloads = [
+            _review_payload(repairable=True),
+            _review_payload(passed=False),
+            _review_payload(
+                passed=False,
+                automatic_fail_reason="automatic failure",
+                human_review_reason="stale reason",
+            ),
+            _review_payload(
+                passed=False,
+                claims=[
+                    {
+                        **_claim_payload(),
+                        "support_status": "unsupported",
+                        "severity": "major",
+                    }
+                ],
+                failed_claim_ids=[],
+                automatic_fail_reason="unsupported claim",
+                repairable=False,
+            ),
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(SemanticGroundingResponseParseError) as error:
+                    parse_and_normalize_semantic_grounding_response(
+                        _raw(json.dumps(payload)),
+                        selected_evidence_ids=("a0-summary",),
+                    )
+
+                self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
+
 
 def _raw(raw_text: str) -> SemanticGroundingRawResponse:
     return SemanticGroundingRawResponse(
@@ -85,29 +119,33 @@ def _raw(raw_text: str) -> SemanticGroundingRawResponse:
     )
 
 
-def _review_payload(*, passed: bool = True) -> dict:
-    return {
+def _review_payload(*, passed: bool = True, **overrides) -> dict:
+    payload = {
         "pass": passed,
-        "claims": [
-            {
-                "claim_id": "c1",
-                "field_name": "post_text",
-                "value_index": None,
-                "claim_text": "Bitcoin adoption has security and volatility constraints.",
-                "claim_type": "attributed_source_claim",
-                "support_status": "supported",
-                "severity": "info",
-                "supported_evidence_ids": ["a0-summary"],
-                "required_qualifications": [],
-                "missing_qualifications": [],
-                "rationale": "Directly supported.",
-                "repair_hint": "",
-            }
-        ],
+        "claims": [_claim_payload()],
         "failed_claim_ids": [],
         "automatic_fail_reason": "",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
+        "repairable": False,
         "repair_instructions": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _claim_payload() -> dict:
+    return {
+        "claim_id": "c1",
+        "field_name": "post_text",
+        "value_index": None,
+        "claim_text": "Bitcoin adoption has security and volatility constraints.",
+        "claim_type": "attributed_source_claim",
+        "support_status": "supported",
+        "severity": "info",
+        "supported_evidence_ids": ["a0-summary"],
+        "required_qualifications": [],
+        "missing_qualifications": [],
+        "rationale": "Directly supported.",
+        "repair_hint": "",
     }

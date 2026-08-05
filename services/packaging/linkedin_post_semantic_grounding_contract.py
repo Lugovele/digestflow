@@ -201,11 +201,6 @@ def normalize_semantic_grounding_review_result(
     claim_reviews = _normalize_claim_reviews(payload.get("claims"), selected_id_set)
     failed_claim_ids = _string_tuple(payload.get("failed_claim_ids"), "failed_claim_ids")
     known_claim_ids = {claim.claim_id for claim in claim_reviews}
-    for claim_id in failed_claim_ids:
-        if claim_id not in known_claim_ids:
-            raise ValueError(
-                f"semantic grounding failed_claim_ids references unknown claim: {claim_id}"
-            )
 
     passed = _required_bool(payload, "pass")
     automatic_fail_reason = _optional_string(payload, "automatic_fail_reason")
@@ -216,14 +211,18 @@ def normalize_semantic_grounding_review_result(
         for claim in claim_reviews
         if _claim_blocks_grounding(claim)
     )
+    _validate_failed_claim_ids(
+        failed_claim_ids,
+        blocking_claim_ids=blocking_claim_ids,
+        known_claim_ids=known_claim_ids,
+    )
     repairable = _optional_bool(payload, "repairable", True)
     repair_instructions = _normalize_repair_instructions(
         payload.get("repair_instructions", ()),
         claim_reviews=claim_reviews,
         blocking_claim_ids=blocking_claim_ids,
     )
-    expected_failed = tuple(dict.fromkeys((*failed_claim_ids, *blocking_claim_ids)))
-    if expected_failed and passed:
+    if blocking_claim_ids and passed:
         raise ValueError("semantic grounding pass cannot be true with failed claims.")
     if automatic_fail_reason and passed:
         raise ValueError(
@@ -237,15 +236,33 @@ def normalize_semantic_grounding_review_result(
         raise ValueError(
             "semantic grounding human_review_reason is required when human review is required."
         )
-    if repairable and not passed and not requires_human_review and not repair_instructions:
+    if not requires_human_review and human_review_reason:
+        raise ValueError(
+            "semantic grounding human_review_reason must be empty when human review is not required."
+        )
+    if passed and repairable:
+        raise ValueError("semantic grounding pass cannot be true when repairable.")
+    if passed and repair_instructions:
+        raise ValueError(
+            "semantic grounding pass cannot be true with repair_instructions."
+        )
+    if not passed and not blocking_claim_ids and not automatic_fail_reason and not requires_human_review:
+        raise ValueError("semantic grounding fail requires a failure signal.")
+    if repairable and not blocking_claim_ids:
+        raise ValueError("semantic grounding repairable requires blocking claims.")
+    if repairable and not repair_instructions:
         raise ValueError(
             "semantic grounding repairable failures require repair_instructions."
+        )
+    if not repairable and repair_instructions:
+        raise ValueError(
+            "semantic grounding repair_instructions require repairable to be true."
         )
 
     return SemanticGroundingReviewResult(
         passed=passed,
         claim_reviews=claim_reviews,
-        blocking_claim_ids=expected_failed,
+        blocking_claim_ids=blocking_claim_ids,
         automatic_fail_reason=automatic_fail_reason,
         requires_human_review=requires_human_review,
         human_review_reason=human_review_reason,
@@ -313,6 +330,29 @@ def _normalize_claim_reviews(
             )
         )
     return tuple(reviews)
+
+
+def _validate_failed_claim_ids(
+    failed_claim_ids: tuple[str, ...],
+    *,
+    blocking_claim_ids: tuple[str, ...],
+    known_claim_ids: set[str],
+) -> None:
+    seen_ids = set()
+    for claim_id in failed_claim_ids:
+        if claim_id in seen_ids:
+            raise ValueError(
+                f"semantic grounding duplicate failed_claim_id: {claim_id}"
+            )
+        seen_ids.add(claim_id)
+        if claim_id not in known_claim_ids:
+            raise ValueError(
+                f"semantic grounding failed_claim_ids references unknown claim: {claim_id}"
+            )
+    if failed_claim_ids != blocking_claim_ids:
+        raise ValueError(
+            "semantic grounding failed_claim_ids must exactly match blocking_claim_ids."
+        )
 
 
 def _normalize_repair_instructions(
