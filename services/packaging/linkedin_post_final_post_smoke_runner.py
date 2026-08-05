@@ -27,7 +27,9 @@ from services.packaging.linkedin_post_controlled_repair_execution import (
 )
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_attempt_contract import (
+    FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
     FinalPostAttemptRequest,
+    STAGE_CANDIDATE_WRITER_EXECUTION,
 )
 from services.packaging.linkedin_post_final_post_attempt_execution import (
     execute_final_post_standalone_attempt,
@@ -88,6 +90,16 @@ SECRET_FIELD_FRAGMENTS = (
     "secret",
     "password",
     "headers",
+)
+PROVIDER_DIAGNOSTIC_FIELDS = (
+    "provider",
+    "model",
+    "stop_reason",
+    "content_block_types",
+    "input_tokens",
+    "output_tokens",
+    "thinking_tokens",
+    "empty_text_classification",
 )
 
 
@@ -840,6 +852,7 @@ def _sanitize_standalone_result(
         ),
         "quality_review": _quality_review_summary(result),
         "semantic_grounding_review": _semantic_grounding_review_summary(result),
+        "provider_response_diagnostics": _provider_response_diagnostics_summary(result),
         **(
             {"raw_texts": _raw_texts_from_standalone(result)}
             if include_raw_responses
@@ -1008,6 +1021,74 @@ def _semantic_grounding_review_summary_from_state(
             None,
         ),
     }
+
+
+def _provider_response_diagnostics_summary(result: Any) -> dict[str, Any] | None:
+    if (
+        getattr(result, "failure_stage", None) != STAGE_CANDIDATE_WRITER_EXECUTION
+        or getattr(result, "failure_code", None) != FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE
+    ):
+        return None
+    candidate_raw_response = getattr(result, "candidate_writer_raw_response", None)
+    provider_metadata = getattr(
+        candidate_raw_response,
+        "provider_response_metadata",
+        None,
+    )
+    classification = getattr(
+        candidate_raw_response,
+        "empty_text_classification",
+        None,
+    )
+    diagnostics = _sanitize_provider_diagnostics(
+        provider_metadata,
+        empty_text_classification=classification,
+    )
+    if diagnostics:
+        return {"candidate_writer": diagnostics}
+    return None
+
+
+def _sanitize_provider_diagnostics(
+    metadata: Any,
+    *,
+    empty_text_classification: Any,
+) -> dict[str, Any] | None:
+    diagnostics: dict[str, Any] = {}
+    if isinstance(metadata, dict):
+        for field_name in PROVIDER_DIAGNOSTIC_FIELDS:
+            if field_name == "empty_text_classification":
+                continue
+            value = metadata.get(field_name)
+            if field_name == "content_block_types":
+                values = _sanitize_content_block_types(value)
+                if values:
+                    diagnostics[field_name] = values
+            elif field_name in ("input_tokens", "output_tokens", "thinking_tokens"):
+                if _is_non_negative_int(value):
+                    diagnostics[field_name] = value
+            elif isinstance(value, str) and value.strip():
+                diagnostics[field_name] = value.strip()[:120]
+    if isinstance(empty_text_classification, str) and empty_text_classification.strip():
+        diagnostics["empty_text_classification"] = empty_text_classification.strip()[:120]
+    return diagnostics or None
+
+
+def _sanitize_content_block_types(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    sanitized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        block_type = item.strip()[:120]
+        if block_type and block_type not in sanitized:
+            sanitized.append(block_type)
+    return sanitized[:20]
+
+
+def _is_non_negative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
 
 
 def _raw_texts_from_standalone(result: Any) -> dict[str, str]:

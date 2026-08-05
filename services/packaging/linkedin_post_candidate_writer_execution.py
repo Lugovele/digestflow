@@ -31,6 +31,16 @@ from services.packaging.linkedin_post_prompt_renderers import (
 
 DEFAULT_CANDIDATE_WRITER_MAX_OUTPUT_TOKENS = 1200
 STAGE_NAME = "candidate writer"
+EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT = "MAX_TOKENS_BEFORE_TEXT"
+PROVIDER_RESPONSE_METADATA_FIELDS = (
+    "provider",
+    "model",
+    "stop_reason",
+    "content_block_types",
+    "input_tokens",
+    "output_tokens",
+    "thinking_tokens",
+)
 
 
 @dataclass(frozen=True)
@@ -64,6 +74,7 @@ class CandidateWriterRawResponse:
     usage: dict[str, Any] | None = None
     raw_provider_response: dict[str, Any] | None = None
     provider_response_metadata: dict[str, Any] | None = None
+    empty_text_classification: str | None = None
     execution_error: str | None = None
     execution_metadata: dict[str, Any] | None = None
 
@@ -83,6 +94,8 @@ class CandidateWriterRawResponse:
             result["provider_response_metadata"] = copy.deepcopy(
                 self.provider_response_metadata
             )
+        if self.empty_text_classification is not None:
+            result["empty_text_classification"] = self.empty_text_classification
         if self.execution_error is not None:
             result["execution_error"] = self.execution_error
         if self.execution_metadata is not None:
@@ -177,6 +190,9 @@ def execute_candidate_writer_prompt(
 
     raw_text = response.text
     if raw_text is None or not str(raw_text).strip():
+        provider_response_metadata = _sanitize_provider_response_metadata(
+            getattr(response, "provider_response_metadata", None)
+        )
         return CandidateWriterRawResponse(
             raw_text=str(raw_text or ""),
             provider=request.provider,
@@ -184,8 +200,9 @@ def execute_candidate_writer_prompt(
             prompt_metadata=prompt_metadata,
             usage=copy.deepcopy(response.usage),
             raw_provider_response=copy.deepcopy(response.raw),
-            provider_response_metadata=copy.deepcopy(
-                getattr(response, "provider_response_metadata", None)
+            provider_response_metadata=provider_response_metadata,
+            empty_text_classification=_classify_empty_text_response(
+                provider_response_metadata
             ),
             execution_error="empty provider response",
             execution_metadata=execution_metadata,
@@ -198,7 +215,7 @@ def execute_candidate_writer_prompt(
         prompt_metadata=prompt_metadata,
         usage=copy.deepcopy(response.usage),
         raw_provider_response=copy.deepcopy(response.raw),
-        provider_response_metadata=copy.deepcopy(
+        provider_response_metadata=_sanitize_provider_response_metadata(
             getattr(response, "provider_response_metadata", None)
         ),
         execution_metadata=execution_metadata,
@@ -282,3 +299,59 @@ def _prompt_metadata_from_render(
         prompt_version=render.prompt_version or "",
         prompt_path=render.prompt_path,
     )
+
+
+def _sanitize_provider_response_metadata(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    sanitized: dict[str, Any] = {}
+    for field_name in PROVIDER_RESPONSE_METADATA_FIELDS:
+        value = metadata.get(field_name)
+        if field_name == "content_block_types":
+            sanitized_list = _sanitize_content_block_types(value)
+            if sanitized_list:
+                sanitized[field_name] = sanitized_list
+        elif field_name in ("input_tokens", "output_tokens", "thinking_tokens"):
+            if _is_non_negative_int(value):
+                sanitized[field_name] = value
+        elif isinstance(value, str) and value.strip():
+            sanitized[field_name] = value.strip()[:120]
+    return sanitized or None
+
+
+def _sanitize_content_block_types(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    sanitized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        block_type = item.strip()[:120]
+        if block_type and block_type not in sanitized:
+            sanitized.append(block_type)
+    return sanitized[:20]
+
+
+def _classify_empty_text_response(metadata: dict[str, Any] | None) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    content_block_types = metadata.get("content_block_types")
+    output_tokens = metadata.get("output_tokens")
+    thinking_tokens = metadata.get("thinking_tokens")
+    if (
+        metadata.get("provider") == "anthropic"
+        and metadata.get("stop_reason") == "max_tokens"
+        and isinstance(content_block_types, list)
+        and "thinking" in content_block_types
+        and "text" not in content_block_types
+        and _is_non_negative_int(output_tokens)
+        and _is_non_negative_int(thinking_tokens)
+        and thinking_tokens == output_tokens
+        and output_tokens > 0
+    ):
+        return EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT
+    return None
+
+
+def _is_non_negative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0

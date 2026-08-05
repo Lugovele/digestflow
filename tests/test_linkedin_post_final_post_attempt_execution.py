@@ -25,6 +25,9 @@ from services.packaging.linkedin_post_attempt_outcome import (
     OUTCOME_REPAIR_REQUIRED,
     OUTCOME_TRY_ALTERNATIVE_MODEL,
 )
+from services.packaging.linkedin_post_candidate_writer_execution import (
+    EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
+)
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_ADAPTATION,
     FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
@@ -243,6 +246,65 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertIsNone(result.parsed_candidate)
         self.assertIsNone(result.candidate_writer_output)
         self.assertEqual(result.candidate_writer_invocation_count, 1)
+
+    def test_empty_response_propagates_safe_provider_diagnostics_to_failure_metadata(
+        self,
+    ) -> None:
+        provider_metadata = {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5",
+            "stop_reason": "max_tokens",
+            "content_block_types": ["thinking"],
+            "input_tokens": 6616,
+            "output_tokens": 4000,
+            "thinking_tokens": 4000,
+        }
+        fake_client = FakeCandidateWriterClient(
+            _provider_response("", provider_response_metadata=provider_metadata)
+        )
+
+        with patch.object(
+            linkedin_post_final_post_attempt_execution,
+            "parse_candidate_writer_raw_response",
+        ) as parse_raw:
+            with patch.object(
+                linkedin_post_final_post_attempt_execution,
+                "build_candidate_writer_output_from_parsed_response",
+            ) as adapt_payload:
+                result = execute_final_post_standalone_candidate_attempt(
+                    _request(
+                        candidate_writer_provider="anthropic",
+                        candidate_writer_model="claude-sonnet-5",
+                    ),
+                    selected_evidence_ids=("ev-1",),
+                    candidate_writer_client=fake_client,
+                )
+
+        parse_raw.assert_not_called()
+        adapt_payload.assert_not_called()
+        self.assertEqual(fake_client.call_count, 1)
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE)
+        self.assertEqual(result.candidate_writer_invocation_count, 1)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        failed_status = next(
+            status
+            for status in result.stage_statuses
+            if status.stage == STAGE_CANDIDATE_WRITER_EXECUTION
+        )
+        self.assertEqual(
+            failed_status.metadata,
+            {
+                "provider_response_metadata": provider_metadata,
+                "empty_text_classification": (
+                    EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT
+                ),
+            },
+        )
+        serialized = json.dumps(result.to_dict(), sort_keys=True)
+        self.assertIn(EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT, serialized)
+        self.assertNotIn("raw request body", serialized)
+        self.assertNotIn("secret provider thinking text", serialized)
 
     def test_parse_failure_does_not_invoke_adaptation(self) -> None:
         fake_client = FakeCandidateWriterClient(_provider_response("{not-json"))
@@ -1253,11 +1315,16 @@ def _render() -> CandidateWriterPromptRender:
     )
 
 
-def _provider_response(raw_text: str) -> SimpleNamespace:
+def _provider_response(
+    raw_text: str,
+    *,
+    provider_response_metadata: dict | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         text=raw_text,
         raw={"id": "resp-1", "metadata_sentinel": "provider-metadata"},
         usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        provider_response_metadata=copy.deepcopy(provider_response_metadata),
     )
 
 

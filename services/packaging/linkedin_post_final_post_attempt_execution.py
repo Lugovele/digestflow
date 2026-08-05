@@ -7,6 +7,7 @@ packaging runtime.
 """
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -169,6 +170,7 @@ def execute_final_post_standalone_candidate_attempt(
                     STAGE_CANDIDATE_WRITER_EXECUTION,
                     failure_code,
                     raw_response.execution_error,
+                    metadata=_candidate_writer_failure_metadata(raw_response),
                 ),
                 _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
@@ -799,6 +801,20 @@ def _candidate_writer_execution_failure_code(
     return FAILURE_CANDIDATE_WRITER_PROVIDER
 
 
+def _candidate_writer_failure_metadata(
+    raw_response: CandidateWriterRawResponse,
+) -> dict[str, Any] | None:
+    if raw_response.execution_error != "empty provider response":
+        return None
+    metadata: dict[str, Any] = {}
+    provider_metadata = raw_response.provider_response_metadata
+    if isinstance(provider_metadata, dict):
+        metadata["provider_response_metadata"] = copy.deepcopy(provider_metadata)
+    if raw_response.empty_text_classification is not None:
+        metadata["empty_text_classification"] = raw_response.empty_text_classification
+    return metadata or None
+
+
 def _quality_evaluator_execution_failure_code(
     raw_response: QualityEvaluatorRawResponse,
 ) -> str:
@@ -1162,12 +1178,15 @@ def _failed_status(
     stage: str,
     error_code: str,
     error_message: str,
+    *,
+    metadata: dict[str, Any] | None = None,
 ) -> FinalPostAttemptStageStatus:
     return FinalPostAttemptStageStatus(
         stage=stage,
         status=STATUS_FAILED,
         error_code=error_code,
         error_message=error_message,
+        metadata=copy.deepcopy(metadata),
     )
 
 

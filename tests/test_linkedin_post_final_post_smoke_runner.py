@@ -14,6 +14,9 @@ from django.test import SimpleTestCase
 from django.test import override_settings
 
 from apps.packaging.management.commands import smoke_linkedin_final_post
+from services.packaging.linkedin_post_candidate_writer_execution import (
+    EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
+)
 from services.packaging import linkedin_post_final_post_smoke_runner
 from services.packaging.linkedin_post_final_post_smoke_runner import (
     EXIT_CONFIG_ERROR,
@@ -357,6 +360,74 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.safe_failure_message, "redacted provider/configuration message")
 
     @override_settings(OPENAI_API_KEY="sk-test")
+    def test_empty_candidate_response_exposes_only_safe_provider_diagnostics(
+        self,
+    ) -> None:
+        provider_metadata = {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5",
+            "stop_reason": "max_tokens",
+            "content_block_types": [
+                "thinking",
+                {"secret": "raw content block"},
+            ],
+            "input_tokens": 6616,
+            "output_tokens": 4000,
+            "thinking_tokens": 4000,
+            "raw_provider_response": {"secret": "raw payload"},
+            "headers": {"x-api-key": "sk-secret"},
+            "prompt": "secret prompt text",
+        }
+        fake_result = _standalone_result(
+            failure_code="candidate_writer_empty_response",
+            failure_message="empty provider response",
+            accepted_payload=None,
+            provider_response_metadata=provider_metadata,
+            empty_text_classification=(
+                EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT
+            ),
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    allow_api=True,
+                    include_raw_responses=True,
+                )
+            )
+
+        diagnostics = result.sanitized_result["provider_response_diagnostics"]
+        self.assertEqual(
+            diagnostics,
+            {
+                "candidate_writer": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_tokens",
+                    "content_block_types": ["thinking"],
+                    "input_tokens": 6616,
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                    "empty_text_classification": (
+                        EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT
+                    ),
+                }
+            },
+        )
+        serialized = json.dumps(result.to_dict(), sort_keys=True)
+        self.assertNotIn("raw_provider_response", serialized)
+        self.assertNotIn("raw payload", serialized)
+        self.assertNotIn("raw content block", serialized)
+        self.assertNotIn("x-api-key", serialized)
+        self.assertNotIn("sk-secret", serialized)
+        self.assertNotIn("secret prompt text", serialized)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
     def test_unexpected_orchestration_exception_uses_safe_technical_failure(
         self,
     ) -> None:
@@ -558,6 +629,8 @@ def _standalone_result(
     failure_message: str = "",
     accepted_payload: dict | None = None,
     candidate_post_text: str | None = None,
+    provider_response_metadata: dict | None = None,
+    empty_text_classification: str | None = None,
 ) -> SimpleNamespace:
     payload = (
         {"post_text": "Accepted smoke post."}
@@ -628,8 +701,14 @@ def _standalone_result(
             )
         ),
         candidate_writer_raw_response=SimpleNamespace(
-            raw_text="candidate raw text",
+            raw_text=(
+                ""
+                if failure_code == "candidate_writer_empty_response"
+                else "candidate raw text"
+            ),
             raw_provider_response={"secret": "secret-provider-metadata"},
+            provider_response_metadata=copy.deepcopy(provider_response_metadata),
+            empty_text_classification=empty_text_classification,
         ),
         semantic_grounding_raw_response=SimpleNamespace(
             raw_text="semantic grounding raw text",

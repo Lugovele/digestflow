@@ -18,6 +18,7 @@ from services.packaging import linkedin_post_candidate_writer_execution
 from services.packaging.linkedin_post_candidate_writer_execution import (
     CandidateWriterExecutionRequest,
     CandidateWriterRawResponse,
+    EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
     build_candidate_writer_execution_request,
     execute_candidate_writer_prompt,
 )
@@ -63,6 +64,7 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             usage={"total_tokens": 12},
             raw_provider_response={"id": "resp_1"},
             provider_response_metadata={"stop_reason": "end_turn"},
+            empty_text_classification=EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
             execution_metadata={"attempt": {"index": 1}},
         )
 
@@ -73,6 +75,10 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         serialized["execution_metadata"]["attempt"]["index"] = 2
 
         self.assertEqual(serialized["raw_text"], '{"post_text": "Draft"}')
+        self.assertEqual(
+            serialized["empty_text_classification"],
+            EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
+        )
         self.assertEqual(response.usage, {"total_tokens": 12})
         self.assertEqual(response.raw_provider_response, {"id": "resp_1"})
         self.assertEqual(response.provider_response_metadata, {"stop_reason": "end_turn"})
@@ -248,10 +254,95 @@ class CandidateWriterExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.execution_error, "empty provider response")
         self.assertEqual(raw_response.raw_provider_response, {})
         self.assertEqual(raw_response.provider_response_metadata, provider_metadata)
+        self.assertEqual(
+            raw_response.empty_text_classification,
+            EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
+        )
         self.assertNotEqual(raw_response.execution_error, "provider invocation failed")
         serialized = json.dumps(raw_response.to_dict(), sort_keys=True)
         self.assertNotIn("secret provider thinking text", serialized)
         mock_build_ai_client.return_value.generate_text.assert_called_once()
+
+    @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
+    def test_empty_response_classification_requires_supported_metadata(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        cases = (
+            (
+                "end_turn",
+                {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "end_turn",
+                    "content_block_types": ["thinking"],
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                },
+            ),
+            (
+                "no_thinking_block",
+                {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_tokens",
+                    "content_block_types": [],
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                },
+            ),
+            (
+                "text_block_present",
+                {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_tokens",
+                    "content_block_types": ["thinking", "text"],
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                },
+            ),
+            (
+                "malformed_metadata",
+                {
+                    "provider": "anthropic",
+                    "stop_reason": "max_tokens",
+                    "content_block_types": {"type": "thinking"},
+                    "output_tokens": "4000",
+                    "thinking_tokens": 4000,
+                },
+            ),
+            (
+                "thinking_tokens_do_not_match_output_tokens",
+                {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_tokens",
+                    "content_block_types": ["thinking"],
+                    "output_tokens": 4000,
+                    "thinking_tokens": 3999,
+                },
+            ),
+        )
+
+        for case_name, metadata in cases:
+            with self.subTest(case_name=case_name):
+                mock_build_ai_client.reset_mock()
+                mock_build_ai_client.return_value.generate_text.return_value = (
+                    SimpleNamespace(
+                        text="",
+                        raw={},
+                        usage={"total_tokens": 3},
+                        provider_response_metadata=metadata,
+                    )
+                )
+
+                raw_response = execute_candidate_writer_prompt(
+                    _request(provider="anthropic", model="claude-sonnet-5")
+                )
+
+                self.assertEqual(raw_response.execution_error, "empty provider response")
+                self.assertIsNone(raw_response.empty_text_classification)
 
     @patch("services.packaging.linkedin_post_candidate_writer_execution.build_ai_client")
     def test_provider_failure_returns_sanitized_execution_error(
