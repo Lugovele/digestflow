@@ -76,6 +76,7 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
         self.assertIn("selected_evidence", access_contract.allowed_inputs)
         self.assertIn("PostBrief", contract.input_contract)
         self.assertIn("AngleDecision", contract.input_contract)
+        self.assertIn("AngleDecision.authorial_voice_directive", contract.input_contract)
         self.assertIn("selected evidence", contract.input_contract)
         self.assertIn("FinalPostPayload", access_contract.allowed_outputs)
         self.assertEqual(contract.output_contract, "FinalPostPayload")
@@ -96,7 +97,7 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
 
         self.assertEqual(
             contract.input_contract,
-            "PostBrief + AngleDecision + selected evidence",
+            "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive + selected evidence",
         )
 
     def test_prompt_output_contract_is_final_post_payload(self) -> None:

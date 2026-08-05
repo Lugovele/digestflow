@@ -407,6 +407,15 @@ Required fields:
 - `main_tension`
 - `supporting_evidence_ids`
 - `angle_to_avoid`
+- `authorial_voice_directive`
+
+The `authorial_voice_directive` object must include:
+
+- `authorial_observation`: what the author notices in the selected evidence;
+- `rejected_reading`: the tempting but unsupported reading the writer must avoid;
+- `why_distinction_matters`: why the distinction matters for the reader;
+- `first_person_policy`: currently `allowed_not_required`, meaning first person is permitted but not required;
+- `forbidden_author_claims`: author claims the writer must not invent, such as personal experience, professional authority, direct market exposure, client or customer stories, invented emotional reaction, or biographical claims.
 
 Validation rules:
 
@@ -414,7 +423,8 @@ Validation rules:
 - `reader_problem` must be concrete;
 - `author_position` must be visible;
 - supporting evidence IDs must refer to contextualized evidence;
-- `angle_to_avoid` should prevent likely drift.
+- `angle_to_avoid` should prevent likely drift;
+- `authorial_voice_directive` must derive from the selected evidence relationship and preserve author perspective without inventing biography, credentials, client work, market exposure, emotion, or personal experience.
 
 Must not contain:
 
@@ -432,7 +442,23 @@ Example JSON:
   "author_position": "Proof of judgment matters more than surface polish.",
   "main_tension": "Finished outcomes look credible, but they can hide how the person actually works.",
   "supporting_evidence_ids": ["e1"],
-  "angle_to_avoid": "Do not make this a broad post about visual identity, authenticity, or personal brand strategy."
+  "angle_to_avoid": [
+    "Do not make this a broad post about visual identity, authenticity, or personal brand strategy."
+  ],
+  "authorial_voice_directive": {
+    "authorial_observation": "The author notices that polished output and visible judgment should not be treated as the same proof.",
+    "rejected_reading": "Reject treating polished output as proof that judgment has been demonstrated.",
+    "why_distinction_matters": "The distinction matters because readers need evidence of thinking, not another neutral recap of branding advice.",
+    "first_person_policy": "allowed_not_required",
+    "forbidden_author_claims": [
+      "personal experience",
+      "professional authority",
+      "direct market exposure",
+      "client or customer stories",
+      "invented emotional reaction",
+      "biographical claims"
+    ]
+  }
 }
 ```
 

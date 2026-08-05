@@ -41,6 +41,17 @@ ALLOWED_BEST_USE_VALUES = {
 
 REQUIRED_QUALITY_CHECKS = set(FINAL_POST_PAYLOAD_REQUIRED_QUALITY_CHECKS)
 
+AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED = "allowed_not_required"
+
+AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS = (
+    "personal experience",
+    "professional authority",
+    "direct market exposure",
+    "client or customer stories",
+    "invented emotional reaction",
+    "biographical claims",
+)
+
 
 class LinkedInPostPipelineContractError(ValueError):
     """Raised when a LinkedIn posting pipeline contract is invalid."""
@@ -140,6 +151,15 @@ class EditorialSynthesisResult:
 
 
 @dataclass(frozen=True)
+class AuthorialVoiceDirective:
+    authorial_observation: str
+    rejected_reading: str
+    why_distinction_matters: str
+    first_person_policy: str
+    forbidden_author_claims: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AngleDecision:
     controlling_angle: str
     reader_problem: str
@@ -147,6 +167,7 @@ class AngleDecision:
     main_tension: str
     supporting_evidence_ids: list[str]
     angle_to_avoid: list[str]
+    authorial_voice_directive: AuthorialVoiceDirective
 
 
 @dataclass(frozen=True)
@@ -401,12 +422,42 @@ def build_angle_decision_from_contextual_evidence_pack(
             contextual_evidence_pack,
             selected_items,
         ),
+        authorial_voice_directive=build_authorial_voice_directive_from_evidence_relationship(
+            relationship
+        ),
     )
     validate_angle_decision_for_contextual_evidence(
         contextual_evidence_pack,
         angle_decision,
     )
     return angle_decision
+
+
+def build_authorial_voice_directive_from_evidence_relationship(
+    relationship: EvidenceRelationship,
+) -> AuthorialVoiceDirective:
+    validate_evidence_relationship(relationship)
+
+    directive = AuthorialVoiceDirective(
+        authorial_observation=(
+            "The author notices that "
+            f"{relationship.left_label} and {relationship.right_label} should not be "
+            "collapsed into one easy conclusion."
+        ),
+        rejected_reading=(
+            "Reject treating "
+            f"{relationship.left_label} as proof that {relationship.right_label} "
+            "has been resolved."
+        ),
+        why_distinction_matters=(
+            "The distinction matters because "
+            f"{relationship.reader_problem[:1].lower()}{relationship.reader_problem[1:]}"
+        ),
+        first_person_policy=AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+        forbidden_author_claims=AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+    )
+    validate_authorial_voice_directive(directive)
+    return directive
 
 
 def build_post_brief_from_angle_decision(
@@ -819,6 +870,46 @@ def validate_angle_decision(decision: AngleDecision) -> None:
     _require_non_empty_string(decision.main_tension, "AngleDecision.main_tension")
     _require_string_list(decision.supporting_evidence_ids, "AngleDecision.supporting_evidence_ids")
     _require_string_list(decision.angle_to_avoid, "AngleDecision.angle_to_avoid")
+    validate_authorial_voice_directive(decision.authorial_voice_directive)
+
+
+def validate_authorial_voice_directive(
+    directive: AuthorialVoiceDirective,
+) -> None:
+    if not isinstance(directive, AuthorialVoiceDirective):
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive must be an AuthorialVoiceDirective."
+        )
+    _require_non_empty_string(
+        directive.authorial_observation,
+        "AngleDecision.authorial_voice_directive.authorial_observation",
+    )
+    _require_non_empty_string(
+        directive.rejected_reading,
+        "AngleDecision.authorial_voice_directive.rejected_reading",
+    )
+    _require_non_empty_string(
+        directive.why_distinction_matters,
+        "AngleDecision.authorial_voice_directive.why_distinction_matters",
+    )
+    _require_non_empty_string(
+        directive.first_person_policy,
+        "AngleDecision.authorial_voice_directive.first_person_policy",
+    )
+    if directive.first_person_policy != AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED:
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive.first_person_policy "
+            f"must be {AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED}."
+        )
+    _require_unique_non_empty_string_tuple(
+        directive.forbidden_author_claims,
+        "AngleDecision.authorial_voice_directive.forbidden_author_claims",
+    )
+    if directive.forbidden_author_claims != AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS:
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive.forbidden_author_claims "
+            "must match the canonical forbidden author claims."
+        )
 
 
 def validate_angle_decision_for_contextual_evidence(
@@ -1075,6 +1166,28 @@ def _require_unique_non_empty_string_list(
     min_items: int = 1,
 ) -> None:
     _require_string_list(value, field_name, min_items=min_items)
+    if len(set(value)) != len(value):
+        raise LinkedInPostPipelineContractError(
+            f"{field_name} must not contain duplicate strings."
+        )
+
+
+def _require_unique_non_empty_string_tuple(
+    value: Any,
+    field_name: str,
+    min_items: int = 1,
+) -> None:
+    if not isinstance(value, tuple):
+        raise LinkedInPostPipelineContractError(f"{field_name} must be a tuple.")
+    if len(value) < min_items:
+        raise LinkedInPostPipelineContractError(
+            f"{field_name} must contain at least {min_items} items."
+        )
+    for item_index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise LinkedInPostPipelineContractError(
+                f"{field_name}[{item_index}] must be a non-empty string."
+            )
     if len(set(value)) != len(value):
         raise LinkedInPostPipelineContractError(
             f"{field_name} must not contain duplicate strings."
@@ -2248,10 +2361,13 @@ __all__ = [
     "ALLOWED_BEST_USE_VALUES",
     "ALLOWED_EVIDENCE_TYPES",
     "ALLOWED_SPECIFICITY_LEVELS",
+    "AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED",
+    "AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS",
     "REQUIRED_QUALITY_CHECKS",
     "AngleDecision",
     "ArticleEvidence",
     "ArticleEvidencePack",
+    "AuthorialVoiceDirective",
     "BriefEvidenceUse",
     "ContextualEvidence",
     "ContextualEvidencePack",
@@ -2266,6 +2382,7 @@ __all__ = [
     "TargetedRepairPlan",
     "build_angle_decision_from_contextual_evidence_pack",
     "build_article_evidence_pack_from_pipeline_input",
+    "build_authorial_voice_directive_from_evidence_relationship",
     "build_contextual_evidence_pack_from_article_evidence_pack",
     "build_editorial_synthesis_result_for_selected_items",
     "build_final_post_payload_from_post_brief",
@@ -2277,6 +2394,7 @@ __all__ = [
     "validate_angle_decision_for_contextual_evidence",
     "validate_article_evidence_pack",
     "validate_article_evidence_pack_for_pipeline_input",
+    "validate_authorial_voice_directive",
     "validate_contextual_evidence_pack",
     "validate_contextual_evidence_pack_for_article_evidence",
     "validate_editorial_synthesis_result",

@@ -36,6 +36,8 @@ Use these inputs:
 * PostBrief.evidence_to_use selected evidence IDs
 * PostBrief.evidence_to_use selected evidence text
 * PostBrief.evidence_to_use role_in_post values
+* AngleDecision.authorial_voice_directive
+* AUTHORIAL_VOICE_DIRECTIVE_JSON
 * FINAL_POST_PAYLOAD_CONSTRAINTS_JSON
 * quality constraints supplied by the caller
 * forbidden claims and safety rules supplied by the caller
@@ -49,6 +51,9 @@ PostBrief is the source of truth for exact selected evidence.
 Exact evidence text is preserved upstream through PostBrief.
 
 Preserve AngleDecision.controlling_angle.
+
+Use AngleDecision.authorial_voice_directive as the source of truth for the
+authorial observation the post should make visible.
 
 Use only selected evidence from PostBrief.evidence_to_use.
 
@@ -123,6 +128,28 @@ repair instruction, debug note, or runtime log.
 
 The post may be opinionated only when the opinion is grounded in PostBrief and
 AngleDecision.
+
+## Authorial Voice Directive Rules
+
+Use AuthorialVoiceDirective to make the approved authorial observation visible.
+
+Use authorial_observation to express what the author notices in the selected evidence.
+
+Use rejected_reading to avoid or challenge the tempting reading that the selected
+evidence does not support.
+
+Use why_distinction_matters to explain why the distinction matters to the reader.
+
+Use first_person_policy only as a bounded permission. When first_person_policy is
+allowed_not_required, first person is allowed when natural but must not be forced.
+
+Use forbidden_author_claims as claims the post must not invent.
+
+Do not invent personal experience, professional authority, direct market exposure,
+client or customer stories, invented emotional reaction, biographical claims, or
+other personal context not supplied by the input.
+
+Do not turn the selected evidence into a neutral article-style summary.
 
 ## Safety / Financial Advice Rules
 

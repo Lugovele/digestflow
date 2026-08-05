@@ -68,6 +68,65 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             ],
         )
 
+    def test_candidate_writer_prompt_uses_authorial_voice_directive(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "AngleDecision.authorial_voice_directive",
+                "AuthorialVoiceDirective",
+                "authorial_observation",
+                "rejected_reading",
+                "why_distinction_matters",
+                "first_person_policy",
+                "forbidden_author_claims",
+                "authorial observation",
+            ],
+        )
+
+    def test_candidate_writer_prompt_forbids_invented_author_context(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "Do not invent personal experience",
+                "professional authority",
+                "direct market exposure",
+                "client or customer stories",
+                "invented emotional reaction",
+                "biographical claims",
+                "personal context not supplied by the input",
+            ],
+        )
+
+    def test_candidate_writer_prompt_allows_but_does_not_force_first_person(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "allowed_not_required",
+                "first person is allowed when natural",
+                "must not be forced",
+            ],
+        )
+
+    def test_candidate_writer_prompt_defers_later_author_presence_fields(self):
+        prompt = _normalized_prompt_text()
+
+        deferred_fields = (
+            "personal" + "_presence" + "_requirement",
+            "author" + "_owned" + "_statement" + "_policy",
+            "ownership" + "_mode",
+        )
+        for field_name in deferred_fields:
+            self.assertNotIn(field_name, prompt)
+
     def test_candidate_writer_prompt_declares_factuality_and_no_invention_rules(self):
         prompt = _normalized_prompt_text()
 

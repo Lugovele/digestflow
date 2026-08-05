@@ -64,7 +64,9 @@ FINAL_POST_PROMPT_REGISTRY = (
         prompt_path="prompts/linkedin/final_post_from_brief.txt",
         agent_role=ROLE_CANDIDATE_WRITER,
         access_mode=get_access_contract(ROLE_CANDIDATE_WRITER).access_mode,
-        input_contract="PostBrief + AngleDecision + selected evidence",
+        input_contract=(
+            "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive + selected evidence"
+        ),
         output_contract="FinalPostPayload",
         model_role=MODEL_ROLE_CANDIDATE_WRITER_PRIMARY,
         status=PROMPT_STATUS_BASELINE,

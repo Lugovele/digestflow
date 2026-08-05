@@ -12,9 +12,12 @@ from services.packaging.linkedin_post_final_post_payload_contract import (
     build_final_post_payload_constraints,
 )
 from services.packaging.linkedin_post_pipeline import (
+    AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+    AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
     AngleDecision,
     ArticleEvidence,
     ArticleEvidencePack,
+    AuthorialVoiceDirective,
     BriefEvidenceUse,
     ContextualEvidence,
     ContextualEvidencePack,
@@ -27,6 +30,7 @@ from services.packaging.linkedin_post_pipeline import (
     SelectedArticle,
     build_angle_decision_from_contextual_evidence_pack,
     build_article_evidence_pack_from_pipeline_input,
+    build_authorial_voice_directive_from_evidence_relationship,
     build_contextual_evidence_pack_from_article_evidence_pack,
     build_editorial_synthesis_result_for_selected_items,
     build_final_post_payload_from_post_brief,
@@ -37,6 +41,7 @@ from services.packaging.linkedin_post_pipeline import (
     validate_angle_decision_for_contextual_evidence,
     validate_article_evidence_pack,
     validate_article_evidence_pack_for_pipeline_input,
+    validate_authorial_voice_directive,
     validate_contextual_evidence_pack,
     validate_contextual_evidence_pack_for_article_evidence,
     validate_editorial_synthesis_result,
@@ -231,6 +236,118 @@ class FinalPostPayloadConstraintsContractTests(SimpleTestCase):
         )
 
 
+class AuthorialVoiceDirectiveContractTests(SimpleTestCase):
+    def test_valid_authorial_voice_directive_constructs(self) -> None:
+        directive = make_authorial_voice_directive()
+
+        validate_authorial_voice_directive(directive)
+        self.assertEqual(
+            directive.first_person_policy,
+            AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+        )
+        self.assertEqual(
+            directive.forbidden_author_claims,
+            AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+        )
+
+    def test_authorial_voice_directive_rejects_empty_required_text(self) -> None:
+        cases = (
+            ("authorial_observation", " "),
+            ("rejected_reading", ""),
+            ("why_distinction_matters", " "),
+        )
+
+        for field_name, field_value in cases:
+            with self.subTest(field_name=field_name):
+                directive = make_authorial_voice_directive(**{field_name: field_value})
+
+                with self.assertRaisesRegex(
+                    LinkedInPostPipelineContractError,
+                    field_name,
+                ):
+                    validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_rejects_invalid_first_person_policy(self) -> None:
+        directive = make_authorial_voice_directive(first_person_policy="required")
+
+        with self.assertRaisesRegex(
+            LinkedInPostPipelineContractError,
+            "first_person_policy",
+        ):
+            validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_rejects_empty_forbidden_claim_entries(self) -> None:
+        directive = make_authorial_voice_directive(
+            forbidden_author_claims=("personal experience", ""),
+        )
+
+        with self.assertRaisesRegex(
+            LinkedInPostPipelineContractError,
+            "forbidden_author_claims",
+        ):
+            validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_rejects_duplicate_forbidden_claims(self) -> None:
+        directive = make_authorial_voice_directive(
+            forbidden_author_claims=("personal experience", "personal experience"),
+        )
+
+        with self.assertRaisesRegex(
+            LinkedInPostPipelineContractError,
+            "duplicate",
+        ):
+            validate_authorial_voice_directive(directive)
+
+    def test_angle_decision_requires_explicit_authorial_voice_directive(self) -> None:
+        with self.assertRaises(TypeError):
+            AngleDecision(
+                controlling_angle="A polished profile is weak proof.",
+                reader_problem="The reader sees output without decisions.",
+                author_position="Visible judgment matters.",
+                main_tension="Polish can hide thinking.",
+                supporting_evidence_ids=["e1"],
+                angle_to_avoid=["generic advice"],
+            )
+
+    def test_build_authorial_voice_directive_from_growth_relationship(self) -> None:
+        directive = build_authorial_voice_directive_from_evidence_relationship(
+            make_growth_vs_constraint_relationship()
+        )
+
+        self.assertEqual(
+            directive.authorial_observation,
+            "The author notices that growth evidence and confidence and risk "
+            "evidence should not be collapsed into one easy conclusion.",
+        )
+        self.assertEqual(
+            directive.rejected_reading,
+            "Reject treating growth evidence as proof that confidence and risk "
+            "evidence has been resolved.",
+        )
+        self.assertEqual(
+            directive.why_distinction_matters,
+            "The distinction matters because readers may treat ownership, investment "
+            "intent, or market forecasts as one clean growth story before checking "
+            "the confidence and risk evidence.",
+        )
+        self.assertEqual(
+            directive.first_person_policy,
+            AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+        )
+        self.assertEqual(
+            directive.forbidden_author_claims,
+            AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+        )
+
+    def test_authorial_voice_directive_serialization_is_json_safe(self) -> None:
+        directive = make_authorial_voice_directive()
+
+        serialized = json.dumps(directive.__dict__, ensure_ascii=False, sort_keys=True)
+
+        self.assertIn("authorial_observation", serialized)
+        self.assertIn("forbidden_author_claims", serialized)
+
+
 def make_article_evidence_pack(
     items: list[ArticleEvidence] | None = None,
 ) -> ArticleEvidencePack:
@@ -260,6 +377,39 @@ def make_contextual_evidence_pack(
     )
 
 
+def make_bitcoin_growth_vs_constraint_contextual_pack() -> ContextualEvidencePack:
+    items = [
+        make_contextual_evidence(
+            evidence_id="growth",
+            best_use_in_post="proof",
+            source_index=0,
+            source_title="Bitcoin adoption",
+            evidence_type="pattern",
+            evidence_text=(
+                "Bitcoin ownership and investment intent show adoption growth."
+            ),
+            what_it_says="The source says more users own crypto.",
+            supports_argument="Use as growth evidence for the crypto-market angle.",
+        ),
+        make_contextual_evidence(
+            evidence_id="risk",
+            best_use_in_post="tension",
+            source_index=1,
+            source_title="Bitcoin risk",
+            evidence_type="warning",
+            evidence_text=(
+                "Bitcoin security concerns, volatility, and trader downside risk remain."
+            ),
+            what_it_says="The source says confidence and risk are unresolved.",
+            supports_argument="Use as confidence and risk evidence.",
+        ),
+    ]
+    return make_contextual_evidence_pack(
+        items=items,
+        main_candidate_evidence_ids=["growth", "risk"],
+    )
+
+
 def primary_editorial_text(
     angle_decision: AngleDecision,
     post_brief: PostBrief | None = None,
@@ -285,6 +435,61 @@ def make_angle_decision(supporting_evidence_ids: list[str] | None = None) -> Ang
         if supporting_evidence_ids is not None
         else ["e1"],
         angle_to_avoid=["generic personal branding advice"],
+        authorial_voice_directive=make_authorial_voice_directive(),
+    )
+
+
+def make_authorial_voice_directive(
+    *,
+    authorial_observation: str = (
+        "The author notices that polished output and visible judgment should not "
+        "be treated as the same proof."
+    ),
+    rejected_reading: str = (
+        "Reject treating polished output as proof that judgment has been demonstrated."
+    ),
+    why_distinction_matters: str = (
+        "The distinction matters because readers need evidence of thinking, not a recap."
+    ),
+    first_person_policy: str = AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+    forbidden_author_claims: tuple[str, ...] = AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+) -> AuthorialVoiceDirective:
+    return AuthorialVoiceDirective(
+        authorial_observation=authorial_observation,
+        rejected_reading=rejected_reading,
+        why_distinction_matters=why_distinction_matters,
+        first_person_policy=first_person_policy,
+        forbidden_author_claims=forbidden_author_claims,
+    )
+
+
+def make_growth_vs_constraint_relationship() -> EvidenceRelationship:
+    return EvidenceRelationship(
+        relationship_type="growth_vs_constraint",
+        left_label="growth evidence",
+        right_label="confidence and risk evidence",
+        left_evidence_ids=["growth"],
+        right_evidence_ids=["risk"],
+        supporting_evidence_ids=["growth", "risk"],
+        qualifier="may, risk",
+        thesis=(
+            "The stronger crypto-market angle is not that adoption or forecasts "
+            "settle the market story, but that visible growth evidence remains "
+            "conditional on confidence and risk evidence."
+        ),
+        reader_problem=(
+            "Readers may treat ownership, investment intent, or market forecasts "
+            "as one clean growth story before checking the confidence and risk evidence."
+        ),
+        author_position=(
+            "The author position is that crypto-market growth should be read as conditional."
+        ),
+        main_tension=(
+            "The tension is between visible growth evidence and unresolved confidence "
+            "or risk evidence."
+        ),
+        score=10,
+        priority=1,
     )
 
 
@@ -896,6 +1101,35 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
         validate_angle_decision_for_contextual_evidence(
             contextual_pack,
             angle_decision,
+        )
+
+    def test_build_angle_decision_from_contextual_evidence_pack_populates_authorial_voice_directive(
+        self,
+    ) -> None:
+        contextual_pack = make_bitcoin_growth_vs_constraint_contextual_pack()
+
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            contextual_pack
+        )
+
+        directive = angle_decision.authorial_voice_directive
+        self.assertEqual(
+            directive.authorial_observation,
+            "The author notices that growth evidence and confidence and risk "
+            "evidence should not be collapsed into one easy conclusion.",
+        )
+        self.assertEqual(
+            directive.rejected_reading,
+            "Reject treating growth evidence as proof that confidence and risk "
+            "evidence has been resolved.",
+        )
+        self.assertEqual(
+            directive.first_person_policy,
+            AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+        )
+        self.assertEqual(
+            directive.forbidden_author_claims,
+            AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
         )
 
     def test_build_angle_decision_from_contextual_evidence_pack_uses_only_main_candidates(self) -> None:
@@ -2251,6 +2485,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             main_tension="Finished outcomes can hide how the person actually works.",
             supporting_evidence_ids=["e1"],
             angle_to_avoid=["generic personal branding advice"],
+            authorial_voice_directive=make_authorial_voice_directive(),
         )
         post_brief = build_post_brief_from_angle_decision(
             contextual_pack,
@@ -2963,6 +3198,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             main_tension="Finished outcomes can hide how the person actually works.",
             supporting_evidence_ids=["e1"],
             angle_to_avoid=["generic personal branding advice"],
+            authorial_voice_directive=make_authorial_voice_directive(),
         )
 
         validate_angle_decision(decision)

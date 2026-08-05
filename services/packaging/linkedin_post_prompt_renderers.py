@@ -55,6 +55,8 @@ REPAIR_ANGLE_DECISION_PROMPT_FIELDS = (
     "angle_to_avoid",
 )
 
+QUALITY_ANGLE_DECISION_PROMPT_FIELDS = REPAIR_ANGLE_DECISION_PROMPT_FIELDS
+
 
 @dataclass(frozen=True)
 class CandidateWriterPromptRender:
@@ -135,6 +137,11 @@ def render_candidate_writer_prompt_input(
     variables = {
         "post_brief_json": _stable_json(candidate_input_dict["post_brief"]),
         "angle_decision_json": _stable_json(candidate_input_dict["angle_decision"]),
+        "authorial_voice_directive_json": _stable_json(
+            _authorial_voice_directive_for_prompt(
+                candidate_input_dict["angle_decision"]
+            )
+        ),
         "selected_evidence_json": _stable_json(
             candidate_input_dict["selected_evidence"]
         ),
@@ -220,7 +227,7 @@ def render_quality_evaluator_prompt_input(
             _serialize_render_value(editorial_input.post_brief)
         ),
         "angle_decision_json": _stable_json(
-            _serialize_render_value(editorial_input.angle_decision)
+            _angle_decision_for_quality_prompt(editorial_input.angle_decision)
         ),
         "selected_evidence_json": _stable_json(
             _selected_evidence_for_quality_prompt(editorial_input.selected_evidence)
@@ -300,6 +307,18 @@ def _serialize_render_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_serialize_render_value(item) for item in value]
     return value
+
+
+def _authorial_voice_directive_for_prompt(angle_decision: Any) -> dict[str, Any]:
+    serialized = _serialize_render_value(angle_decision)
+    if not isinstance(serialized, dict):
+        raise TypeError("angle_decision must serialize to a dictionary.")
+    directive = serialized.get("authorial_voice_directive")
+    if not isinstance(directive, dict):
+        raise TypeError(
+            "AngleDecision.authorial_voice_directive must serialize to a dictionary."
+        )
+    return directive
 
 
 def _candidate_payload_for_quality_prompt(candidate_payload: Any) -> dict[str, Any]:
@@ -409,6 +428,17 @@ def _angle_decision_for_repair_prompt(
     return prompt_decision
 
 
+def _angle_decision_for_quality_prompt(angle_decision: Any) -> dict[str, Any]:
+    serialized = _serialize_render_value(angle_decision)
+    if not isinstance(serialized, dict):
+        raise TypeError("angle_decision must serialize to a dictionary.")
+    return {
+        field_name: serialized[field_name]
+        for field_name in QUALITY_ANGLE_DECISION_PROMPT_FIELDS
+        if field_name in serialized
+    }
+
+
 def _repair_dict(value: Any, label: str) -> dict[str, Any]:
     serialized = _serialize_render_value(value)
     if not isinstance(serialized, dict):
@@ -420,6 +450,10 @@ def _build_input_text(variables: dict[str, str]) -> str:
     sections = [
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
+        (
+            "AUTHORIAL_VOICE_DIRECTIVE_JSON",
+            variables["authorial_voice_directive_json"],
+        ),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
         ("CANDIDATE_WRITER_INPUT_JSON", variables["candidate_writer_input_json"]),
         (
