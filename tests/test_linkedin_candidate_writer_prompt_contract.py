@@ -137,6 +137,50 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             ],
         )
 
+    def test_candidate_writer_prompt_requires_one_strict_json_object(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "Return one valid JSON object only",
+                "Do not include prose before or after the JSON object",
+                "double-quoted keys",
+                "double-quoted string values",
+                "strict JSON",
+                "without preprocessing or repair",
+            ],
+        )
+
+    def test_candidate_writer_prompt_forbids_non_strict_json_syntax(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "Do not wrap the JSON object in markdown code fences",
+                "Do not use single-quoted pseudo-JSON",
+                "Do not include comments",
+                "Do not use trailing commas",
+            ],
+        )
+
+    def test_candidate_writer_prompt_requires_escaped_json_string_newlines(self):
+        prompt = _prompt_text()
+
+        self.assertIn("All line breaks inside JSON string values must be encoded", prompt)
+        self.assertIn(r"\n", prompt)
+        self.assertIn(
+            r"If post_text needs paragraph breaks, encode them inside the JSON string as \n\n",
+            prompt,
+        )
+        self.assertIn(
+            "Never place a literal physical newline inside a quoted JSON string",
+            prompt,
+        )
+
     def test_candidate_writer_prompt_uses_canonical_payload_constraints(self):
         prompt = _normalized_prompt_text()
 

@@ -145,7 +145,30 @@ When finance, crypto, or investment context is present, do not use direct advice
 
 ## Output JSON Requirements
 
+Return one valid JSON object only.
+
+Do not wrap the JSON object in markdown code fences.
+
+Do not include prose before or after the JSON object.
+
 Return only valid JSON matching the existing FinalPostPayload schema.
+
+Use valid JSON with double-quoted keys and double-quoted string values.
+
+Do not use single-quoted pseudo-JSON.
+
+Do not include comments.
+
+Do not use trailing commas.
+
+All line breaks inside JSON string values must be encoded as \n.
+
+If post_text needs paragraph breaks, encode them inside the JSON string as \n\n.
+
+Never place a literal physical newline inside a quoted JSON string.
+
+Before returning, verify that the entire response can be parsed by a strict JSON
+parser without preprocessing or repair.
 
 The JSON must include:
 

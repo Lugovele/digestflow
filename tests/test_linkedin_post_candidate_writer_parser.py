@@ -93,6 +93,31 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
         self.assertEqual(parsed["quality_checks"]["linkedin_ready"], True)
         self.assertEqual(parsed["carousel_outline"][0]["title"], "Point")
 
+    def test_valid_multiline_post_text_with_escaped_paragraph_breaks_parses(self) -> None:
+        raw = _raw_response(
+            json.dumps(
+                {
+                    "post_text": "First paragraph.\n\nSecond paragraph.",
+                    "hook_variants": ["Hook 1", "Hook 2", "Hook 3"],
+                    "cta_variants": ["CTA 1", "CTA 2", "CTA 3"],
+                    "hashtags": ["#AI"],
+                    "quality_checks": {
+                        "linkedin_ready": True,
+                        "uses_only_provided_facts": True,
+                        "has_clear_point_of_view": True,
+                    },
+                    "carousel_outline": [],
+                }
+            )
+        )
+
+        parsed = parse_candidate_writer_raw_response(raw)
+
+        self.assertEqual(
+            parsed["post_text"],
+            "First paragraph.\n\nSecond paragraph.",
+        )
+
     def test_raw_response_remains_unchanged(self) -> None:
         raw = _raw_response(json.dumps({"post_text": "Post"}))
         before = copy.deepcopy(raw)
@@ -248,6 +273,34 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
                     parse_candidate_writer_raw_response(_raw_response(raw_text))
 
                 self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_literal_physical_newline_inside_quoted_json_string_fails(self) -> None:
+        malformed = '{"post_text": "First paragraph.\nSecond paragraph."}'
+
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(_raw_response(malformed))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_trailing_comma_fails_without_repair(self) -> None:
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(_raw_response('{"post_text": "Post",}'))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_commented_json_fails_without_repair(self) -> None:
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(
+                _raw_response('{"post_text": "Post" // comment\n}')
+            )
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_single_quoted_pseudo_json_fails_without_repair(self) -> None:
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(_raw_response("{'post_text': 'Post'}"))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
 
     def test_non_standard_json_numbers_fail(self) -> None:
         for constant in ("NaN", "Infinity", "-Infinity"):
