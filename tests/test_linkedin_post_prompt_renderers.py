@@ -31,6 +31,9 @@ from services.packaging.linkedin_post_prompt_renderers import (
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    build_semantic_grounding_prompt_rules,
+)
 
 
 QUALITY_EVALUATOR_VARIABLES = (
@@ -46,7 +49,7 @@ SEMANTIC_GROUNDING_VARIABLES = (
     "post_brief_json",
     "angle_decision_json",
     "selected_evidence_json",
-    "grounding_rules_json",
+    "semantic_grounding_rules_json",
 )
 
 REPAIR_WRITER_VARIABLES = (
@@ -295,6 +298,15 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         render = render_semantic_grounding_prompt_input(_post_editorial_input())
 
         self.assertEqual(tuple(render.variables), SEMANTIC_GROUNDING_VARIABLES)
+
+    def test_semantic_grounding_rules_variable_matches_contract_helper(self) -> None:
+        render = render_semantic_grounding_prompt_input(_post_editorial_input())
+
+        self.assertEqual(
+            json.loads(render.variables["semantic_grounding_rules_json"]),
+            build_semantic_grounding_prompt_rules(),
+        )
+        self.assertIn("SEMANTIC_GROUNDING_RULES_JSON", render.input_text)
 
     def test_semantic_grounding_preserves_selected_evidence_order_and_text(self) -> None:
         editorial_input = _post_editorial_input(

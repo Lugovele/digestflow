@@ -95,6 +95,8 @@ SEMANTIC_GROUNDING_SEVERITIES = (
     SEVERITY_BLOCKING,
 )
 
+SEMANTIC_GROUNDING_PROMPT_RULES_SCHEMA_VERSION = "1.0"
+
 
 @dataclass(frozen=True)
 class SemanticGroundingClaimReview:
@@ -271,6 +273,84 @@ def normalize_semantic_grounding_review_result(
     )
 
 
+def build_semantic_grounding_prompt_rules() -> dict[str, Any]:
+    """Return deterministic, JSON-safe prompt rules derived from this contract."""
+
+    return {
+        "schema_version": SEMANTIC_GROUNDING_PROMPT_RULES_SCHEMA_VERSION,
+        "authoritative": True,
+        "selected_evidence_only": True,
+        "claim_type_values": list(SEMANTIC_GROUNDING_CLAIM_TYPES),
+        "support_status_values": list(SEMANTIC_GROUNDING_SUPPORT_STATUSES),
+        "severity_values": list(SEMANTIC_GROUNDING_SEVERITIES),
+        "claim_decision_combinations": [
+            {
+                "support_status": support_status,
+                "severity": severity,
+                "blocking": _support_status_severity_blocks_grounding(
+                    support_status,
+                    severity,
+                ),
+                "decision": (
+                    "blocking"
+                    if _support_status_severity_blocks_grounding(
+                        support_status,
+                        severity,
+                    )
+                    else "advisory"
+                ),
+                "requires_failure": _support_status_severity_blocks_grounding(
+                    support_status,
+                    severity,
+                ),
+            }
+            for support_status in SEMANTIC_GROUNDING_SUPPORT_STATUSES
+            for severity in SEMANTIC_GROUNDING_SEVERITIES
+        ],
+        "failure_rules": {
+            "blocking_claims_require_pass_false": True,
+            "failed_claim_ids_must_match_blocking_claim_ids": True,
+            "pass_false_requires_failure_signal": True,
+        },
+        "repairability_rules": {
+            "repairable_requires_pass_false": True,
+            "repairable_requires_blocking_claims": True,
+            "repairable_requires_repair_instructions": True,
+            "repair_instructions_must_reference_blocking_claims": True,
+            "repair_instructions_require_repairable_true": True,
+            "every_blocking_claim_does_not_require_repair_instruction": True,
+        },
+        "human_review_rules": {
+            "human_review_requires_pass_false": True,
+            "human_review_requires_non_empty_reason": True,
+            "human_review_reason_requires_human_review_true": True,
+        },
+        "automatic_fail_rules": {
+            "automatic_fail_reason_requires_pass_false": True,
+            "automatic_fail_only_may_be_not_repairable": True,
+        },
+        "assessment_guidance": {
+            "atomic_claim": (
+                "One assessable assertion from human-facing post text; split "
+                "compound sentences into separate claims."
+            ),
+            "qualification_invariants": [
+                "projected remains projected",
+                "likely remains attributed likelihood",
+                "may remains possibility",
+                "risk remains risk",
+                "analysis remains attributed analysis",
+            ],
+            "causal_fidelity": [
+                "Do not turn coexistence into cause.",
+                "Do not turn forecasts into outcomes.",
+                "Do not turn positioning or risk into stability, recovery, optimism, or growth.",
+                "Do not turn adoption interest into mainstream inevitability.",
+            ],
+        },
+    }
+
+
 def _normalize_claim_reviews(
     claims: Any,
     selected_evidence_ids: set[str],
@@ -399,8 +479,18 @@ def _normalize_repair_instructions(
 
 
 def _claim_blocks_grounding(claim: SemanticGroundingClaimReview) -> bool:
-    if claim.severity in {SEVERITY_MAJOR, SEVERITY_BLOCKING}:
-        return claim.support_status not in {
+    return _support_status_severity_blocks_grounding(
+        claim.support_status,
+        claim.severity,
+    )
+
+
+def _support_status_severity_blocks_grounding(
+    support_status: str,
+    severity: str,
+) -> bool:
+    if severity in {SEVERITY_MAJOR, SEVERITY_BLOCKING}:
+        return support_status not in {
             SUPPORT_STATUS_SUPPORTED,
             SUPPORT_STATUS_SUPPORTED_WITH_REQUIRED_QUALIFICATION,
             SUPPORT_STATUS_NOT_CLAIM,

@@ -13,6 +13,9 @@ from services.packaging.linkedin_post_flow_input_builders import CandidateWriter
 from services.packaging.linkedin_post_quality_rubric_contract import (
     QualityEvaluatorRubricPayload,
 )
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    build_semantic_grounding_prompt_rules,
+)
 
 
 FINAL_POST_PAYLOAD_PROMPT_FIELDS = (
@@ -254,7 +257,9 @@ def render_semantic_grounding_prompt_input(
         "selected_evidence_json": _stable_json(
             _selected_evidence_for_quality_prompt(editorial_input.selected_evidence)
         ),
-        "grounding_rules_json": _stable_json(_semantic_grounding_rules()),
+        "semantic_grounding_rules_json": _stable_json(
+            build_semantic_grounding_prompt_rules()
+        ),
     }
 
     return SemanticGroundingPromptRender(
@@ -440,34 +445,12 @@ def _build_quality_evaluator_input_text(variables: dict[str, str]) -> str:
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)
 
 
-def _semantic_grounding_rules() -> dict[str, Any]:
-    return {
-        "atomic_claim": (
-            "One assessable assertion from human-facing post text; split "
-            "compound sentences into separate claims."
-        ),
-        "qualification_invariants": [
-            "projected remains projected",
-            "likely remains attributed likelihood",
-            "may remains possibility",
-            "risk remains risk",
-            "analysis remains attributed analysis",
-        ],
-        "causal_fidelity": [
-            "Do not turn coexistence into cause.",
-            "Do not turn forecasts into outcomes.",
-            "Do not turn positioning or risk into stability, recovery, optimism, or growth.",
-        ],
-        "selected_evidence_only": True,
-    }
-
-
 def _build_semantic_grounding_input_text(variables: dict[str, str]) -> str:
     sections = [
         ("CANDIDATE_PAYLOAD_JSON", variables["candidate_payload_json"]),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
-        ("GROUNDING_RULES_JSON", variables["grounding_rules_json"]),
+        ("SEMANTIC_GROUNDING_RULES_JSON", variables["semantic_grounding_rules_json"]),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)

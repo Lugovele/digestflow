@@ -8,17 +8,132 @@ from django.test import SimpleTestCase
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
     GROUNDING_STATUS_PASS,
+    SEMANTIC_GROUNDING_SEVERITIES,
+    SEMANTIC_GROUNDING_SUPPORT_STATUSES,
     SUPPORT_STATUS_CAUSAL_OVERREACH,
+    SUPPORT_STATUS_PARTIALLY_SUPPORTED,
     SUPPORT_STATUS_SUPPORTED,
     SUPPORT_STATUS_UNSUPPORTED,
+    SEVERITY_BLOCKING,
+    SEVERITY_MAJOR,
+    SEVERITY_MINOR,
     FinalPostSemanticGroundingState,
     SemanticGroundingRepairInstruction,
     SemanticGroundingReviewResult,
+    build_semantic_grounding_prompt_rules,
     normalize_semantic_grounding_review_result,
 )
 
 
 class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
+    def test_prompt_rules_are_json_serializable_and_stable(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        first = json.dumps(rules, sort_keys=True)
+        second = json.dumps(build_semantic_grounding_prompt_rules(), sort_keys=True)
+
+        self.assertEqual(first, second)
+        self.assertTrue(rules["authoritative"])
+        self.assertTrue(rules["selected_evidence_only"])
+
+    def test_prompt_rules_represent_every_status_severity_combination_once(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+        combinations = rules["claim_decision_combinations"]
+
+        observed = [
+            (item["support_status"], item["severity"])
+            for item in combinations
+        ]
+
+        self.assertEqual(len(observed), len(set(observed)))
+        self.assertEqual(
+            set(observed),
+            {
+                (support_status, severity)
+                for support_status in SEMANTIC_GROUNDING_SUPPORT_STATUSES
+                for severity in SEMANTIC_GROUNDING_SEVERITIES
+            },
+        )
+
+    def test_prompt_rule_decisions_match_normalized_blocking_semantics(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        for combination in rules["claim_decision_combinations"]:
+            with self.subTest(combination=combination):
+                support_status = combination["support_status"]
+                severity = combination["severity"]
+                payload = _review_payload(
+                    passed=not combination["blocking"],
+                    claims=[
+                        _claim(
+                            support_status=support_status,
+                            severity=severity,
+                        )
+                    ],
+                    failed_claim_ids=(["c1"] if combination["blocking"] else []),
+                    automatic_fail_reason=(
+                        "blocking claim" if combination["blocking"] else ""
+                    ),
+                    repairable=combination["blocking"],
+                    repair_instructions=(
+                        [_repair_instruction("c1", "Repair blocking claim.")]
+                        if combination["blocking"]
+                        else []
+                    ),
+                )
+                result = normalize_semantic_grounding_review_result(
+                    payload,
+                    selected_evidence_ids=("a0-summary",),
+                )
+
+                self.assertEqual(bool(result.blocking_claim_ids), combination["blocking"])
+                self.assertEqual(
+                    combination["decision"],
+                    "blocking" if result.blocking_claim_ids else "advisory",
+                )
+                self.assertEqual(
+                    combination["requires_failure"],
+                    bool(result.blocking_claim_ids),
+                )
+
+    def test_prompt_rules_keep_known_advisory_and_blocking_combinations(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+        combinations = {
+            (item["support_status"], item["severity"]): item["blocking"]
+            for item in rules["claim_decision_combinations"]
+        }
+
+        self.assertFalse(
+            combinations[(SUPPORT_STATUS_PARTIALLY_SUPPORTED, SEVERITY_MINOR)]
+        )
+        self.assertTrue(combinations[(SUPPORT_STATUS_UNSUPPORTED, SEVERITY_MAJOR)])
+        self.assertTrue(combinations[(SUPPORT_STATUS_CAUSAL_OVERREACH, SEVERITY_BLOCKING)])
+
+    def test_prompt_rules_include_contract_consistency_guidance(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        self.assertTrue(
+            rules["failure_rules"]["failed_claim_ids_must_match_blocking_claim_ids"]
+        )
+        self.assertTrue(rules["repairability_rules"]["repairable_requires_blocking_claims"])
+        self.assertTrue(
+            rules["repairability_rules"][
+                "repair_instructions_must_reference_blocking_claims"
+            ]
+        )
+        self.assertTrue(rules["human_review_rules"]["human_review_requires_pass_false"])
+        self.assertTrue(
+            rules["automatic_fail_rules"]["automatic_fail_reason_requires_pass_false"]
+        )
+
+    def test_prompt_rules_preserve_adoption_interest_causal_fidelity_guard(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        self.assertIn(
+            "Do not turn adoption interest into mainstream inevitability.",
+            rules["assessment_guidance"]["causal_fidelity"],
+        )
+
     def test_directly_supported_claim_passes(self) -> None:
         result = normalize_semantic_grounding_review_result(
             _review_payload(),

@@ -18,18 +18,10 @@ For each factual, causal, comparative, predictive, interpretive, or prescriptive
 claim, create one claim review. Split compound sentences into separate claims.
 Pure rhetorical lines that do not imply a factual state may be marked not_claim.
 
-Qualification rules:
-* projected remains projected
-* likely remains attributed likelihood
-* may remains possibility
-* analysis remains attributed analysis
-* risk remains risk
-
-Causal-fidelity rules:
-* Do not turn coexistence into cause.
-* Do not turn forecast into guaranteed outcome.
-* Do not turn positioning or risk into stability, recovery, optimism, or growth.
-* Do not turn adoption interest into mainstream inevitability.
+Use SEMANTIC_GROUNDING_RULES_JSON as the authoritative source for claim_type,
+support_status, severity, blocking/advisory decisions, pass/fail consistency,
+repairability, human review, automatic fail, qualification, and causal-fidelity
+rules. Do not override or reinterpret those rules from prose.
 
 Return only JSON compatible with this shape:
 
@@ -64,34 +56,6 @@ Return only JSON compatible with this shape:
   ]
 }
 
-Allowed claim_type values:
-* metric_or_date
-* attributed_source_claim
-* market_condition
-* forecast_or_projection
-* causal_claim
-* comparison_or_contrast
-* author_interpretation
-* recommendation
-* personal_experience_or_case
-* cta_or_rhetorical
-
-Allowed support_status values:
-* not_claim
-* supported
-* supported_with_required_qualification
-* partially_supported
-* missing_required_qualification
-* causal_overreach
-* unsupported
-* contradicted
-* not_evaluable
-
-Allowed severity values:
-* info
-* minor
-* major
-* blocking
-
-Set pass to false when any major or blocking claim is unsupported, contradicted,
-missing required qualification, or causal overreach.
+Set pass, failed_claim_ids, automatic_fail_reason, requires_human_review,
+human_review_reason, repairable, and repair_instructions according to
+SEMANTIC_GROUNDING_RULES_JSON.
