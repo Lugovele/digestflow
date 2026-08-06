@@ -24,6 +24,10 @@ from services.packaging.linkedin_post_flow_input_builders import (
     build_candidate_writer_input,
     build_post_editorial_input,
 )
+from services.packaging.linkedin_post_pipeline import (
+    AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS,
+    AuthorialVoiceDirective,
+)
 
 
 @dataclass(frozen=True)
@@ -43,7 +47,7 @@ class PostBriefStub:
 class AngleDecisionStub:
     controlling_angle: str
     supporting_evidence_ids: list[str]
-    authorial_voice_directive: dict[str, object]
+    authorial_voice_directive: object
 
 
 class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
@@ -193,6 +197,89 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
             candidate_input.to_dict()["angle_decision"]["authorial_voice_directive"],
             _authorial_voice_directive(),
         )
+
+
+    def test_candidate_writer_input_accepts_canonical_authorial_voice_directive_object(self) -> None:
+        angle_decision = AngleDecisionStub(
+            controlling_angle="Make remote work explicit.",
+            supporting_evidence_ids=["a0-summary", "a1-kp0"],
+            authorial_voice_directive=_canonical_authorial_voice_directive(),
+        )
+
+        candidate_input = build_candidate_writer_input(_post_brief(), angle_decision)
+
+        self.assertEqual(
+            candidate_input.to_dict()["angle_decision"]["authorial_voice_directive"][
+                "forbidden_author_claims"
+            ],
+            list(AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS),
+        )
+
+    def test_candidate_writer_input_rejects_missing_authorial_voice_directive_before_evidence(self) -> None:
+        malformed_post_brief = {
+            "evidence_to_use": [
+                {"evidence_id": "", "evidence_text": "Text", "role_in_post": "proof"}
+            ]
+        }
+
+        with patch(
+            "services.packaging.linkedin_post_flow_input_builders.CandidateWriterInput"
+        ) as candidate_input_class:
+            with self.assertRaisesRegex(ValueError, "authorial_voice_directive"):
+                build_candidate_writer_input(
+                    malformed_post_brief,
+                    {
+                        "controlling_angle": "Make remote work explicit.",
+                        "supporting_evidence_ids": ["a0-summary"],
+                    },
+                )
+
+        candidate_input_class.assert_not_called()
+
+    def test_candidate_writer_input_rejects_malformed_authorial_voice_directives(self) -> None:
+        for directive, message in _malformed_authorial_voice_directives():
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    build_candidate_writer_input(
+                        _post_brief(),
+                        _angle_decision_with_directive(directive),
+                    )
+
+    def test_post_editorial_input_rejects_malformed_authorial_voice_directives(self) -> None:
+        for directive, message in _malformed_authorial_voice_directives():
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    build_post_editorial_input(
+                        post_brief=_post_brief(),
+                        angle_decision=_angle_decision_with_directive(directive),
+                        candidate_output=_candidate_output(),
+                        gate_output=_passing_gate_output(),
+                    )
+
+    def test_post_editorial_input_rejects_invalid_authorial_voice_before_gate_and_serialization(self) -> None:
+        gate_output = _passing_gate_output(validation_passed=False)
+
+        with patch(
+            "services.packaging.linkedin_post_flow_input_builders.PostEditorialInput"
+        ) as editorial_input_class:
+            with self.assertRaisesRegex(ValueError, "authorial_observation"):
+                build_post_editorial_input(
+                    post_brief=_post_brief(),
+                    angle_decision=_angle_decision_with_directive(
+                        _directive_with(authorial_observation="")
+                    ),
+                    candidate_output=_candidate_output(),
+                    gate_output=gate_output,
+                )
+
+        editorial_input_class.assert_not_called()
+
+    def test_builder_reuses_canonical_authorial_voice_policy_without_local_tables(self) -> None:
+        source = inspect.getsource(linkedin_post_flow_input_builders)
+
+        self.assertIn("validate_authorial_voice_directive", source)
+        self.assertNotIn("AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS", source)
+        self.assertNotIn("AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS", source)
 
     def test_builder_does_not_mutate_selected_evidence_items(self) -> None:
         post_brief = _post_brief()
@@ -811,15 +898,58 @@ def _authorial_voice_directive() -> dict[str, object]:
         ),
         "personal_presence_requirement": "explicit_author_owned_statement_required",
         "first_person_policy": "allowed_not_required",
-        "forbidden_author_claims": [
-            "personal experience",
-            "professional authority",
-            "direct market exposure",
-            "client or customer stories",
-            "invented emotional reaction",
-            "biographical claims",
-        ],
+        "forbidden_author_claims": list(AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS),
     }
+
+
+def _canonical_authorial_voice_directive() -> AuthorialVoiceDirective:
+    directive = _authorial_voice_directive()
+    return AuthorialVoiceDirective(
+        authorial_observation=directive["authorial_observation"],
+        rejected_reading=directive["rejected_reading"],
+        why_distinction_matters=directive["why_distinction_matters"],
+        personal_presence_requirement=directive["personal_presence_requirement"],
+        first_person_policy=directive["first_person_policy"],
+        forbidden_author_claims=tuple(directive["forbidden_author_claims"]),
+    )
+
+
+def _angle_decision_with_directive(directive: object) -> AngleDecisionStub:
+    return AngleDecisionStub(
+        controlling_angle="Make remote work explicit.",
+        supporting_evidence_ids=["a0-summary", "a1-kp0"],
+        authorial_voice_directive=directive,
+    )
+
+
+def _directive_with(**overrides) -> dict[str, object]:
+    directive = _authorial_voice_directive()
+    directive.update(overrides)
+    return directive
+
+
+def _malformed_authorial_voice_directives() -> tuple[tuple[object, str], ...]:
+    missing_forbidden_claims = _authorial_voice_directive()
+    missing_forbidden_claims.pop("forbidden_author_claims")
+    return (
+        ("not a directive", "must be an AuthorialVoiceDirective"),
+        (_directive_with(authorial_observation="   "), "authorial_observation"),
+        (_directive_with(rejected_reading=""), "rejected_reading"),
+        (_directive_with(why_distinction_matters="   "), "why_distinction_matters"),
+        (_directive_with(first_person_policy="required"), "first_person_policy"),
+        (
+            _directive_with(personal_presence_requirement="invent_persona"),
+            "personal_presence_requirement",
+        ),
+        (missing_forbidden_claims, "forbidden_author_claims"),
+        (_directive_with(forbidden_author_claims="personal experience"), "must be a tuple"),
+        (_directive_with(forbidden_author_claims=["personal experience", "   "]), "non-empty string"),
+        (
+            _directive_with(forbidden_author_claims=["personal experience", "personal experience"]),
+            "duplicate",
+        ),
+        (_directive_with(forbidden_author_claims=["personal experience"]), "canonical"),
+    )
 
 
 def _candidate_output(

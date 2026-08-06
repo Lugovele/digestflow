@@ -16,6 +16,10 @@ from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
 )
+from services.packaging.linkedin_post_pipeline import (
+    AuthorialVoiceDirective,
+    validate_authorial_voice_directive,
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,7 @@ def build_candidate_writer_input(
     angle_decision: object | dict,
     prompt_metadata: PromptMetadata | None = None,
 ) -> CandidateWriterInput:
+    _validate_angle_decision_authorial_voice_directive(angle_decision)
     return CandidateWriterInput(
         post_brief=post_brief,
         angle_decision=angle_decision,
@@ -61,6 +66,7 @@ def build_post_editorial_input(
     generation_metadata: PostGenerationMetadata | None = None,
     prompt_metadata: PromptMetadata | None = None,
 ) -> PostEditorialInput:
+    _validate_angle_decision_authorial_voice_directive(angle_decision)
     _require_passing_gate(gate_output)
     _require_matching_candidate_payload(candidate_output, gate_output)
 
@@ -94,6 +100,37 @@ def build_post_editorial_input(
         prompt_metadata=resolved_prompt_metadata,
     )
 
+
+
+def _validate_angle_decision_authorial_voice_directive(
+    angle_decision: object | dict,
+) -> None:
+    directive = _get_required_value(
+        angle_decision,
+        "authorial_voice_directive",
+        "AngleDecision",
+    )
+    if isinstance(directive, AuthorialVoiceDirective):
+        validate_authorial_voice_directive(directive)
+        return
+    if not isinstance(directive, dict):
+        validate_authorial_voice_directive(directive)
+        return
+    forbidden_author_claims = directive.get("forbidden_author_claims")
+    if isinstance(forbidden_author_claims, (list, tuple)):
+        normalized_forbidden_author_claims = tuple(forbidden_author_claims)
+    else:
+        normalized_forbidden_author_claims = forbidden_author_claims
+    validate_authorial_voice_directive(
+        AuthorialVoiceDirective(
+            authorial_observation=directive.get("authorial_observation"),
+            rejected_reading=directive.get("rejected_reading"),
+            why_distinction_matters=directive.get("why_distinction_matters"),
+            personal_presence_requirement=directive.get("personal_presence_requirement"),
+            first_person_policy=directive.get("first_person_policy"),
+            forbidden_author_claims=normalized_forbidden_author_claims,
+        )
+    )
 
 def _normalize_selected_evidence_item(item: object | dict) -> dict[str, str]:
     normalized = {

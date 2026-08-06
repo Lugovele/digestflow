@@ -16,6 +16,7 @@ from services.packaging.linkedin_post_final_post_payload_contract import (
     build_final_post_payload_constraints,
 )
 from services.packaging.linkedin_post_flow_input_builders import (
+    CandidateWriterInput,
     build_candidate_writer_input,
 )
 from services.packaging.linkedin_post_pipeline import FinalPostPayload
@@ -208,13 +209,12 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
     ) -> None:
         directive = dict(_authorial_voice_directive())
         directive.pop("personal_presence_requirement")
-        candidate_input = build_candidate_writer_input(
-            _post_brief(),
+        candidate_input = _malformed_candidate_input_for_renderer(
             {
                 "controlling_angle": "Make remote work explicit.",
                 "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
                 "authorial_voice_directive": directive,
-            },
+            }
         )
 
         with self.assertRaisesRegex(TypeError, "personal_presence_requirement"):
@@ -227,13 +227,12 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             **_authorial_voice_directive(),
             "personal_presence_requirement": "invented_policy",
         }
-        candidate_input = build_candidate_writer_input(
-            _post_brief(),
+        candidate_input = _malformed_candidate_input_for_renderer(
             {
                 "controlling_angle": "Make remote work explicit.",
                 "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
                 "authorial_voice_directive": directive,
-            },
+            }
         )
 
         with self.assertRaisesRegex(ValueError, "personal_presence_requirement"):
@@ -242,12 +241,11 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
     def test_candidate_writer_render_rejects_missing_authorial_voice_directive(
         self,
     ) -> None:
-        candidate_input = build_candidate_writer_input(
-            _post_brief(),
+        candidate_input = _malformed_candidate_input_for_renderer(
             {
                 "controlling_angle": "Make remote work explicit.",
                 "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
-            },
+            }
         )
 
         with self.assertRaisesRegex(TypeError, "authorial_voice_directive"):
@@ -1196,6 +1194,26 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertEqual(render.prompt_version, "1.0")
         self.assertIsNone(render.prompt_path)
 
+
+
+def _malformed_candidate_input_for_renderer(angle_decision):
+    return CandidateWriterInput(
+        post_brief=_post_brief(),
+        angle_decision=angle_decision,
+        selected_evidence=(
+            {
+                "evidence_id": "a0-summary",
+                "evidence_text": "Remote teams need clear operating agreements.",
+                "role_in_post": "opening support",
+            },
+            {
+                "evidence_id": "a1-kp0",
+                "evidence_text": "Isolation can rise when remote work is unmanaged.",
+                "role_in_post": "practical tension",
+            },
+        ),
+        prompt_metadata=None,
+    )
 
 def _candidate_input(prompt_metadata=None):
     return build_candidate_writer_input(
