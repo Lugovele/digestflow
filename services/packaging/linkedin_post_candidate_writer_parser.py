@@ -12,6 +12,18 @@ from typing import TYPE_CHECKING, Any
 
 from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
     CandidateWriterStructuralDiagnostics,
+    PARSER_DETAIL_EXPECTED_COLON,
+    PARSER_DETAIL_EXPECTED_COMMA_DELIMITER,
+    PARSER_DETAIL_EXPECTED_PROPERTY_NAME,
+    PARSER_DETAIL_EXPECTED_VALUE,
+    PARSER_DETAIL_EXTRA_DATA_AFTER_JSON,
+    PARSER_DETAIL_INVALID_CONTROL_CHARACTER,
+    PARSER_DETAIL_INVALID_ESCAPE,
+    PARSER_DETAIL_NON_STANDARD_NUMBER,
+    PARSER_DETAIL_TRAILING_COMMA,
+    PARSER_DETAIL_UNEXPECTED_END_OF_INPUT,
+    PARSER_DETAIL_UNTERMINATED_STRING,
+    PARSER_DETAIL_UNKNOWN_JSON_SYNTAX,
     build_parser_structural_diagnostics,
 )
 
@@ -82,6 +94,10 @@ def parse_candidate_writer_raw_response(
             diagnostics=build_parser_structural_diagnostics(
                 parser_error_code=ERROR_MALFORMED_JSON,
                 candidate_text=raw_text,
+                parser_error_detail_code=_json_error_detail_code(json_text, exc),
+                parser_error_line=exc.lineno,
+                parser_error_column=exc.colno,
+                parser_error_position=exc.pos,
             ),
         ) from exc
     except ValueError as exc:
@@ -91,6 +107,7 @@ def parse_candidate_writer_raw_response(
             diagnostics=build_parser_structural_diagnostics(
                 parser_error_code=ERROR_MALFORMED_JSON,
                 candidate_text=raw_text,
+                parser_error_detail_code=PARSER_DETAIL_NON_STANDARD_NUMBER,
             ),
         ) from exc
 
@@ -182,3 +199,42 @@ def _extract_fenced_json_text(stripped: str) -> str:
 
 def _reject_non_standard_number(value: str) -> None:
     raise ValueError(f"non-standard JSON number: {value}")
+
+
+def _json_error_detail_code(json_text: str, exc: json.JSONDecodeError) -> str:
+    message = exc.msg.lower()
+    stripped = json_text.strip()
+    if "trailing comma" in message:
+        return PARSER_DETAIL_TRAILING_COMMA
+    if "unterminated string" in message:
+        return PARSER_DETAIL_UNTERMINATED_STRING
+    if "invalid control character" in message:
+        return PARSER_DETAIL_INVALID_CONTROL_CHARACTER
+    if "invalid \\escape" in message:
+        return PARSER_DETAIL_INVALID_ESCAPE
+    if "extra data" in message:
+        return PARSER_DETAIL_EXTRA_DATA_AFTER_JSON
+    if "expecting property name enclosed in double quotes" in message:
+        if _looks_like_trailing_comma(stripped, exc.pos):
+            return PARSER_DETAIL_TRAILING_COMMA
+        return PARSER_DETAIL_EXPECTED_PROPERTY_NAME
+    if "expecting ':' delimiter" in message:
+        return PARSER_DETAIL_EXPECTED_COLON
+    if "expecting ',' delimiter" in message:
+        if exc.pos >= max(0, len(stripped) - 1):
+            return PARSER_DETAIL_UNEXPECTED_END_OF_INPUT
+        return PARSER_DETAIL_EXPECTED_COMMA_DELIMITER
+    if "expecting value" in message:
+        if exc.pos >= len(stripped):
+            return PARSER_DETAIL_UNEXPECTED_END_OF_INPUT
+        return PARSER_DETAIL_EXPECTED_VALUE
+    if exc.pos >= len(stripped):
+        return PARSER_DETAIL_UNEXPECTED_END_OF_INPUT
+    return PARSER_DETAIL_UNKNOWN_JSON_SYNTAX
+
+
+def _looks_like_trailing_comma(json_text: str, position: int) -> bool:
+    if position <= 0:
+        return False
+    prefix = json_text[:position].rstrip()
+    return prefix.endswith(",")

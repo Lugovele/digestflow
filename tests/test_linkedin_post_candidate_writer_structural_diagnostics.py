@@ -9,9 +9,13 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
     ADAPTER_ERROR_UNKNOWN,
     FAILURE_STAGE_CANDIDATE_WRITER_ADAPTATION,
     FAILURE_STAGE_CANDIDATE_WRITER_PARSE,
+    FIELD_VIOLATION_ABOVE_MAX_LENGTH,
+    FIELD_VIOLATION_WRONG_TYPE,
     MAX_DIAGNOSTIC_FIELD_NAME_LENGTH,
     MAX_DIAGNOSTIC_LIST_ITEMS,
+    PARSER_DETAIL_TRAILING_COMMA,
     PARSER_ERROR_MALFORMED_JSON,
+    CandidateWriterFieldViolation,
     CandidateWriterStructuralDiagnostics,
     build_adapter_structural_diagnostics,
     build_parser_structural_diagnostics,
@@ -155,6 +159,11 @@ class CandidateWriterStructuralDiagnosticsTests(SimpleTestCase):
                 "candidate_text_length",
                 "diagnostics_truncated",
                 "redacted_key_count",
+                "field_violations",
+                "parser_error_detail_code",
+                "parser_error_line",
+                "parser_error_column",
+                "parser_error_position",
             },
         )
         self.assertNotIn("secret post text", text)
@@ -267,3 +276,147 @@ class CandidateWriterStructuralDiagnosticsTests(SimpleTestCase):
                 }
             )
         )
+
+    def test_field_violation_serializes_only_bounded_measurements(self) -> None:
+        violation = CandidateWriterFieldViolation(
+            field_name="post_text",
+            reason_code=FIELD_VIOLATION_ABOVE_MAX_LENGTH,
+            actual_type="str",
+            actual_length=1501,
+            minimum_required=None,
+            maximum_allowed=1300,
+        )
+
+        serialized = violation.to_dict()
+
+        self.assertEqual(serialized["field_name"], "post_text")
+        self.assertEqual(serialized["reason_code"], FIELD_VIOLATION_ABOVE_MAX_LENGTH)
+        self.assertEqual(serialized["actual_length"], 1501)
+        self.assertEqual(serialized["maximum_allowed"], 1300)
+        json.dumps(serialized, sort_keys=True)
+
+    def test_invalid_field_violation_reason_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            CandidateWriterFieldViolation(
+                field_name="post_text",
+                reason_code="raw_value_contains_secret",
+                actual_type="str",
+                actual_length=1,
+                minimum_required=None,
+                maximum_allowed=None,
+            )
+
+    def test_adapter_builder_carries_field_violations_without_values(self) -> None:
+        diagnostics = build_adapter_structural_diagnostics(
+            adapter_error_code=ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
+            parsed_candidate={"post_text": "secret post text"},
+            required_fields=("post_text", "hook_variants"),
+            allowed_fields=("post_text", "hook_variants"),
+            invalid_field_names=("post_text",),
+            field_violations=(
+                CandidateWriterFieldViolation(
+                    field_name="post_text",
+                    reason_code=FIELD_VIOLATION_WRONG_TYPE,
+                    actual_type="list",
+                    actual_length=None,
+                    minimum_required=None,
+                    maximum_allowed=None,
+                ),
+            ),
+        )
+
+        serialized = diagnostics.to_dict()
+
+        self.assertEqual(
+            serialized["field_violations"][0]["reason_code"],
+            FIELD_VIOLATION_WRONG_TYPE,
+        )
+        serialized_text = json.dumps(serialized, sort_keys=True)
+        self.assertNotIn("secret post text", serialized_text)
+
+    def test_parser_detail_fields_are_serialized(self) -> None:
+        diagnostics = build_parser_structural_diagnostics(
+            parser_error_code=PARSER_ERROR_MALFORMED_JSON,
+            candidate_text='{"post_text": "x",}',
+            parser_error_detail_code=PARSER_DETAIL_TRAILING_COMMA,
+            parser_error_line=1,
+            parser_error_column=18,
+            parser_error_position=17,
+        )
+
+        serialized = diagnostics.to_dict()
+
+        self.assertEqual(
+            serialized["parser_error_detail_code"],
+            PARSER_DETAIL_TRAILING_COMMA,
+        )
+        self.assertEqual(serialized["parser_error_line"], 1)
+        self.assertEqual(serialized["parser_error_column"], 18)
+        self.assertEqual(serialized["parser_error_position"], 17)
+
+    def test_old_schema_diagnostics_still_reconstruct(self) -> None:
+        diagnostics = structural_diagnostics_from_dict(
+            {
+                "schema_version": "1.0",
+                "failure_stage": FAILURE_STAGE_CANDIDATE_WRITER_PARSE,
+                "parser_error_code": PARSER_ERROR_MALFORMED_JSON,
+                "adapter_error_code": None,
+                "top_level_json_type": None,
+                "received_top_level_keys": [],
+                "missing_required_fields": [],
+                "unexpected_fields": [],
+                "invalid_field_names": [],
+                "candidate_text_length": 10,
+                "diagnostics_truncated": False,
+                "redacted_key_count": 0,
+            }
+        )
+
+        self.assertIsNotNone(diagnostics)
+        assert diagnostics is not None
+        self.assertEqual(diagnostics.field_violations, ())
+        self.assertIsNone(diagnostics.parser_error_detail_code)
+
+    def test_reconstruction_resanitizes_field_violations(self) -> None:
+        diagnostics = structural_diagnostics_from_dict(
+            {
+                "failure_stage": FAILURE_STAGE_CANDIDATE_WRITER_ADAPTATION,
+                "parser_error_code": None,
+                "adapter_error_code": ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
+                "top_level_json_type": "dict",
+                "received_top_level_keys": ["post_text"],
+                "missing_required_fields": [],
+                "unexpected_fields": [],
+                "invalid_field_names": ["post_text"],
+                "candidate_text_length": None,
+                "diagnostics_truncated": False,
+                "redacted_key_count": 0,
+                "field_violations": [
+                    {
+                        "field_name": "post_text",
+                        "reason_code": FIELD_VIOLATION_ABOVE_MAX_LENGTH,
+                        "actual_type": "str",
+                        "actual_length": 1501,
+                        "minimum_required": None,
+                        "maximum_allowed": 1300,
+                    },
+                    {
+                        "field_name": "api_key",
+                        "reason_code": FIELD_VIOLATION_WRONG_TYPE,
+                        "actual_type": "secret",
+                        "actual_length": -1,
+                        "minimum_required": None,
+                        "maximum_allowed": None,
+                    },
+                ],
+            }
+        )
+
+        self.assertIsNotNone(diagnostics)
+        assert diagnostics is not None
+        self.assertEqual(len(diagnostics.field_violations), 1)
+        self.assertEqual(diagnostics.field_violations[0].field_name, "post_text")
+        self.assertTrue(diagnostics.diagnostics_truncated)
+        serialized = json.dumps(diagnostics.to_dict(), sort_keys=True)
+        self.assertNotIn("api_key", serialized)
+        self.assertNotIn("secret", serialized)

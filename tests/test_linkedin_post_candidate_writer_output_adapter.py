@@ -27,6 +27,13 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
     ADAPTER_ERROR_INVALID_FIELD_VALUES,
     ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
     ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT,
+    FIELD_VIOLATION_ABOVE_MAX_LENGTH,
+    FIELD_VIOLATION_BELOW_MIN_COUNT,
+    FIELD_VIOLATION_EMPTY_STRING,
+    FIELD_VIOLATION_INVALID_STRING_LIST_ITEM,
+    FIELD_VIOLATION_MISSING_REQUIRED_BOOLEAN_KEY,
+    FIELD_VIOLATION_NON_BOOLEAN_REQUIRED_KEY,
+    FIELD_VIOLATION_WRONG_TYPE,
 )
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_payload_contract import (
@@ -145,6 +152,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             ADAPTER_ERROR_INVALID_FIELD_VALUES,
         )
         self.assertEqual(
+            _violation_reasons(error.exception),
+            {"quality_checks": [FIELD_VIOLATION_NON_BOOLEAN_REQUIRED_KEY]},
+        )
+        self.assertEqual(
             error.exception.safe_details["quality_checks"]["provided_keys"],
             [
                 "has_clear_point_of_view",
@@ -169,6 +180,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             "uses_only_provided_facts",
             error.exception.safe_details["quality_checks"]["required_boolean_keys"],
         )
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"quality_checks": [FIELD_VIOLATION_MISSING_REQUIRED_BOOLEAN_KEY]},
+        )
 
     def test_post_text_over_hard_max_fails_with_safe_details(self) -> None:
         rejected_content = "x" * (FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1)
@@ -189,7 +204,41 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             error.exception.safe_details["post_text"]["max_chars"],
             FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
         )
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"post_text": [FIELD_VIOLATION_ABOVE_MAX_LENGTH]},
+        )
+        violation = error.exception.diagnostics.field_violations[0]
+        self.assertEqual(violation.actual_length, len(rejected_content))
+        self.assertEqual(violation.maximum_allowed, FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS)
         self.assertNotIn(rejected_content, json.dumps(error.exception.safe_details))
+
+    def test_post_text_wrong_type_has_bounded_field_violation(self) -> None:
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(_parsed_candidate(post_text=["not text"]))
+
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"post_text": [FIELD_VIOLATION_WRONG_TYPE]},
+        )
+        violation = error.exception.diagnostics.field_violations[0]
+        self.assertEqual(violation.actual_type, "list")
+        self.assertIsNone(violation.actual_length)
+
+    def test_empty_and_whitespace_post_text_share_empty_string_violation(self) -> None:
+        for value in ("", "   "):
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+                    adapt_candidate_writer_payload(_parsed_candidate(post_text=value))
+
+                self.assertEqual(
+                    _violation_reasons(error.exception),
+                    {"post_text": [FIELD_VIOLATION_EMPTY_STRING]},
+                )
+                self.assertEqual(
+                    error.exception.diagnostics.field_violations[0].actual_length,
+                    len(value),
+                )
 
     def test_post_text_at_hard_max_succeeds(self) -> None:
         payload = adapt_candidate_writer_payload(
@@ -210,6 +259,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             error.exception.safe_details["hook_variants"]["min_count"],
             FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
         )
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"hook_variants": [FIELD_VIOLATION_BELOW_MIN_COUNT]},
+        )
 
     def test_too_few_cta_variants_fail_with_safe_count(self) -> None:
         with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
@@ -219,6 +272,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
         self.assertEqual(
             error.exception.safe_details["cta_variants"]["min_count"],
             FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+        )
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"cta_variants": [FIELD_VIOLATION_BELOW_MIN_COUNT]},
         )
 
     def test_zero_hashtags_fail_with_safe_count(self) -> None:
@@ -230,6 +287,24 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             error.exception.safe_details["hashtags"]["min_count"],
             FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
         )
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"hashtags": [FIELD_VIOLATION_BELOW_MIN_COUNT]},
+        )
+
+    def test_invalid_string_list_item_has_bounded_field_violation(self) -> None:
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(
+                _parsed_candidate(hook_variants=["ok", "also ok", " "])
+            )
+
+        self.assertEqual(
+            _violation_reasons(error.exception),
+            {"hook_variants": [FIELD_VIOLATION_INVALID_STRING_LIST_ITEM]},
+        )
+        violation = error.exception.diagnostics.field_violations[0]
+        self.assertEqual(violation.actual_type, "list")
+        self.assertEqual(violation.actual_length, 3)
 
     def test_adaptation_safe_details_do_not_include_rejected_content(self) -> None:
         parsed = _parsed_candidate(
@@ -600,6 +675,14 @@ def _raw_response(
         execution_error=execution_error,
         execution_metadata=execution_metadata,
     )
+
+
+def _violation_reasons(error: CandidateWriterOutputAdaptationError) -> dict[str, list[str]]:
+    reasons: dict[str, list[str]] = {}
+    assert error.diagnostics is not None
+    for violation in error.diagnostics.field_violations:
+        reasons.setdefault(violation.field_name, []).append(violation.reason_code)
+    return reasons
 
 
 def _imported_names_and_modules(source: str) -> set[str]:

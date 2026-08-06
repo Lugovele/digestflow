@@ -481,6 +481,9 @@ def _run_record_from_smoke_result(
     final_outcome_summary = sanitized.get("final_attempt_outcome") if isinstance(sanitized.get("final_attempt_outcome"), dict) else {}
     provider_diagnostics = sanitized.get("provider_response_diagnostics") if isinstance(sanitized.get("provider_response_diagnostics"), dict) else {}
     candidate_writer_diagnostics = _candidate_writer_structural_diagnostics(sanitized)
+    candidate_writer_primary_violation = _candidate_writer_primary_field_violation(
+        candidate_writer_diagnostics
+    )
     role_diagnostics = _role_diagnostics_for_plan(plan, sanitized)
     repair_diagnostics = _repair_diagnostics(smoke_result, sanitized, plan)
     record = {
@@ -533,6 +536,26 @@ def _run_record_from_smoke_result(
             if candidate_writer_diagnostics
             else None
         ),
+        "candidate_writer_parser_error_detail_code": (
+            candidate_writer_diagnostics.get("parser_error_detail_code")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_parser_error_line": (
+            candidate_writer_diagnostics.get("parser_error_line")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_parser_error_column": (
+            candidate_writer_diagnostics.get("parser_error_column")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_parser_error_position": (
+            candidate_writer_diagnostics.get("parser_error_position")
+            if candidate_writer_diagnostics
+            else None
+        ),
         "candidate_writer_adapter_error_code": (
             candidate_writer_diagnostics.get("adapter_error_code")
             if candidate_writer_diagnostics
@@ -559,6 +582,35 @@ def _run_record_from_smoke_result(
         "candidate_writer_invalid_field_count": _diagnostic_list_count(
             candidate_writer_diagnostics,
             "invalid_field_names",
+        ),
+        "candidate_writer_field_violation_count": _diagnostic_list_count(
+            candidate_writer_diagnostics,
+            "field_violations",
+        ),
+        "candidate_writer_primary_invalid_field": (
+            candidate_writer_primary_violation.get("field_name")
+            if candidate_writer_primary_violation
+            else None
+        ),
+        "candidate_writer_primary_violation_reason": (
+            candidate_writer_primary_violation.get("reason_code")
+            if candidate_writer_primary_violation
+            else None
+        ),
+        "candidate_writer_primary_actual_length": (
+            candidate_writer_primary_violation.get("actual_length")
+            if candidate_writer_primary_violation
+            else None
+        ),
+        "candidate_writer_primary_minimum_required": (
+            candidate_writer_primary_violation.get("minimum_required")
+            if candidate_writer_primary_violation
+            else None
+        ),
+        "candidate_writer_primary_maximum_allowed": (
+            candidate_writer_primary_violation.get("maximum_allowed")
+            if candidate_writer_primary_violation
+            else None
         ),
         "candidate_writer_diagnostics_truncated": (
             candidate_writer_diagnostics.get("diagnostics_truncated")
@@ -665,6 +717,18 @@ def _candidate_writer_structural_diagnostics(
     return None
 
 
+def _candidate_writer_primary_field_violation(
+    diagnostics: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not diagnostics:
+        return None
+    violations = diagnostics.get("field_violations")
+    if not isinstance(violations, list) or not violations:
+        return None
+    first = violations[0]
+    return first if isinstance(first, dict) else None
+
+
 def _diagnostic_list_count(
     diagnostics: dict[str, Any] | None,
     field_name: str,
@@ -750,10 +814,20 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
         "post_length",
         "candidate_writer_failure_stage",
         "candidate_writer_parser_error_code",
+        "candidate_writer_parser_error_detail_code",
+        "candidate_writer_parser_error_line",
+        "candidate_writer_parser_error_column",
+        "candidate_writer_parser_error_position",
         "candidate_writer_adapter_error_code",
         "candidate_writer_missing_field_count",
         "candidate_writer_unexpected_field_count",
         "candidate_writer_invalid_field_count",
+        "candidate_writer_field_violation_count",
+        "candidate_writer_primary_invalid_field",
+        "candidate_writer_primary_violation_reason",
+        "candidate_writer_primary_actual_length",
+        "candidate_writer_primary_minimum_required",
+        "candidate_writer_primary_maximum_allowed",
         "candidate_writer_diagnostics_truncated",
     )
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -782,6 +856,18 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     "candidate_writer_parser_error_code": record.get(
                         "candidate_writer_parser_error_code"
                     ),
+                    "candidate_writer_parser_error_detail_code": record.get(
+                        "candidate_writer_parser_error_detail_code"
+                    ),
+                    "candidate_writer_parser_error_line": record.get(
+                        "candidate_writer_parser_error_line"
+                    ),
+                    "candidate_writer_parser_error_column": record.get(
+                        "candidate_writer_parser_error_column"
+                    ),
+                    "candidate_writer_parser_error_position": record.get(
+                        "candidate_writer_parser_error_position"
+                    ),
                     "candidate_writer_adapter_error_code": record.get(
                         "candidate_writer_adapter_error_code"
                     ),
@@ -793,6 +879,24 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     ),
                     "candidate_writer_invalid_field_count": record.get(
                         "candidate_writer_invalid_field_count"
+                    ),
+                    "candidate_writer_field_violation_count": record.get(
+                        "candidate_writer_field_violation_count"
+                    ),
+                    "candidate_writer_primary_invalid_field": record.get(
+                        "candidate_writer_primary_invalid_field"
+                    ),
+                    "candidate_writer_primary_violation_reason": record.get(
+                        "candidate_writer_primary_violation_reason"
+                    ),
+                    "candidate_writer_primary_actual_length": record.get(
+                        "candidate_writer_primary_actual_length"
+                    ),
+                    "candidate_writer_primary_minimum_required": record.get(
+                        "candidate_writer_primary_minimum_required"
+                    ),
+                    "candidate_writer_primary_maximum_allowed": record.get(
+                        "candidate_writer_primary_maximum_allowed"
                     ),
                     "candidate_writer_diagnostics_truncated": record.get(
                         "candidate_writer_diagnostics_truncated"
@@ -833,23 +937,48 @@ def _report_candidate_writer_diagnostic(record: dict[str, Any]) -> str:
     parts = [
         record.get("candidate_writer_failure_stage"),
         record.get("candidate_writer_parser_error_code"),
+        record.get("candidate_writer_parser_error_detail_code"),
         record.get("candidate_writer_adapter_error_code"),
     ]
     counts = (
         f"missing={record.get('candidate_writer_missing_field_count') or 0}",
         f"unexpected={record.get('candidate_writer_unexpected_field_count') or 0}",
         f"invalid={record.get('candidate_writer_invalid_field_count') or 0}",
+        f"field_violations={record.get('candidate_writer_field_violation_count') or 0}",
     )
+    primary_violation = _format_primary_candidate_writer_violation(record)
     filtered = [str(part) for part in parts if isinstance(part, str) and part]
     if not filtered and not any(record.get(key) is not None for key in (
         "candidate_writer_missing_field_count",
         "candidate_writer_unexpected_field_count",
         "candidate_writer_invalid_field_count",
+        "candidate_writer_field_violation_count",
     )):
         return ""
+    if primary_violation:
+        filtered.append(primary_violation)
     if record.get("candidate_writer_diagnostics_truncated") is True:
         filtered.append("truncated")
     return " ".join((*filtered, *counts))
+
+
+def _format_primary_candidate_writer_violation(record: dict[str, Any]) -> str:
+    field_name = record.get("candidate_writer_primary_invalid_field")
+    reason = record.get("candidate_writer_primary_violation_reason")
+    if not isinstance(field_name, str) or not isinstance(reason, str):
+        return ""
+    measurements: list[str] = []
+    actual_length = record.get("candidate_writer_primary_actual_length")
+    minimum_required = record.get("candidate_writer_primary_minimum_required")
+    maximum_allowed = record.get("candidate_writer_primary_maximum_allowed")
+    if isinstance(actual_length, int):
+        measurements.append(f"actual_length={actual_length}")
+    if isinstance(minimum_required, int):
+        measurements.append(f"minimum_required={minimum_required}")
+    if isinstance(maximum_allowed, int):
+        measurements.append(f"maximum_allowed={maximum_allowed}")
+    suffix = f" ({', '.join(measurements)})" if measurements else ""
+    return f"{field_name}:{reason}{suffix}"
 
 
 def _sanitize_artifact_value(value: Any) -> Any:

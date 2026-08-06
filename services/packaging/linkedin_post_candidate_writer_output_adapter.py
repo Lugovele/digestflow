@@ -19,6 +19,14 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
     ADAPTER_ERROR_PAYLOAD_CONTRACT_VIOLATION,
     ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT,
     ADAPTER_ERROR_UNKNOWN,
+    FIELD_VIOLATION_ABOVE_MAX_LENGTH,
+    FIELD_VIOLATION_BELOW_MIN_COUNT,
+    FIELD_VIOLATION_EMPTY_STRING,
+    FIELD_VIOLATION_INVALID_STRING_LIST_ITEM,
+    FIELD_VIOLATION_MISSING_REQUIRED_BOOLEAN_KEY,
+    FIELD_VIOLATION_NON_BOOLEAN_REQUIRED_KEY,
+    FIELD_VIOLATION_WRONG_TYPE,
+    CandidateWriterFieldViolation,
     CandidateWriterStructuralDiagnostics,
     build_adapter_structural_diagnostics,
 )
@@ -171,6 +179,9 @@ def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str
                 required_fields=REQUIRED_FINAL_POST_PAYLOAD_FIELDS,
                 allowed_fields=CANONICAL_FINAL_POST_PAYLOAD_FIELDS,
                 invalid_field_names=_invalid_field_names_for_validation_failure(
+                    canonical_payload
+                ),
+                field_violations=_field_violations_for_validation_failure(
                     canonical_payload
                 ),
             ),
@@ -347,6 +358,156 @@ def _invalid_field_names_for_validation_failure(
     canonical_payload: dict[str, Any],
 ) -> tuple[str, ...]:
     return tuple(_field_failure_classifications(canonical_payload))
+
+
+def _field_violations_for_validation_failure(
+    canonical_payload: dict[str, Any],
+) -> tuple[CandidateWriterFieldViolation, ...]:
+    violations: list[CandidateWriterFieldViolation] = []
+    post_text = canonical_payload.get("post_text")
+    if not isinstance(post_text, str):
+        violations.append(
+            _field_violation(
+                "post_text",
+                FIELD_VIOLATION_WRONG_TYPE,
+                actual_type=type(post_text).__name__,
+            )
+        )
+    elif not post_text.strip():
+        violations.append(
+            _field_violation(
+                "post_text",
+                FIELD_VIOLATION_EMPTY_STRING,
+                actual_type="str",
+                actual_length=len(post_text),
+            )
+        )
+    elif len(post_text) > FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS:
+        violations.append(
+            _field_violation(
+                "post_text",
+                FIELD_VIOLATION_ABOVE_MAX_LENGTH,
+                actual_type="str",
+                actual_length=len(post_text),
+                maximum_allowed=FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+            )
+        )
+
+    violations.extend(
+        _string_list_field_violations(
+            "hook_variants",
+            canonical_payload.get("hook_variants"),
+            FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
+        )
+    )
+    violations.extend(
+        _string_list_field_violations(
+            "cta_variants",
+            canonical_payload.get("cta_variants"),
+            FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
+        )
+    )
+    violations.extend(
+        _string_list_field_violations(
+            "hashtags",
+            canonical_payload.get("hashtags"),
+            FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
+        )
+    )
+
+    carousel_outline = canonical_payload.get("carousel_outline")
+    if not isinstance(carousel_outline, list):
+        violations.append(
+            _field_violation(
+                "carousel_outline",
+                FIELD_VIOLATION_WRONG_TYPE,
+                actual_type=type(carousel_outline).__name__,
+            )
+        )
+
+    quality_checks = canonical_payload.get("quality_checks")
+    if not isinstance(quality_checks, dict):
+        violations.append(
+            _field_violation(
+                "quality_checks",
+                FIELD_VIOLATION_WRONG_TYPE,
+                actual_type=type(quality_checks).__name__,
+            )
+        )
+    else:
+        for key in sorted(REQUIRED_QUALITY_CHECKS):
+            if key not in quality_checks:
+                violations.append(
+                    _field_violation(
+                        "quality_checks",
+                        FIELD_VIOLATION_MISSING_REQUIRED_BOOLEAN_KEY,
+                        actual_type="dict",
+                    )
+                )
+            elif not isinstance(quality_checks[key], bool):
+                violations.append(
+                    _field_violation(
+                        "quality_checks",
+                        FIELD_VIOLATION_NON_BOOLEAN_REQUIRED_KEY,
+                        actual_type="dict",
+                    )
+                )
+    return tuple(violations)
+
+
+def _string_list_field_violations(
+    field_name: str,
+    value: Any,
+    min_count: int,
+) -> tuple[CandidateWriterFieldViolation, ...]:
+    if not isinstance(value, list):
+        return (
+            _field_violation(
+                field_name,
+                FIELD_VIOLATION_WRONG_TYPE,
+                actual_type=type(value).__name__,
+            ),
+        )
+    violations: list[CandidateWriterFieldViolation] = []
+    if len(value) < min_count:
+        violations.append(
+            _field_violation(
+                field_name,
+                FIELD_VIOLATION_BELOW_MIN_COUNT,
+                actual_type="list",
+                actual_length=len(value),
+                minimum_required=min_count,
+            )
+        )
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        violations.append(
+            _field_violation(
+                field_name,
+                FIELD_VIOLATION_INVALID_STRING_LIST_ITEM,
+                actual_type="list",
+                actual_length=len(value),
+            )
+        )
+    return tuple(violations)
+
+
+def _field_violation(
+    field_name: str,
+    reason_code: str,
+    *,
+    actual_type: str | None = None,
+    actual_length: int | None = None,
+    minimum_required: int | None = None,
+    maximum_allowed: int | None = None,
+) -> CandidateWriterFieldViolation:
+    return CandidateWriterFieldViolation(
+        field_name=field_name,
+        reason_code=reason_code,
+        actual_type=actual_type,
+        actual_length=actual_length,
+        minimum_required=minimum_required,
+        maximum_allowed=maximum_allowed,
+    )
 
 
 def _field_failure_classifications(canonical_payload: dict[str, Any]) -> dict[str, str]:

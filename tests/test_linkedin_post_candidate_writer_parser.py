@@ -21,6 +21,13 @@ from services.packaging.linkedin_post_candidate_writer_parser import (
     CandidateWriterResponseParseError,
     parse_candidate_writer_raw_response,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    PARSER_DETAIL_EXTRA_DATA_AFTER_JSON,
+    PARSER_DETAIL_INVALID_CONTROL_CHARACTER,
+    PARSER_DETAIL_NON_STANDARD_NUMBER,
+    PARSER_DETAIL_TRAILING_COMMA,
+    PARSER_DETAIL_UNEXPECTED_END_OF_INPUT,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 
 
@@ -292,12 +299,23 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
 
         self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
         self.assertEqual(error.exception.diagnostics.candidate_text_length, len(malformed))
+        self.assertEqual(
+            error.exception.diagnostics.parser_error_detail_code,
+            PARSER_DETAIL_INVALID_CONTROL_CHARACTER,
+        )
 
     def test_trailing_comma_fails_without_repair(self) -> None:
         with self.assertRaises(CandidateWriterResponseParseError) as error:
             parse_candidate_writer_raw_response(_raw_response('{"post_text": "Post",}'))
 
         self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+        self.assertEqual(
+            error.exception.diagnostics.parser_error_detail_code,
+            PARSER_DETAIL_TRAILING_COMMA,
+        )
+        self.assertEqual(error.exception.diagnostics.parser_error_line, 1)
+        self.assertIsInstance(error.exception.diagnostics.parser_error_column, int)
+        self.assertIsInstance(error.exception.diagnostics.parser_error_position, int)
 
     def test_commented_json_fails_without_repair(self) -> None:
         with self.assertRaises(CandidateWriterResponseParseError) as error:
@@ -322,6 +340,35 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
                     )
 
                 self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+                self.assertEqual(
+                    error.exception.diagnostics.parser_error_detail_code,
+                    PARSER_DETAIL_NON_STANDARD_NUMBER,
+                )
+
+    def test_unexpected_end_diagnostic_detail_is_bounded(self) -> None:
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(_raw_response('{"post_text": '))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+        self.assertEqual(
+            error.exception.diagnostics.parser_error_detail_code,
+            PARSER_DETAIL_UNEXPECTED_END_OF_INPUT,
+        )
+        self.assertIsInstance(error.exception.diagnostics.parser_error_line, int)
+        self.assertIsInstance(error.exception.diagnostics.parser_error_column, int)
+        self.assertIsInstance(error.exception.diagnostics.parser_error_position, int)
+
+    def test_extra_data_diagnostic_detail_is_bounded(self) -> None:
+        raw_text = '{"a": 1} {"b": 2}'
+
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(_raw_response(raw_text))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+        self.assertEqual(
+            error.exception.diagnostics.parser_error_detail_code,
+            PARSER_DETAIL_EXTRA_DATA_AFTER_JSON,
+        )
 
     def test_non_object_json_fails(self) -> None:
         cases = ("[]", '"post"', "42", "4.2", "true", "null")

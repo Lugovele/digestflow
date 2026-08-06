@@ -353,7 +353,7 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self,
     ) -> None:
         diagnostics = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "failure_stage": "candidate_writer_adaptation",
             "parser_error_code": None,
             "adapter_error_code": "missing_required_fields",
@@ -365,6 +365,20 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
             "candidate_text_length": None,
             "diagnostics_truncated": False,
             "redacted_key_count": 0,
+            "field_violations": [
+                {
+                    "field_name": "post_text",
+                    "reason_code": "above_max_length",
+                    "actual_type": "str",
+                    "actual_length": 1501,
+                    "minimum_required": None,
+                    "maximum_allowed": 1300,
+                }
+            ],
+            "parser_error_detail_code": None,
+            "parser_error_line": None,
+            "parser_error_column": None,
+            "parser_error_position": None,
         }
         smoke_runner = Mock(
             return_value=_smoke_result(
@@ -404,13 +418,25 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         )
         self.assertEqual(record["candidate_writer_missing_field_count"], 2)
         self.assertEqual(record["candidate_writer_unexpected_field_count"], 1)
+        self.assertEqual(record["candidate_writer_field_violation_count"], 1)
+        self.assertEqual(record["candidate_writer_primary_invalid_field"], "post_text")
+        self.assertEqual(
+            record["candidate_writer_primary_violation_reason"],
+            "above_max_length",
+        )
+        self.assertEqual(record["candidate_writer_primary_actual_length"], 1501)
+        self.assertEqual(record["candidate_writer_primary_maximum_allowed"], 1300)
         runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
         summary_text = Path(result.artifacts.summary_csv).read_text(encoding="utf-8")
         report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
         self.assertIn("candidate_writer_structural_diagnostics", runs_text)
+        self.assertIn("field_violations", runs_text)
         self.assertIn("candidate_writer_missing_field_count", summary_text)
+        self.assertIn("candidate_writer_primary_violation_reason", summary_text)
         self.assertIn("missing_required_fields", report_text)
         self.assertIn("missing=2", report_text)
+        self.assertIn("post_text:above_max_length", report_text)
+        self.assertIn("maximum_allowed=1300", report_text)
         self.assertNotIn("secret raw response", runs_text + summary_text + report_text)
         self.assertNotIn("secret post text", runs_text + summary_text + report_text)
         self.assertNotIn("hook_variants", summary_text + report_text)
@@ -475,6 +501,70 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self.assertNotIn("api_key", artifact_text)
         self.assertNotIn("provider_payload", artifact_text)
         self.assertNotIn("secret raw response text", artifact_text)
+
+    def test_candidate_writer_parser_detail_scalars_are_allowlisted_into_artifacts(
+        self,
+    ) -> None:
+        diagnostics = {
+            "schema_version": "1.1",
+            "failure_stage": "candidate_writer_parse",
+            "parser_error_code": "malformed_json",
+            "adapter_error_code": None,
+            "top_level_json_type": None,
+            "received_top_level_keys": [],
+            "missing_required_fields": [],
+            "unexpected_fields": [],
+            "invalid_field_names": [],
+            "candidate_text_length": 21,
+            "diagnostics_truncated": False,
+            "redacted_key_count": 0,
+            "field_violations": [],
+            "parser_error_detail_code": "trailing_comma",
+            "parser_error_line": 1,
+            "parser_error_column": 22,
+            "parser_error_position": 21,
+        }
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result={
+                    "stage_statuses": [
+                        {
+                            "stage": "candidate_writer_parse",
+                            "status": "failed",
+                            "metadata": {
+                                "candidate_writer_structural_diagnostics": diagnostics,
+                            },
+                        }
+                    ],
+                    "candidate_payload": {},
+                    "provider_response_diagnostics": {},
+                }
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_writer_parser_detail",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        record = result.run_records[0]
+        self.assertEqual(
+            record["candidate_writer_parser_error_detail_code"],
+            "trailing_comma",
+        )
+        self.assertEqual(record["candidate_writer_parser_error_line"], 1)
+        self.assertEqual(record["candidate_writer_parser_error_column"], 22)
+        self.assertEqual(record["candidate_writer_parser_error_position"], 21)
+        summary_text = Path(result.artifacts.summary_csv).read_text(encoding="utf-8")
+        report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
+        self.assertIn("candidate_writer_parser_error_detail_code", summary_text)
+        self.assertIn("trailing_comma", report_text)
 
     def test_missing_metrics_remain_null(self) -> None:
         smoke_runner = Mock(return_value=_smoke_result(sanitized_result={}))
