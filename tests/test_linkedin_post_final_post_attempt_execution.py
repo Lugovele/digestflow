@@ -11,6 +11,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from apps.ai.client import AI_THINKING_MODE_DISABLED
+from apps.ai.client import AI_THINKING_MODE_PROVIDER_DEFAULT
 from services.packaging import linkedin_post_final_post_attempt_execution
 from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_EXECUTION_FAILED,
@@ -574,6 +575,9 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
     def test_full_attempt_grounding_request_failure_invokes_no_grounding_or_quality(
         self,
     ) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
         grounding_client = FakeCandidateWriterClient(
             _provider_response(json.dumps(_semantic_review_payload(passed=True)))
         )
@@ -583,22 +587,83 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
 
         result = execute_final_post_standalone_attempt(
             _request(semantic_grounding_provider=""),
-            candidate_writer_client=FakeCandidateWriterClient(
-                _provider_response(_candidate_json())
-            ),
+            candidate_writer_client=candidate_client,
             semantic_grounding_client=grounding_client,
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
 
+        self.assertEqual(candidate_client.call_count, 0)
         self.assertEqual(grounding_client.call_count, 0)
         self.assertEqual(evaluator_client.call_count, 0)
         self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_REQUEST)
         self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_REQUEST)
         self.assertEqual(result.semantic_grounding_invocation_count, 0)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
-        self.assertEqual(result.semantic_grounding_state.status, "not_ready")
-        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.semantic_grounding_state)
+        self.assertIsNone(result.final_attempt_outcome)
+
+    def test_full_attempt_preflights_quality_config_before_candidate_writer(
+        self,
+    ) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+        grounding_client = _passing_semantic_client()
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(quality_evaluator_provider="gemini"),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(grounding_client.call_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.candidate_writer_invocation_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertIsNone(result.final_attempt_outcome)
+
+    def test_full_attempt_allows_role_policy_mixed_providers(self) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+        grounding_client = _passing_semantic_client()
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(
+                candidate_writer_provider="gemini",
+                candidate_writer_model="gemini-3.6-flash",
+                semantic_grounding_provider="anthropic",
+                semantic_grounding_model="claude-sonnet-5",
+                quality_evaluator_provider="openai",
+            ),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 1)
+        self.assertEqual(grounding_client.call_count, 1)
+        self.assertEqual(evaluator_client.call_count, 1)
+        self.assertEqual(candidate_client.thinking_mode, AI_THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertEqual(grounding_client.thinking_mode, AI_THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_ACCEPTED)
+
+    def test_attempt_request_has_no_candidate_writer_thinking_mode_field(self) -> None:
+        self.assertFalse(hasattr(_request(), "candidate_writer_thinking_mode"))
 
     def test_full_attempt_grounding_provider_failure_skips_quality(self) -> None:
         grounding_client = FailingCandidateWriterClient(RuntimeError("secret"))
@@ -919,8 +984,8 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
         self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
-        self.assertEqual(result.quality_evaluation_state.status, "not_run")
-        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.quality_evaluation_state)
+        self.assertIsNone(result.final_attempt_outcome)
 
     def test_full_attempt_too_small_evaluator_budget_fails_before_provider(
         self,

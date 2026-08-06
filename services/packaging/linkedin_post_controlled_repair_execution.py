@@ -63,6 +63,21 @@ from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_attempt_execution import (
     execute_final_post_standalone_attempt,
 )
+from services.packaging.linkedin_post_final_post_attempt_contract import (
+    FAILURE_CANDIDATE_WRITER_REQUEST,
+    FAILURE_QUALITY_EVALUATOR_REQUEST,
+    FAILURE_SEMANTIC_GROUNDING_REQUEST,
+    STAGE_CANDIDATE_WRITER_REQUEST,
+    STAGE_QUALITY_EVALUATOR_REQUEST,
+    STAGE_SEMANTIC_GROUNDING_REQUEST,
+    STATUS_SKIPPED,
+    FinalPostAttemptStageStatus,
+    FinalPostStandaloneAttemptResult,
+)
+from services.packaging.linkedin_post_final_post_execution_plan import (
+    FinalPostExecutionRoleSelection,
+    preflight_final_post_execution_plan,
+)
 from services.packaging.linkedin_post_flow_decision import (
     FinalPostDecisionPolicy,
     HUMAN_REVIEW_FLAGS,
@@ -93,6 +108,12 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
+)
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_CANDIDATE_WRITER,
+    FINAL_POST_ROLE_QUALITY_EVALUATOR,
+    FINAL_POST_ROLE_REPAIR_WRITER,
+    FINAL_POST_ROLE_SEMANTIC_GROUNDING,
 )
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
@@ -131,6 +152,20 @@ def execute_final_post_controlled_repair_attempt(
     """Run one initial attempt and, when eligible, exactly one repair attempt."""
 
     evidence_ids = tuple(selected_evidence_ids)
+    if request.repair_enabled:
+        preflight_result = preflight_final_post_execution_plan(
+            _controlled_repair_role_selections(
+                request,
+                candidate_writer_client=candidate_writer_client,
+                semantic_grounding_client=semantic_grounding_client,
+                quality_evaluator_client=quality_evaluator_client,
+                repair_writer_client=repair_writer_client,
+            )
+        )
+        preflight_failure = preflight_result.first_failure()
+        if preflight_failure is not None:
+            return _controlled_preflight_failure_result(request, preflight_failure)
+
     initial_result = execute_final_post_standalone_attempt(
         request.initial_attempt_request,
         post_brief=post_brief,
@@ -1095,6 +1130,91 @@ def _repair_writer_request_error(request: Any) -> str | None:
     if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
         return "missing repair writer rendered input text"
     return None
+
+
+def _controlled_repair_role_selections(
+    request: FinalPostControlledRepairRequest,
+    *,
+    candidate_writer_client: Any | None,
+    semantic_grounding_client: Any | None,
+    quality_evaluator_client: Any | None,
+    repair_writer_client: Any | None,
+) -> tuple[FinalPostExecutionRoleSelection, ...]:
+    initial = request.initial_attempt_request
+    return (
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+            provider=initial.candidate_writer_provider,
+            model=initial.candidate_writer_model,
+            stage=STAGE_CANDIDATE_WRITER_REQUEST,
+            failure_code=FAILURE_CANDIDATE_WRITER_REQUEST,
+            stage_label="candidate writer",
+            validate_key=candidate_writer_client is None,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+            provider=initial.semantic_grounding_provider,
+            model=initial.semantic_grounding_model,
+            stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
+            failure_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            stage_label="semantic grounding",
+            validate_key=semantic_grounding_client is None,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
+            provider=initial.quality_evaluator_provider,
+            model=initial.quality_evaluator_model,
+            stage=STAGE_QUALITY_EVALUATOR_REQUEST,
+            failure_code=FAILURE_QUALITY_EVALUATOR_REQUEST,
+            stage_label="quality evaluator",
+            validate_key=quality_evaluator_client is None,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_REPAIR_WRITER,
+            provider=request.repair_provider,
+            model=request.repair_model,
+            stage="repair_writer_request",
+            failure_code=FAILURE_REPAIR_WRITER_REQUEST,
+            stage_label="repair writer",
+            validate_key=repair_writer_client is None,
+        ),
+    )
+
+
+def _controlled_preflight_failure_result(
+    request: FinalPostControlledRepairRequest,
+    failure: Any,
+) -> FinalPostControlledRepairResult:
+    initial_result = FinalPostStandaloneAttemptResult(
+        request=request.initial_attempt_request,
+        stage_statuses=(
+            FinalPostAttemptStageStatus(
+                stage=STAGE_CANDIDATE_WRITER_REQUEST,
+                status=STATUS_SKIPPED,
+            ),
+            FinalPostAttemptStageStatus(
+                stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
+                status=STATUS_SKIPPED,
+            ),
+            FinalPostAttemptStageStatus(
+                stage=STAGE_QUALITY_EVALUATOR_REQUEST,
+                status=STATUS_SKIPPED,
+            ),
+        ),
+        failure_stage=failure.stage,
+        failure_code=failure.failure_code,
+        failure_message=failure.message,
+    )
+    return FinalPostControlledRepairResult(
+        request=request,
+        initial_attempt_result=initial_result,
+        repair_eligibility=_ineligible("execution plan preflight failed"),
+        repair_executed=False,
+        terminal_reason="execution plan preflight failed",
+        failure_stage=failure.stage,
+        failure_code=failure.failure_code,
+        failure_message=failure.message,
+    )
 
 
 def _quality_evaluator_request_error(request: Any) -> str | None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import copy
+from dataclasses import asdict
 import inspect
 import json
 from pathlib import Path
@@ -25,6 +26,10 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     STAGE_CANDIDATE_WRITER_ADAPTATION,
 )
 from services.packaging import linkedin_post_final_post_smoke_runner
+from services.packaging.linkedin_post_pipeline import (
+    EvidenceRelationship,
+    build_authorial_voice_directive_from_evidence_relationship,
+)
 from services.packaging.linkedin_post_final_post_smoke_runner import (
     EXIT_CONFIG_ERROR,
     EXIT_EXECUTION_FAILURE,
@@ -42,7 +47,7 @@ from services.packaging.linkedin_post_final_post_smoke_runner import (
 )
 
 
-FIXTURE_PATH = (
+BASE_FIXTURE_PATH = (
     Path(settings.BASE_DIR)
     / "tests"
     / "fixtures"
@@ -52,13 +57,16 @@ FIXTURE_PATH = (
 
 
 class FinalPostSmokeRunnerTests(SimpleTestCase):
+    def setUp(self) -> None:
+        self.fixture_path = _write_current_contract_fixture()
+
     def test_dry_run_does_not_invoke_standalone_api(self) -> None:
         with patch.object(
             linkedin_post_final_post_smoke_runner,
             "execute_final_post_standalone_attempt",
         ) as standalone:
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path)
             )
 
         standalone.assert_not_called()
@@ -70,6 +78,82 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             result.sanitized_result,
         )
 
+    def test_dry_run_reports_role_diagnostics_for_mixed_candidate_roles(self) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    candidate_provider="gemini",
+                    candidate_model="gemini-3.6-flash",
+                    semantic_grounding_provider="anthropic",
+                    semantic_grounding_model="claude-sonnet-5",
+                    quality_evaluator_provider="openai",
+                    quality_evaluator_model="gpt-4.1-2025-04-14",
+                )
+            )
+
+        standalone.assert_not_called()
+        diagnostics = result.sanitized_result["role_diagnostics"]
+        self.assertEqual(result.status, SMOKE_STATUS_DRY_RUN)
+        self.assertEqual(
+            [diagnostic["role"] for diagnostic in diagnostics],
+            ["candidate_writer", "semantic_grounding", "quality_evaluator"],
+        )
+        self.assertEqual(diagnostics[0]["provider"], "gemini")
+        self.assertEqual(diagnostics[0]["model"], "gemini-3.6-flash")
+        self.assertEqual(diagnostics[1]["provider"], "anthropic")
+        self.assertEqual(diagnostics[1]["model"], "claude-sonnet-5")
+        self.assertEqual(diagnostics[2]["provider"], "openai")
+        self.assertTrue(
+            all(
+                diagnostic["validation_status"] == "valid"
+                for diagnostic in diagnostics
+            )
+        )
+
+    def test_dry_run_rejects_invalid_role_model_before_provider_execution(self) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    candidate_provider="gemini",
+                    candidate_model="gpt-4.1-2025-04-14",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(result.exit_code, EXIT_CONFIG_ERROR)
+        self.assertIn("Candidate Writer provider/model mismatch", result.safe_failure_message)
+
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="")
+    def test_live_smoke_rejects_missing_selected_provider_key_before_delegation(
+        self,
+    ) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    allow_api=True,
+                    candidate_provider="gemini",
+                    candidate_model="gemini-3.6-flash",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(result.exit_code, EXIT_CONFIG_ERROR)
+        self.assertIn("GEMINI_API_KEY", result.safe_failure_message)
+
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_standalone_mode_delegates_once_to_public_api(self) -> None:
         fake_result = _standalone_result()
@@ -80,7 +164,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             return_value=fake_result,
         ) as standalone:
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
 
         standalone.assert_called_once()
@@ -114,7 +198,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             return_value=fake_result,
         ):
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
 
         semantic_summary = result.sanitized_result["semantic_grounding_review"]
@@ -133,7 +217,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         ) as controlled:
             result = run_final_post_smoke(
                 FinalPostSmokeRunRequest(
-                    input_path=FIXTURE_PATH,
+                    input_path=self.fixture_path,
                     mode=SMOKE_MODE_CONTROLLED_REPAIR,
                     allow_api=True,
                 )
@@ -164,7 +248,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         ):
             result = run_final_post_smoke(
                 FinalPostSmokeRunRequest(
-                    input_path=FIXTURE_PATH,
+                    input_path=self.fixture_path,
                     mode=SMOKE_MODE_CONTROLLED_REPAIR,
                     allow_api=True,
                     expect_repair=True,
@@ -208,7 +292,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertIn("not valid JSON", result.safe_failure_message)
 
     def test_directory_input_returns_config_error_before_provider_execution(self) -> None:
-        directory_input = FIXTURE_PATH.parent
+        directory_input = self.fixture_path.parent
 
         with patch.object(
             linkedin_post_final_post_smoke_runner,
@@ -248,7 +332,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
     def test_malformed_selected_evidence_returns_config_error_before_provider_execution(
         self,
     ) -> None:
-        payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        payload = json.loads(self.fixture_path.read_text(encoding="utf-8"))
         del payload["post_brief"]["evidence_to_use"][0]["evidence_text"]
         malformed_fixture = _write_raw_temp_fixture(json.dumps(payload))
 
@@ -277,11 +361,11 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             return_value=fake_result,
         ):
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
             debug_result = run_final_post_smoke(
                 FinalPostSmokeRunRequest(
-                    input_path=FIXTURE_PATH,
+                    input_path=self.fixture_path,
                     allow_api=True,
                     include_raw_responses=True,
                 )
@@ -314,7 +398,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         ):
             result = run_final_post_smoke(
                 FinalPostSmokeRunRequest(
-                    input_path=FIXTURE_PATH,
+                    input_path=self.fixture_path,
                     allow_api=True,
                     save_output=True,
                     output_dir=output_dir,
@@ -337,7 +421,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
                 call_command(
                     "smoke_linkedin_final_post",
                     "--input",
-                    str(FIXTURE_PATH),
+                    str(self.fixture_path),
                     "--allow-api",
                     stdout=command_output,
                 )
@@ -359,7 +443,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             return_value=fake_result,
         ):
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
 
         self.assertEqual(result.status, SMOKE_STATUS_EXECUTION_FAILED)
@@ -402,7 +486,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         ):
             result = run_final_post_smoke(
                 FinalPostSmokeRunRequest(
-                    input_path=FIXTURE_PATH,
+                    input_path=self.fixture_path,
                     allow_api=True,
                     include_raw_responses=True,
                 )
@@ -444,7 +528,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             side_effect=RuntimeError("provider exploded with sk-secret-value"),
         ):
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
 
         self.assertEqual(result.status, SMOKE_STATUS_EXECUTION_FAILED)
@@ -491,7 +575,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             return_value=fake_result,
         ):
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
 
         stage_metadata = result.sanitized_result["stage_statuses"][0]["metadata"]
@@ -522,7 +606,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         ):
             result = run_final_post_smoke(
                 FinalPostSmokeRunRequest(
-                    input_path=FIXTURE_PATH,
+                    input_path=self.fixture_path,
                     allow_api=True,
                     save_output=True,
                     output_dir=output_dir,
@@ -542,7 +626,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_input_fixture_is_not_mutated_and_output_is_json_safe(self) -> None:
-        before = FIXTURE_PATH.read_text(encoding="utf-8")
+        before = self.fixture_path.read_text(encoding="utf-8")
 
         with patch.object(
             linkedin_post_final_post_smoke_runner,
@@ -550,10 +634,10 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             return_value=_standalone_result(),
         ):
             result = run_final_post_smoke(
-                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
             )
 
-        self.assertEqual(FIXTURE_PATH.read_text(encoding="utf-8"), before)
+        self.assertEqual(self.fixture_path.read_text(encoding="utf-8"), before)
         json.dumps(result.to_dict(), ensure_ascii=False, allow_nan=False, sort_keys=True)
 
     def test_module_does_not_import_production_runtime_or_django_models(self) -> None:
@@ -580,7 +664,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         call_command(
             "smoke_linkedin_final_post",
             "--input",
-            str(FIXTURE_PATH),
+            str(self.fixture_path),
             stdout=output,
         )
 
@@ -602,7 +686,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
                 status=SMOKE_STATUS_COMPLETED,
                 exit_code=EXIT_OK,
                 mode=SMOKE_MODE_STANDALONE,
-                input_path=str(FIXTURE_PATH),
+                input_path=str(self.fixture_path),
                 provider_models={},
                 invocation_budget={},
                 invocation_counts={},
@@ -624,7 +708,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             call_command(
                 "smoke_linkedin_final_post",
                 "--input",
-                str(FIXTURE_PATH),
+                str(self.fixture_path),
                 stdout=output,
             )
 
@@ -645,7 +729,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
                 status=SMOKE_STATUS_DRY_RUN,
                 exit_code=EXIT_OK,
                 mode=SMOKE_MODE_STANDALONE,
-                input_path=str(FIXTURE_PATH),
+                input_path=str(self.fixture_path),
                 provider_models={},
                 invocation_budget={},
                 invocation_counts={},
@@ -667,7 +751,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             call_command(
                 "smoke_linkedin_final_post",
                 "--input",
-                str(FIXTURE_PATH),
+                str(self.fixture_path),
                 "--grounding-provider",
                 "openai",
                 "--grounding-model",
@@ -873,9 +957,45 @@ def _full_payload(post_text: str) -> dict:
 
 
 def _write_temp_fixture(extra: dict) -> Path:
-    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    payload = _current_contract_payload()
     payload.update(extra)
     return _write_raw_temp_fixture(json.dumps(payload))
+
+
+def _write_current_contract_fixture() -> Path:
+    return _write_raw_temp_fixture(json.dumps(_current_contract_payload()))
+
+
+def _current_contract_payload() -> dict:
+    payload = json.loads(BASE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    payload["angle_decision"]["authorial_voice_directive"] = asdict(
+        build_authorial_voice_directive_from_evidence_relationship(
+            _evidence_relationship_from_fixture_payload(payload)
+        )
+    )
+    return payload
+
+
+def _evidence_relationship_from_fixture_payload(payload: dict) -> EvidenceRelationship:
+    angle_decision = payload["angle_decision"]
+    selected_evidence_ids = [
+        item["evidence_id"] for item in payload["post_brief"]["evidence_to_use"]
+    ]
+    return EvidenceRelationship(
+        relationship_type="contrast",
+        left_label="operational clarity",
+        right_label="human support",
+        left_evidence_ids=selected_evidence_ids[:1],
+        right_evidence_ids=selected_evidence_ids[1:],
+        supporting_evidence_ids=selected_evidence_ids,
+        qualifier="selected smoke fixture evidence",
+        thesis=angle_decision["controlling_angle"],
+        reader_problem=angle_decision["reader_problem"],
+        author_position=angle_decision["author_position"],
+        main_tension=angle_decision["main_tension"],
+        score=5,
+        priority=1,
+    )
 
 
 def _write_raw_temp_fixture(content: str) -> Path:

@@ -79,11 +79,17 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     FinalPostAttemptStageStatus,
     FinalPostStandaloneAttemptResult,
 )
+from services.packaging.linkedin_post_final_post_execution_plan import (
+    FinalPostExecutionRoleSelection,
+    preflight_final_post_execution_plan,
+)
 from services.packaging.linkedin_post_flow_input_builders import (
     build_post_editorial_input,
 )
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_CANDIDATE_WRITER,
+    FINAL_POST_ROLE_QUALITY_EVALUATOR,
+    FINAL_POST_ROLE_SEMANTIC_GROUNDING,
     get_final_post_role_provider_model_policy_failure,
 )
 from services.packaging.linkedin_post_prompt_renderers import (
@@ -299,6 +305,25 @@ def execute_final_post_standalone_attempt(
     quality_evaluator_client: Any | None = None,
 ) -> FinalPostStandaloneAttemptResult:
     """Run one standalone attempt through quality evaluation and adjudication."""
+
+    preflight_result = preflight_final_post_execution_plan(
+        _standalone_role_selections(
+            request,
+            candidate_writer_client=candidate_writer_client,
+            semantic_grounding_client=semantic_grounding_client,
+            quality_evaluator_client=quality_evaluator_client,
+        )
+    )
+    preflight_failure = preflight_result.first_failure()
+    if preflight_failure is not None:
+        return _failure_result(
+            request=_request_with_failure_safe_candidate_writer_render(request),
+            stage_statuses=_preflight_failure_statuses(preflight_failure),
+            failure_stage=preflight_failure.stage,
+            failure_code=preflight_failure.failure_code,
+            failure_message=preflight_failure.message,
+            candidate_writer_invocation_count=0,
+        )
 
     candidate_result = execute_final_post_standalone_candidate_attempt(
         request,
@@ -740,6 +765,62 @@ def _semantic_grounding_request_error(
     request: SemanticGroundingExecutionRequest,
 ) -> str | None:
     return get_semantic_grounding_execution_request_error(request)
+
+
+def _standalone_role_selections(
+    request: FinalPostAttemptRequest,
+    *,
+    candidate_writer_client: Any | None,
+    semantic_grounding_client: Any | None,
+    quality_evaluator_client: Any | None,
+) -> tuple[FinalPostExecutionRoleSelection, ...]:
+    return (
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+            provider=request.candidate_writer_provider,
+            model=request.candidate_writer_model,
+            stage=STAGE_CANDIDATE_WRITER_REQUEST,
+            failure_code=FAILURE_CANDIDATE_WRITER_REQUEST,
+            stage_label="candidate writer",
+            validate_key=candidate_writer_client is None,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+            provider=request.semantic_grounding_provider,
+            model=request.semantic_grounding_model,
+            stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
+            failure_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            stage_label="semantic grounding",
+            validate_key=semantic_grounding_client is None,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
+            provider=request.quality_evaluator_provider,
+            model=request.quality_evaluator_model,
+            stage=STAGE_QUALITY_EVALUATOR_REQUEST,
+            failure_code=FAILURE_QUALITY_EVALUATOR_REQUEST,
+            stage_label="quality evaluator",
+            validate_key=quality_evaluator_client is None,
+        ),
+    )
+
+
+def _preflight_failure_statuses(
+    failure: Any,
+) -> tuple[FinalPostAttemptStageStatus, ...]:
+    statuses: list[FinalPostAttemptStageStatus] = []
+    for stage in (
+        STAGE_CANDIDATE_WRITER_REQUEST,
+        STAGE_SEMANTIC_GROUNDING_REQUEST,
+        STAGE_QUALITY_EVALUATOR_REQUEST,
+    ):
+        if stage == failure.stage:
+            statuses.append(
+                _failed_status(stage, failure.failure_code, failure.message)
+            )
+        else:
+            statuses.append(_skipped_status(stage))
+    return tuple(statuses)
 
 
 def _request_with_failure_safe_candidate_writer_render(

@@ -20,6 +20,7 @@ from typing import Any
 from django.conf import settings
 
 from services.packaging.linkedin_post_controlled_repair_contract import (
+    FAILURE_REPAIR_WRITER_REQUEST,
     FinalPostControlledRepairRequest,
 )
 from services.packaging.linkedin_post_controlled_repair_execution import (
@@ -28,11 +29,22 @@ from services.packaging.linkedin_post_controlled_repair_execution import (
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
+    FAILURE_CANDIDATE_WRITER_REQUEST,
+    FAILURE_QUALITY_EVALUATOR_REQUEST,
+    FAILURE_SEMANTIC_GROUNDING_REQUEST,
     FinalPostAttemptRequest,
     STAGE_CANDIDATE_WRITER_EXECUTION,
+    STAGE_CANDIDATE_WRITER_REQUEST,
+    STAGE_QUALITY_EVALUATOR_REQUEST,
+    STAGE_SEMANTIC_GROUNDING_REQUEST,
 )
 from services.packaging.linkedin_post_final_post_attempt_execution import (
     execute_final_post_standalone_attempt,
+)
+from services.packaging.linkedin_post_final_post_execution_plan import (
+    FinalPostExecutionPlanPreflightResult,
+    FinalPostExecutionRoleSelection,
+    preflight_final_post_execution_plan,
 )
 from services.packaging.linkedin_post_flow_decision import FinalPostDecisionPolicy
 from services.packaging.linkedin_post_flow_input_builders import (
@@ -52,6 +64,12 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 )
 from services.packaging.linkedin_post_quality_evaluator_execution import (
     DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS,
+)
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_CANDIDATE_WRITER,
+    FINAL_POST_ROLE_QUALITY_EVALUATOR,
+    FINAL_POST_ROLE_REPAIR_WRITER,
+    FINAL_POST_ROLE_SEMANTIC_GROUNDING,
 )
 
 
@@ -80,7 +98,6 @@ DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 2400
 DEFAULT_QUALITY_MAX_OUTPUT_TOKENS = DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS
 DEFAULT_REPAIR_MAX_OUTPUT_TOKENS = 1200
 
-PLACEHOLDER_API_KEYS = {"", "sk-your-key", "your-openai-api-key-here"}
 SECRET_FIELD_FRAGMENTS = (
     "api_key",
     "apikey",
@@ -272,9 +289,10 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
             "model": _resolve_model(request.repair_model),
         }
 
-    _validate_provider_models(provider_models)
-    if request.allow_api:
-        _validate_api_key()
+    execution_plan = _preflight_provider_models(
+        provider_models,
+        validate_keys=request.allow_api,
+    )
 
     policy = FinalPostDecisionPolicy(max_total_attempts=2)
     initial_request = FinalPostAttemptRequest(
@@ -332,6 +350,7 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
             else None
         ),
         "provider_models": provider_models,
+        "execution_plan": execution_plan,
         "prompt_paths": {
             "candidate_writer": candidate_contract.prompt_path,
             "semantic_grounding": semantic_grounding_prompt_path,
@@ -407,6 +426,7 @@ def _dry_run_result(
         sanitized_result={
             "prompt_paths": copy.deepcopy(prepared["prompt_paths"]),
             "selected_evidence_ids": list(prepared["selected_evidence_ids"]),
+            "role_diagnostics": prepared["execution_plan"].role_diagnostics(),
             "max_call_budget": _invocation_budget(request.mode),
             "manual_smoke_only": True,
             "api_call": "skipped",
@@ -427,6 +447,11 @@ def _result_from_standalone(
         failure_message=getattr(result, "failure_message", ""),
         scenario_mismatch=False,
     )
+    sanitized_result = _sanitize_standalone_result(
+        result,
+        include_raw_responses=request.include_raw_responses,
+    )
+    sanitized_result["role_diagnostics"] = prepared["execution_plan"].role_diagnostics()
     return FinalPostSmokeRunResult(
         status=status,
         exit_code=exit_code,
@@ -446,10 +471,7 @@ def _result_from_standalone(
         safe_failure_message=failure_message,
         deterministic_gate_passed=_gate_passed(getattr(result, "deterministic_gate_output", None)),
         quality_passed=_quality_passed(getattr(result, "quality_evaluation_state", None)),
-        sanitized_result=_sanitize_standalone_result(
-            result,
-            include_raw_responses=request.include_raw_responses,
-        ),
+        sanitized_result=sanitized_result,
     )
 
 
@@ -472,6 +494,11 @@ def _result_from_controlled_repair(
         failure_message = "Expected controlled repair, but repair was not executed."
 
     initial_result = getattr(result, "initial_attempt_result", None)
+    sanitized_result = _sanitize_controlled_result(
+        result,
+        include_raw_responses=request.include_raw_responses,
+    )
+    sanitized_result["role_diagnostics"] = prepared["execution_plan"].role_diagnostics()
     return FinalPostSmokeRunResult(
         status=status,
         exit_code=exit_code,
@@ -495,10 +522,7 @@ def _result_from_controlled_repair(
         safe_failure_message=failure_message,
         deterministic_gate_passed=_controlled_gate_passed(result),
         quality_passed=_controlled_quality_passed(result),
-        sanitized_result=_sanitize_controlled_result(
-            result,
-            include_raw_responses=request.include_raw_responses,
-        ),
+        sanitized_result=sanitized_result,
     )
 
 
@@ -692,22 +716,71 @@ def _resolve_model(model: str | None) -> str:
     return str(model if model is not None else settings.POSTFLOW_POST_MODEL).strip()
 
 
-def _validate_provider_models(provider_models: dict[str, dict[str, str]]) -> None:
-    for role, provider_model in provider_models.items():
-        provider = provider_model["provider"]
-        model = provider_model["model"]
-        if provider != "openai":
-            raise FinalPostSmokeInputError(f"unsupported {role} provider: {provider}")
-        if not model:
-            raise FinalPostSmokeInputError(f"missing {role} model")
-
-
-def _validate_api_key() -> None:
-    api_key = str(settings.OPENAI_API_KEY or "").strip()
-    if api_key in PLACEHOLDER_API_KEYS:
-        raise FinalPostSmokeInputError(
-            "OPENAI_API_KEY must be configured with a real key before provider smoke execution"
+def _preflight_provider_models(
+    provider_models: dict[str, dict[str, str]],
+    *,
+    validate_keys: bool,
+) -> FinalPostExecutionPlanPreflightResult:
+    result = preflight_final_post_execution_plan(
+        _role_selections_from_provider_models(
+            provider_models,
+            validate_keys=validate_keys,
         )
+    )
+    failure = result.first_failure()
+    if failure is not None:
+        raise FinalPostSmokeInputError(failure.message)
+    return result
+
+
+def _role_selections_from_provider_models(
+    provider_models: dict[str, dict[str, str]],
+    *,
+    validate_keys: bool,
+) -> tuple[FinalPostExecutionRoleSelection, ...]:
+    selections = [
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+            provider=provider_models["candidate_writer"]["provider"],
+            model=provider_models["candidate_writer"]["model"],
+            stage=STAGE_CANDIDATE_WRITER_REQUEST,
+            failure_code=FAILURE_CANDIDATE_WRITER_REQUEST,
+            stage_label="Candidate Writer",
+            validate_key=validate_keys,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+            provider=provider_models["semantic_grounding"]["provider"],
+            model=provider_models["semantic_grounding"]["model"],
+            stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
+            failure_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            stage_label="Semantic Grounding Evaluator",
+            validate_key=validate_keys,
+        ),
+        FinalPostExecutionRoleSelection(
+            role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
+            provider=provider_models["quality_evaluator"]["provider"],
+            model=provider_models["quality_evaluator"]["model"],
+            stage=STAGE_QUALITY_EVALUATOR_REQUEST,
+            failure_code=FAILURE_QUALITY_EVALUATOR_REQUEST,
+            stage_label="Quality Evaluator",
+            validate_key=validate_keys,
+        ),
+    ]
+    repair_model = provider_models.get("repair_writer")
+    if repair_model is not None:
+        selections.append(
+            FinalPostExecutionRoleSelection(
+                role=FINAL_POST_ROLE_REPAIR_WRITER,
+                provider=repair_model["provider"],
+                model=repair_model["model"],
+                stage="repair_writer_request",
+                failure_code=FAILURE_REPAIR_WRITER_REQUEST,
+                stage_label="Repair Writer",
+                validate_key=validate_keys,
+            )
+        )
+    return tuple(selections)
 
 
 def _invocation_budget(mode: str) -> dict[str, int]:

@@ -80,12 +80,8 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
-            _controlled_request(
-                initial_attempt_request=_attempt_request(candidate_writer_provider="")
-            ),
-            candidate_writer_client=QueuedFakeClient(
-                _provider_response(_candidate_json())
-            ),
+            _controlled_request(),
+            candidate_writer_client=FailingFakeClient(RuntimeError("secret")),
             semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=QueuedFakeClient(
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
@@ -98,6 +94,35 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(repair_client.call_count, 0)
         self.assertEqual(result.failure_code, FAILURE_REPAIR_INELIGIBLE)
         self.assertIn("initial attempt failed", result.failure_message)
+
+    def test_repair_role_config_failure_preflights_before_initial_candidate(
+        self,
+    ) -> None:
+        candidate_client = QueuedFakeClient(_provider_response(_candidate_json()))
+        semantic_client = _passing_semantic_client()
+        evaluator_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=False)))
+        )
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(repair_provider="gemini"),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(semantic_client.call_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(repair_client.call_count, 0)
+        self.assertFalse(result.repair_executed)
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_REQUEST)
+        self.assertEqual(result.failure_stage, "repair_writer_request")
+        self.assertEqual(result.initial_attempt_result.candidate_writer_invocation_count, 0)
+        self.assertEqual(result.repair_invocation_count, 0)
 
     def test_initial_deterministic_gate_failure_skips_repair(self) -> None:
         repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
