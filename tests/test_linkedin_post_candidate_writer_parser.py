@@ -148,6 +148,7 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
                 parse_candidate_writer_raw_response(raw)
 
         self.assertEqual(error.exception.code, ERROR_EXECUTION_FAILED)
+        self.assertEqual(error.exception.diagnostics.parser_error_code, ERROR_EXECUTION_FAILED)
         mock_loads.assert_not_called()
 
     def test_execution_failure_message_does_not_include_raw_text_or_metadata(
@@ -179,6 +180,10 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
                     parse_candidate_writer_raw_response(_raw_response(raw_text))
 
                 self.assertEqual(error.exception.code, ERROR_EMPTY_RAW_RESPONSE)
+                self.assertEqual(
+                    error.exception.diagnostics.parser_error_code,
+                    ERROR_EMPTY_RAW_RESPONSE,
+                )
 
     def test_unsupported_fence_label_fails(self) -> None:
         for label in ("python", "javascript", "text", "yaml", "markdown"):
@@ -195,6 +200,7 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
             parse_candidate_writer_raw_response(_raw_response('Intro\n```json\n{}\n```'))
 
         self.assertEqual(error.exception.code, ERROR_MALFORMED_FENCE)
+        self.assertEqual(error.exception.diagnostics.parser_error_code, ERROR_MALFORMED_FENCE)
 
     def test_prose_after_fence_fails(self) -> None:
         with self.assertRaises(CandidateWriterResponseParseError) as error:
@@ -273,6 +279,10 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
                     parse_candidate_writer_raw_response(_raw_response(raw_text))
 
                 self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+                self.assertEqual(
+                    error.exception.diagnostics.parser_error_code,
+                    ERROR_MALFORMED_JSON,
+                )
 
     def test_literal_physical_newline_inside_quoted_json_string_fails(self) -> None:
         malformed = '{"post_text": "First paragraph.\nSecond paragraph."}'
@@ -281,6 +291,7 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
             parse_candidate_writer_raw_response(_raw_response(malformed))
 
         self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+        self.assertEqual(error.exception.diagnostics.candidate_text_length, len(malformed))
 
     def test_trailing_comma_fails_without_repair(self) -> None:
         with self.assertRaises(CandidateWriterResponseParseError) as error:
@@ -320,6 +331,23 @@ class LinkedInCandidateWriterParserTests(SimpleTestCase):
                     parse_candidate_writer_raw_response(_raw_response(raw_text))
 
                 self.assertEqual(error.exception.code, ERROR_NON_OBJECT_JSON)
+                self.assertEqual(
+                    error.exception.diagnostics.parser_error_code,
+                    ERROR_NON_OBJECT_JSON,
+                )
+                self.assertIsNotNone(error.exception.diagnostics.top_level_json_type)
+
+    def test_parse_diagnostics_record_length_without_response_content(self) -> None:
+        raw_text = '{"post_text": "secret post value", "api_key": "secret"} trailing'
+
+        with self.assertRaises(CandidateWriterResponseParseError) as error:
+            parse_candidate_writer_raw_response(_raw_response(raw_text))
+
+        diagnostics = error.exception.diagnostics.to_dict()
+        serialized = json.dumps(diagnostics, sort_keys=True)
+        self.assertEqual(diagnostics["candidate_text_length"], len(raw_text))
+        self.assertNotIn("secret post value", serialized)
+        self.assertNotIn("api_key", serialized)
 
     def test_unknown_top_level_fields_are_preserved_for_later_adapter_policy(
         self,

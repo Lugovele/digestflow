@@ -10,6 +10,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    CandidateWriterStructuralDiagnostics,
+    build_parser_structural_diagnostics,
+)
+
 if TYPE_CHECKING:
     from services.packaging.linkedin_post_candidate_writer_execution import (
         CandidateWriterRawResponse,
@@ -26,9 +31,16 @@ ERROR_NON_OBJECT_JSON = "non_object_json"
 class CandidateWriterResponseParseError(ValueError):
     """Raised when a Candidate Writer raw response cannot be parsed."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        diagnostics: CandidateWriterStructuralDiagnostics | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.diagnostics = diagnostics
 
 
 def parse_candidate_writer_raw_response(
@@ -40,6 +52,10 @@ def parse_candidate_writer_raw_response(
         raise CandidateWriterResponseParseError(
             ERROR_EXECUTION_FAILED,
             "candidate writer execution failed before parsing.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_EXECUTION_FAILED,
+                candidate_text=getattr(raw_response, "raw_text", None),
+            ),
         )
 
     raw_text = raw_response.raw_text
@@ -47,6 +63,10 @@ def parse_candidate_writer_raw_response(
         raise CandidateWriterResponseParseError(
             ERROR_EMPTY_RAW_RESPONSE,
             "candidate writer raw response is empty.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_EMPTY_RAW_RESPONSE,
+                candidate_text=raw_text,
+            ),
         )
 
     json_text = _extract_supported_json_text(str(raw_text))
@@ -59,17 +79,30 @@ def parse_candidate_writer_raw_response(
         raise CandidateWriterResponseParseError(
             ERROR_MALFORMED_JSON,
             "candidate writer raw response is not valid JSON.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_MALFORMED_JSON,
+                candidate_text=raw_text,
+            ),
         ) from exc
     except ValueError as exc:
         raise CandidateWriterResponseParseError(
             ERROR_MALFORMED_JSON,
             "candidate writer raw response contains non-standard JSON numbers.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_MALFORMED_JSON,
+                candidate_text=raw_text,
+            ),
         ) from exc
 
     if not isinstance(payload, dict):
         raise CandidateWriterResponseParseError(
             ERROR_NON_OBJECT_JSON,
             "candidate writer raw response must be a JSON object.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_NON_OBJECT_JSON,
+                candidate_text=raw_text,
+                top_level_json_type=type(payload).__name__,
+            ),
         )
     return payload
 
@@ -83,6 +116,10 @@ def _extract_supported_json_text(raw_text: str) -> str:
             raise CandidateWriterResponseParseError(
                 ERROR_MALFORMED_FENCE,
                 "candidate writer raw response has malformed markdown fencing.",
+                diagnostics=build_parser_structural_diagnostics(
+                    parser_error_code=ERROR_MALFORMED_FENCE,
+                    candidate_text=raw_text,
+                ),
             )
         return stripped
     return stripped
@@ -94,6 +131,10 @@ def _extract_fenced_json_text(stripped: str) -> str:
         raise CandidateWriterResponseParseError(
             ERROR_MALFORMED_FENCE,
             "candidate writer raw response has incomplete markdown fencing.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_MALFORMED_FENCE,
+                candidate_text=stripped,
+            ),
         )
 
     opening = lines[0].strip()
@@ -101,11 +142,19 @@ def _extract_fenced_json_text(stripped: str) -> str:
         raise CandidateWriterResponseParseError(
             ERROR_MALFORMED_FENCE,
             "candidate writer raw response uses unsupported markdown fencing.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_MALFORMED_FENCE,
+                candidate_text=stripped,
+            ),
         )
     if lines[-1].strip() != "```":
         raise CandidateWriterResponseParseError(
             ERROR_MALFORMED_FENCE,
             "candidate writer raw response has malformed markdown fencing.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_MALFORMED_FENCE,
+                candidate_text=stripped,
+            ),
         )
 
     body_lines = lines[1:-1]
@@ -113,12 +162,20 @@ def _extract_fenced_json_text(stripped: str) -> str:
         raise CandidateWriterResponseParseError(
             ERROR_MALFORMED_FENCE,
             "candidate writer raw response has nested markdown fencing.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_MALFORMED_FENCE,
+                candidate_text=stripped,
+            ),
         )
     body = "\n".join(body_lines).strip()
     if not body:
         raise CandidateWriterResponseParseError(
             ERROR_EMPTY_RAW_RESPONSE,
             "candidate writer fenced raw response is empty.",
+            diagnostics=build_parser_structural_diagnostics(
+                parser_error_code=ERROR_EMPTY_RAW_RESPONSE,
+                candidate_text=stripped,
+            ),
         )
     return body
 

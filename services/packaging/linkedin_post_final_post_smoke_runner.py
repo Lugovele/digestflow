@@ -26,6 +26,10 @@ from services.packaging.linkedin_post_controlled_repair_contract import (
 from services.packaging.linkedin_post_controlled_repair_execution import (
     execute_final_post_controlled_repair_attempt,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
+    structural_diagnostics_from_dict,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
@@ -1107,6 +1111,13 @@ def _safe_stage_metadata(metadata: Any) -> dict[str, Any] | None:
     safe_details = metadata.get("safe_details")
     if isinstance(safe_details, dict):
         safe_metadata["safe_details"] = _safe_adaptation_details(safe_details)
+    structural_diagnostics = structural_diagnostics_from_dict(
+        metadata.get(METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS)
+    )
+    if structural_diagnostics is not None:
+        safe_metadata[METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS] = (
+            structural_diagnostics.to_dict()
+        )
     return safe_metadata or None
 
 

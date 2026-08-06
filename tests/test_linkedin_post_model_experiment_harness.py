@@ -349,6 +349,133 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self.assertNotIn("provider payload secret", serialized)
         self.assertNotIn("provider reply secret", serialized)
 
+    def test_candidate_writer_structural_diagnostics_are_allowlisted_into_artifacts(
+        self,
+    ) -> None:
+        diagnostics = {
+            "schema_version": "1.0",
+            "failure_stage": "candidate_writer_adaptation",
+            "parser_error_code": None,
+            "adapter_error_code": "missing_required_fields",
+            "top_level_json_type": "dict",
+            "received_top_level_keys": ["post_text"],
+            "missing_required_fields": ["hook_variants", "quality_checks"],
+            "unexpected_fields": ["debug"],
+            "invalid_field_names": [],
+            "candidate_text_length": None,
+            "diagnostics_truncated": False,
+            "redacted_key_count": 0,
+        }
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result={
+                    "stage_statuses": [
+                        {
+                            "stage": "candidate_writer_adaptation",
+                            "status": "failed",
+                            "metadata": {
+                                "candidate_writer_structural_diagnostics": diagnostics,
+                                "raw_response": "secret raw response",
+                                "post_text": "secret post text",
+                            },
+                        }
+                    ],
+                    "candidate_payload": {},
+                    "provider_response_diagnostics": {},
+                }
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_writer_diagnostics",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        record = result.run_records[0]
+        self.assertEqual(
+            record["candidate_writer_structural_diagnostics"]["adapter_error_code"],
+            "missing_required_fields",
+        )
+        self.assertEqual(record["candidate_writer_missing_field_count"], 2)
+        self.assertEqual(record["candidate_writer_unexpected_field_count"], 1)
+        runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+        summary_text = Path(result.artifacts.summary_csv).read_text(encoding="utf-8")
+        report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
+        self.assertIn("candidate_writer_structural_diagnostics", runs_text)
+        self.assertIn("candidate_writer_missing_field_count", summary_text)
+        self.assertIn("missing_required_fields", report_text)
+        self.assertIn("missing=2", report_text)
+        self.assertNotIn("secret raw response", runs_text + summary_text + report_text)
+        self.assertNotIn("secret post text", runs_text + summary_text + report_text)
+        self.assertNotIn("hook_variants", summary_text + report_text)
+
+    def test_candidate_writer_structural_diagnostics_are_resanitized_for_artifacts(
+        self,
+    ) -> None:
+        diagnostics = {
+            "schema_version": "1.0",
+            "failure_stage": "candidate_writer_adaptation",
+            "parser_error_code": None,
+            "adapter_error_code": "missing_required_fields",
+            "top_level_json_type": "prompt: secret raw response text",
+            "received_top_level_keys": ["post_text", "api_key"],
+            "missing_required_fields": ["hook_variants"],
+            "unexpected_fields": ["provider_payload", "debug"],
+            "invalid_field_names": ["post_text"],
+            "candidate_text_length": None,
+            "diagnostics_truncated": False,
+            "redacted_key_count": 0,
+        }
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result={
+                    "stage_statuses": [
+                        {
+                            "stage": "candidate_writer_adaptation",
+                            "status": "failed",
+                            "metadata": {
+                                "candidate_writer_structural_diagnostics": diagnostics,
+                            },
+                        }
+                    ],
+                    "candidate_payload": {},
+                    "provider_response_diagnostics": {},
+                }
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_writer_diagnostics_resanitized",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        record = result.run_records[0]
+        diagnostics = record["candidate_writer_structural_diagnostics"]
+        self.assertIsNone(diagnostics["top_level_json_type"])
+        self.assertEqual(diagnostics["received_top_level_keys"], ["post_text"])
+        self.assertEqual(diagnostics["unexpected_fields"], ["debug"])
+        self.assertTrue(diagnostics["diagnostics_truncated"])
+        artifact_text = (
+            Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+            + Path(result.artifacts.summary_csv).read_text(encoding="utf-8")
+            + Path(result.artifacts.report_md).read_text(encoding="utf-8")
+        )
+        self.assertNotIn("api_key", artifact_text)
+        self.assertNotIn("provider_payload", artifact_text)
+        self.assertNotIn("secret raw response text", artifact_text)
+
     def test_missing_metrics_remain_null(self) -> None:
         smoke_runner = Mock(return_value=_smoke_result(sanitized_result={}))
         result = harness.run_linkedin_final_post_model_experiment(

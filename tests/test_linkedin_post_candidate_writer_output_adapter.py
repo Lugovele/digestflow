@@ -22,6 +22,12 @@ from services.packaging.linkedin_post_candidate_writer_output_adapter import (
     adapt_candidate_writer_payload,
     build_candidate_writer_output_from_parsed_response,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    ADAPTER_ERROR_INVALID_FIELD_TYPES,
+    ADAPTER_ERROR_INVALID_FIELD_VALUES,
+    ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
+    ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_payload_contract import (
     FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
@@ -50,6 +56,11 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
 
         self.assertEqual(error.exception.code, ERROR_MISSING_REQUIRED_FIELD)
         self.assertIn("post_text", str(error.exception))
+        self.assertEqual(
+            error.exception.diagnostics.adapter_error_code,
+            ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
+        )
+        self.assertEqual(error.exception.diagnostics.missing_required_fields, ("post_text",))
 
     def test_missing_carousel_outline_gets_adapter_owned_empty_list_default(self) -> None:
         parsed = _parsed_candidate()
@@ -72,6 +83,24 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             adapt_candidate_writer_payload(["not", "a", "dict"])
 
         self.assertEqual(error.exception.code, ERROR_INVALID_PARSED_CANDIDATE)
+        self.assertEqual(
+            error.exception.diagnostics.adapter_error_code,
+            ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT,
+        )
+        self.assertEqual(error.exception.diagnostics.top_level_json_type, "list")
+
+    def test_non_dict_adaptation_diagnostics_drop_hostile_type_names(self) -> None:
+        class PromptSecretRawResponse:
+            pass
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(PromptSecretRawResponse())  # type: ignore[arg-type]
+
+        diagnostics = error.exception.diagnostics
+        self.assertEqual(diagnostics.adapter_error_code, ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT)
+        self.assertIsNone(diagnostics.top_level_json_type)
+        serialized = json.dumps(diagnostics.to_dict(), sort_keys=True)
+        self.assertNotIn("PromptSecretRawResponse", serialized)
 
     def test_invalid_basic_types_fail_through_final_post_payload_validation(self) -> None:
         invalid_cases = (
@@ -93,6 +122,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
                     error.exception.code,
                     ERROR_INVALID_FINAL_POST_PAYLOAD,
                 )
+                self.assertIn(
+                    field_name,
+                    error.exception.diagnostics.invalid_field_names,
+                )
 
     def test_non_boolean_quality_check_values_fail(self) -> None:
         parsed = _parsed_candidate(
@@ -107,6 +140,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             adapt_candidate_writer_payload(parsed)
 
         self.assertEqual(error.exception.code, ERROR_INVALID_FINAL_POST_PAYLOAD)
+        self.assertEqual(
+            error.exception.diagnostics.adapter_error_code,
+            ADAPTER_ERROR_INVALID_FIELD_VALUES,
+        )
         self.assertEqual(
             error.exception.safe_details["quality_checks"]["provided_keys"],
             [
@@ -140,6 +177,10 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             adapt_candidate_writer_payload(_parsed_candidate(post_text=rejected_content))
 
         self.assertEqual(error.exception.code, ERROR_INVALID_FINAL_POST_PAYLOAD)
+        self.assertEqual(
+            error.exception.diagnostics.adapter_error_code,
+            ADAPTER_ERROR_INVALID_FIELD_VALUES,
+        )
         self.assertEqual(
             error.exception.safe_details["post_text"]["input_length"],
             FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
@@ -244,6 +285,48 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
             "persistence-sentinel",
         ):
             self.assertNotIn(sentinel, serialized)
+
+    def test_adaptation_diagnostics_include_unexpected_field_names_as_context(self) -> None:
+        parsed = _parsed_candidate(
+            post_text="",
+            debug_extra="secret debug value",
+            provider_payload="secret provider value",
+        )
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(parsed)
+
+        diagnostics = error.exception.diagnostics
+        self.assertEqual(diagnostics.unexpected_fields, ("debug_extra",))
+        self.assertGreaterEqual(diagnostics.redacted_key_count, 1)
+        serialized = json.dumps(diagnostics.to_dict(), sort_keys=True)
+        self.assertNotIn("secret debug value", serialized)
+        self.assertNotIn("secret provider value", serialized)
+        self.assertNotIn("provider_payload", serialized)
+
+    def test_adaptation_diagnostics_bound_received_key_names(self) -> None:
+        parsed = _parsed_candidate(post_text="")
+        for index in range(25):
+            parsed[f"extra_{index:02d}"] = "value"
+        parsed["x" * 90] = "secret"
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(parsed)
+
+        diagnostics = error.exception.diagnostics
+        self.assertLessEqual(len(diagnostics.received_top_level_keys), 20)
+        self.assertTrue(diagnostics.diagnostics_truncated)
+        self.assertGreaterEqual(diagnostics.redacted_key_count, 1)
+
+    def test_adaptation_diagnostics_do_not_retain_field_values(self) -> None:
+        parsed = _parsed_candidate(post_text="secret post text", hook_variants=[])
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(parsed)
+
+        serialized = json.dumps(error.exception.diagnostics.to_dict(), sort_keys=True)
+        self.assertIn("hook_variants", serialized)
+        self.assertNotIn("secret post text", serialized)
 
     def test_quality_checks_are_allowlisted_to_required_canonical_keys(self) -> None:
         payload = adapt_candidate_writer_payload(

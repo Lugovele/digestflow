@@ -22,6 +22,10 @@ from apps.ai.client import AI_PROVIDER_ANTHROPIC, AI_PROVIDER_GEMINI, AI_PROVIDE
 from services.packaging.linkedin_post_controlled_repair_contract import (
     FAILURE_REPAIR_WRITER_REQUEST,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
+    structural_diagnostics_from_dict,
+)
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_REQUEST,
     FAILURE_QUALITY_EVALUATOR_REQUEST,
@@ -476,6 +480,7 @@ def _run_record_from_smoke_result(
     candidate_payload = sanitized.get("candidate_payload") if isinstance(sanitized.get("candidate_payload"), dict) else {}
     final_outcome_summary = sanitized.get("final_attempt_outcome") if isinstance(sanitized.get("final_attempt_outcome"), dict) else {}
     provider_diagnostics = sanitized.get("provider_response_diagnostics") if isinstance(sanitized.get("provider_response_diagnostics"), dict) else {}
+    candidate_writer_diagnostics = _candidate_writer_structural_diagnostics(sanitized)
     role_diagnostics = _role_diagnostics_for_plan(plan, sanitized)
     repair_diagnostics = _repair_diagnostics(smoke_result, sanitized, plan)
     record = {
@@ -517,6 +522,54 @@ def _run_record_from_smoke_result(
         "output_tokens": None,
         "finish_reason": None,
         "provider_diagnostic_category": _provider_diagnostic_category(provider_diagnostics),
+        "candidate_writer_structural_diagnostics": candidate_writer_diagnostics,
+        "candidate_writer_failure_stage": (
+            candidate_writer_diagnostics.get("failure_stage")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_parser_error_code": (
+            candidate_writer_diagnostics.get("parser_error_code")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_adapter_error_code": (
+            candidate_writer_diagnostics.get("adapter_error_code")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_top_level_json_type": (
+            candidate_writer_diagnostics.get("top_level_json_type")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_candidate_text_length": (
+            candidate_writer_diagnostics.get("candidate_text_length")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_missing_field_count": _diagnostic_list_count(
+            candidate_writer_diagnostics,
+            "missing_required_fields",
+        ),
+        "candidate_writer_unexpected_field_count": _diagnostic_list_count(
+            candidate_writer_diagnostics,
+            "unexpected_fields",
+        ),
+        "candidate_writer_invalid_field_count": _diagnostic_list_count(
+            candidate_writer_diagnostics,
+            "invalid_field_names",
+        ),
+        "candidate_writer_diagnostics_truncated": (
+            candidate_writer_diagnostics.get("diagnostics_truncated")
+            if candidate_writer_diagnostics
+            else None
+        ),
+        "candidate_writer_redacted_key_count": (
+            candidate_writer_diagnostics.get("redacted_key_count")
+            if candidate_writer_diagnostics
+            else None
+        ),
         "estimated_cost": None,
         "human_editing_distance": None,
         "human_reviewer_notes": None,
@@ -592,6 +645,38 @@ def _provider_diagnostic_category(provider_diagnostics: dict[str, Any]) -> str |
     return None
 
 
+def _candidate_writer_structural_diagnostics(
+    sanitized: dict[str, Any],
+) -> dict[str, Any] | None:
+    statuses = sanitized.get("stage_statuses")
+    if not isinstance(statuses, list):
+        return None
+    for status in statuses:
+        if not isinstance(status, dict):
+            continue
+        metadata = status.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        diagnostics = structural_diagnostics_from_dict(
+            metadata.get(METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS)
+        )
+        if diagnostics is not None:
+            return diagnostics.to_dict()
+    return None
+
+
+def _diagnostic_list_count(
+    diagnostics: dict[str, Any] | None,
+    field_name: str,
+) -> int | None:
+    if diagnostics is None:
+        return None
+    value = diagnostics.get(field_name)
+    if isinstance(value, list):
+        return len(value)
+    return None
+
+
 def _length_or_none(value: Any) -> int | None:
     if isinstance(value, (list, tuple)):
         return len(value)
@@ -663,6 +748,13 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
         "quality_evaluator_calls",
         "repair_writer_calls",
         "post_length",
+        "candidate_writer_failure_stage",
+        "candidate_writer_parser_error_code",
+        "candidate_writer_adapter_error_code",
+        "candidate_writer_missing_field_count",
+        "candidate_writer_unexpected_field_count",
+        "candidate_writer_invalid_field_count",
+        "candidate_writer_diagnostics_truncated",
     )
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -684,6 +776,27 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     "quality_evaluator_calls": counts.get("quality_evaluator"),
                     "repair_writer_calls": counts.get("repair_writer"),
                     "post_length": record.get("post_length"),
+                    "candidate_writer_failure_stage": record.get(
+                        "candidate_writer_failure_stage"
+                    ),
+                    "candidate_writer_parser_error_code": record.get(
+                        "candidate_writer_parser_error_code"
+                    ),
+                    "candidate_writer_adapter_error_code": record.get(
+                        "candidate_writer_adapter_error_code"
+                    ),
+                    "candidate_writer_missing_field_count": record.get(
+                        "candidate_writer_missing_field_count"
+                    ),
+                    "candidate_writer_unexpected_field_count": record.get(
+                        "candidate_writer_unexpected_field_count"
+                    ),
+                    "candidate_writer_invalid_field_count": record.get(
+                        "candidate_writer_invalid_field_count"
+                    ),
+                    "candidate_writer_diagnostics_truncated": record.get(
+                        "candidate_writer_diagnostics_truncated"
+                    ),
                 }
             )
 
@@ -697,22 +810,46 @@ def _report_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ..
         f"Runs: {len(run_records)}",
         f"Accepted: {accepted_count}",
         "",
-        "| Case | Plan | Run | Status | Accepted | Failure |",
-        "| --- | --- | ---: | --- | --- | --- |",
+        "| Case | Plan | Run | Status | Accepted | Failure | Candidate Writer diagnostic |",
+        "| --- | --- | ---: | --- | --- | --- | --- |",
     ]
     for record in run_records:
         lines.append(
-            "| {case} | {plan} | {run} | {status} | {accepted} | {failure} |".format(
+            "| {case} | {plan} | {run} | {status} | {accepted} | {failure} | {diagnostic} |".format(
                 case=record.get("case_id"),
                 plan=record.get("plan_id"),
                 run=record.get("run_index"),
                 status=record.get("status"),
                 accepted=record.get("accepted"),
                 failure=record.get("failure_code") or "",
+                diagnostic=_report_candidate_writer_diagnostic(record),
             )
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _report_candidate_writer_diagnostic(record: dict[str, Any]) -> str:
+    parts = [
+        record.get("candidate_writer_failure_stage"),
+        record.get("candidate_writer_parser_error_code"),
+        record.get("candidate_writer_adapter_error_code"),
+    ]
+    counts = (
+        f"missing={record.get('candidate_writer_missing_field_count') or 0}",
+        f"unexpected={record.get('candidate_writer_unexpected_field_count') or 0}",
+        f"invalid={record.get('candidate_writer_invalid_field_count') or 0}",
+    )
+    filtered = [str(part) for part in parts if isinstance(part, str) and part]
+    if not filtered and not any(record.get(key) is not None for key in (
+        "candidate_writer_missing_field_count",
+        "candidate_writer_unexpected_field_count",
+        "candidate_writer_invalid_field_count",
+    )):
+        return ""
+    if record.get("candidate_writer_diagnostics_truncated") is True:
+        filtered.append("truncated")
+    return " ".join((*filtered, *counts))
 
 
 def _sanitize_artifact_value(value: Any) -> Any:

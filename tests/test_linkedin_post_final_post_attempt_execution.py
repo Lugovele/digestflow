@@ -29,6 +29,11 @@ from services.packaging.linkedin_post_attempt_outcome import (
 from services.packaging.linkedin_post_candidate_writer_execution import (
     EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
+    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
+    PARSER_ERROR_MALFORMED_JSON,
+)
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_ADAPTATION,
     FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
@@ -326,6 +331,19 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_EXECUTION)
         self.assertIsNone(result.parsed_candidate)
         self.assertIsNone(result.candidate_writer_output)
+        failed_status = next(
+            status
+            for status in result.stage_statuses
+            if status.stage == STAGE_CANDIDATE_WRITER_PARSE
+        )
+        diagnostics = failed_status.metadata[
+            METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS
+        ]
+        self.assertEqual(diagnostics["failure_stage"], STAGE_CANDIDATE_WRITER_PARSE)
+        self.assertEqual(diagnostics["parser_error_code"], PARSER_ERROR_MALFORMED_JSON)
+        self.assertEqual(diagnostics["candidate_text_length"], len("{not-json"))
+        serialized = json.dumps(diagnostics, sort_keys=True)
+        self.assertNotIn("{not-json", serialized)
 
     def test_adaptation_failure_does_not_invoke_deterministic_gate(self) -> None:
         fake_client = FakeCandidateWriterClient(
@@ -366,6 +384,58 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 "quality_checks",
             ],
         )
+        diagnostics = failed_status.metadata[
+            METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS
+        ]
+        self.assertEqual(diagnostics["failure_stage"], STAGE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(diagnostics["adapter_error_code"], "missing_required_fields")
+        self.assertEqual(
+            diagnostics["missing_required_fields"],
+            [
+                "cta_variants",
+                "hashtags",
+                "hook_variants",
+                "quality_checks",
+            ],
+        )
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+
+    def test_structural_failure_metadata_resanitizes_diagnostics_before_transport(
+        self,
+    ) -> None:
+        class HostileDiagnostics:
+            def to_dict(self) -> dict:
+                return {
+                    "schema_version": "1.0",
+                    "failure_stage": STAGE_CANDIDATE_WRITER_ADAPTATION,
+                    "parser_error_code": None,
+                    "adapter_error_code": ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
+                    "top_level_json_type": "prompt: secret raw response text",
+                    "received_top_level_keys": ["post_text", "api_key"],
+                    "missing_required_fields": ["hook_variants"],
+                    "unexpected_fields": ["provider_payload", "debug"],
+                    "invalid_field_names": ["post_text"],
+                    "candidate_text_length": None,
+                    "diagnostics_truncated": False,
+                    "redacted_key_count": 0,
+                }
+
+        metadata = (
+            linkedin_post_final_post_attempt_execution
+            ._candidate_writer_structural_failure_metadata(
+                SimpleNamespace(diagnostics=HostileDiagnostics())
+            )
+        )
+
+        diagnostics = metadata[METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS]
+        self.assertIsNone(diagnostics["top_level_json_type"])
+        self.assertEqual(diagnostics["received_top_level_keys"], ["post_text"])
+        self.assertEqual(diagnostics["unexpected_fields"], ["debug"])
+        serialized = json.dumps(metadata, sort_keys=True)
+        self.assertNotIn("secret raw response text", serialized)
+        self.assertNotIn("api_key", serialized)
+        self.assertNotIn("provider_payload", serialized)
 
     def test_deterministic_gate_failure_preserves_candidate_text_and_skips_quality(
         self,

@@ -18,6 +18,9 @@ from apps.packaging.management.commands import smoke_linkedin_final_post
 from services.packaging.linkedin_post_candidate_writer_execution import (
     EMPTY_TEXT_CLASSIFICATION_MAX_TOKENS_BEFORE_TEXT,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
+)
 from services.packaging.linkedin_post_final_post_payload_contract import (
     FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
 )
@@ -556,6 +559,21 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
                 ),
                 metadata={
                     "adaptation_error_code": "invalid_final_post_payload",
+                    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS: {
+                        "schema_version": "1.0",
+                        "failure_stage": STAGE_CANDIDATE_WRITER_ADAPTATION,
+                        "parser_error_code": None,
+                        "adapter_error_code": "invalid_field_values",
+                        "top_level_json_type": "dict",
+                        "received_top_level_keys": ["post_text"],
+                        "missing_required_fields": ["hook_variants"],
+                        "unexpected_fields": [],
+                        "invalid_field_names": ["post_text"],
+                        "candidate_text_length": None,
+                        "diagnostics_truncated": False,
+                        "redacted_key_count": 0,
+                    },
+                    "raw_response": "secret raw provider response",
                     "safe_details": {
                         "post_text": {
                             "input_length": (
@@ -590,8 +608,73 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
                 "max_chars": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
             },
         )
+        self.assertEqual(
+            stage_metadata[METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS][
+                "adapter_error_code"
+            ],
+            "invalid_field_values",
+        )
         serialized = json.dumps(result.to_dict(), sort_keys=True)
         self.assertNotIn("secret rejected candidate content", serialized)
+        self.assertNotIn("secret raw provider response", serialized)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_smoke_output_resanitizes_structural_diagnostics_metadata(self) -> None:
+        fake_result = _standalone_result(
+            failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+            failure_message="parsed candidate does not satisfy FinalPostPayload structure.",
+        )
+        fake_result.stage_statuses = [
+            SimpleNamespace(
+                stage=STAGE_CANDIDATE_WRITER_ADAPTATION,
+                status="failed",
+                error_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                error_message=(
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                metadata={
+                    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS: {
+                        "schema_version": "1.0",
+                        "failure_stage": STAGE_CANDIDATE_WRITER_ADAPTATION,
+                        "parser_error_code": None,
+                        "adapter_error_code": "missing_required_fields",
+                        "top_level_json_type": "prompt: secret raw response text",
+                        "received_top_level_keys": [
+                            "post_text",
+                            "api_key",
+                            "secret raw response text",
+                        ],
+                        "missing_required_fields": ["hook_variants"],
+                        "unexpected_fields": ["provider_payload", "debug_extra"],
+                        "invalid_field_names": ["post_text"],
+                        "candidate_text_length": None,
+                        "diagnostics_truncated": False,
+                        "redacted_key_count": 0,
+                    },
+                },
+            )
+        ]
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
+            )
+
+        diagnostics = result.sanitized_result["stage_statuses"][0]["metadata"][
+            METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS
+        ]
+        self.assertEqual(diagnostics["received_top_level_keys"], ["post_text"])
+        self.assertEqual(diagnostics["unexpected_fields"], ["debug_extra"])
+        self.assertIsNone(diagnostics["top_level_json_type"])
+        self.assertTrue(diagnostics["diagnostics_truncated"])
+        serialized = json.dumps(result.to_dict(), sort_keys=True)
+        self.assertNotIn("api_key", serialized)
+        self.assertNotIn("secret raw response text", serialized)
+        self.assertNotIn("provider_payload", serialized)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_save_output_writes_sanitized_json_under_requested_debug_directory(

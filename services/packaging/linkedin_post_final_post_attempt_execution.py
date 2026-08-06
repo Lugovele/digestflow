@@ -26,6 +26,10 @@ from services.packaging.linkedin_post_candidate_writer_parser import (
     CandidateWriterResponseParseError,
     parse_candidate_writer_raw_response,
 )
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
+    structural_diagnostics_from_dict,
+)
 from services.packaging.linkedin_post_deterministic_gate import (
     run_final_post_deterministic_gate,
 )
@@ -201,6 +205,7 @@ def execute_final_post_standalone_candidate_attempt(
                     STAGE_CANDIDATE_WRITER_PARSE,
                     FAILURE_CANDIDATE_WRITER_PARSE,
                     str(exc),
+                    metadata=_candidate_writer_structural_failure_metadata(exc),
                 ),
                 _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
@@ -900,11 +905,22 @@ def _candidate_writer_failure_metadata(
 def _candidate_writer_adaptation_failure_metadata(
     exc: CandidateWriterOutputAdaptationError,
 ) -> dict[str, Any] | None:
-    if not exc.safe_details:
+    metadata = _candidate_writer_structural_failure_metadata(exc) or {}
+    if exc.safe_details:
+        metadata["adaptation_error_code"] = exc.code
+        metadata["safe_details"] = copy.deepcopy(exc.safe_details)
+    return metadata or None
+
+
+def _candidate_writer_structural_failure_metadata(exc: Any) -> dict[str, Any] | None:
+    diagnostics = getattr(exc, "diagnostics", None)
+    if diagnostics is None or not hasattr(diagnostics, "to_dict"):
+        return None
+    diagnostics = structural_diagnostics_from_dict(diagnostics.to_dict())
+    if diagnostics is None:
         return None
     return {
-        "adaptation_error_code": exc.code,
-        "safe_details": copy.deepcopy(exc.safe_details),
+        METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS: diagnostics.to_dict()
     }
 
 
