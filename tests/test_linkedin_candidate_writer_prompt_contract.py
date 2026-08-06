@@ -6,6 +6,11 @@ from services.packaging.linkedin_post_prompt_registry import (
     PROMPT_FINAL_POST_CANDIDATE_FROM_BRIEF,
     get_prompt_contract,
 )
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
+)
 
 
 def _prompt_path() -> Path:
@@ -278,10 +283,99 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             ],
         )
 
+    def test_candidate_writer_prompt_makes_post_text_hard_max_operational(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "post_text.hard_max_chars",
+                "hard maximum",
+                "absolute output",
+                "limit",
+                "decoded post_text string",
+                "JSON escapes are parsed",
+                "does not apply to the full JSON object",
+            ],
+        )
+
+    def test_candidate_writer_prompt_uses_canonical_target_range_with_safety_margin(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "prompt_target_min_chars",
+                "prompt_target_max_chars",
+                "writing",
+                "target",
+                "safety margin",
+                "hard maximum",
+            ],
+        )
+        self.assertLess(
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+        self.assertLess(
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+        )
+
+    def test_candidate_writer_prompt_requires_length_self_check_before_json_return(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "after composing the completed post_text",
+                "count its decoded characters",
+                "if the",
+                "completed post_text exceeds",
+                "shorten post_text before returning the JSON object",
+                "before returning, perform this final output check",
+                "count decoded post_text characters",
+                "return exactly one valid JSON object",
+            ],
+        )
+
+    def test_candidate_writer_prompt_forbids_runtime_truncation_as_solution(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "do not rely on the parser, adapter, validator, runtime, repair stage",
+                "downstream process to shorten post_text",
+            ],
+        )
+        self.assertNotIn("post_text[:", prompt)
+        self.assertNotIn("truncate(", prompt)
+
+    def test_candidate_writer_prompt_preserves_meaning_and_voice_when_shortening(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "do not remove required meaning",
+                "qualifications",
+                "attribution",
+                "authorial judgment",
+                "personal-presence compliance",
+                "selected-evidence grounding",
+            ],
+        )
+
     def test_candidate_writer_prompt_does_not_duplicate_numeric_payload_limits(self):
         prompt = _normalized_prompt_text()
 
-        self.assertNotIn("1300", prompt)
+        self.assertNotIn(str(FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS), prompt)
         self.assertIn("final_post_payload_constraints_json", prompt)
 
     def test_candidate_writer_prompt_forbids_payload_debug_and_runtime_fields(self):

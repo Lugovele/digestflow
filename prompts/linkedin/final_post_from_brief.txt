@@ -125,7 +125,26 @@ Keep post_text within FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.hard_max_cha
 Use the rendered target range in
 FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.prompt_target_min_chars and
 FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.prompt_target_max_chars as a writing
-target, while treating hard_max_chars as the absolute output limit.
+target, while treating hard_max_chars as the hard maximum and absolute output
+limit.
+
+The post_text length limit applies only to the decoded post_text string after
+JSON escapes are parsed. It does not apply to the full JSON object, JSON syntax,
+or escaped newline characters used to serialize the string.
+
+Aim below the target ceiling when needed so post_text has a safety margin before
+the hard maximum.
+
+After composing the completed post_text, count its decoded characters. If the
+completed post_text exceeds FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.hard_max_chars,
+shorten post_text before returning the JSON object.
+
+Do not rely on the parser, adapter, validator, runtime, repair stage, or any
+downstream process to shorten post_text.
+
+Do not remove required meaning, qualifications, attribution, authorial judgment,
+personal-presence compliance, or selected-evidence grounding merely to shorten
+post_text.
 
 Write a finished LinkedIn post, not a brief, research summary, evidence report,
 repair instruction, debug note, or runtime log.
@@ -235,6 +254,17 @@ Never place a literal physical newline inside a quoted JSON string.
 
 Before returning, verify that the entire response can be parsed by a strict JSON
 parser without preprocessing or repair.
+
+Before returning, perform this final output check:
+
+1. Validate that all required JSON keys are present.
+2. Validate that post_text is a non-empty string.
+3. Count decoded post_text characters.
+4. If post_text exceeds FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.hard_max_chars,
+   shorten post_text before returning the JSON object.
+5. Validate hook_variants, cta_variants, hashtags, quality_checks, and
+   carousel_outline against FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.
+6. Return exactly one valid JSON object.
 
 The JSON must include:
 
