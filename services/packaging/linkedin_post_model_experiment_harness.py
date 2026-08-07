@@ -808,6 +808,7 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
         "repair_executed",
         "failure_code",
         "candidate_writer_calls",
+        "candidate_writer_length_repair_calls",
         "semantic_grounding_calls",
         "quality_evaluator_calls",
         "repair_writer_calls",
@@ -846,6 +847,9 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     "repair_executed": record.get("repair_executed"),
                     "failure_code": record.get("failure_code"),
                     "candidate_writer_calls": counts.get("candidate_writer"),
+                    "candidate_writer_length_repair_calls": counts.get(
+                        "candidate_writer_length_repair"
+                    ),
                     "semantic_grounding_calls": counts.get("semantic_grounding"),
                     "quality_evaluator_calls": counts.get("quality_evaluator"),
                     "repair_writer_calls": counts.get("repair_writer"),

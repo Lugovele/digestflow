@@ -93,6 +93,7 @@ EXIT_EXECUTION_FAILURE = 2
 EXIT_SCENARIO_MISMATCH = 3
 
 MAX_CANDIDATE_WRITER_CALLS = 1
+MAX_CANDIDATE_WRITER_LENGTH_REPAIR_CALLS = 1
 MAX_QUALITY_EVALUATOR_CALLS_STANDALONE = 1
 MAX_QUALITY_EVALUATOR_CALLS_CONTROLLED_REPAIR = 2
 MAX_REPAIR_WRITER_CALLS = 1
@@ -790,6 +791,7 @@ def _role_selections_from_provider_models(
 def _invocation_budget(mode: str) -> dict[str, int]:
     return {
         "candidate_writer": MAX_CANDIDATE_WRITER_CALLS,
+        "candidate_writer_length_repair": MAX_CANDIDATE_WRITER_LENGTH_REPAIR_CALLS,
         "semantic_grounding": (
             MAX_QUALITY_EVALUATOR_CALLS_CONTROLLED_REPAIR
             if mode == SMOKE_MODE_CONTROLLED_REPAIR
@@ -811,6 +813,7 @@ def _invocation_budget(mode: str) -> dict[str, int]:
 def _zero_invocation_counts() -> dict[str, int]:
     return {
         "candidate_writer": 0,
+        "candidate_writer_length_repair": 0,
         "semantic_grounding": 0,
         "quality_evaluator": 0,
         "repair_writer": 0,
@@ -820,6 +823,9 @@ def _zero_invocation_counts() -> dict[str, int]:
 def _invocation_counts_from_standalone(result: Any) -> dict[str, int]:
     return {
         "candidate_writer": int(getattr(result, "candidate_writer_invocation_count", 0) or 0),
+        "candidate_writer_length_repair": int(
+            getattr(result, "candidate_writer_length_repair_invocation_count", 0) or 0
+        ),
         "semantic_grounding": int(getattr(result, "semantic_grounding_invocation_count", 0) or 0),
         "quality_evaluator": int(getattr(result, "quality_evaluator_invocation_count", 0) or 0),
         "repair_writer": int(getattr(result, "repair_invocation_count", 0) or 0),
@@ -829,10 +835,28 @@ def _invocation_counts_from_standalone(result: Any) -> dict[str, int]:
 def _invocation_counts_from_controlled_repair(result: Any) -> dict[str, int]:
     return {
         "candidate_writer": int(getattr(result, "candidate_writer_invocation_count", 0) or 0),
+        "candidate_writer_length_repair": _controlled_candidate_writer_length_repair_invocation_count(
+            result
+        ),
         "semantic_grounding": _controlled_semantic_grounding_invocation_count(result),
         "quality_evaluator": int(getattr(result, "quality_evaluator_invocation_count", 0) or 0),
         "repair_writer": int(getattr(result, "repair_invocation_count", 0) or 0),
     }
+
+
+def _controlled_candidate_writer_length_repair_invocation_count(result: Any) -> int:
+    explicit_count = getattr(
+        result,
+        "candidate_writer_length_repair_invocation_count",
+        None,
+    )
+    if explicit_count is not None:
+        return int(explicit_count or 0)
+    initial_result = getattr(result, "initial_attempt_result", None)
+    return int(
+        getattr(initial_result, "candidate_writer_length_repair_invocation_count", 0)
+        or 0
+    )
 
 
 def _controlled_semantic_grounding_invocation_count(result: Any) -> int:
@@ -911,6 +935,11 @@ def _sanitize_standalone_result(
             "candidate_writer_invocation_count",
             0,
         ),
+        "candidate_writer_length_repair_invocation_count": getattr(
+            result,
+            "candidate_writer_length_repair_invocation_count",
+            0,
+        ),
         "quality_evaluator_invocation_count": getattr(
             result,
             "quality_evaluator_invocation_count",
@@ -955,6 +984,9 @@ def _sanitize_controlled_result(
             result,
             "candidate_writer_invocation_count",
             0,
+        ),
+        "candidate_writer_length_repair_invocation_count": (
+            _controlled_candidate_writer_length_repair_invocation_count(result)
         ),
         "quality_evaluator_invocation_count": getattr(
             result,
@@ -1105,6 +1137,7 @@ def _safe_stage_metadata(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, dict):
         return None
     safe_metadata: dict[str, Any] = {}
+    safe_metadata.update(_safe_length_repair_metadata(metadata))
     adaptation_error_code = metadata.get("adaptation_error_code")
     if isinstance(adaptation_error_code, str) and adaptation_error_code.strip():
         safe_metadata["adaptation_error_code"] = adaptation_error_code.strip()[:120]
@@ -1119,6 +1152,36 @@ def _safe_stage_metadata(metadata: Any) -> dict[str, Any] | None:
             structural_diagnostics.to_dict()
         )
     return safe_metadata or None
+
+
+def _safe_length_repair_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    allowed_string_fields = {
+        "repair_provider",
+        "repair_model",
+        "repair_failure_code",
+        "eligibility_reason",
+    }
+    allowed_bool_fields = {"repair_eligible", "repair_executed"}
+    allowed_int_fields = {
+        "original_post_text_length",
+        "repaired_post_text_length",
+        "maximum_allowed",
+        "repair_invocation_count",
+    }
+    safe: dict[str, Any] = {}
+    for field_name in allowed_string_fields:
+        value = metadata.get(field_name)
+        if isinstance(value, str) and value.strip():
+            safe[field_name] = value.strip()[:120]
+    for field_name in allowed_bool_fields:
+        value = metadata.get(field_name)
+        if isinstance(value, bool):
+            safe[field_name] = value
+    for field_name in allowed_int_fields:
+        value = metadata.get(field_name)
+        if _is_non_negative_int(value):
+            safe[field_name] = value
+    return safe
 
 
 def _safe_adaptation_details(details: dict[str, Any]) -> dict[str, Any]:

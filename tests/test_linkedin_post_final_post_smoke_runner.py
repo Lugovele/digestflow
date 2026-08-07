@@ -76,6 +76,8 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.status, SMOKE_STATUS_DRY_RUN)
         self.assertEqual(result.exit_code, EXIT_OK)
         self.assertEqual(result.invocation_counts["candidate_writer"], 0)
+        self.assertEqual(result.invocation_counts["candidate_writer_length_repair"], 0)
+        self.assertEqual(result.invocation_budget["candidate_writer_length_repair"], 1)
         self.assertIn(
             "selected_evidence_ids",
             result.sanitized_result,
@@ -179,6 +181,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.status, SMOKE_STATUS_COMPLETED)
         self.assertEqual(result.final_post_text, "Accepted smoke post.")
         self.assertEqual(result.invocation_counts["candidate_writer"], 1)
+        self.assertEqual(result.invocation_counts["candidate_writer_length_repair"], 0)
         self.assertEqual(result.invocation_counts["semantic_grounding"], 1)
         self.assertEqual(result.invocation_counts["quality_evaluator"], 1)
         self.assertEqual(result.invocation_counts["repair_writer"], 0)
@@ -235,10 +238,47 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.status, SMOKE_STATUS_COMPLETED)
         self.assertTrue(result.repair_executed)
         self.assertEqual(result.invocation_counts["candidate_writer"], 1)
+        self.assertEqual(result.invocation_counts["candidate_writer_length_repair"], 0)
         self.assertEqual(result.invocation_counts["semantic_grounding"], 2)
         self.assertEqual(result.invocation_counts["quality_evaluator"], 2)
         self.assertEqual(result.invocation_counts["repair_writer"], 1)
         self.assertEqual(result.final_post_text, "Accepted repaired smoke post.")
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_controlled_repair_reports_initial_candidate_length_repair_count(
+        self,
+    ) -> None:
+        fake_result = _controlled_result(
+            repair_executed=True,
+            initial_candidate_writer_length_repair_invocation_count=1,
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_controlled_repair_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    mode=SMOKE_MODE_CONTROLLED_REPAIR,
+                    allow_api=True,
+                )
+            )
+
+        self.assertEqual(result.invocation_counts["candidate_writer_length_repair"], 1)
+        self.assertEqual(
+            result.sanitized_result[
+                "candidate_writer_length_repair_invocation_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            result.sanitized_result["initial_attempt"][
+                "candidate_writer_length_repair_invocation_count"
+            ],
+            1,
+        )
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_repair_expected_but_not_executed_is_scenario_mismatch(self) -> None:
@@ -380,6 +420,33 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertIn("candidate raw text", debug_serialized)
         self.assertNotIn("raw_provider_response", debug_serialized)
         self.assertNotIn("secret-provider-metadata", debug_serialized)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_standalone_smoke_reports_candidate_writer_length_repair_count(
+        self,
+    ) -> None:
+        fake_result = _standalone_result(
+            candidate_writer_length_repair_invocation_count=1,
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
+            )
+
+        self.assertEqual(result.invocation_counts["candidate_writer"], 1)
+        self.assertEqual(result.invocation_counts["candidate_writer_length_repair"], 1)
+        self.assertEqual(result.invocation_counts["repair_writer"], 0)
+        self.assertEqual(
+            result.sanitized_result[
+                "candidate_writer_length_repair_invocation_count"
+            ],
+            1,
+        )
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_unaccepted_candidate_text_is_hidden_from_default_sanitized_outputs(
@@ -858,6 +925,7 @@ def _standalone_result(
     candidate_post_text: str | None = None,
     provider_response_metadata: dict | None = None,
     empty_text_classification: str | None = None,
+    candidate_writer_length_repair_invocation_count: int = 0,
 ) -> SimpleNamespace:
     payload = (
         {"post_text": "Accepted smoke post."}
@@ -878,6 +946,9 @@ def _standalone_result(
             )
         ],
         candidate_writer_invocation_count=1,
+        candidate_writer_length_repair_invocation_count=(
+            candidate_writer_length_repair_invocation_count
+        ),
         semantic_grounding_invocation_count=0 if failure_code else 1,
         quality_evaluator_invocation_count=0 if failure_code else 1,
         repair_invocation_count=0,
@@ -948,7 +1019,11 @@ def _standalone_result(
     )
 
 
-def _controlled_result(*, repair_executed: bool) -> SimpleNamespace:
+def _controlled_result(
+    *,
+    repair_executed: bool,
+    initial_candidate_writer_length_repair_invocation_count: int = 0,
+) -> SimpleNamespace:
     accepted_payload = (
         {"post_text": "Accepted repaired smoke post."}
         if repair_executed
@@ -956,7 +1031,10 @@ def _controlled_result(*, repair_executed: bool) -> SimpleNamespace:
     )
     return SimpleNamespace(
         initial_attempt_result=_standalone_result(
-            accepted_payload=None if repair_executed else accepted_payload
+            accepted_payload=None if repair_executed else accepted_payload,
+            candidate_writer_length_repair_invocation_count=(
+                initial_candidate_writer_length_repair_invocation_count
+            ),
         ),
         repair_eligibility=SimpleNamespace(
             status="eligible" if repair_executed else "ineligible",

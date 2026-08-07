@@ -37,6 +37,8 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_ADAPTATION,
     FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
+    FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_REQUEST,
+    FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_VALIDATION,
     FAILURE_CANDIDATE_WRITER_PARSE,
     FAILURE_CANDIDATE_WRITER_PROVIDER,
     FAILURE_CANDIDATE_WRITER_REQUEST,
@@ -53,6 +55,7 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_QUALITY_REVIEW_NORMALIZATION,
     STAGE_CANDIDATE_WRITER_ADAPTATION,
     STAGE_CANDIDATE_WRITER_EXECUTION,
+    STAGE_CANDIDATE_WRITER_LENGTH_REPAIR,
     STAGE_CANDIDATE_WRITER_PARSE,
     STAGE_CANDIDATE_WRITER_REQUEST,
     STAGE_DETERMINISTIC_GATE,
@@ -401,6 +404,153 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.semantic_grounding_invocation_count, 0)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
 
+    def test_overlong_post_text_runs_one_length_repair_and_continues_downstream(
+        self,
+    ) -> None:
+        original_payload = _candidate_payload(post_text="A" * 1301)
+        repaired_text = "Short repaired candidate text from fake provider."
+        candidate_client = SequentialCandidateWriterClient(
+            (
+                _provider_response(json.dumps(original_payload)),
+                _provider_response(json.dumps({"post_text": repaired_text})),
+            )
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=True)))
+            ),
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 2)
+        self.assertIn("candidate writer length-only repair", candidate_client.prompts[1].lower())
+        self.assertEqual(result.failure_code, None)
+        self.assertEqual(result.completed_stage, "attempt_outcome")
+        self.assertEqual(result.candidate_writer_invocation_count, 1)
+        self.assertEqual(result.candidate_writer_length_repair_invocation_count, 1)
+        self.assertEqual(result.semantic_grounding_invocation_count, 1)
+        self.assertEqual(result.quality_evaluator_invocation_count, 1)
+        self.assertEqual(
+            result.candidate_writer_output.payload["post_text"],
+            repaired_text,
+        )
+        for field_name in (
+            "hook_variants",
+            "cta_variants",
+            "hashtags",
+            "quality_checks",
+            "carousel_outline",
+        ):
+            self.assertEqual(
+                result.candidate_writer_output.payload[field_name],
+                original_payload[field_name],
+            )
+
+    def test_length_repair_still_over_max_stops_before_downstream(self) -> None:
+        candidate_client = SequentialCandidateWriterClient(
+            (
+                _provider_response(json.dumps(_candidate_payload(post_text="A" * 1301))),
+                _provider_response(json.dumps({"post_text": "B" * 1301})),
+            )
+        )
+        semantic_client = _passing_semantic_client()
+        quality_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=quality_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 2)
+        self.assertEqual(semantic_client.call_count, 0)
+        self.assertEqual(quality_client.call_count, 0)
+        self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_PARSE)
+        self.assertEqual(result.failure_stage, STAGE_CANDIDATE_WRITER_LENGTH_REPAIR)
+        self.assertEqual(
+            result.failure_code,
+            FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_VALIDATION,
+        )
+        self.assertEqual(result.candidate_writer_invocation_count, 1)
+        self.assertEqual(result.candidate_writer_length_repair_invocation_count, 1)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+
+    def test_length_repair_request_failure_stays_inside_attempt_envelope(self) -> None:
+        candidate_client = SequentialCandidateWriterClient(
+            (
+                _provider_response(json.dumps(_candidate_payload(post_text="A" * 1301))),
+            )
+        )
+        semantic_client = _passing_semantic_client()
+        quality_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+        kwargs = _full_attempt_kwargs()
+        kwargs["angle_decision"] = {"controlling_angle": "Missing directive."}
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=quality_client,
+            **kwargs,
+        )
+
+        self.assertEqual(candidate_client.call_count, 1)
+        self.assertEqual(semantic_client.call_count, 0)
+        self.assertEqual(quality_client.call_count, 0)
+        self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_PARSE)
+        self.assertEqual(result.failure_stage, STAGE_CANDIDATE_WRITER_LENGTH_REPAIR)
+        self.assertEqual(
+            result.failure_code,
+            FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_REQUEST,
+        )
+        self.assertIn("authorial_voice_directive", result.failure_message)
+        self.assertEqual(result.candidate_writer_length_repair_invocation_count, 0)
+        statuses = {status.stage: status for status in result.stage_statuses}
+        self.assertEqual(
+            statuses[STAGE_CANDIDATE_WRITER_ADAPTATION].status,
+            STATUS_FAILED,
+        )
+        self.assertEqual(
+            statuses[STAGE_CANDIDATE_WRITER_LENGTH_REPAIR].status,
+            STATUS_FAILED,
+        )
+
+    def test_ineligible_adaptation_failure_does_not_run_length_repair(self) -> None:
+        candidate_client = SequentialCandidateWriterClient(
+            (
+                _provider_response(
+                    json.dumps(_candidate_payload(post_text="A" * 1301, hook_variants=[]))
+                ),
+                _provider_response(json.dumps({"post_text": "Short repaired text."})),
+            )
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=True)))
+            ),
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 1)
+        self.assertEqual(result.failure_stage, STAGE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(result.candidate_writer_length_repair_invocation_count, 0)
+
     def test_structural_failure_metadata_resanitizes_diagnostics_before_transport(
         self,
     ) -> None:
@@ -522,6 +672,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                 (STAGE_CANDIDATE_WRITER_EXECUTION, STATUS_SUCCEEDED),
                 (STAGE_CANDIDATE_WRITER_PARSE, STATUS_SUCCEEDED),
                 (STAGE_CANDIDATE_WRITER_ADAPTATION, STATUS_SUCCEEDED),
+                (STAGE_CANDIDATE_WRITER_LENGTH_REPAIR, STATUS_SKIPPED),
                 (STAGE_DETERMINISTIC_GATE, STATUS_SUCCEEDED),
                 ("quality_evaluator_request", STATUS_SKIPPED),
             ],
@@ -1394,6 +1545,30 @@ class FakeCandidateWriterClient:
         return self.response
 
 
+class SequentialCandidateWriterClient:
+    def __init__(self, responses: tuple[SimpleNamespace, ...]) -> None:
+        self.responses = list(responses)
+        self.call_count = 0
+        self.prompts: list[str] = []
+
+    def generate_text(
+        self,
+        *,
+        prompt: str,
+        max_output_tokens: int,
+        json_mode: bool,
+        allow_json_mode_fallback: bool = True,
+        thinking_mode: str = "provider_default",
+    ) -> SimpleNamespace:
+        self.call_count += 1
+        self.prompts.append(prompt)
+        self.max_output_tokens = max_output_tokens
+        self.json_mode = json_mode
+        self.allow_json_mode_fallback = allow_json_mode_fallback
+        self.thinking_mode = thinking_mode
+        return self.responses.pop(0)
+
+
 class FailingCandidateWriterClient:
     def __init__(self, exc: Exception) -> None:
         self.exc = exc
@@ -1529,14 +1704,20 @@ def _candidate_json() -> str:
     return json.dumps(_candidate_payload())
 
 
-def _candidate_payload(*, post_text: str = "Real candidate text from fake provider.") -> dict:
+def _candidate_payload(
+    *,
+    post_text: str = "Real candidate text from fake provider.",
+    hook_variants: list[str] | None = None,
+) -> dict:
     return {
         "post_text": post_text,
         "hook_variants": [
             "A practical remote work policy starts here.",
             "Remote policy is not just a document.",
             "Hybrid work needs clearer operating habits.",
-        ],
+        ]
+        if hook_variants is None
+        else hook_variants,
         "cta_variants": [
             "What would you clarify first in a remote policy?",
             "Where does your team still need shared expectations?",

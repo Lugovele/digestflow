@@ -18,6 +18,7 @@ STAGE_CANDIDATE_WRITER_REQUEST = "candidate_writer_request"
 STAGE_CANDIDATE_WRITER_EXECUTION = "candidate_writer_execution"
 STAGE_CANDIDATE_WRITER_PARSE = "candidate_writer_parse"
 STAGE_CANDIDATE_WRITER_ADAPTATION = "candidate_writer_adaptation"
+STAGE_CANDIDATE_WRITER_LENGTH_REPAIR = "candidate_writer_length_repair"
 STAGE_DETERMINISTIC_GATE = "deterministic_gate"
 STAGE_SEMANTIC_GROUNDING_REQUEST = "semantic_grounding_request"
 STAGE_SEMANTIC_GROUNDING_EXECUTION = "semantic_grounding_execution"
@@ -35,6 +36,7 @@ FINAL_POST_ATTEMPT_STAGE_ORDER = (
     STAGE_CANDIDATE_WRITER_EXECUTION,
     STAGE_CANDIDATE_WRITER_PARSE,
     STAGE_CANDIDATE_WRITER_ADAPTATION,
+    STAGE_CANDIDATE_WRITER_LENGTH_REPAIR,
     STAGE_DETERMINISTIC_GATE,
     STAGE_SEMANTIC_GROUNDING_REQUEST,
     STAGE_SEMANTIC_GROUNDING_EXECUTION,
@@ -59,6 +61,21 @@ FAILURE_CANDIDATE_WRITER_PROVIDER = "candidate_writer_provider_failure"
 FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE = "candidate_writer_empty_response"
 FAILURE_CANDIDATE_WRITER_PARSE = "candidate_writer_parse_failure"
 FAILURE_CANDIDATE_WRITER_ADAPTATION = "candidate_writer_adaptation_failure"
+FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_REQUEST = (
+    "candidate_writer_length_repair_request_failure"
+)
+FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_PROVIDER = (
+    "candidate_writer_length_repair_provider_failure"
+)
+FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_EMPTY_RESPONSE = (
+    "candidate_writer_length_repair_empty_response"
+)
+FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_PARSE = (
+    "candidate_writer_length_repair_parse_failure"
+)
+FAILURE_CANDIDATE_WRITER_LENGTH_REPAIR_VALIDATION = (
+    "candidate_writer_length_repair_validation_failure"
+)
 FAILURE_DETERMINISTIC_GATE = "deterministic_gate_failure"
 FAILURE_SEMANTIC_GROUNDING_REQUEST = "semantic_grounding_request_failure"
 FAILURE_SEMANTIC_GROUNDING_PROVIDER = "semantic_grounding_provider_failure"
@@ -206,6 +223,7 @@ class FinalPostStandaloneAttemptResult:
     quality_evaluation_state: object | dict | None = None
     final_attempt_outcome: object | dict | None = None
     candidate_writer_invocation_count: int = 0
+    candidate_writer_length_repair_invocation_count: int = 0
     semantic_grounding_invocation_count: int = 0
     quality_evaluator_invocation_count: int = 0
     repair_invocation_count: int = 0
@@ -264,6 +282,11 @@ class FinalPostStandaloneAttemptResult:
             ),
             "candidate_writer_invocation_count": _serialize_attempt_value(
                 self.candidate_writer_invocation_count
+            ),
+            "candidate_writer_length_repair_invocation_count": (
+                _serialize_attempt_value(
+                    self.candidate_writer_length_repair_invocation_count
+                )
             ),
             "semantic_grounding_invocation_count": (
                 _serialize_attempt_value(self.semantic_grounding_invocation_count)

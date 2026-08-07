@@ -327,6 +327,10 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self.assertEqual(record["plan_id"], "gpt_baseline")
         self.assertIn("repair_diagnostics", record)
         self.assertEqual(record["final_post_text"], "Accepted final post")
+        self.assertEqual(
+            record["provider_invocation_counts"]["candidate_writer_length_repair"],
+            0,
+        )
 
     def test_secret_sentinel_is_excluded_from_artifacts(self) -> None:
         smoke_runner = Mock(return_value=_smoke_result(secret_fields=True))
@@ -433,6 +437,7 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self.assertIn("field_violations", runs_text)
         self.assertIn("candidate_writer_missing_field_count", summary_text)
         self.assertIn("candidate_writer_primary_violation_reason", summary_text)
+        self.assertIn("candidate_writer_length_repair_calls", summary_text)
         self.assertIn("missing_required_fields", report_text)
         self.assertIn("missing=2", report_text)
         self.assertIn("post_text:above_max_length", report_text)
@@ -786,12 +791,14 @@ def _smoke_result(
         },
         invocation_budget={
             "candidate_writer": 1,
+            "candidate_writer_length_repair": 1,
             "semantic_grounding": 1,
             "quality_evaluator": 1,
             "repair_writer": 0,
         },
         invocation_counts={
             "candidate_writer": 0,
+            "candidate_writer_length_repair": 0,
             "semantic_grounding": 0,
             "quality_evaluator": 0,
             "repair_writer": 0,

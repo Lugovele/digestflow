@@ -2,7 +2,8 @@
 
 This module composes existing Candidate Writer execution, parsing, adaptation,
 deterministic gate, Quality Evaluator execution, and attempt adjudication
-stages. It does not repair text, persist data, or connect to production
+stages. It only allows the narrow Candidate Writer length-repair boundary; it
+does not perform broad/editorial repair, persist data, or connect to production
 packaging runtime.
 """
 from __future__ import annotations
@@ -10,7 +11,10 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
+
+from django.conf import settings
 
 from services.packaging.linkedin_post_candidate_writer_execution import (
     CandidateWriterExecutionRequest,
@@ -29,6 +33,10 @@ from services.packaging.linkedin_post_candidate_writer_parser import (
 from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
     METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
     structural_diagnostics_from_dict,
+)
+from services.packaging.linkedin_post_candidate_writer_length_repair import (
+    PROMPT_CANDIDATE_WRITER_LENGTH_REPAIR_PATH,
+    execute_candidate_writer_length_repair,
 )
 from services.packaging.linkedin_post_deterministic_gate import (
     run_final_post_deterministic_gate,
@@ -65,6 +73,7 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
     STAGE_ATTEMPT_OUTCOME,
     STAGE_CANDIDATE_WRITER_ADAPTATION,
     STAGE_CANDIDATE_WRITER_EXECUTION,
+    STAGE_CANDIDATE_WRITER_LENGTH_REPAIR,
     STAGE_CANDIDATE_WRITER_PARSE,
     STAGE_CANDIDATE_WRITER_REQUEST,
     STAGE_DETERMINISTIC_GATE,
@@ -142,6 +151,8 @@ def execute_final_post_standalone_candidate_attempt(
     request: FinalPostAttemptRequest,
     *,
     selected_evidence_ids: Sequence[str],
+    post_brief: object | dict | None = None,
+    angle_decision: object | dict | None = None,
     candidate_writer_client: Any | None = None,
 ) -> FinalPostStandaloneAttemptResult:
     """Run Candidate Writer through deterministic gate for one attempt."""
@@ -218,35 +229,90 @@ def execute_final_post_standalone_candidate_attempt(
             candidate_writer_invocation_count=1,
         )
 
+    length_repair_invocation_count = 0
     try:
         candidate_writer_output = build_candidate_writer_output_from_parsed_response(
             parsed_candidate=parsed_candidate,
             raw_response=raw_response,
         )
     except CandidateWriterOutputAdaptationError as exc:
-        return _failure_result(
-            request=request,
-            stage_statuses=(
-                _succeeded_status(STAGE_CANDIDATE_WRITER_REQUEST),
-                _succeeded_status(STAGE_CANDIDATE_WRITER_EXECUTION),
-                _succeeded_status(STAGE_CANDIDATE_WRITER_PARSE),
-                _failed_status(
-                    STAGE_CANDIDATE_WRITER_ADAPTATION,
-                    FAILURE_CANDIDATE_WRITER_ADAPTATION,
-                    str(exc),
-                    metadata=_candidate_writer_adaptation_failure_metadata(exc),
-                ),
-                _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
-                _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
-            ),
-            completed_stage=STAGE_CANDIDATE_WRITER_PARSE,
-            failure_stage=STAGE_CANDIDATE_WRITER_ADAPTATION,
-            failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
-            failure_message=str(exc),
-            candidate_writer_raw_response=raw_response,
-            parsed_candidate=parsed_candidate,
-            candidate_writer_invocation_count=1,
-        )
+        if post_brief is not None and angle_decision is not None:
+            repair_result = execute_candidate_writer_length_repair(
+                parsed_candidate=parsed_candidate,
+                adaptation_error=exc,
+                post_brief=post_brief,
+                angle_decision=angle_decision,
+                provider=candidate_writer_request.provider,
+                model=candidate_writer_request.model,
+                prompt_text=_candidate_writer_length_repair_prompt_text(),
+                client=candidate_writer_client,
+                thinking_mode=candidate_writer_request.thinking_mode,
+            )
+            if repair_result.failure_code is not None:
+                length_repair_invocation_count = (
+                    1 if repair_result.repair_executed else 0
+                )
+                return _failure_result(
+                    request=request,
+                    stage_statuses=(
+                        _succeeded_status(STAGE_CANDIDATE_WRITER_REQUEST),
+                        _succeeded_status(STAGE_CANDIDATE_WRITER_EXECUTION),
+                        _succeeded_status(STAGE_CANDIDATE_WRITER_PARSE),
+                        _failed_status(
+                            STAGE_CANDIDATE_WRITER_ADAPTATION,
+                            FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                            str(exc),
+                            metadata=_candidate_writer_adaptation_failure_metadata(
+                                exc
+                            ),
+                        ),
+                        _failed_status(
+                            STAGE_CANDIDATE_WRITER_LENGTH_REPAIR,
+                            repair_result.failure_code,
+                            repair_result.failure_message,
+                            metadata=_candidate_writer_length_repair_metadata(
+                                repair_result,
+                                provider=candidate_writer_request.provider,
+                                model=candidate_writer_request.model,
+                            ),
+                        ),
+                        _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
+                        _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
+                    ),
+                    completed_stage=STAGE_CANDIDATE_WRITER_PARSE,
+                    failure_stage=STAGE_CANDIDATE_WRITER_LENGTH_REPAIR,
+                    failure_code=repair_result.failure_code,
+                    failure_message=repair_result.failure_message,
+                    candidate_writer_raw_response=raw_response,
+                    parsed_candidate=parsed_candidate,
+                    candidate_writer_invocation_count=1,
+                    candidate_writer_length_repair_invocation_count=(
+                        length_repair_invocation_count
+                    ),
+                )
+            if repair_result.repair_executed:
+                length_repair_invocation_count = 1
+                parsed_candidate = repair_result.repaired_candidate or {}
+                candidate_writer_output = (
+                    build_candidate_writer_output_from_parsed_response(
+                        parsed_candidate=parsed_candidate,
+                        raw_response=raw_response,
+                    )
+                )
+            else:
+                return _adaptation_failure_result(
+                    request=request,
+                    raw_response=raw_response,
+                    parsed_candidate=parsed_candidate,
+                    adaptation_error=exc,
+                )
+        else:
+            return _adaptation_failure_result(
+                request=request,
+                raw_response=raw_response,
+                parsed_candidate=parsed_candidate,
+                adaptation_error=exc,
+            )
 
     deterministic_gate_output = run_final_post_deterministic_gate(
         candidate_writer_output,
@@ -260,6 +326,9 @@ def execute_final_post_standalone_candidate_attempt(
                 _succeeded_status(STAGE_CANDIDATE_WRITER_EXECUTION),
                 _succeeded_status(STAGE_CANDIDATE_WRITER_PARSE),
                 _succeeded_status(STAGE_CANDIDATE_WRITER_ADAPTATION),
+                _candidate_writer_length_repair_stage_status(
+                    length_repair_invocation_count
+                ),
                 _failed_status(
                     STAGE_DETERMINISTIC_GATE,
                     FAILURE_DETERMINISTIC_GATE,
@@ -277,6 +346,9 @@ def execute_final_post_standalone_candidate_attempt(
             candidate_writer_output=candidate_writer_output,
             deterministic_gate_output=deterministic_gate_output,
             candidate_writer_invocation_count=1,
+            candidate_writer_length_repair_invocation_count=(
+                length_repair_invocation_count
+            ),
         )
 
     return FinalPostStandaloneAttemptResult(
@@ -286,6 +358,7 @@ def execute_final_post_standalone_candidate_attempt(
             _succeeded_status(STAGE_CANDIDATE_WRITER_EXECUTION),
             _succeeded_status(STAGE_CANDIDATE_WRITER_PARSE),
             _succeeded_status(STAGE_CANDIDATE_WRITER_ADAPTATION),
+            _candidate_writer_length_repair_stage_status(length_repair_invocation_count),
             _succeeded_status(STAGE_DETERMINISTIC_GATE),
             _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
         ),
@@ -295,6 +368,7 @@ def execute_final_post_standalone_candidate_attempt(
         candidate_writer_output=candidate_writer_output,
         deterministic_gate_output=deterministic_gate_output,
         candidate_writer_invocation_count=1,
+        candidate_writer_length_repair_invocation_count=length_repair_invocation_count,
         quality_evaluator_invocation_count=0,
     )
 
@@ -333,6 +407,8 @@ def execute_final_post_standalone_attempt(
     candidate_result = execute_final_post_standalone_candidate_attempt(
         request,
         selected_evidence_ids=selected_evidence_ids,
+        post_brief=post_brief,
+        angle_decision=angle_decision,
         candidate_writer_client=candidate_writer_client,
     )
     if candidate_result.failure_code is not None:
@@ -667,6 +743,9 @@ def execute_final_post_standalone_attempt(
         quality_evaluation_state=quality_state,
         final_attempt_outcome=final_attempt_outcome,
         candidate_writer_invocation_count=candidate_result.candidate_writer_invocation_count,
+        candidate_writer_length_repair_invocation_count=(
+            candidate_result.candidate_writer_length_repair_invocation_count
+        ),
         semantic_grounding_prompt_render=semantic_prompt_render,
         semantic_grounding_raw_response=semantic_raw_response,
         semantic_grounding_state=semantic_state,
@@ -912,6 +991,80 @@ def _candidate_writer_adaptation_failure_metadata(
     return metadata or None
 
 
+def _candidate_writer_length_repair_metadata(
+    repair_result: Any,
+    *,
+    provider: str,
+    model: str,
+) -> dict[str, Any]:
+    eligibility = repair_result.eligibility
+    metadata = {
+        "repair_eligible": bool(eligibility.eligible),
+        "repair_executed": bool(repair_result.repair_executed),
+        "repair_provider": provider,
+        "repair_model": model,
+        "original_post_text_length": eligibility.original_post_text_length,
+        "repaired_post_text_length": repair_result.repaired_post_text_length,
+        "maximum_allowed": eligibility.maximum_allowed,
+        "repair_invocation_count": 1 if repair_result.repair_executed else 0,
+        "repair_failure_code": repair_result.failure_code,
+        "eligibility_reason": eligibility.reason,
+    }
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _candidate_writer_length_repair_stage_status(
+    invocation_count: int,
+) -> FinalPostAttemptStageStatus:
+    if invocation_count:
+        return FinalPostAttemptStageStatus(
+            stage=STAGE_CANDIDATE_WRITER_LENGTH_REPAIR,
+            status=STATUS_SUCCEEDED,
+            metadata={"repair_invocation_count": invocation_count},
+        )
+    return _skipped_status(STAGE_CANDIDATE_WRITER_LENGTH_REPAIR)
+
+
+def _adaptation_failure_result(
+    *,
+    request: FinalPostAttemptRequest,
+    raw_response: CandidateWriterRawResponse,
+    parsed_candidate: dict[str, Any],
+    adaptation_error: CandidateWriterOutputAdaptationError,
+) -> FinalPostStandaloneAttemptResult:
+    return _failure_result(
+        request=request,
+        stage_statuses=(
+            _succeeded_status(STAGE_CANDIDATE_WRITER_REQUEST),
+            _succeeded_status(STAGE_CANDIDATE_WRITER_EXECUTION),
+            _succeeded_status(STAGE_CANDIDATE_WRITER_PARSE),
+            _failed_status(
+                STAGE_CANDIDATE_WRITER_ADAPTATION,
+                FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                str(adaptation_error),
+                metadata=_candidate_writer_adaptation_failure_metadata(
+                    adaptation_error
+                ),
+            ),
+            _skipped_status(STAGE_CANDIDATE_WRITER_LENGTH_REPAIR),
+            _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
+            _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
+        ),
+        completed_stage=STAGE_CANDIDATE_WRITER_PARSE,
+        failure_stage=STAGE_CANDIDATE_WRITER_ADAPTATION,
+        failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+        failure_message=str(adaptation_error),
+        candidate_writer_raw_response=raw_response,
+        parsed_candidate=parsed_candidate,
+        candidate_writer_invocation_count=1,
+    )
+
+
+def _candidate_writer_length_repair_prompt_text() -> str:
+    prompt_path = Path(settings.BASE_DIR) / PROMPT_CANDIDATE_WRITER_LENGTH_REPAIR_PATH
+    return prompt_path.read_text(encoding="utf-8")
+
+
 def _candidate_writer_structural_failure_metadata(exc: Any) -> dict[str, Any] | None:
     diagnostics = getattr(exc, "diagnostics", None)
     if diagnostics is None or not hasattr(diagnostics, "to_dict"):
@@ -963,6 +1116,7 @@ def _failure_result(
     candidate_writer_output: Any | None = None,
     deterministic_gate_output: Any | None = None,
     candidate_writer_invocation_count: int = 0,
+    candidate_writer_length_repair_invocation_count: int = 0,
 ) -> FinalPostStandaloneAttemptResult:
     return FinalPostStandaloneAttemptResult(
         request=request,
@@ -976,6 +1130,9 @@ def _failure_result(
         candidate_writer_output=candidate_writer_output,
         deterministic_gate_output=deterministic_gate_output,
         candidate_writer_invocation_count=candidate_writer_invocation_count,
+        candidate_writer_length_repair_invocation_count=(
+            candidate_writer_length_repair_invocation_count
+        ),
         quality_evaluator_invocation_count=0,
     )
 
@@ -1040,6 +1197,9 @@ def _quality_failure_result(
         quality_evaluation_state=quality_evaluation_state,
         final_attempt_outcome=final_attempt_outcome,
         candidate_writer_invocation_count=candidate_result.candidate_writer_invocation_count,
+        candidate_writer_length_repair_invocation_count=(
+            candidate_result.candidate_writer_length_repair_invocation_count
+        ),
         semantic_grounding_invocation_count=semantic_grounding_invocation_count,
         quality_evaluator_invocation_count=quality_evaluator_invocation_count,
     )
@@ -1104,6 +1264,9 @@ def _semantic_failure_result(
             candidate_writer_invocation_count=(
                 candidate_result.candidate_writer_invocation_count
             ),
+            candidate_writer_length_repair_invocation_count=(
+                candidate_result.candidate_writer_length_repair_invocation_count
+            ),
             semantic_grounding_invocation_count=semantic_grounding_invocation_count,
             quality_evaluator_invocation_count=0,
         )
@@ -1129,6 +1292,9 @@ def _semantic_failure_result(
         quality_evaluation_state=quality_state,
         final_attempt_outcome=final_attempt_outcome,
         candidate_writer_invocation_count=candidate_result.candidate_writer_invocation_count,
+        candidate_writer_length_repair_invocation_count=(
+            candidate_result.candidate_writer_length_repair_invocation_count
+        ),
         semantic_grounding_invocation_count=semantic_grounding_invocation_count,
         quality_evaluator_invocation_count=0,
     )
