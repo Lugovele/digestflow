@@ -34,6 +34,9 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
     METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
     PARSER_ERROR_MALFORMED_JSON,
 )
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FAILURE_CANDIDATE_WRITER_ADAPTATION,
     FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
@@ -385,6 +388,52 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(diagnostics["failure_stage"], STAGE_CANDIDATE_WRITER_ADAPTATION)
         self.assertEqual(diagnostics["adapter_error_code"], "payload_contract_violation")
         self.assertEqual(diagnostics["unexpected_fields"], ["hook_variants"])
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+
+    def test_overlength_adaptation_failure_preserves_parsed_post_text(
+        self,
+    ) -> None:
+        overlength_text = "x" * (FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1)
+        fake_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps({"post_text": overlength_text}))
+        )
+
+        with patch.object(
+            linkedin_post_final_post_attempt_execution,
+            "run_candidate_post_deterministic_gate",
+        ) as gate:
+            result = execute_final_post_standalone_candidate_attempt(
+                _request(),
+                selected_evidence_ids=("ev-1",),
+                candidate_writer_client=fake_client,
+            )
+
+        gate.assert_not_called()
+        self.assertEqual(result.failure_stage, STAGE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_PARSE)
+        self.assertEqual(result.parsed_candidate, {"post_text": overlength_text})
+        self.assertIsNone(result.candidate_writer_output)
+        failed_status = next(
+            status
+            for status in result.stage_statuses
+            if status.stage == STAGE_CANDIDATE_WRITER_ADAPTATION
+        )
+        diagnostics = failed_status.metadata[
+            METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS
+        ]
+        self.assertEqual(diagnostics["failure_stage"], STAGE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(diagnostics["adapter_error_code"], "invalid_field_values")
+        self.assertEqual(diagnostics["field_violations"][0]["field_name"], "post_text")
+        self.assertEqual(
+            diagnostics["field_violations"][0]["reason_code"],
+            "above_max_length",
+        )
+        self.assertEqual(
+            diagnostics["field_violations"][0]["actual_length"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
+        )
         self.assertEqual(result.semantic_grounding_invocation_count, 0)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
 

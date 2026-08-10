@@ -472,7 +472,8 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self,
     ) -> None:
         fake_result = _standalone_result(
-            candidate_post_text="Canonical CandidatePost smoke text."
+            candidate_post_text="Canonical CandidatePost smoke text.",
+            parsed_candidate={"post_text": "Canonical CandidatePost smoke text."},
         )
 
         with patch.object(
@@ -502,7 +503,88 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
                 "post_text_length": len("Canonical CandidatePost smoke text."),
             },
         )
+        self.assertEqual(
+            default_result.sanitized_result["parsed_candidate_payload"],
+            {"post_text_length": len("Canonical CandidatePost smoke text.")},
+        )
+        self.assertEqual(
+            exposed_result.sanitized_result["parsed_candidate_payload"],
+            {
+                "post_text": "Canonical CandidatePost smoke text.",
+                "post_text_length": len("Canonical CandidatePost smoke text."),
+            },
+        )
 
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_parsed_candidate_post_text_is_hidden_by_default_and_exposed_by_flag(
+        self,
+    ) -> None:
+        parsed_text = "Parsed invalid smoke candidate " + "x" * 1301
+        fake_result = _standalone_result(
+            failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+            failure_message="parsed candidate does not satisfy FinalPostPayload structure.",
+            accepted_payload=None,
+            parsed_candidate={"post_text": parsed_text},
+        )
+        fake_result.completed_stage = STAGE_CANDIDATE_WRITER_ADAPTATION
+        fake_result.failure_stage = STAGE_CANDIDATE_WRITER_ADAPTATION
+        fake_result.candidate_writer_output = None
+        fake_result.deterministic_gate_output = None
+        fake_result.semantic_grounding_state = None
+        fake_result.quality_evaluation_state = None
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            default_result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
+            )
+            exposed_result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    allow_api=True,
+                    include_candidate_post_text=True,
+                )
+            )
+
+        self.assertIsNone(default_result.sanitized_result["candidate_payload"])
+        self.assertIsNone(default_result.sanitized_result["accepted_core_post"])
+        self.assertIsNone(default_result.sanitized_result["publication_package"])
+        self.assertEqual(
+            default_result.sanitized_result["parsed_candidate_payload"],
+            {"post_text_length": len(parsed_text)},
+        )
+        self.assertEqual(
+            exposed_result.sanitized_result["parsed_candidate_payload"],
+            {"post_text": parsed_text, "post_text_length": len(parsed_text)},
+        )
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_non_string_parsed_candidate_post_text_is_not_projected(self) -> None:
+        fake_result = _standalone_result(
+            failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+            failure_message="parsed candidate does not satisfy FinalPostPayload structure.",
+            accepted_payload=None,
+            parsed_candidate={"post_text": 123},
+        )
+        fake_result.candidate_writer_output = None
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    allow_api=True,
+                    include_candidate_post_text=True,
+                )
+            )
+
+        self.assertIsNone(result.sanitized_result["parsed_candidate_payload"])
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_provider_failure_uses_stable_safe_output(self) -> None:
         fake_result = _standalone_result(
@@ -929,6 +1011,7 @@ def _standalone_result(
     candidate_post_text: str | None = None,
     provider_response_metadata: dict | None = None,
     empty_text_classification: str | None = None,
+    parsed_candidate: dict | None = None,
 ) -> SimpleNamespace:
     payload = (
         {"post_text": "Accepted smoke post."}
@@ -977,6 +1060,7 @@ def _standalone_result(
                 requires_human_review=False,
             )
         ),
+        parsed_candidate=parsed_candidate,
         final_attempt_outcome=SimpleNamespace(
             outcome="accepted" if failure_code is None else "not_ready",
             reason=failure_message,

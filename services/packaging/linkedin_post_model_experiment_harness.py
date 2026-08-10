@@ -502,6 +502,22 @@ def _run_record_from_smoke_result(
     repair_diagnostics = _repair_diagnostics(smoke_result, sanitized, plan)
     candidate_post_text = _safe_candidate_post_text(candidate_payload)
     candidate_post_length = _candidate_post_length(candidate_payload, candidate_post_text)
+    parsed_candidate_payload = (
+        sanitized.get("parsed_candidate_payload")
+        if isinstance(sanitized.get("parsed_candidate_payload"), dict)
+        else {}
+    )
+    parsed_candidate_post_text = _safe_candidate_post_text(parsed_candidate_payload)
+    parsed_candidate_post_length = _candidate_post_length(
+        parsed_candidate_payload,
+        parsed_candidate_post_text,
+    )
+    characters_over_limit = _characters_over_limit(parsed_candidate_post_length)
+    text_source_status = _candidate_text_source_status(
+        candidate_post_text=candidate_post_text,
+        parsed_candidate_post_text=parsed_candidate_post_text,
+        characters_over_limit=characters_over_limit,
+    )
     final_attempt_disposition = _first_mapping_value(
         final_outcome_summary,
         "outcome",
@@ -549,6 +565,16 @@ def _run_record_from_smoke_result(
             if isinstance(candidate_post_length, int)
             else None
         ),
+        "parsed_candidate_post_text": parsed_candidate_post_text,
+        "parsed_candidate_post_character_length": parsed_candidate_post_length,
+        "parsed_candidate_post_within_limit": (
+            parsed_candidate_post_length <= CANDIDATE_POST_TEXT_MAX_CHARS
+            if isinstance(parsed_candidate_post_length, int)
+            else None
+        ),
+        "candidate_post_maximum_allowed": CANDIDATE_POST_TEXT_MAX_CHARS,
+        "characters_over_limit": characters_over_limit,
+        "text_source_status": text_source_status,
         "semantic_grounding_pass": grounding.get("pass"),
         "semantic_grounding_automatic_fail": bool(grounding.get("automatic_fail_reason")),
         "semantic_grounding_human_review_required": grounding.get("requires_human_review"),
@@ -696,6 +722,9 @@ def _run_record_from_smoke_result(
         "human_reviewer_notes": None,
         "final_post_text": smoke_result.final_post_text,
     }
+    record["candidate_writer_hard_failure_category"] = (
+        _candidate_writer_hard_failure_category(record)
+    )
     for criterion in CANONICAL_QUALITY_SCORE_KEYS:
         record[f"quality_{criterion}_score"] = quality_scores.get(criterion)
     return _sanitize_artifact_value(record)
@@ -715,6 +744,27 @@ def _candidate_post_length(candidate_payload: dict[str, Any], post_text: str) ->
     if not isinstance(value, bool) and isinstance(value, int):
         return value
     return len(post_text) if post_text else None
+
+
+def _characters_over_limit(candidate_post_length: int | None) -> int | None:
+    if candidate_post_length is None:
+        return None
+    return max(0, candidate_post_length - CANDIDATE_POST_TEXT_MAX_CHARS)
+
+
+def _candidate_text_source_status(
+    *,
+    candidate_post_text: str,
+    parsed_candidate_post_text: str,
+    characters_over_limit: int | None,
+) -> str:
+    if candidate_post_text:
+        return "CANONICAL_VALID"
+    if parsed_candidate_post_text:
+        if isinstance(characters_over_limit, int) and characters_over_limit > 0:
+            return "PARSED_INVALID - above hard length maximum"
+        return "PARSED_INVALID"
+    return "UNAVAILABLE"
 
 
 def _candidate_parse_success(
@@ -978,6 +1028,9 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
         "repair_executed",
         "post_length",
         "candidate_post_character_length",
+        "parsed_candidate_post_character_length",
+        "characters_over_limit",
+        "text_source_status",
         "within_length_limit",
         "candidate_parse_success",
         "candidate_adapter_success",
@@ -1031,6 +1084,11 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     "repair_executed": record.get("repair_executed"),
                     "post_length": record.get("post_length"),
                     "candidate_post_character_length": record.get("candidate_post_character_length"),
+                    "parsed_candidate_post_character_length": record.get(
+                        "parsed_candidate_post_character_length"
+                    ),
+                    "characters_over_limit": record.get("characters_over_limit"),
+                    "text_source_status": record.get("text_source_status"),
                     "within_length_limit": record.get("candidate_post_within_limit"),
                     "candidate_parse_success": record.get("candidate_parse_success"),
                     "candidate_adapter_success": record.get("candidate_adapter_success"),
@@ -1109,12 +1167,12 @@ def _report_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ..
         "",
         "## Case-Level Results",
         "",
-        "| Case | Plan | Writer | Run | Status | Accepted | Failure | Gate | Grounding | Blocking claims | Quality | Human voice | Author POV | Length |",
-        "| --- | --- | --- | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Case | Plan | Writer | Run | Status | Accepted | Failure | Hard failure | Gate | Grounding | Blocking claims | Quality | Human voice | Author POV | Length |",
+        "| --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for record in run_records:
         lines.append(
-            "| {case} | {plan} | {writer} | {run} | {status} | {accepted} | {failure} | {gate} | {grounding} | {blocking} | {quality} | {voice} | {pov} | {length} |".format(
+            "| {case} | {plan} | {writer} | {run} | {status} | {accepted} | {failure} | {hard_failure} | {gate} | {grounding} | {blocking} | {quality} | {voice} | {pov} | {length} |".format(
                 case=record.get("case_id"),
                 plan=record.get("plan_id"),
                 writer=record.get("candidate_writer_model"),
@@ -1122,13 +1180,14 @@ def _report_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ..
                 status=record.get("status"),
                 accepted=record.get("accepted"),
                 failure=record.get("failure_code") or "",
+                hard_failure=record.get("candidate_writer_hard_failure_category") or "",
                 gate=record.get("candidate_gate_pass"),
                 grounding=record.get("semantic_grounding_pass"),
                 blocking=record.get("blocking_claim_count"),
                 quality=record.get("quality_total_score"),
                 voice=record.get("quality_human_voice_score"),
                 pov=record.get("quality_author_point_of_view_score"),
-                length=record.get("candidate_post_character_length"),
+                length=_writer_comparison_character_length(record),
             )
         )
     lines.extend(["", "## Model-Level Descriptive Summary", ""])
@@ -1176,9 +1235,16 @@ def _model_summary_lines(run_records: tuple[dict[str, Any], ...]) -> list[str]:
                 quality_pass=_true_count(records, "quality_pass"),
                 mean_quality=_format_number(_mean_or_none(records, "quality_total_score")),
                 median_quality=_format_number(_median_or_none(records, "quality_total_score")),
-                mean_length=_format_number(
-                    _mean_or_none(records, "candidate_post_character_length")
-                ),
+                mean_length=_format_number(_mean_or_none(
+                    tuple(
+                        dict(
+                            record,
+                            writer_display_length=_writer_comparison_character_length(record),
+                        )
+                        for record in records
+                    ),
+                    "writer_display_length",
+                )),
                 mean_voice=_format_number(_mean_or_none(records, "quality_human_voice_score")),
                 mean_pov=_format_number(
                     _mean_or_none(records, "quality_author_point_of_view_score")
@@ -1216,15 +1282,20 @@ def _writer_comparison_text(
                 [
                     f"### {label}",
                     "",
-                    f"character_length: {record.get('candidate_post_character_length')}",
+                    f"text_source_status: {record.get('text_source_status')}",
+                    f"character_length: {_writer_comparison_character_length(record)}",
+                    f"candidate_post_maximum_allowed: {record.get('candidate_post_maximum_allowed')}",
+                    f"characters_over_limit: {record.get('characters_over_limit')}",
                     f"hard_failure: {_has_hard_failure(record)}",
+                    f"failure_stage: {record.get('failure_stage')}",
+                    f"failure_reason: {record.get('failure_code') or record.get('failure_message')}",
                     f"grounding_pass: {record.get('semantic_grounding_pass')}",
                     f"quality_total: {record.get('quality_total_score')}",
                     f"author_point_of_view_score: {record.get('quality_author_point_of_view_score')}",
                     f"human_voice_score: {record.get('quality_human_voice_score')}",
                     "",
                     "```text",
-                    str(record.get("candidate_post_text") or ""),
+                    _writer_comparison_post_text(record),
                     "```",
                     "",
                     "preferred_candidate:",
@@ -1237,6 +1308,36 @@ def _writer_comparison_text(
                 ]
             )
     return "\n".join(lines)
+
+
+def _writer_comparison_post_text(record: dict[str, Any]) -> str:
+    candidate_text = record.get("candidate_post_text")
+    if isinstance(candidate_text, str) and candidate_text:
+        return candidate_text
+    parsed_text = record.get("parsed_candidate_post_text")
+    return parsed_text if isinstance(parsed_text, str) else ""
+
+
+def _writer_comparison_character_length(record: dict[str, Any]) -> int | None:
+    value = record.get("candidate_post_character_length")
+    if not isinstance(value, bool) and isinstance(value, int):
+        return value
+    value = record.get("parsed_candidate_post_character_length")
+    if not isinstance(value, bool) and isinstance(value, int):
+        return value
+    return None
+
+
+def _candidate_writer_hard_failure_category(record: dict[str, Any]) -> str | None:
+    if record.get("candidate_parse_success") is False:
+        return "PARSE_FAILURE"
+    if record.get("candidate_adapter_success") is False:
+        return "ADAPTATION_FAILURE"
+    if record.get("candidate_gate_pass") is False:
+        return "GATE_FAILURE"
+    if _has_hard_failure(record):
+        return "DOWNSTREAM_FAILURE"
+    return None
 
 
 def _report_candidate_writer_diagnostic(record: dict[str, Any]) -> str:

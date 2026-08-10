@@ -12,6 +12,16 @@ from django.test import SimpleTestCase
 
 from apps.ai.client import AI_THINKING_MODE_DISABLED
 from services.packaging import linkedin_post_model_experiment_harness as harness
+from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
+    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS,
+)
+from services.packaging.linkedin_post_final_post_attempt_contract import (
+    FAILURE_CANDIDATE_WRITER_ADAPTATION,
+    STAGE_CANDIDATE_WRITER_ADAPTATION,
+)
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_final_post_smoke_runner import (
     FinalPostSmokeRunResult,
     SMOKE_MODE_CONTROLLED_REPAIR,
@@ -392,12 +402,175 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         record = result.run_records[0]
         self.assertEqual(record["candidate_post_text"], "Canonical candidate post")
         self.assertEqual(record["candidate_post_character_length"], 24)
+        self.assertEqual(record["parsed_candidate_post_text"], "Canonical candidate post")
+        self.assertEqual(record["parsed_candidate_post_character_length"], 24)
+        self.assertEqual(record["text_source_status"], "CANONICAL_VALID")
         self.assertTrue(record["candidate_post_within_limit"])
         self.assertTrue(record["candidate_parse_success"])
         self.assertTrue(record["candidate_adapter_success"])
         runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
         self.assertIn("Canonical candidate post", runs_text)
         self.assertIn('"candidate_post_text"', runs_text)
+
+    def test_writer_experiment_records_parsed_invalid_candidate_post_text(self) -> None:
+        parsed_text = "Invalid but parseable candidate " + "x" * 1301
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result=_adaptation_failure_sanitized_result(parsed_text),
+                safe_failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                safe_failure_message=(
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                final_post_text="",
+                quality_passed=None,
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_parsed_invalid_text",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        record = result.run_records[0]
+        self.assertEqual(record["candidate_post_text"], "")
+        self.assertIsNone(record["candidate_post_character_length"])
+        self.assertEqual(record["parsed_candidate_post_text"], parsed_text)
+        self.assertEqual(record["parsed_candidate_post_character_length"], len(parsed_text))
+        self.assertEqual(
+            record["characters_over_limit"],
+            len(parsed_text) - FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+        self.assertEqual(
+            record["text_source_status"],
+            "PARSED_INVALID - above hard length maximum",
+        )
+        self.assertEqual(record["candidate_writer_hard_failure_category"], "ADAPTATION_FAILURE")
+        self.assertTrue(record["candidate_parse_success"])
+        self.assertFalse(record["candidate_adapter_success"])
+        runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+        self.assertIn('"parsed_candidate_post_text"', runs_text)
+        self.assertIn(parsed_text, runs_text)
+
+    def test_writer_comparison_displays_parsed_invalid_candidate_text(self) -> None:
+        parsed_text = "Parsed invalid markdown candidate " + "y" * 1301
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result=_adaptation_failure_sanitized_result(parsed_text),
+                safe_failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                safe_failure_message=(
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                final_post_text="",
+                quality_passed=None,
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_parsed_invalid_markdown",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        comparison_text = Path(result.artifacts.writer_comparison_md).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Candidate A", comparison_text)
+        self.assertIn("text_source_status: PARSED_INVALID - above hard length maximum", comparison_text)
+        self.assertIn(f"character_length: {len(parsed_text)}", comparison_text)
+        self.assertIn(
+            f"characters_over_limit: {len(parsed_text) - FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS}",
+            comparison_text,
+        )
+        self.assertIn("failure_stage: candidate_writer_adaptation", comparison_text)
+        report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
+        self.assertIn("ADAPTATION_FAILURE", report_text)
+        self.assertIn("above_max_length", report_text)
+        self.assertIn(parsed_text, comparison_text)
+        self.assertNotIn("gpt-4.1-2025-04-14", comparison_text.split("```text", 1)[0])
+
+    def test_summary_csv_exposes_parsed_invalid_candidate_length_scalars(self) -> None:
+        parsed_text = "Parsed invalid csv candidate " + "z" * 1301
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result=_adaptation_failure_sanitized_result(parsed_text),
+                safe_failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                safe_failure_message=(
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                final_post_text="",
+                quality_passed=None,
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_parsed_invalid_csv",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        with Path(result.artifacts.summary_csv).open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+
+        row = rows[0]
+        self.assertEqual(row["candidate_post_character_length"], "")
+        self.assertEqual(row["parsed_candidate_post_character_length"], str(len(parsed_text)))
+        self.assertEqual(
+            row["characters_over_limit"],
+            str(len(parsed_text) - FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS),
+        )
+        self.assertEqual(
+            row["text_source_status"],
+            "PARSED_INVALID - above hard length maximum",
+        )
+
+    def test_writer_comparison_artifact_preserves_utf8_punctuation(self) -> None:
+        parsed_text = (
+            "Human text with \u2019smart quotes\u2019, caf\u00e9, "
+            "and an em dash \u2014 kept."
+        )
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                sanitized_result=_adaptation_failure_sanitized_result(parsed_text),
+                safe_failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                safe_failure_message=(
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                final_post_text="",
+                quality_passed=None,
+            )
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_utf8_writer_artifact",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        data = Path(result.artifacts.writer_comparison_md).read_bytes()
+        decoded = data.decode("utf-8")
+        self.assertIn(parsed_text, decoded)
+        self.assertNotIn("\u0432\u0402", decoded)
 
     def test_grounding_and_quality_are_projected_for_writer_comparison(self) -> None:
         smoke_runner = Mock(return_value=_smoke_result())
@@ -965,6 +1138,10 @@ def _smoke_result(
     candidate_provider: str = "openai",
     candidate_model: str = OPENAI_FINAL_POST_MODEL,
     invocation_counts: dict[str, int] | None = None,
+    safe_failure_code: str | None = None,
+    safe_failure_message: str = "",
+    deterministic_gate_passed: bool | None = None,
+    quality_passed: bool | None = True,
 ) -> FinalPostSmokeRunResult:
     if sanitized_result is None:
         sanitized_result = {
@@ -1070,6 +1247,10 @@ def _smoke_result(
                 "post_text": post_text,
                 "post_text_length": len(post_text),
             },
+            "parsed_candidate_payload": {
+                "post_text": post_text,
+                "post_text_length": len(post_text),
+            },
             "publication_package": {
                 "post_text": post_text,
                 "hook_variants": [],
@@ -1126,13 +1307,67 @@ def _smoke_result(
         final_outcome=None,
         accepted=False,
         final_post_text=final_post_text or post_text,
-        safe_failure_code=None,
-        safe_failure_message="",
-        deterministic_gate_passed=None,
-        quality_passed=True,
+        safe_failure_code=safe_failure_code,
+        safe_failure_message=safe_failure_message,
+        deterministic_gate_passed=deterministic_gate_passed,
+        quality_passed=quality_passed,
         saved_output_path=None,
         sanitized_result=sanitized_result,
     )
+
+
+
+
+
+def _adaptation_failure_sanitized_result(parsed_text: str) -> dict:
+    return {
+        "failure_stage": STAGE_CANDIDATE_WRITER_ADAPTATION,
+        "candidate_payload": None,
+        "parsed_candidate_payload": {
+            "post_text": parsed_text,
+            "post_text_length": len(parsed_text),
+        },
+        "publication_package": None,
+        "accepted_core_post": None,
+        "final_attempt_outcome": None,
+        "quality_review": None,
+        "semantic_grounding_review": None,
+        "provider_response_diagnostics": {},
+        "stage_statuses": [
+            {
+                "stage": STAGE_CANDIDATE_WRITER_ADAPTATION,
+                "status": "failed",
+                "error_code": FAILURE_CANDIDATE_WRITER_ADAPTATION,
+                "error_message": (
+                    "parsed candidate does not satisfy FinalPostPayload structure."
+                ),
+                "metadata": {
+                    METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS: {
+                        "schema_version": "1.0",
+                        "failure_stage": STAGE_CANDIDATE_WRITER_ADAPTATION,
+                        "parser_error_code": None,
+                        "adapter_error_code": "payload_contract_violation",
+                        "top_level_json_type": "dict",
+                        "received_top_level_keys": ["post_text"],
+                        "missing_required_fields": [],
+                        "unexpected_fields": [],
+                        "invalid_field_names": ["post_text"],
+                        "field_violations": [
+                            {
+                                "field_name": "post_text",
+                                "reason_code": "above_max_length",
+                                "actual_length": len(parsed_text),
+                                "maximum_allowed": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+                            }
+                        ],
+                        "candidate_text_length": len(parsed_text),
+                        "diagnostics_truncated": False,
+                        "redacted_key_count": 0,
+                    }
+                },
+            }
+        ],
+    }
 
 
 def _claude_writer_plan() -> harness.FinalPostExperimentPlan:

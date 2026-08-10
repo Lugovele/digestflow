@@ -955,6 +955,10 @@ def _sanitize_standalone_result(
             result,
             include_post_text=include_candidate_post_text,
         ),
+        "parsed_candidate_payload": _parsed_candidate_payload_summary(
+            result,
+            include_post_text=include_candidate_post_text,
+        ),
         "accepted_core_post": _accepted_core_post_summary(accepted_payload),
         "publication_package": _publication_package_summary(
             accepted_payload,
@@ -1082,6 +1086,25 @@ def _candidate_payload_summary(
         getattr(candidate_output, "payload", None),
         include_post_text=include_post_text,
     )
+
+
+def _parsed_candidate_payload_summary(
+    result: Any,
+    *,
+    include_post_text: bool,
+) -> dict[str, Any] | None:
+    parsed_candidate = getattr(result, "parsed_candidate", None)
+    if not isinstance(parsed_candidate, dict):
+        return None
+    post_text = parsed_candidate.get("post_text")
+    if not isinstance(post_text, str):
+        return None
+    summary = {
+        "post_text_length": len(post_text),
+    }
+    if include_post_text:
+        summary["post_text"] = post_text
+    return summary
 
 
 def _payload_summary(
