@@ -36,6 +36,7 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             [
                 "PostBrief",
                 "AngleDecision",
+                "CANDIDATE_POST_LENGTH_INSTRUCTION",
                 "CANDIDATE_POST_CONSTRAINTS_JSON",
                 "selected evidence",
                 "Use only selected evidence from PostBrief.evidence_to_use",
@@ -265,12 +266,12 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             self,
             prompt,
             [
+                "CANDIDATE_POST_LENGTH_INSTRUCTION",
                 "CANDIDATE_POST_CONSTRAINTS_JSON",
                 "canonical structural contract",
                 "post_text",
-                "max_chars",
-                "prompt_target_min_chars",
-                "prompt_target_max_chars",
+                "direct numeric target length",
+                "hard maximum",
             ],
         )
 
@@ -282,24 +283,19 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
         self.assertNotIn("1100", prompt)
         self.assertIn("candidate_post_constraints_json", prompt)
 
-    def test_candidate_writer_prompt_distinguishes_target_from_hard_limit(self):
+    def test_candidate_writer_prompt_uses_rendered_length_instruction(self):
         prompt = _normalized_prompt_text()
 
         _assert_contains_all(
             self,
             prompt,
             [
-                "target:",
-                "prompt_target_min_chars",
-                "prompt_target_max_chars",
-                "preferred",
-                "working range",
-                "comfortably inside that target range",
-                "do not expand merely to reach the upper target",
-                "hard limit:",
-                "absolute hard",
-                "failure boundary",
-                "not as the writing target",
+                "CANDIDATE_POST_LENGTH_INSTRUCTION",
+                "direct numeric target length",
+                "hard maximum",
+                "rendered from the canonical CandidatePost constraints",
+                "Do not treat CANDIDATE_POST_CONSTRAINTS_JSON as the writing target",
+                "canonical structural contract",
             ],
         )
 

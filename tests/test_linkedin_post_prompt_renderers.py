@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import inspect
 import json
+from unittest import mock
 
 from django.test import SimpleTestCase
 
@@ -16,6 +17,8 @@ from services.packaging.linkedin_post_candidate_post_contract import (
 )
 from services.packaging.linkedin_post_final_post_payload_contract import (
     FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
 )
 from services.packaging.linkedin_post_flow_input_builders import (
     CandidateWriterInput,
@@ -108,6 +111,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
                 "personal_presence_instruction",
                 "selected_evidence_json",
                 "candidate_writer_input_json",
+                "candidate_post_length_instruction",
                 "candidate_post_constraints_json",
             },
         )
@@ -130,13 +134,72 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         )
         self.assertEqual(
             candidate_post_constraints["post_text"]["prompt_target_min_chars"],
-            1100,
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
         )
         self.assertEqual(
             candidate_post_constraints["post_text"]["prompt_target_max_chars"],
-            1200,
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
         )
+        self.assertIn("CANDIDATE_POST_LENGTH_INSTRUCTION", render.input_text)
         self.assertIn("CANDIDATE_POST_CONSTRAINTS_JSON", render.input_text)
+
+    def test_candidate_writer_render_includes_direct_numeric_length_instruction(
+        self,
+    ) -> None:
+        render = render_candidate_writer_prompt_input(_candidate_input())
+        instruction = render.variables["candidate_post_length_instruction"]
+
+        self.assertIn("TARGET LENGTH:", instruction)
+        self.assertIn("1100-1200 characters", instruction)
+        self.assertIn("HARD MAXIMUM:", instruction)
+        self.assertIn("post_text must not exceed 1300 characters", instruction)
+        self.assertIn("More than 1300 characters is a hard failure", instruction)
+        self.assertIn(
+            "Do not add content merely to reach 1100 characters",
+            instruction,
+        )
+        self.assertIn(
+            "Prefer a shorter complete post over exceeding 1300",
+            instruction,
+        )
+        self.assertIn(instruction, render.input_text)
+
+    def test_candidate_writer_length_instruction_derives_from_constraints(
+        self,
+    ) -> None:
+        injected_constraints = {
+            "post_text": {
+                "type": "string",
+                "required": True,
+                "min_chars": 1,
+                "max_chars": 999,
+                "prompt_target_min_chars": 700,
+                "prompt_target_max_chars": 850,
+            },
+            "allowed_fields": ["post_text"],
+            "forbidden_fields": [],
+        }
+
+        with mock.patch.object(
+            linkedin_post_prompt_renderers,
+            "build_candidate_post_constraints",
+            return_value=injected_constraints,
+        ) as build_constraints:
+            render = render_candidate_writer_prompt_input(_candidate_input())
+
+        build_constraints.assert_called_once_with()
+        self.assertIn(
+            "Write post_text at approximately 700-850 characters.",
+            render.variables["candidate_post_length_instruction"],
+        )
+        self.assertIn(
+            "post_text must not exceed 999 characters.",
+            render.variables["candidate_post_length_instruction"],
+        )
+        self.assertEqual(
+            json.loads(render.variables["candidate_post_constraints_json"]),
+            injected_constraints,
+        )
 
     def test_rendered_selected_evidence_preserves_id_order(self) -> None:
         render = render_candidate_writer_prompt_input(_candidate_input())

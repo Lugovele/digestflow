@@ -29,6 +29,7 @@ Use these inputs:
 * AngleDecision.authorial_voice_directive
 * AUTHORIAL_VOICE_DIRECTIVE_JSON
 * PERSONAL_PRESENCE_INSTRUCTION
+* CANDIDATE_POST_LENGTH_INSTRUCTION
 * CANDIDATE_POST_CONSTRAINTS_JSON
 * quality constraints supplied by the caller
 * forbidden claims and safety rules supplied by the caller
@@ -110,20 +111,11 @@ selected evidence, evidence above, source-grounded, separate signals,
 keep claims attributed, avoid unsupported conclusions, according to one source,
 another source, research cited in a third source, or sources matter.
 
-TARGET:
+Follow CANDIDATE_POST_LENGTH_INSTRUCTION for the direct numeric target length and
+hard maximum. It is rendered from the canonical CandidatePost constraints.
 
-Use CANDIDATE_POST_CONSTRAINTS_JSON.post_text.prompt_target_min_chars and
-CANDIDATE_POST_CONSTRAINTS_JSON.post_text.prompt_target_max_chars as the preferred
-working range for post_text.
-
-Aim for concise post_text comfortably inside that target range.
-
-Do not expand merely to reach the upper target.
-
-HARD LIMIT:
-
-Treat CANDIDATE_POST_CONSTRAINTS_JSON.post_text.max_chars as the absolute hard
-failure boundary, not as the writing target.
+Do not treat CANDIDATE_POST_CONSTRAINTS_JSON as the writing target. Use it as the
+canonical structural contract.
 
 Write a finished LinkedIn post, not a brief, research summary, evidence report,
 repair instruction, debug note, or runtime log.

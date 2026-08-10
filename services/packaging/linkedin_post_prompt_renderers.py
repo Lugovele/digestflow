@@ -173,6 +173,7 @@ def render_candidate_writer_prompt_input(
     authorial_voice_directive = _authorial_voice_directive_for_prompt(
         candidate_input_dict["angle_decision"]
     )
+    candidate_post_constraints = build_candidate_post_constraints()
     variables = {
         "post_brief_json": _stable_json(candidate_input_dict["post_brief"]),
         "angle_decision_json": _stable_json(candidate_input_dict["angle_decision"]),
@@ -184,9 +185,10 @@ def render_candidate_writer_prompt_input(
             candidate_input_dict["selected_evidence"]
         ),
         "candidate_writer_input_json": _stable_json(candidate_input_dict),
-        "candidate_post_constraints_json": _stable_json(
-            build_candidate_post_constraints()
+        "candidate_post_length_instruction": _candidate_post_length_instruction(
+            candidate_post_constraints
         ),
+        "candidate_post_constraints_json": _stable_json(candidate_post_constraints),
     }
     prompt_metadata = candidate_input.prompt_metadata
 
@@ -414,6 +416,41 @@ def _validate_authorial_voice_directive_for_prompt(
             )
 
 
+def _candidate_post_length_instruction(
+    candidate_post_constraints: dict[str, Any],
+) -> str:
+    post_text_constraints = candidate_post_constraints.get("post_text")
+    if not isinstance(post_text_constraints, dict):
+        raise TypeError("candidate_post_constraints.post_text must be a dictionary.")
+    target_min_chars = post_text_constraints.get("prompt_target_min_chars")
+    target_max_chars = post_text_constraints.get("prompt_target_max_chars")
+    hard_max_chars = post_text_constraints.get("max_chars")
+    for field_name, field_value in (
+        ("prompt_target_min_chars", target_min_chars),
+        ("prompt_target_max_chars", target_max_chars),
+        ("max_chars", hard_max_chars),
+    ):
+        if not isinstance(field_value, int):
+            raise TypeError(
+                "candidate_post_constraints.post_text."
+                f"{field_name} must be an integer."
+            )
+    if not (0 < target_min_chars <= target_max_chars <= hard_max_chars):
+        raise ValueError(
+            "candidate post length targets must be positive and stay within max_chars."
+        )
+    return (
+        "TARGET LENGTH:\n"
+        f"Write post_text at approximately {target_min_chars}-{target_max_chars} "
+        "characters.\n\n"
+        "HARD MAXIMUM:\n"
+        f"post_text must not exceed {hard_max_chars} characters. More than "
+        f"{hard_max_chars} characters is a hard failure.\n\n"
+        f"Do not add content merely to reach {target_min_chars} characters. "
+        f"Prefer a shorter complete post over exceeding {hard_max_chars} characters."
+    )
+
+
 def _personal_presence_instruction_for_prompt(
     authorial_voice_directive: dict[str, Any],
 ) -> str:
@@ -558,6 +595,10 @@ def _repair_dict(value: Any, label: str) -> dict[str, Any]:
 
 def _build_input_text(variables: dict[str, str]) -> str:
     sections = [
+        (
+            "CANDIDATE_POST_LENGTH_INSTRUCTION",
+            variables["candidate_post_length_instruction"],
+        ),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
         (
