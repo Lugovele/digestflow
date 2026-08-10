@@ -45,6 +45,37 @@ class ExperimentLinkedInFinalPostModelsCommandTests(SimpleTestCase):
         request = fake_harness.call_args.args[0]
         self.assertFalse(request.allow_api)
 
+    def test_command_default_plans_are_scope_22a_writer_only_pair(self) -> None:
+        fake_harness = Mock(return_value=_result())
+        with patch(f"{COMMAND_MODULE}.run_linkedin_final_post_model_experiment", fake_harness):
+            call_command(
+                "experiment_linkedin_final_post_models",
+                "--experiment-id",
+                "exp_cmd_scope_22a_default",
+                "--case",
+                f"case_a={self.case_path}",
+                stdout=io.StringIO(),
+            )
+
+        plans = fake_harness.call_args.args[0].plans
+        self.assertEqual(
+            [plan.plan_id for plan in plans],
+            ["gpt_writer_gpt_fixed", "claude_writer_gpt_fixed"],
+        )
+        self.assertEqual(
+            {plan.candidate_writer.provider for plan in plans},
+            {"openai", "anthropic"},
+        )
+        self.assertEqual(
+            {(plan.semantic_grounding.provider, plan.semantic_grounding.model) for plan in plans},
+            {("openai", OPENAI_FINAL_POST_MODEL)},
+        )
+        self.assertEqual(
+            {(plan.quality_evaluator.provider, plan.quality_evaluator.model) for plan in plans},
+            {("openai", OPENAI_FINAL_POST_MODEL)},
+        )
+        self.assertTrue(all(plan.repair_writer is None for plan in plans))
+
     def test_command_refuses_conflicting_dry_run_and_allow_api(self) -> None:
         with self.assertRaises(CommandError):
             call_command(
@@ -278,6 +309,9 @@ def _result(*, safe_failure_message: str = "") -> FinalPostModelExperimentResult
         summary_csv="debug_outputs/final_post_model_experiments/exp/summary.csv",
         report_md="debug_outputs/final_post_model_experiments/exp/report.md",
         manifest_json="debug_outputs/final_post_model_experiments/exp/manifest.json",
+        writer_comparison_md=(
+            "debug_outputs/final_post_model_experiments/exp/writer_comparison.md"
+        ),
     )
     return FinalPostModelExperimentResult(
         status=EXPERIMENT_STATUS_COMPLETED,

@@ -135,6 +135,7 @@ class FinalPostSmokeRunRequest:
     allow_api: bool = False
     save_output: bool = False
     include_raw_responses: bool = False
+    include_candidate_post_text: bool = False
     expect_repair: bool = False
     output_dir: Path | None = None
     candidate_provider: str | None = None
@@ -458,6 +459,7 @@ def _result_from_standalone(
     sanitized_result = _sanitize_standalone_result(
         result,
         include_raw_responses=request.include_raw_responses,
+        include_candidate_post_text=request.include_candidate_post_text,
     )
     sanitized_result["role_diagnostics"] = prepared["execution_plan"].role_diagnostics()
     return FinalPostSmokeRunResult(
@@ -505,6 +507,7 @@ def _result_from_controlled_repair(
     sanitized_result = _sanitize_controlled_result(
         result,
         include_raw_responses=request.include_raw_responses,
+        include_candidate_post_text=request.include_candidate_post_text,
     )
     sanitized_result["role_diagnostics"] = prepared["execution_plan"].role_diagnostics()
     return FinalPostSmokeRunResult(
@@ -922,6 +925,7 @@ def _sanitize_standalone_result(
     result: Any,
     *,
     include_raw_responses: bool,
+    include_candidate_post_text: bool,
 ) -> dict[str, Any]:
     accepted_payload = _accepted_payload_from_standalone(result)
     return {
@@ -949,7 +953,7 @@ def _sanitize_standalone_result(
         "final_attempt_outcome": _final_attempt_outcome_summary(result),
         "candidate_payload": _candidate_payload_summary(
             result,
-            include_post_text=include_raw_responses,
+            include_post_text=include_candidate_post_text,
         ),
         "accepted_core_post": _accepted_core_post_summary(accepted_payload),
         "publication_package": _publication_package_summary(
@@ -979,6 +983,7 @@ def _sanitize_controlled_result(
     result: Any,
     *,
     include_raw_responses: bool,
+    include_candidate_post_text: bool,
 ) -> dict[str, Any]:
     accepted_payload = copy.deepcopy(getattr(result, "accepted_payload", None))
     return {
@@ -1006,6 +1011,7 @@ def _sanitize_controlled_result(
         "initial_attempt": _sanitize_standalone_result(
             getattr(result, "initial_attempt_result", None),
             include_raw_responses=include_raw_responses,
+            include_candidate_post_text=include_candidate_post_text,
         ),
         "repaired_candidate_payload": _payload_summary(
             getattr(getattr(result, "repaired_candidate_output", None), "payload", None),
@@ -1131,6 +1137,7 @@ def _quality_review_summary_from_state(quality_state: Any) -> dict[str, Any] | N
         return None
     return {
         "pass": quality_review.get("pass"),
+        "scores": copy.deepcopy(quality_review.get("scores") or {}),
         "total_score": quality_review.get("total_score"),
         "failed_criteria": copy.deepcopy(quality_review.get("failed_criteria") or []),
         "automatic_fail_reason": quality_review.get("automatic_fail_reason"),
@@ -1154,6 +1161,10 @@ def _semantic_grounding_review_summary_from_state(
         return None
     return {
         "pass": getattr(grounding_review, "passed", None),
+        "claim_reviews": [
+            claim.to_dict()
+            for claim in (getattr(grounding_review, "claim_reviews", ()) or ())
+        ],
         "blocking_claim_ids": list(getattr(grounding_review, "blocking_claim_ids", ()) or ()),
         "automatic_fail_reason": getattr(
             grounding_review,
@@ -1165,6 +1176,13 @@ def _semantic_grounding_review_summary_from_state(
             "requires_human_review",
             None,
         ),
+        "repairable": getattr(grounding_review, "repairable", None),
+        "repair_instructions": [
+            instruction.to_dict()
+            for instruction in (
+                getattr(grounding_review, "repair_instructions", ()) or ()
+            )
+        ],
     }
 
 

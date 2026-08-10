@@ -468,6 +468,42 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertNotIn("Rejected candidate smoke post.", command_output.getvalue())
 
     @override_settings(OPENAI_API_KEY="sk-test")
+    def test_candidate_post_text_is_hidden_by_default_and_exposed_by_flag(
+        self,
+    ) -> None:
+        fake_result = _standalone_result(
+            candidate_post_text="Canonical CandidatePost smoke text."
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            default_result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=self.fixture_path, allow_api=True)
+            )
+            exposed_result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=self.fixture_path,
+                    allow_api=True,
+                    include_candidate_post_text=True,
+                )
+            )
+
+        self.assertEqual(
+            default_result.sanitized_result["candidate_payload"],
+            {"post_text_length": len("Canonical CandidatePost smoke text.")},
+        )
+        self.assertEqual(
+            exposed_result.sanitized_result["candidate_payload"],
+            {
+                "post_text": "Canonical CandidatePost smoke text.",
+                "post_text_length": len("Canonical CandidatePost smoke text."),
+            },
+        )
+
+    @override_settings(OPENAI_API_KEY="sk-test")
     def test_provider_failure_uses_stable_safe_output(self) -> None:
         fake_result = _standalone_result(
             failure_code="candidate_writer_provider_failure",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime
 import ast
 import json
@@ -331,6 +332,240 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self.assertEqual(record["hook_variant_count"], 0)
         self.assertEqual(record["cta_variant_count"], 0)
         self.assertEqual(record["hashtag_count"], 0)
+
+    def test_writer_comparison_plans_create_six_durable_run_records(self) -> None:
+        cases = tuple(
+            harness.FinalPostExperimentCase(f"case_{index}", self.root / f"case_{index}.json")
+            for index in range(1, 4)
+        )
+        for case in cases:
+            case.input_path.write_text("{}", encoding="utf-8")
+        plans = (_claude_writer_plan(), self.plan)
+        smoke_runner = Mock(
+            side_effect=[
+                _smoke_result(
+                    post_text=f"Candidate post {case.case_id} {plan.plan_id}",
+                    candidate_provider=plan.candidate_writer.provider,
+                    candidate_model=plan.candidate_writer.model,
+                )
+                for case in cases
+                for plan in plans
+            ]
+        )
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="writer_compare",
+                cases=cases,
+                plans=plans,
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        self.assertEqual(result.run_count, 6)
+        self.assertEqual(len({record["run_id"] for record in result.run_records}), 6)
+        self.assertEqual(
+            {record["candidate_writer_model"] for record in result.run_records},
+            {"claude-sonnet-5", OPENAI_FINAL_POST_MODEL},
+        )
+        self.assertNotIn(
+            "gemini-3.6-flash",
+            json.dumps(result.to_dict(), sort_keys=True),
+        )
+
+    def test_writer_experiment_records_initial_candidate_post_text(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result(post_text="Canonical candidate post"))
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_candidate_text",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        record = result.run_records[0]
+        self.assertEqual(record["candidate_post_text"], "Canonical candidate post")
+        self.assertEqual(record["candidate_post_character_length"], 24)
+        self.assertTrue(record["candidate_post_within_limit"])
+        self.assertTrue(record["candidate_parse_success"])
+        self.assertTrue(record["candidate_adapter_success"])
+        runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+        self.assertIn("Canonical candidate post", runs_text)
+        self.assertIn('"candidate_post_text"', runs_text)
+
+    def test_grounding_and_quality_are_projected_for_writer_comparison(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result())
+
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_projection",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+        record = result.run_records[0]
+
+        self.assertTrue(record["semantic_grounding_pass"])
+        self.assertFalse(record["semantic_grounding_automatic_fail"])
+        self.assertFalse(record["semantic_grounding_human_review_required"])
+        self.assertEqual(record["blocking_claim_count"], 0)
+        self.assertEqual(record["unsupported_claim_count"], 1)
+        self.assertEqual(record["contradicted_claim_count"], 1)
+        self.assertEqual(record["grounding_repair_instruction_count"], 1)
+        self.assertTrue(record["quality_pass"])
+        self.assertEqual(record["quality_total_score"], 41)
+        self.assertEqual(record["quality_human_voice_score"], 5)
+        self.assertEqual(record["quality_author_point_of_view_score"], 4)
+
+    def test_summary_csv_exposes_writer_comparison_scalars(self) -> None:
+        smoke_runner = Mock(
+            return_value=_smoke_result(
+                post_text="Canonical candidate post is longer",
+                final_post_text="Final post",
+                invocation_counts={
+                    "candidate_writer": 1,
+                    "semantic_grounding": 1,
+                    "quality_evaluator": 1,
+                    "repair_writer": 0,
+                }
+            )
+        )
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_summary_scalars",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        with Path(result.artifacts.summary_csv).open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+
+        row = rows[0]
+        self.assertEqual(row["writer_model"], OPENAI_FINAL_POST_MODEL)
+        self.assertEqual(row["post_length"], str(len("Final post")))
+        self.assertEqual(
+            row["candidate_post_character_length"],
+            str(len("Canonical candidate post is longer")),
+        )
+        self.assertEqual(row["within_length_limit"], "True")
+        self.assertEqual(row["grounding_pass"], "True")
+        self.assertEqual(row["blocking_claim_count"], "0")
+        self.assertEqual(row["quality_total_score"], "41")
+        self.assertEqual(row["author_point_of_view_score"], "4")
+        self.assertEqual(row["human_voice_score"], "5")
+        self.assertEqual(row["provider_call_count"], "3")
+
+    def test_writer_comparison_markdown_contains_posts_and_blank_review_fields(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result(post_text="Human review candidate"))
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_writer_markdown",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        comparison_text = Path(result.artifacts.writer_comparison_md).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Candidate A", comparison_text)
+        self.assertIn("Human review candidate", comparison_text)
+        self.assertIn("preferred_candidate:\nhuman_voice:\nspecificity:", comparison_text)
+        self.assertNotIn("preferred_candidate: Candidate", comparison_text)
+
+    def test_report_retains_case_level_results_and_descriptive_summary(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result())
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_report",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
+        self.assertIn("## Case-Level Results", report_text)
+        self.assertIn("## Model-Level Descriptive Summary", report_text)
+        self.assertIn("do not treat means as statistically robust", report_text)
+        self.assertIn("case_a", report_text)
+        self.assertIn(OPENAI_FINAL_POST_MODEL, report_text)
+
+    def test_manifest_records_git_commit_for_reproducibility(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result())
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_manifest",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        manifest = json.loads(Path(result.artifacts.manifest_json).read_text(encoding="utf-8"))
+        self.assertIsInstance(manifest["git_commit"], str)
+        self.assertTrue(manifest["git_commit"])
+        self.assertEqual(manifest["runs_per_plan"], 1)
+
+    def test_writer_comparison_smoke_requests_keep_repair_disabled(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result())
+        harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_no_repair",
+                cases=(self.case,),
+                plans=(_claude_writer_plan(), self.plan),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+
+        for call in smoke_runner.call_args_list:
+            smoke_request = call.args[0]
+            self.assertEqual(smoke_request.mode, SMOKE_MODE_STANDALONE)
+            self.assertIsNone(smoke_request.repair_provider)
+            self.assertIsNone(smoke_request.repair_model)
+            self.assertFalse(smoke_request.include_raw_responses)
+            self.assertTrue(smoke_request.include_candidate_post_text)
+            self.assertFalse(smoke_request.save_output)
+
+    def test_publication_package_fields_are_not_treated_as_writer_output(self) -> None:
+        smoke_runner = Mock(return_value=_smoke_result(post_text="Core candidate"))
+        result = harness.run_linkedin_final_post_model_experiment(
+            harness.FinalPostModelExperimentRequest(
+                experiment_id="exp_core_only",
+                cases=(self.case,),
+                plans=(self.plan,),
+                output_root=self.root / "outputs",
+            ),
+            smoke_runner=smoke_runner,
+            now_factory=_fixed_now,
+        )
+        record = result.run_records[0]
+
+        self.assertEqual(record["candidate_post_text"], "Core candidate")
+        self.assertNotIn("hook_variants", record["candidate_post_text"])
+        self.assertNotIn("quality_checks", record["candidate_post_text"])
 
     def test_secret_sentinel_is_excluded_from_artifacts(self) -> None:
         smoke_runner = Mock(return_value=_smoke_result(secret_fields=True))
@@ -725,6 +960,11 @@ def _smoke_result(
     sanitized_result: dict | None = None,
     role_diagnostics: list[dict] | None = None,
     secret_fields: bool = False,
+    post_text: str = "Accepted final post",
+    final_post_text: str | None = None,
+    candidate_provider: str = "openai",
+    candidate_model: str = OPENAI_FINAL_POST_MODEL,
+    invocation_counts: dict[str, int] | None = None,
 ) -> FinalPostSmokeRunResult:
     if sanitized_result is None:
         sanitized_result = {
@@ -755,16 +995,83 @@ def _smoke_result(
             ],
             "quality_review": {
                 "pass": True,
+                "scores": _quality_scores(),
                 "total_score": 41,
                 "failed_criteria": [],
+                "criterion_rationales": {
+                    criterion: {
+                        "score": score,
+                        "max_score": 5,
+                        "rationale": f"{criterion} rationale",
+                        "post_text_evidence": f"{criterion} evidence",
+                        "failure_reason": "",
+                    }
+                    for criterion, score in _quality_scores().items()
+                },
             },
             "semantic_grounding_review": {
                 "pass": True,
+                "claim_reviews": [
+                    {
+                        "claim_id": "c1",
+                        "field_name": "post_text",
+                        "value_index": None,
+                        "claim_text": "Supported claim",
+                        "claim_type": "author_interpretation",
+                        "support_status": "supported",
+                        "severity": "info",
+                        "supported_evidence_ids": ["a0-summary"],
+                        "required_qualifications": [],
+                        "missing_qualifications": [],
+                        "rationale": "grounded",
+                        "repair_hint": "",
+                    },
+                    {
+                        "claim_id": "c2",
+                        "field_name": "post_text",
+                        "value_index": None,
+                        "claim_text": "Unsupported claim",
+                        "claim_type": "causal_claim",
+                        "support_status": "unsupported",
+                        "severity": "major",
+                        "supported_evidence_ids": [],
+                        "required_qualifications": [],
+                        "missing_qualifications": [],
+                        "rationale": "not grounded enough",
+                        "repair_hint": "qualify it",
+                    },
+                    {
+                        "claim_id": "c3",
+                        "field_name": "post_text",
+                        "value_index": None,
+                        "claim_text": "Contradicted claim",
+                        "claim_type": "market_condition",
+                        "support_status": "contradicted",
+                        "severity": "minor",
+                        "supported_evidence_ids": [],
+                        "required_qualifications": [],
+                        "missing_qualifications": [],
+                        "rationale": "conflicts with evidence",
+                        "repair_hint": "remove it",
+                    },
+                ],
                 "blocking_claim_ids": [],
+                "automatic_fail_reason": "",
+                "requires_human_review": False,
+                "repairable": False,
+                "repair_instructions": [
+                    {
+                        "claim_id": "c2",
+                        "instruction": "Remove the unsupported claim.",
+                    }
+                ],
             },
-            "candidate_payload": {"post_text_length": len("Accepted final post")},
+            "candidate_payload": {
+                "post_text": post_text,
+                "post_text_length": len(post_text),
+            },
             "publication_package": {
-                "post_text": "Accepted final post",
+                "post_text": post_text,
                 "hook_variants": [],
                 "cta_variants": [],
                 "hashtags": [],
@@ -792,7 +1099,10 @@ def _smoke_result(
         mode=SMOKE_MODE_STANDALONE,
         input_path="case.json",
         provider_models={
-            "candidate_writer": {"provider": "openai", "model": OPENAI_FINAL_POST_MODEL},
+            "candidate_writer": {
+                "provider": candidate_provider,
+                "model": candidate_model,
+            },
             "semantic_grounding": {"provider": "openai", "model": OPENAI_FINAL_POST_MODEL},
             "quality_evaluator": {"provider": "openai", "model": OPENAI_FINAL_POST_MODEL},
         },
@@ -802,7 +1112,8 @@ def _smoke_result(
             "quality_evaluator": 1,
             "repair_writer": 0,
         },
-        invocation_counts={
+        invocation_counts=invocation_counts
+        or {
             "candidate_writer": 0,
             "semantic_grounding": 0,
             "quality_evaluator": 0,
@@ -814,11 +1125,37 @@ def _smoke_result(
         initial_outcome=None,
         final_outcome=None,
         accepted=False,
-        final_post_text="Accepted final post",
+        final_post_text=final_post_text or post_text,
         safe_failure_code=None,
         safe_failure_message="",
         deterministic_gate_passed=None,
-        quality_passed=None,
+        quality_passed=True,
         saved_output_path=None,
         sanitized_result=sanitized_result,
     )
+
+
+def _claude_writer_plan() -> harness.FinalPostExperimentPlan:
+    claude = harness.FinalPostExperimentRoleModel("anthropic", "claude-sonnet-5")
+    gpt = harness.FinalPostExperimentRoleModel("openai", OPENAI_FINAL_POST_MODEL)
+    return harness.FinalPostExperimentPlan(
+        plan_id="claude_writer_gpt_fixed",
+        mode=SMOKE_MODE_STANDALONE,
+        candidate_writer=claude,
+        semantic_grounding=gpt,
+        quality_evaluator=gpt,
+    )
+
+
+def _quality_scores() -> dict[str, int]:
+    return {
+        "hook": 5,
+        "controlling_angle": 5,
+        "reader_problem": 5,
+        "pattern_interrupt": 4,
+        "evidence": 4,
+        "author_point_of_view": 4,
+        "human_voice": 5,
+        "practical_value": 4,
+        "cta": 5,
+    }
