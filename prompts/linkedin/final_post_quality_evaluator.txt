@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Evaluate an already generated LinkedIn FinalPostPayload candidate.
+Evaluate an already generated LinkedIn CandidatePost core post.
 
 Prompt version: 1.0
 
@@ -22,9 +22,9 @@ Use only these PostEditorialInput-derived variables:
 * selected_evidence_json
 * quality_rubric_json
 
-candidate_payload_json contains the current FinalPostPayload candidate,
-including post_text, hook_variants, cta_variants, hashtags, quality_checks, and
-carousel_outline.
+candidate_payload_json contains the current CandidatePost candidate with post_text.
+Hook and CTA criteria must be evaluated from the actual post_text, not from
+separate hook_variants or cta_variants packaging fields.
 
 post_brief_json contains the writing plan, including core point, practical
 point, intended structure, evidence usage, and final-post constraints.

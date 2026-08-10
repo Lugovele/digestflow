@@ -1,4 +1,4 @@
-"""Deterministic diagnostics for FinalPostPayload candidates."""
+"""Deterministic diagnostics for final LinkedIn post candidates."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -73,6 +73,59 @@ class FinalPostDiagnostics:
             "system_linkedin_ready": self.system_linkedin_ready,
             "repair_reasons": list(self.repair_reasons),
         }
+
+
+def diagnose_candidate_post_payload(
+    payload: dict,
+    *,
+    selected_evidence_ids: list[str],
+    schema_validation_passed: bool,
+    schema_validation_error: str = "",
+) -> FinalPostDiagnostics:
+    """Diagnose the core CandidatePost payload without packaging self-checks."""
+
+    evidence_id_leaks = _find_phrase_leaks(
+        payload,
+        [evidence_id for evidence_id in selected_evidence_ids if evidence_id],
+        leak_type="evidence_id",
+    )
+    scaffold_phrase_leaks = _find_phrase_leaks(
+        payload,
+        SCAFFOLD_PHRASES,
+        leak_type="scaffold_phrase",
+    )
+    source_summary_phrase_leaks = _find_phrase_leaks(
+        payload,
+        SOURCE_SUMMARY_PHRASES,
+        leak_type="source_summary_phrase",
+    )
+
+    deterministic_checks_passed = not (
+        evidence_id_leaks
+        or scaffold_phrase_leaks
+        or source_summary_phrase_leaks
+    )
+    system_linkedin_ready = schema_validation_passed and deterministic_checks_passed
+    repair_reasons = _build_candidate_post_repair_reasons(
+        schema_validation_passed=schema_validation_passed,
+        evidence_id_leaks=evidence_id_leaks,
+        scaffold_phrase_leaks=scaffold_phrase_leaks,
+        source_summary_phrase_leaks=source_summary_phrase_leaks,
+    )
+
+    return FinalPostDiagnostics(
+        schema_validation_passed=schema_validation_passed,
+        schema_validation_error=schema_validation_error,
+        missing_quality_check_keys=[],
+        non_boolean_quality_check_keys=[],
+        evidence_id_leaks=evidence_id_leaks,
+        scaffold_phrase_leaks=scaffold_phrase_leaks,
+        source_summary_phrase_leaks=source_summary_phrase_leaks,
+        model_claimed_linkedin_ready=None,
+        deterministic_checks_passed=deterministic_checks_passed,
+        system_linkedin_ready=system_linkedin_ready,
+        repair_reasons=repair_reasons,
+    )
 
 
 def diagnose_final_post_payload(
@@ -209,4 +262,23 @@ def _build_repair_reasons(
         reasons.append("source_summary_language_in_human_text")
     if model_claimed_linkedin_ready is not True:
         reasons.append("model_not_linkedin_ready")
+    return reasons
+
+
+def _build_candidate_post_repair_reasons(
+    *,
+    schema_validation_passed: bool,
+    evidence_id_leaks: list[TextLeak],
+    scaffold_phrase_leaks: list[TextLeak],
+    source_summary_phrase_leaks: list[TextLeak],
+) -> list[str]:
+    reasons: list[str] = []
+    if not schema_validation_passed:
+        reasons.append("schema_validation_failed")
+    if evidence_id_leaks:
+        reasons.append("evidence_ids_in_human_text")
+    if scaffold_phrase_leaks:
+        reasons.append("scaffold_language_in_human_text")
+    if source_summary_phrase_leaks:
+        reasons.append("source_summary_language_in_human_text")
     return reasons

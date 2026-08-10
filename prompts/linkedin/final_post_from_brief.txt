@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Generate a validator-compatible FinalPostPayload from a PostBrief and AngleDecision.
+Generate a core CandidatePost from a PostBrief and AngleDecision.
 
 This prompt is a contract for future generation. It does not define runtime wiring,
 repair behavior, quality scoring, provider settings, persistence, or package output.
@@ -39,7 +39,7 @@ Use these inputs:
 * AngleDecision.authorial_voice_directive
 * AUTHORIAL_VOICE_DIRECTIVE_JSON
 * PERSONAL_PRESENCE_INSTRUCTION
-* FINAL_POST_PAYLOAD_CONSTRAINTS_JSON
+* CANDIDATE_POST_CONSTRAINTS_JSON
 * quality constraints supplied by the caller
 * forbidden claims and safety rules supplied by the caller
 
@@ -70,21 +70,21 @@ Use selected evidence content to support the post.
 
 Selected evidence IDs are input-side traceability references only.
 
-FinalPostPayload currently has no traceability field, so do not output evidence IDs.
+CandidatePost currently has no traceability field, so do not output evidence IDs.
 
 Do not add non-schema traceability fields, evidence ID fields, debug fields, or
 source-reference fields.
 
 Do not include evidence IDs in human-facing LinkedIn text.
 
-Do not include evidence IDs in post_text, hook_variants, or cta_variants.
+Do not include evidence IDs in post_text.
 
 Do not include evidence IDs such as a0-summary, a1-kp0, a2-summary, or any
 a<number>-... evidence ID in human-facing LinkedIn text.
 
 Represent evidence with compact references or concise synthesis.
 
-FinalPostPayload is not an evidence archive.
+CandidatePost is not an evidence archive.
 
 Do not copy long evidence verbatim.
 
@@ -120,12 +120,7 @@ selected evidence, evidence above, source-grounded, separate signals,
 keep claims attributed, avoid unsupported conclusions, according to one source,
 another source, research cited in a third source, or sources matter.
 
-Keep post_text within FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.hard_max_chars.
-
-Use the rendered target range in
-FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.prompt_target_min_chars and
-FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.post_text.prompt_target_max_chars as a writing
-target, while treating hard_max_chars as the absolute output limit.
+Keep post_text within CANDIDATE_POST_CONSTRAINTS_JSON.post_text.max_chars.
 
 Write a finished LinkedIn post, not a brief, research summary, evidence report,
 repair instruction, debug note, or runtime log.
@@ -217,7 +212,11 @@ Do not wrap the JSON object in markdown code fences.
 
 Do not include prose before or after the JSON object.
 
-Return only valid JSON matching the existing FinalPostPayload schema.
+Return only valid JSON matching the CandidatePost contract.
+
+Exact shape:
+
+{"post_text": "..."}
 
 Use valid JSON with double-quoted keys and double-quoted string values.
 
@@ -236,28 +235,14 @@ Never place a literal physical newline inside a quoted JSON string.
 Before returning, verify that the entire response can be parsed by a strict JSON
 parser without preprocessing or repair.
 
-The JSON must include:
+The JSON must include exactly one content field:
 
 * post_text
-* hook_variants
-* cta_variants
-* hashtags
-* quality_checks
-* carousel_outline
 
-The output must be validator-compatible with the existing FinalPostPayload contract.
+Do not include hook_variants, cta_variants, hashtags, quality_checks,
+carousel_outline, or any other packaging fields.
 
-Follow FINAL_POST_PAYLOAD_CONSTRAINTS_JSON as the canonical structural contract.
-
-Return at least FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.hook_variants.min_count
-hook_variants.
-
-Return at least FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.cta_variants.min_count
-cta_variants.
-
-Return at least FINAL_POST_PAYLOAD_CONSTRAINTS_JSON.hashtags.min_count hashtags.
-
-Keep carousel_outline empty unless carousel support is explicitly added later.
+Follow CANDIDATE_POST_CONSTRAINTS_JSON as the canonical structural contract.
 
 ## Forbidden Output Fields
 
@@ -278,25 +263,3 @@ Do not include persistence fields.
 Do not include package fields.
 
 Do not include ContentPackage fields.
-
-## Quality Checks
-
-quality_checks must be coarse booleans only.
-
-quality_checks must include these required boolean keys:
-
-* linkedin_ready
-* uses_only_provided_facts
-* has_clear_point_of_view
-
-quality_checks.linkedin_ready must reflect actual readiness.
-
-Do not blindly set quality_checks.linkedin_ready to true.
-
-Set quality_checks.linkedin_ready to false if required quality_checks keys are
-missing, if any required quality_checks value is not boolean, if evidence IDs
-appear in human-facing fields, or if scaffold/source-summary phrases appear in
-human-facing fields.
-
-Do not include quality scores, numeric ratings, rubric details, repair instructions,
-or review commentary.

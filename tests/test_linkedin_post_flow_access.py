@@ -30,8 +30,8 @@ from services.packaging.linkedin_post_flow_access import (
 
 
 class LinkedInPostFlowAccessTests(SimpleTestCase):
-    def test_only_candidate_writer_can_create_first_final_post_payload(self) -> None:
-        self.assertEqual(roles_that_can_create_payload(), (ROLE_CANDIDATE_WRITER,))
+    def test_no_role_creates_first_final_post_payload_in_core_path(self) -> None:
+        self.assertEqual(roles_that_can_create_payload(), ())
 
     def test_only_repair_agent_can_create_revised_final_post_payload(self) -> None:
         self.assertEqual(roles_that_can_create_revised_payload(), (ROLE_REPAIR_AGENT,))

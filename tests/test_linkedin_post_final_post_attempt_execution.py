@@ -347,12 +347,12 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
 
     def test_adaptation_failure_does_not_invoke_deterministic_gate(self) -> None:
         fake_client = FakeCandidateWriterClient(
-            _provider_response(json.dumps({"post_text": "Missing fields"}))
+            _provider_response(json.dumps({"post_text": "Unexpected packaging", "hook_variants": []}))
         )
 
         with patch.object(
             linkedin_post_final_post_attempt_execution,
-            "run_final_post_deterministic_gate",
+            "run_candidate_post_deterministic_gate",
         ) as gate:
             result = execute_final_post_standalone_candidate_attempt(
                 _request(),
@@ -364,7 +364,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.failure_stage, STAGE_CANDIDATE_WRITER_ADAPTATION)
         self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_ADAPTATION)
         self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_PARSE)
-        self.assertEqual(result.parsed_candidate, {"post_text": "Missing fields"})
+        self.assertEqual(result.parsed_candidate, {"post_text": "Unexpected packaging", "hook_variants": []})
         self.assertIsNone(result.candidate_writer_output)
         failed_status = next(
             status
@@ -373,31 +373,18 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         )
         self.assertEqual(
             failed_status.metadata["adaptation_error_code"],
-            "missing_required_field",
+            "invalid_candidate_post",
         )
         self.assertEqual(
-            failed_status.metadata["safe_details"]["missing_fields"],
-            [
-                "hook_variants",
-                "cta_variants",
-                "hashtags",
-                "quality_checks",
-            ],
+            failed_status.metadata["safe_details"]["unexpected_fields"],
+            ["hook_variants"],
         )
         diagnostics = failed_status.metadata[
             METADATA_KEY_CANDIDATE_WRITER_STRUCTURAL_DIAGNOSTICS
         ]
         self.assertEqual(diagnostics["failure_stage"], STAGE_CANDIDATE_WRITER_ADAPTATION)
-        self.assertEqual(diagnostics["adapter_error_code"], "missing_required_fields")
-        self.assertEqual(
-            diagnostics["missing_required_fields"],
-            [
-                "cta_variants",
-                "hashtags",
-                "hook_variants",
-                "quality_checks",
-            ],
-        )
+        self.assertEqual(diagnostics["adapter_error_code"], "payload_contract_violation")
+        self.assertEqual(diagnostics["unexpected_fields"], ["hook_variants"])
         self.assertEqual(result.semantic_grounding_invocation_count, 0)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
 
@@ -413,7 +400,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
                     "adapter_error_code": ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
                     "top_level_json_type": "prompt: secret raw response text",
                     "received_top_level_keys": ["post_text", "api_key"],
-                    "missing_required_fields": ["hook_variants"],
+                    "payload_contract_violation": ["hook_variants"],
                     "unexpected_fields": ["provider_payload", "debug"],
                     "invalid_field_names": ["post_text"],
                     "candidate_text_length": None,
@@ -472,8 +459,8 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
 
         with patch.object(
             linkedin_post_final_post_attempt_execution,
-            "run_final_post_deterministic_gate",
-            wraps=linkedin_post_final_post_attempt_execution.run_final_post_deterministic_gate,
+            "run_candidate_post_deterministic_gate",
+            wraps=linkedin_post_final_post_attempt_execution.run_candidate_post_deterministic_gate,
         ) as gate:
             result = execute_final_post_standalone_candidate_attempt(
                 _request(),
@@ -1530,26 +1517,7 @@ def _candidate_json() -> str:
 
 
 def _candidate_payload(*, post_text: str = "Real candidate text from fake provider.") -> dict:
-    return {
-        "post_text": post_text,
-        "hook_variants": [
-            "A practical remote work policy starts here.",
-            "Remote policy is not just a document.",
-            "Hybrid work needs clearer operating habits.",
-        ],
-        "cta_variants": [
-            "What would you clarify first in a remote policy?",
-            "Where does your team still need shared expectations?",
-            "What makes hybrid work sustainable in your organization?",
-        ],
-        "hashtags": ["#remotework", "#futureofwork"],
-        "quality_checks": {
-            "linkedin_ready": True,
-            "uses_only_provided_facts": True,
-            "has_clear_point_of_view": True,
-        },
-        "carousel_outline": [],
-    }
+    return {"post_text": post_text}
 
 
 def _full_attempt_kwargs() -> dict:
@@ -1616,7 +1584,6 @@ def _bitcoin_angle_decision() -> dict:
         "author_position": "Do not turn likelihood and risk into certainty.",
         "authorial_voice_directive": _bitcoin_authorial_voice_directive(),
     }
-
 
 def _authorial_voice_directive() -> dict:
     return {

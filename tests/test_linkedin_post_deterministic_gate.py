@@ -7,6 +7,7 @@ from django.test import SimpleTestCase
 
 from services.packaging import linkedin_post_deterministic_gate
 from services.packaging.linkedin_post_deterministic_gate import (
+    run_candidate_post_deterministic_gate,
     run_final_post_deterministic_gate,
 )
 from services.packaging.linkedin_post_flow_handoffs import (
@@ -16,6 +17,43 @@ from services.packaging.linkedin_post_flow_handoffs import (
 
 
 class LinkedInPostDeterministicGateTests(SimpleTestCase):
+    def test_valid_core_candidate_post_returns_deterministic_gate_output(self) -> None:
+        output = run_candidate_post_deterministic_gate(
+            {"post_text": "Clear core candidate post text."},
+            selected_evidence_ids=("a0-summary", "a1-kp0"),
+        )
+
+        self.assertIsInstance(output, DeterministicGateOutput)
+        self.assertTrue(output.validation_passed)
+        self.assertEqual(output.validation_error, "")
+        self.assertEqual(output.payload, {"post_text": "Clear core candidate post text."})
+        self.assertEqual(output.selected_evidence_ids, ("a0-summary", "a1-kp0"))
+        self.assertTrue(output.diagnostics.system_linkedin_ready)
+        self.assertEqual(output.diagnostics.missing_quality_check_keys, [])
+        self.assertIsNone(output.diagnostics.model_claimed_linkedin_ready)
+
+    def test_core_candidate_post_rejects_packaging_fields(self) -> None:
+        output = run_candidate_post_deterministic_gate(
+            {"post_text": "Clear core candidate post text.", "hook_variants": []},
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertFalse(output.validation_passed)
+        self.assertIn("unexpected fields", output.validation_error)
+        self.assertIn("schema_validation_failed", output.diagnostics.repair_reasons)
+
+    def test_core_candidate_post_evidence_id_leaks_are_reported(self) -> None:
+        output = run_candidate_post_deterministic_gate(
+            {"post_text": "This core post leaks a0-summary."},
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(output.validation_passed)
+        self.assertFalse(output.diagnostics.system_linkedin_ready)
+        self.assertEqual(len(output.diagnostics.evidence_id_leaks), 1)
+        self.assertEqual(output.diagnostics.evidence_id_leaks[0].field_name, "post_text")
+        self.assertEqual(output.diagnostics.evidence_id_leaks[0].phrase, "a0-summary")
+
     def test_valid_candidate_payload_returns_deterministic_gate_output(self) -> None:
         output = run_final_post_deterministic_gate(
             _valid_payload(),

@@ -65,11 +65,9 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
             [
                 "posteditorialinput-derived variables",
                 *QUALITY_EVALUATOR_VARIABLES,
+                "candidatepost",
                 "post_text",
-                "hook_variants",
-                "cta_variants",
-                "hashtags",
-                "carousel_outline",
+                "actual post_text",
                 "controlling angle",
                 "author position",
                 "reader problem",

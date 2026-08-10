@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dataclasses import fields
 import inspect
 import json
 
@@ -12,16 +11,16 @@ from services.packaging.linkedin_final_post_diagnostics import FinalPostDiagnost
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
 from services.packaging.linkedin_post_editorial_boundary import PostGenerationMetadata
-from services.packaging.linkedin_post_final_post_payload_contract import (
-    build_final_post_payload_constraints,
+from services.packaging.linkedin_post_candidate_post_contract import (
+    build_candidate_post_constraints,
 )
 from services.packaging.linkedin_post_flow_input_builders import (
     CandidateWriterInput,
     build_candidate_writer_input,
 )
-from services.packaging.linkedin_post_pipeline import FinalPostPayload
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
+    CANDIDATE_POST_PROMPT_FIELDS,
     FINAL_POST_PAYLOAD_PROMPT_FIELDS,
     QualityEvaluatorPromptRender,
     RepairWriterPromptRender,
@@ -107,7 +106,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
                 "personal_presence_instruction",
                 "selected_evidence_json",
                 "candidate_writer_input_json",
-                "final_post_payload_constraints_json",
+                "candidate_post_constraints_json",
             },
         )
 
@@ -117,10 +116,10 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         render = render_candidate_writer_prompt_input(_candidate_input())
 
         self.assertEqual(
-            json.loads(render.variables["final_post_payload_constraints_json"]),
-            build_final_post_payload_constraints(),
+            json.loads(render.variables["candidate_post_constraints_json"]),
+            build_candidate_post_constraints(),
         )
-        self.assertIn("FINAL_POST_PAYLOAD_CONSTRAINTS_JSON", render.input_text)
+        self.assertIn("CANDIDATE_POST_CONSTRAINTS_JSON", render.input_text)
 
     def test_rendered_selected_evidence_preserves_id_order(self) -> None:
         render = render_candidate_writer_prompt_input(_candidate_input())
@@ -436,11 +435,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         )
         self.assertIn("post_text", json.loads(render.variables["candidate_payload_json"]))
 
-    def test_quality_evaluator_candidate_payload_json_uses_final_post_payload_fields(self) -> None:
-        self.assertEqual(
-            set(FINAL_POST_PAYLOAD_PROMPT_FIELDS),
-            {field.name for field in fields(FinalPostPayload)},
-        )
+    def test_quality_evaluator_candidate_payload_json_uses_core_candidate_post_fields(self) -> None:
+        self.assertEqual(CANDIDATE_POST_PROMPT_FIELDS, ("post_text",))
 
     def test_render_semantic_grounding_prompt_input_returns_contract(self) -> None:
         render = render_semantic_grounding_prompt_input(_post_editorial_input())
@@ -510,6 +506,25 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertNotIn("raw-sentinel", rendered)
         self.assertNotIn("raw-article-sentinel", rendered)
         self.assertIn("selected evidence", rendered)
+
+    def test_semantic_grounding_candidate_payload_json_is_core_post_only(self) -> None:
+        editorial_input = _post_editorial_input(candidate_payload=_candidate_payload())
+
+        render = render_semantic_grounding_prompt_input(editorial_input)
+        rendered_payload = json.loads(render.variables["candidate_payload_json"])
+        rendered_text = render.variables["candidate_payload_json"]
+
+        self.assertEqual(rendered_payload, {"post_text": _candidate_payload()["post_text"]})
+        for forbidden in (
+            "hook_variants",
+            "cta_variants",
+            "hashtags",
+            "quality_checks",
+            "carousel_outline",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_payload)
+                self.assertNotIn(forbidden, rendered_text)
 
     def test_semantic_grounding_prompt_filters_brief_and_angle_to_selected_context(
         self,
@@ -627,7 +642,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         candidate_payload = json.loads(render.variables["candidate_payload_json"])
         rendered_text = "\n".join([*render.variables.values(), render.input_text])
 
-        self.assertEqual(set(candidate_payload), set(FINAL_POST_PAYLOAD_PROMPT_FIELDS))
+        self.assertEqual(set(candidate_payload), set(CANDIDATE_POST_PROMPT_FIELDS))
         for forbidden in (
             *extra_candidate_fields,
             "diagnostics-sentinel",
@@ -650,10 +665,22 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, rendered_text)
 
-    def test_quality_evaluator_candidate_payload_json_does_not_invent_absent_optional_fields(self) -> None:
-        candidate_payload = _candidate_payload()
-        candidate_payload.pop("carousel_outline")
-        editorial_input = _post_editorial_input(candidate_payload=candidate_payload)
+    def test_quality_evaluator_rejects_missing_candidate_post_text(self) -> None:
+        editorial_input = _post_editorial_input(candidate_payload={"hook_variants": []})
+
+        with self.assertRaisesRegex(TypeError, "candidate_payload.post_text"):
+            render_quality_evaluator_prompt_input(
+                editorial_input,
+                get_quality_evaluator_rubric_payload(),
+            )
+
+    def test_semantic_grounding_rejects_missing_candidate_post_text(self) -> None:
+        editorial_input = _post_editorial_input(candidate_payload={"hook_variants": []})
+
+        with self.assertRaisesRegex(TypeError, "candidate_payload.post_text"):
+            render_semantic_grounding_prompt_input(editorial_input)
+    def test_quality_evaluator_candidate_payload_json_excludes_packaging_fields(self) -> None:
+        editorial_input = _post_editorial_input(candidate_payload=_candidate_payload())
 
         render = render_quality_evaluator_prompt_input(
             editorial_input,
@@ -661,9 +688,19 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         )
 
         rendered_payload = json.loads(render.variables["candidate_payload_json"])
+        rendered_text = render.variables["candidate_payload_json"]
 
-        self.assertNotIn("carousel_outline", rendered_payload)
-        self.assertNotIn("carousel_outline", render.variables["candidate_payload_json"])
+        self.assertEqual(rendered_payload, {"post_text": _candidate_payload()["post_text"]})
+        for forbidden in (
+            "hook_variants",
+            "cta_variants",
+            "hashtags",
+            "quality_checks",
+            "carousel_outline",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered_payload)
+                self.assertNotIn(forbidden, rendered_text)
 
     def test_quality_evaluator_serializes_complete_post_brief_snapshot(self) -> None:
         editorial_input = _post_editorial_input()
@@ -868,17 +905,15 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("café", render.variables["selected_evidence_json"])
         self.assertIn("человечность", render.variables["candidate_payload_json"])
 
-    def test_quality_evaluator_dictionary_keys_are_sorted(self) -> None:
+    def test_quality_evaluator_candidate_payload_json_is_core_post_only(self) -> None:
         render = render_quality_evaluator_prompt_input(
             _post_editorial_input(),
             get_quality_evaluator_rubric_payload(),
         )
 
-        candidate_payload_json = render.variables["candidate_payload_json"]
-
-        self.assertLess(
-            candidate_payload_json.index('"carousel_outline"'),
-            candidate_payload_json.index('"post_text"'),
+        self.assertEqual(
+            json.loads(render.variables["candidate_payload_json"]),
+            {"post_text": _post_editorial_input().candidate_payload["post_text"]},
         )
 
     def test_quality_evaluator_input_text_has_exact_section_order(self) -> None:
@@ -1401,7 +1436,7 @@ def _selected_evidence() -> list[dict]:
 def _canonical_candidate_payload(candidate_payload: dict) -> dict:
     return {
         field_name: candidate_payload[field_name]
-        for field_name in FINAL_POST_PAYLOAD_PROMPT_FIELDS
+        for field_name in CANDIDATE_POST_PROMPT_FIELDS
         if field_name in candidate_payload
     }
 

@@ -9,8 +9,8 @@ from typing import Any
 
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
-from services.packaging.linkedin_post_final_post_payload_contract import (
-    build_final_post_payload_constraints,
+from services.packaging.linkedin_post_candidate_post_contract import (
+    build_candidate_post_constraints,
 )
 from services.packaging.linkedin_post_flow_input_builders import CandidateWriterInput
 from services.packaging.linkedin_post_pipeline import (
@@ -24,6 +24,11 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 )
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     build_semantic_grounding_prompt_rules,
+)
+
+
+CANDIDATE_POST_PROMPT_FIELDS = (
+    "post_text",
 )
 
 
@@ -187,8 +192,8 @@ def render_candidate_writer_prompt_input(
             candidate_input_dict["selected_evidence"]
         ),
         "candidate_writer_input_json": _stable_json(candidate_input_dict),
-        "final_post_payload_constraints_json": _stable_json(
-            build_final_post_payload_constraints()
+        "candidate_post_constraints_json": _stable_json(
+            build_candidate_post_constraints()
         ),
     }
     prompt_metadata = candidate_input.prompt_metadata
@@ -218,7 +223,7 @@ def render_repair_writer_prompt_input(
     selected_evidence_ids = _selected_evidence_ids_for_repair_prompt(selected_evidence)
     variables = {
         "original_candidate_payload_json": _stable_json(
-            _candidate_payload_for_quality_prompt(original_candidate_payload)
+            _final_post_payload_for_repair_prompt(original_candidate_payload)
         ),
         "post_brief_json": _stable_json(
             _post_brief_for_repair_prompt(post_brief, selected_evidence_ids)
@@ -262,7 +267,7 @@ def render_quality_evaluator_prompt_input(
 ) -> QualityEvaluatorPromptRender:
     variables = {
         "candidate_payload_json": _stable_json(
-            _candidate_payload_for_quality_prompt(editorial_input.candidate_payload)
+            _candidate_post_payload_for_prompt(editorial_input.candidate_payload)
         ),
         "post_brief_json": _stable_json(
             _serialize_render_value(editorial_input.post_brief)
@@ -297,7 +302,7 @@ def render_semantic_grounding_prompt_input(
     )
     variables = {
         "candidate_payload_json": _stable_json(
-            _candidate_payload_for_quality_prompt(editorial_input.candidate_payload)
+            _candidate_post_payload_for_prompt(editorial_input.candidate_payload)
         ),
         "post_brief_json": _stable_json(
             _post_brief_for_repair_prompt(
@@ -435,7 +440,18 @@ def _personal_presence_instruction_for_prompt(
         ) from exc
 
 
-def _candidate_payload_for_quality_prompt(candidate_payload: Any) -> dict[str, Any]:
+def _candidate_post_payload_for_prompt(candidate_payload: Any) -> dict[str, Any]:
+    serialized = _serialize_render_value(candidate_payload)
+    if not isinstance(serialized, dict):
+        raise TypeError("candidate_payload must serialize to a dictionary.")
+    post_text = serialized.get("post_text")
+    if not isinstance(post_text, str) or not post_text.strip():
+        raise TypeError("candidate_payload.post_text must be a non-empty string.")
+
+    return {"post_text": post_text}
+
+
+def _final_post_payload_for_repair_prompt(candidate_payload: Any) -> dict[str, Any]:
     serialized = _serialize_render_value(candidate_payload)
     if not isinstance(serialized, dict):
         raise TypeError("candidate_payload must serialize to a dictionary.")
@@ -575,8 +591,8 @@ def _build_input_text(variables: dict[str, str]) -> str:
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
         ("CANDIDATE_WRITER_INPUT_JSON", variables["candidate_writer_input_json"]),
         (
-            "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
-            variables["final_post_payload_constraints_json"],
+            "CANDIDATE_POST_CONSTRAINTS_JSON",
+            variables["candidate_post_constraints_json"],
         ),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)

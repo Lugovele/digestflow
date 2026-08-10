@@ -79,8 +79,8 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
         self.assertIn("AngleDecision.authorial_voice_directive", contract.input_contract)
         self.assertIn("personal_presence_instruction", contract.input_contract)
         self.assertIn("selected evidence", contract.input_contract)
-        self.assertIn("FinalPostPayload", access_contract.allowed_outputs)
-        self.assertEqual(contract.output_contract, "FinalPostPayload")
+        self.assertIn("CandidatePost", access_contract.allowed_outputs)
+        self.assertEqual(contract.output_contract, "CandidatePost")
 
     def test_quality_evaluator_prompt_contract_matches_access_contract_terms(self) -> None:
         contract = get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)
@@ -103,10 +103,10 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
             "+ personal_presence_instruction + selected evidence",
         )
 
-    def test_prompt_output_contract_is_final_post_payload(self) -> None:
+    def test_prompt_output_contract_is_candidate_post(self) -> None:
         contract = get_prompt_contract(PROMPT_FINAL_POST_CANDIDATE_FROM_BRIEF)
 
-        self.assertEqual(contract.output_contract, "FinalPostPayload")
+        self.assertEqual(contract.output_contract, "CandidatePost")
 
     def test_quality_evaluator_prompt_contract_is_post_editorial_input_to_quality_review(self) -> None:
         contract = get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)

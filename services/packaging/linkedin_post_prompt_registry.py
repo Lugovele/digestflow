@@ -68,7 +68,7 @@ FINAL_POST_PROMPT_REGISTRY = (
             "PostBrief + AngleDecision + AngleDecision.authorial_voice_directive "
             "+ personal_presence_instruction + selected evidence"
         ),
-        output_contract="FinalPostPayload",
+        output_contract="CandidatePost",
         model_role=MODEL_ROLE_CANDIDATE_WRITER_PRIMARY,
         status=PROMPT_STATUS_BASELINE,
     ),

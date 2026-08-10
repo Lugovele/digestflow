@@ -6,10 +6,8 @@ CTA quality, usefulness, or LinkedIn polish.
 Evaluate only whether human-facing candidate text is grounded in the selected
 evidence supplied in the prompt input.
 
-Human-facing fields:
+Human-facing CandidatePost field:
 * post_text
-* hook_variants
-* cta_variants
 
 Use only selected evidence. Do not use raw articles, outside knowledge, topic
 knowledge, or assumptions.

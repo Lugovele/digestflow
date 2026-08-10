@@ -1,7 +1,7 @@
-"""Adapter from parsed Candidate Writer output to PostFlow handoff contracts.
+"""Adapter from parsed Candidate Writer output to core CandidatePost handoff.
 
-This module turns a parsed Candidate Writer dictionary into a canonical
-FinalPostPayload-shaped dictionary and, when paired with a raw response, a
+This module turns strict parsed Candidate Writer JSON into a canonical
+CandidatePost-shaped dictionary and, when paired with a raw response, a
 CandidateWriterOutput handoff. It does not parse JSON, call providers, run the
 deterministic gate, evaluate quality, repair text, persist data, or connect to
 runtime packaging.
@@ -11,7 +11,12 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
-from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
+from services.packaging.linkedin_post_candidate_post_contract import (
+    CANDIDATE_POST_FIELDS,
+    CandidatePostContractError,
+    candidate_post_from_dict,
+    candidate_post_to_dict,
+)
 from services.packaging.linkedin_post_candidate_writer_structural_diagnostics import (
     ADAPTER_ERROR_INVALID_FIELD_TYPES,
     ADAPTER_ERROR_INVALID_FIELD_VALUES,
@@ -20,29 +25,16 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
     ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT,
     ADAPTER_ERROR_UNKNOWN,
     FIELD_VIOLATION_ABOVE_MAX_LENGTH,
-    FIELD_VIOLATION_BELOW_MIN_COUNT,
     FIELD_VIOLATION_EMPTY_STRING,
-    FIELD_VIOLATION_INVALID_STRING_LIST_ITEM,
-    FIELD_VIOLATION_MISSING_REQUIRED_BOOLEAN_KEY,
-    FIELD_VIOLATION_NON_BOOLEAN_REQUIRED_KEY,
     FIELD_VIOLATION_WRONG_TYPE,
     CandidateWriterFieldViolation,
     CandidateWriterStructuralDiagnostics,
     build_adapter_structural_diagnostics,
 )
 from services.packaging.linkedin_post_final_post_payload_contract import (
-    FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
-    FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
-    FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
     FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
 )
-from services.packaging.linkedin_post_pipeline import (
-    FinalPostPayload,
-    LinkedInPostPipelineContractError,
-    REQUIRED_QUALITY_CHECKS,
-    final_post_payload_to_dict,
-    validate_final_post_payload,
-)
+from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
 
 if TYPE_CHECKING:
     from services.packaging.linkedin_post_candidate_writer_execution import (
@@ -50,34 +42,20 @@ if TYPE_CHECKING:
     )
 
 __all__ = (
+    "CANONICAL_CANDIDATE_POST_FIELDS",
     "CandidateWriterOutputAdaptationError",
     "adapt_candidate_writer_payload",
     "build_candidate_writer_output_from_parsed_response",
 )
 
 
-CANONICAL_FINAL_POST_PAYLOAD_FIELDS = (
-    "post_text",
-    "hook_variants",
-    "cta_variants",
-    "hashtags",
-    "quality_checks",
-    "carousel_outline",
-)
-REQUIRED_FINAL_POST_PAYLOAD_FIELDS = (
-    "post_text",
-    "hook_variants",
-    "cta_variants",
-    "hashtags",
-    "quality_checks",
-)
-OPTIONAL_FINAL_POST_PAYLOAD_DEFAULTS = {
-    "carousel_outline": [],
-}
-
+CANONICAL_CANDIDATE_POST_FIELDS = CANDIDATE_POST_FIELDS
+CANONICAL_FINAL_POST_PAYLOAD_FIELDS = CANONICAL_CANDIDATE_POST_FIELDS
+REQUIRED_CANDIDATE_POST_FIELDS = ("post_text",)
 ERROR_INVALID_PARSED_CANDIDATE = "invalid_parsed_candidate"
 ERROR_MISSING_REQUIRED_FIELD = "missing_required_field"
-ERROR_INVALID_FINAL_POST_PAYLOAD = "invalid_final_post_payload"
+ERROR_INVALID_CANDIDATE_POST = "invalid_candidate_post"
+ERROR_INVALID_FINAL_POST_PAYLOAD = ERROR_INVALID_CANDIDATE_POST
 ERROR_RAW_RESPONSE_EXECUTION_ERROR = "raw_response_execution_error"
 ERROR_INVALID_RAW_RESPONSE = "invalid_raw_response"
 
@@ -113,7 +91,7 @@ class CandidateWriterOutputAdaptationError(ValueError):
 
 
 def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str, Any]:
-    """Return a canonical FinalPostPayload-compatible dictionary."""
+    """Return a canonical CandidatePost-compatible dictionary."""
 
     if not isinstance(parsed_candidate, dict):
         raise CandidateWriterOutputAdaptationError(
@@ -122,15 +100,13 @@ def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str
             diagnostics=build_adapter_structural_diagnostics(
                 adapter_error_code=ADAPTER_ERROR_TOP_LEVEL_NOT_OBJECT,
                 parsed_candidate=parsed_candidate,
-                required_fields=REQUIRED_FINAL_POST_PAYLOAD_FIELDS,
-                allowed_fields=CANONICAL_FINAL_POST_PAYLOAD_FIELDS,
+                required_fields=REQUIRED_CANDIDATE_POST_FIELDS,
+                allowed_fields=CANONICAL_CANDIDATE_POST_FIELDS,
             ),
         )
 
     missing_fields = [
-        field
-        for field in REQUIRED_FINAL_POST_PAYLOAD_FIELDS
-        if field not in parsed_candidate
+        field for field in REQUIRED_CANDIDATE_POST_FIELDS if field not in parsed_candidate
     ]
     if missing_fields:
         raise CandidateWriterOutputAdaptationError(
@@ -139,55 +115,53 @@ def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str
             safe_details={
                 "error_code": ERROR_MISSING_REQUIRED_FIELD,
                 "missing_fields": list(missing_fields),
-                "required_fields": list(REQUIRED_FINAL_POST_PAYLOAD_FIELDS),
+                "required_fields": list(REQUIRED_CANDIDATE_POST_FIELDS),
             },
             diagnostics=build_adapter_structural_diagnostics(
                 adapter_error_code=ADAPTER_ERROR_MISSING_REQUIRED_FIELDS,
                 parsed_candidate=parsed_candidate,
-                required_fields=REQUIRED_FINAL_POST_PAYLOAD_FIELDS,
-                allowed_fields=CANONICAL_FINAL_POST_PAYLOAD_FIELDS,
+                required_fields=REQUIRED_CANDIDATE_POST_FIELDS,
+                allowed_fields=CANONICAL_CANDIDATE_POST_FIELDS,
             ),
         )
 
-    canonical_payload = {
-        field: _copy_canonical_field(parsed_candidate[field], field)
-        for field in REQUIRED_FINAL_POST_PAYLOAD_FIELDS
-    }
-    defaulted_optional_fields = []
-    for field, default in OPTIONAL_FINAL_POST_PAYLOAD_DEFAULTS.items():
-        if field not in parsed_candidate:
-            defaulted_optional_fields.append(field)
-        canonical_payload[field] = copy.deepcopy(parsed_candidate.get(field, default))
+    unexpected_fields = sorted(set(parsed_candidate) - set(CANONICAL_CANDIDATE_POST_FIELDS))
+    if unexpected_fields:
+        raise CandidateWriterOutputAdaptationError(
+            ERROR_INVALID_CANDIDATE_POST,
+            f"parsed candidate contains unexpected fields: {unexpected_fields}.",
+            safe_details={
+                "error_code": ERROR_INVALID_CANDIDATE_POST,
+                "unexpected_fields": list(unexpected_fields),
+                **_safe_validation_details(parsed_candidate, ValueError("unexpected fields")),
+            },
+            diagnostics=build_adapter_structural_diagnostics(
+                adapter_error_code=ADAPTER_ERROR_PAYLOAD_CONTRACT_VIOLATION,
+                parsed_candidate=parsed_candidate,
+                required_fields=REQUIRED_CANDIDATE_POST_FIELDS,
+                allowed_fields=CANONICAL_CANDIDATE_POST_FIELDS,
+                invalid_field_names=unexpected_fields,
+            ),
+        )
 
     try:
-        final_post_payload = FinalPostPayload(**canonical_payload)
-        validate_final_post_payload(final_post_payload)
-    except (TypeError, LinkedInPostPipelineContractError) as exc:
+        candidate_post = candidate_post_from_dict(copy.deepcopy(parsed_candidate))
+    except (TypeError, CandidatePostContractError) as exc:
         raise CandidateWriterOutputAdaptationError(
-            ERROR_INVALID_FINAL_POST_PAYLOAD,
-            "parsed candidate does not satisfy FinalPostPayload structure.",
-            safe_details=_safe_validation_details(
-                canonical_payload,
-                exc,
-                defaulted_optional_fields=tuple(defaulted_optional_fields),
-            ),
+            ERROR_INVALID_CANDIDATE_POST,
+            "parsed candidate does not satisfy CandidatePost structure.",
+            safe_details=_safe_validation_details(parsed_candidate, exc),
             diagnostics=build_adapter_structural_diagnostics(
-                adapter_error_code=_adapter_error_code_for_validation_failure(
-                    canonical_payload
-                ),
+                adapter_error_code=_adapter_error_code_for_validation_failure(parsed_candidate),
                 parsed_candidate=parsed_candidate,
-                required_fields=REQUIRED_FINAL_POST_PAYLOAD_FIELDS,
-                allowed_fields=CANONICAL_FINAL_POST_PAYLOAD_FIELDS,
-                invalid_field_names=_invalid_field_names_for_validation_failure(
-                    canonical_payload
-                ),
-                field_violations=_field_violations_for_validation_failure(
-                    canonical_payload
-                ),
+                required_fields=REQUIRED_CANDIDATE_POST_FIELDS,
+                allowed_fields=CANONICAL_CANDIDATE_POST_FIELDS,
+                invalid_field_names=_invalid_field_names_for_validation_failure(parsed_candidate),
+                field_violations=_field_violations_for_validation_failure(parsed_candidate),
             ),
         ) from exc
 
-    return copy.deepcopy(final_post_payload_to_dict(final_post_payload))
+    return copy.deepcopy(candidate_post_to_dict(candidate_post))
 
 
 def build_candidate_writer_output_from_parsed_response(
@@ -197,11 +171,7 @@ def build_candidate_writer_output_from_parsed_response(
 ) -> CandidateWriterOutput:
     """Build a CandidateWriterOutput from parsed output and raw metadata."""
 
-    _require_attributes(
-        raw_response,
-        REQUIRED_RAW_RESPONSE_ATTRIBUTES,
-        "raw response",
-    )
+    _require_attributes(raw_response, REQUIRED_RAW_RESPONSE_ATTRIBUTES, "raw response")
 
     if raw_response.execution_error:
         raise CandidateWriterOutputAdaptationError(
@@ -210,19 +180,15 @@ def build_candidate_writer_output_from_parsed_response(
             diagnostics=build_adapter_structural_diagnostics(
                 adapter_error_code=ADAPTER_ERROR_UNKNOWN,
                 parsed_candidate=parsed_candidate,
-                required_fields=REQUIRED_FINAL_POST_PAYLOAD_FIELDS,
-                allowed_fields=CANONICAL_FINAL_POST_PAYLOAD_FIELDS,
+                required_fields=REQUIRED_CANDIDATE_POST_FIELDS,
+                allowed_fields=CANONICAL_CANDIDATE_POST_FIELDS,
             ),
         )
 
     payload = adapt_candidate_writer_payload(parsed_candidate)
     prompt_metadata = raw_response.prompt_metadata
     if prompt_metadata is not None:
-        _require_attributes(
-            prompt_metadata,
-            REQUIRED_PROMPT_METADATA_ATTRIBUTES,
-            "prompt metadata",
-        )
+        _require_attributes(prompt_metadata, REQUIRED_PROMPT_METADATA_ATTRIBUTES, "prompt metadata")
 
     return CandidateWriterOutput(
         payload=payload,
@@ -230,106 +196,30 @@ def build_candidate_writer_output_from_parsed_response(
         provider=raw_response.provider,
         model=raw_response.model,
         prompt_name=prompt_metadata.prompt_name if prompt_metadata is not None else None,
-        prompt_version=(
-            prompt_metadata.prompt_version if prompt_metadata is not None else None
-        ),
+        prompt_version=prompt_metadata.prompt_version if prompt_metadata is not None else None,
         token_usage=copy.deepcopy(raw_response.usage),
         cost_metadata=None,
     )
 
 
-def _copy_canonical_field(value: Any, field_name: str) -> Any:
-    if field_name == "quality_checks" and isinstance(value, dict):
-        return {
-            key: copy.deepcopy(value[key])
-            for key in REQUIRED_QUALITY_CHECKS
-            if key in value
-        }
-    return copy.deepcopy(value)
-
-
-def _safe_validation_details(
-    canonical_payload: dict[str, Any],
-    exc: Exception,
-    *,
-    defaulted_optional_fields: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    details = _safe_field_details(
-        canonical_payload,
-        defaulted_optional_fields=defaulted_optional_fields,
-    )
-    details["error_code"] = ERROR_INVALID_FINAL_POST_PAYLOAD
-    details["validation_error"] = str(exc)
-    return details
-
-
-def _safe_field_details(
-    canonical_payload: dict[str, Any],
-    *,
-    defaulted_optional_fields: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    post_text = canonical_payload.get("post_text")
-    hook_variants = canonical_payload.get("hook_variants")
-    cta_variants = canonical_payload.get("cta_variants")
-    hashtags = canonical_payload.get("hashtags")
-    quality_checks = canonical_payload.get("quality_checks")
-    carousel_outline = canonical_payload.get("carousel_outline")
-
+def _safe_validation_details(value: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    post_text = value.get("post_text") if isinstance(value, dict) else None
     details: dict[str, Any] = {
+        "error_code": ERROR_INVALID_CANDIDATE_POST,
+        "validation_error": str(exc),
         "post_text": {
             "expected_type": "string",
             "max_chars": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
             "input_type": type(post_text).__name__,
         },
-        "hook_variants": {
-            "expected_type": "list[string]",
-            "min_count": FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
-            "input_type": type(hook_variants).__name__,
-        },
-        "cta_variants": {
-            "expected_type": "list[string]",
-            "min_count": FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
-            "input_type": type(cta_variants).__name__,
-        },
-        "hashtags": {
-            "expected_type": "list[string]",
-            "min_count": FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
-            "input_type": type(hashtags).__name__,
-        },
-        "quality_checks": {
-            "expected_type": "object",
-            "required_boolean_keys": sorted(REQUIRED_QUALITY_CHECKS),
-            "input_type": type(quality_checks).__name__,
-        },
-        "carousel_outline": {
-            "expected_type": "list",
-            "default_used_when_missing": "carousel_outline" in defaulted_optional_fields,
-            "input_type": type(carousel_outline).__name__,
-        },
     }
     if isinstance(post_text, str):
         details["post_text"]["input_length"] = len(post_text)
-    if isinstance(hook_variants, list):
-        details["hook_variants"]["input_count"] = len(hook_variants)
-    if isinstance(cta_variants, list):
-        details["cta_variants"]["input_count"] = len(cta_variants)
-    if isinstance(hashtags, list):
-        details["hashtags"]["input_count"] = len(hashtags)
-    if isinstance(carousel_outline, list):
-        details["carousel_outline"]["input_count"] = len(carousel_outline)
-    if isinstance(quality_checks, dict):
-        details["quality_checks"]["provided_keys"] = sorted(
-            str(key) for key in quality_checks
-        )
     return details
 
 
 def _require_attributes(value: Any, attribute_names: tuple[str, ...], label: str) -> None:
-    missing = [
-        attribute_name
-        for attribute_name in attribute_names
-        if not hasattr(value, attribute_name)
-    ]
+    missing = [name for name in attribute_names if not hasattr(value, name)]
     if missing:
         raise CandidateWriterOutputAdaptationError(
             ERROR_INVALID_RAW_RESPONSE,
@@ -343,152 +233,36 @@ def _require_attributes(value: Any, attribute_names: tuple[str, ...], label: str
         )
 
 
-def _adapter_error_code_for_validation_failure(
-    canonical_payload: dict[str, Any],
-) -> str:
-    field_classifications = _field_failure_classifications(canonical_payload)
-    if any(value == "type" for value in field_classifications.values()):
+def _adapter_error_code_for_validation_failure(value: dict[str, Any]) -> str:
+    failures = _field_failure_classifications(value)
+    if any(item == "type" for item in failures.values()):
         return ADAPTER_ERROR_INVALID_FIELD_TYPES
-    if field_classifications:
+    if failures:
         return ADAPTER_ERROR_INVALID_FIELD_VALUES
     return ADAPTER_ERROR_PAYLOAD_CONTRACT_VIOLATION
 
 
-def _invalid_field_names_for_validation_failure(
-    canonical_payload: dict[str, Any],
-) -> tuple[str, ...]:
-    return tuple(_field_failure_classifications(canonical_payload))
+def _invalid_field_names_for_validation_failure(value: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(_field_failure_classifications(value))
 
 
-def _field_violations_for_validation_failure(
-    canonical_payload: dict[str, Any],
-) -> tuple[CandidateWriterFieldViolation, ...]:
-    violations: list[CandidateWriterFieldViolation] = []
-    post_text = canonical_payload.get("post_text")
+def _field_violations_for_validation_failure(value: dict[str, Any]) -> tuple[CandidateWriterFieldViolation, ...]:
+    post_text = value.get("post_text") if isinstance(value, dict) else None
     if not isinstance(post_text, str):
-        violations.append(
-            _field_violation(
-                "post_text",
-                FIELD_VIOLATION_WRONG_TYPE,
-                actual_type=type(post_text).__name__,
-            )
-        )
-    elif not post_text.strip():
-        violations.append(
-            _field_violation(
-                "post_text",
-                FIELD_VIOLATION_EMPTY_STRING,
-                actual_type="str",
-                actual_length=len(post_text),
-            )
-        )
-    elif len(post_text) > FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS:
-        violations.append(
+        return (_field_violation("post_text", FIELD_VIOLATION_WRONG_TYPE, actual_type=type(post_text).__name__),)
+    if not post_text.strip():
+        return (_field_violation("post_text", FIELD_VIOLATION_EMPTY_STRING, actual_type="str", actual_length=len(post_text)),)
+    if len(post_text) > FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS:
+        return (
             _field_violation(
                 "post_text",
                 FIELD_VIOLATION_ABOVE_MAX_LENGTH,
                 actual_type="str",
                 actual_length=len(post_text),
                 maximum_allowed=FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
-            )
-        )
-
-    violations.extend(
-        _string_list_field_violations(
-            "hook_variants",
-            canonical_payload.get("hook_variants"),
-            FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
-        )
-    )
-    violations.extend(
-        _string_list_field_violations(
-            "cta_variants",
-            canonical_payload.get("cta_variants"),
-            FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
-        )
-    )
-    violations.extend(
-        _string_list_field_violations(
-            "hashtags",
-            canonical_payload.get("hashtags"),
-            FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
-        )
-    )
-
-    carousel_outline = canonical_payload.get("carousel_outline")
-    if not isinstance(carousel_outline, list):
-        violations.append(
-            _field_violation(
-                "carousel_outline",
-                FIELD_VIOLATION_WRONG_TYPE,
-                actual_type=type(carousel_outline).__name__,
-            )
-        )
-
-    quality_checks = canonical_payload.get("quality_checks")
-    if not isinstance(quality_checks, dict):
-        violations.append(
-            _field_violation(
-                "quality_checks",
-                FIELD_VIOLATION_WRONG_TYPE,
-                actual_type=type(quality_checks).__name__,
-            )
-        )
-    else:
-        for key in sorted(REQUIRED_QUALITY_CHECKS):
-            if key not in quality_checks:
-                violations.append(
-                    _field_violation(
-                        "quality_checks",
-                        FIELD_VIOLATION_MISSING_REQUIRED_BOOLEAN_KEY,
-                        actual_type="dict",
-                    )
-                )
-            elif not isinstance(quality_checks[key], bool):
-                violations.append(
-                    _field_violation(
-                        "quality_checks",
-                        FIELD_VIOLATION_NON_BOOLEAN_REQUIRED_KEY,
-                        actual_type="dict",
-                    )
-                )
-    return tuple(violations)
-
-
-def _string_list_field_violations(
-    field_name: str,
-    value: Any,
-    min_count: int,
-) -> tuple[CandidateWriterFieldViolation, ...]:
-    if not isinstance(value, list):
-        return (
-            _field_violation(
-                field_name,
-                FIELD_VIOLATION_WRONG_TYPE,
-                actual_type=type(value).__name__,
             ),
         )
-    violations: list[CandidateWriterFieldViolation] = []
-    if len(value) < min_count:
-        violations.append(
-            _field_violation(
-                field_name,
-                FIELD_VIOLATION_BELOW_MIN_COUNT,
-                actual_type="list",
-                actual_length=len(value),
-                minimum_required=min_count,
-            )
-        )
-    if any(not isinstance(item, str) or not item.strip() for item in value):
-        violations.append(
-            _field_violation(
-                field_name,
-                FIELD_VIOLATION_INVALID_STRING_LIST_ITEM,
-                actual_type="list",
-                actual_length=len(value),
-            )
-        )
-    return tuple(violations)
+    return ()
 
 
 def _field_violation(
@@ -510,63 +284,11 @@ def _field_violation(
     )
 
 
-def _field_failure_classifications(canonical_payload: dict[str, Any]) -> dict[str, str]:
+def _field_failure_classifications(value: dict[str, Any]) -> dict[str, str]:
     failures: dict[str, str] = {}
-    post_text = canonical_payload.get("post_text")
+    post_text = value.get("post_text") if isinstance(value, dict) else None
     if not isinstance(post_text, str):
         failures["post_text"] = "type"
     elif not post_text.strip() or len(post_text) > FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS:
         failures["post_text"] = "value"
-
-    _classify_string_list_field(
-        failures,
-        "hook_variants",
-        canonical_payload.get("hook_variants"),
-        FINAL_POST_PAYLOAD_HOOK_VARIANTS_MIN_COUNT,
-    )
-    _classify_string_list_field(
-        failures,
-        "cta_variants",
-        canonical_payload.get("cta_variants"),
-        FINAL_POST_PAYLOAD_CTA_VARIANTS_MIN_COUNT,
-    )
-    _classify_string_list_field(
-        failures,
-        "hashtags",
-        canonical_payload.get("hashtags"),
-        FINAL_POST_PAYLOAD_HASHTAGS_MIN_COUNT,
-    )
-
-    carousel_outline = canonical_payload.get("carousel_outline")
-    if not isinstance(carousel_outline, list):
-        failures["carousel_outline"] = "type"
-
-    quality_checks = canonical_payload.get("quality_checks")
-    if not isinstance(quality_checks, dict):
-        failures["quality_checks"] = "type"
-    else:
-        missing = [key for key in REQUIRED_QUALITY_CHECKS if key not in quality_checks]
-        non_boolean = [
-            key
-            for key in REQUIRED_QUALITY_CHECKS
-            if key in quality_checks and not isinstance(quality_checks[key], bool)
-        ]
-        if missing or non_boolean:
-            failures["quality_checks"] = "value"
     return failures
-
-
-def _classify_string_list_field(
-    failures: dict[str, str],
-    field_name: str,
-    value: Any,
-    min_count: int,
-) -> None:
-    if not isinstance(value, list):
-        failures[field_name] = "type"
-        return
-    if len(value) < min_count or any(
-        not isinstance(item, str) or not item.strip()
-        for item in value
-    ):
-        failures[field_name] = "value"

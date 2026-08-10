@@ -36,7 +36,7 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             [
                 "PostBrief",
                 "AngleDecision",
-                "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
+                "CANDIDATE_POST_CONSTRAINTS_JSON",
                 "selected evidence",
                 "Use only selected evidence from PostBrief.evidence_to_use",
             ],
@@ -189,13 +189,13 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             prompt,
             [
                 "Selected evidence IDs are input-side traceability references only",
-                "FinalPostPayload currently has no traceability field",
+                "CandidatePost currently has no traceability field",
                 "do not output evidence IDs",
-                "Do not include evidence IDs in post_text, hook_variants, or cta_variants",
+                "Do not include evidence IDs in post_text",
             ],
         )
 
-    def test_candidate_writer_prompt_declares_final_post_payload_json_contract(self):
+    def test_candidate_writer_prompt_declares_candidate_post_json_contract(self):
         prompt = _normalized_prompt_text()
 
         _assert_contains_all(
@@ -203,16 +203,14 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             prompt,
             [
                 "Return only valid JSON",
-                "FinalPostPayload schema",
+                "CandidatePost contract",
+                "exactly one content field",
                 "post_text",
-                "hook_variants",
+                "Do not include hook_variants",
                 "cta_variants",
                 "hashtags",
                 "quality_checks",
                 "carousel_outline",
-                "linkedin_ready",
-                "uses_only_provided_facts",
-                "has_clear_point_of_view",
             ],
         )
 
@@ -267,14 +265,10 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
             self,
             prompt,
             [
-                "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
+                "CANDIDATE_POST_CONSTRAINTS_JSON",
                 "canonical structural contract",
-                "post_text.hard_max_chars",
-                "prompt_target_min_chars",
-                "prompt_target_max_chars",
-                "hook_variants.min_count",
-                "cta_variants.min_count",
-                "hashtags.min_count",
+                "post_text",
+                "max_chars",
             ],
         )
 
@@ -282,7 +276,7 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
         prompt = _normalized_prompt_text()
 
         self.assertNotIn("1300", prompt)
-        self.assertIn("final_post_payload_constraints_json", prompt)
+        self.assertIn("candidate_post_constraints_json", prompt)
 
     def test_candidate_writer_prompt_forbids_payload_debug_and_runtime_fields(self):
         prompt = _normalized_prompt_text()

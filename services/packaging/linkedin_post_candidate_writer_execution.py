@@ -2,7 +2,7 @@
 
 This module executes an already-rendered Candidate Writer prompt and captures
 the raw provider response. It does not parse JSON, build CandidateWriterOutput,
-validate FinalPostPayload, route decisions, repair payloads, persist data, or
+validate CandidatePost, route decisions, repair payloads, persist data, or
 connect to runtime packaging.
 """
 from __future__ import annotations

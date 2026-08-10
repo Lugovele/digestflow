@@ -1,7 +1,7 @@
 """Strict parser for raw LinkedIn Candidate Writer responses.
 
 This module converts a provider raw response into a plain dictionary. It does
-not adapt the parsed object into FinalPostPayload, build CandidateWriterOutput,
+not adapt the parsed object into CandidatePost, build CandidateWriterOutput,
 run deterministic gates, evaluate quality, repair text, persist data, or
 connect to runtime packaging.
 """

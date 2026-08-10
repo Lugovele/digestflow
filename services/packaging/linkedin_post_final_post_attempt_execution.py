@@ -31,7 +31,7 @@ from services.packaging.linkedin_post_candidate_writer_structural_diagnostics im
     structural_diagnostics_from_dict,
 )
 from services.packaging.linkedin_post_deterministic_gate import (
-    run_final_post_deterministic_gate,
+    run_candidate_post_deterministic_gate,
 )
 from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_EXECUTION_FAILED,
@@ -248,7 +248,7 @@ def execute_final_post_standalone_candidate_attempt(
             candidate_writer_invocation_count=1,
         )
 
-    deterministic_gate_output = run_final_post_deterministic_gate(
+    deterministic_gate_output = run_candidate_post_deterministic_gate(
         candidate_writer_output,
         selected_evidence_ids=tuple(selected_evidence_ids),
     )

@@ -5,7 +5,7 @@ including author position and controlling angle. If author_take.core_opinion is
 reintroduced as a separate source of truth, it should be added to
 PostEditorialInput in a separate architecture step.
 
-Payload snapshots are represented as dictionaries at this spec stage. Stricter
+Payload snapshots are represented as dictionaries at this spec stage. First-attempt Candidate Writer snapshots contain the core CandidatePost shape {"post_text": ...}. Stricter
 snapshot immutability can be added when orchestration is implemented.
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ class TargetedRepairPlan:
 
 @dataclass(frozen=True)
 class CandidateWriterOutput:
-    """New candidate payload created by FinalPostCandidateWriter.
+    """New core CandidatePost payload created by FinalPostCandidateWriter.
 
     This is not a mutation of an existing payload. The next required handoff is
     FinalPostDeterministicGate.
