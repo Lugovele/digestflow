@@ -7,25 +7,15 @@ Generate a core CandidatePost from a PostBrief and AngleDecision.
 This prompt is a contract for future generation. It does not define runtime wiring,
 repair behavior, quality scoring, provider settings, persistence, or package output.
 
-## Model Routing Constraint
+## Role / Model Routing Boundary
 
-This final post generation prompt is intended for gpt-4.1-2025-04-14.
+This is a Candidate Writer prompt contract.
 
-Research, extraction, ArticleEvidencePack, and ContextualEvidencePack work may use
-gpt-4o-mini-2024-07-18 when those stages become LLM-backed.
-
-AngleDecision and PostBrief may start on gpt-4o-mini-2024-07-18 and may move to
-gpt-4.1-2025-04-14 if angle quality is weak.
-
-Repair or quality-sensitive rewrite work should use gpt-4.1-2025-04-14 when that
-stage exists.
+It is role-level and provider-neutral: the same prompt contract applies to any
+approved Candidate Writer provider or model.
 
 This prompt does not implement model routing, runtime wiring, model selection,
-provider configuration, or prompt execution.
-
-Do not evaluate final post quality from Codex or chat samples. Use API-like debug runs
-with the actual final prompt, actual input shape, intended model target, and
-validator-compatible JSON output.
+provider configuration, prompt execution, repair behavior, or quality scoring.
 
 ## Inputs
 
@@ -120,7 +110,20 @@ selected evidence, evidence above, source-grounded, separate signals,
 keep claims attributed, avoid unsupported conclusions, according to one source,
 another source, research cited in a third source, or sources matter.
 
-Keep post_text within CANDIDATE_POST_CONSTRAINTS_JSON.post_text.max_chars.
+TARGET:
+
+Use CANDIDATE_POST_CONSTRAINTS_JSON.post_text.prompt_target_min_chars and
+CANDIDATE_POST_CONSTRAINTS_JSON.post_text.prompt_target_max_chars as the preferred
+working range for post_text.
+
+Aim for concise post_text comfortably inside that target range.
+
+Do not expand merely to reach the upper target.
+
+HARD LIMIT:
+
+Treat CANDIDATE_POST_CONSTRAINTS_JSON.post_text.max_chars as the absolute hard
+failure boundary, not as the writing target.
 
 Write a finished LinkedIn post, not a brief, research summary, evidence report,
 repair instruction, debug note, or runtime log.

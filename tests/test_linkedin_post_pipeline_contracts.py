@@ -9,6 +9,7 @@ from apps.topics.models import Topic
 from services.packaging.linkedin_post_final_post_payload_contract import (
     FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
     FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
     build_final_post_payload_constraints,
 )
 from services.packaging.linkedin_post_pipeline import (
@@ -235,6 +236,20 @@ class FinalPostPayloadConstraintsContractTests(SimpleTestCase):
         self.assertLessEqual(
             FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
             FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+
+    def test_prompt_target_range_is_current_candidate_writer_headroom(self) -> None:
+        constraints = build_final_post_payload_constraints()
+
+        self.assertEqual(FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS, 1100)
+        self.assertEqual(FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS, 1200)
+        self.assertEqual(
+            constraints["post_text"]["prompt_target_min_chars"],
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
+        )
+        self.assertEqual(
+            constraints["post_text"]["prompt_target_max_chars"],
+            FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
         )
 
 

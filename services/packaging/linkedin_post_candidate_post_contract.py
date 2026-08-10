@@ -6,6 +6,8 @@ from typing import Any
 
 from services.packaging.linkedin_post_final_post_payload_contract import (
     FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS,
 )
 
 
@@ -72,6 +74,12 @@ def build_candidate_post_constraints() -> dict[str, Any]:
             "required": True,
             "min_chars": 1,
             "max_chars": CANDIDATE_POST_TEXT_MAX_CHARS,
+            "prompt_target_min_chars": (
+                FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MIN_CHARS
+            ),
+            "prompt_target_max_chars": (
+                FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS
+            ),
         },
         "allowed_fields": list(CANDIDATE_POST_FIELDS),
         "forbidden_fields": [

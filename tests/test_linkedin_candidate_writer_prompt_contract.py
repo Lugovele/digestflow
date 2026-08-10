@@ -269,6 +269,8 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
                 "canonical structural contract",
                 "post_text",
                 "max_chars",
+                "prompt_target_min_chars",
+                "prompt_target_max_chars",
             ],
         )
 
@@ -276,7 +278,64 @@ class LinkedInCandidateWriterPromptContractTests(SimpleTestCase):
         prompt = _normalized_prompt_text()
 
         self.assertNotIn("1300", prompt)
+        self.assertNotIn("1200", prompt)
+        self.assertNotIn("1100", prompt)
         self.assertIn("candidate_post_constraints_json", prompt)
+
+    def test_candidate_writer_prompt_distinguishes_target_from_hard_limit(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "target:",
+                "prompt_target_min_chars",
+                "prompt_target_max_chars",
+                "preferred",
+                "working range",
+                "comfortably inside that target range",
+                "do not expand merely to reach the upper target",
+                "hard limit:",
+                "absolute hard",
+                "failure boundary",
+                "not as the writing target",
+            ],
+        )
+
+    def test_candidate_writer_prompt_is_role_level_not_provider_specific(self):
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "Candidate Writer prompt contract",
+                "role-level and provider-neutral",
+                "same prompt contract applies",
+                "approved Candidate Writer provider or model",
+            ],
+        )
+        self.assertNotIn("gpt-4.1", prompt)
+        self.assertNotIn("gpt-4o-mini", prompt)
+        self.assertNotIn("claude", prompt)
+        self.assertNotIn("gemini", prompt)
+
+    def test_candidate_writer_prompt_does_not_introduce_length_repair_or_compression(self):
+        prompt = _normalized_prompt_text()
+
+        for forbidden in (
+            "compress",
+            "truncate",
+            "trunca" + "tion",
+            "com" + "pressor",
+            "second writer " + "call",
+            "shorten to fit",
+            "retry",
+            "fall" + "back",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, prompt)
 
     def test_candidate_writer_prompt_forbids_payload_debug_and_runtime_fields(self):
         prompt = _normalized_prompt_text()

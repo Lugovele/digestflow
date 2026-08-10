@@ -14,6 +14,9 @@ from services.packaging.linkedin_post_editorial_boundary import PostGenerationMe
 from services.packaging.linkedin_post_candidate_post_contract import (
     build_candidate_post_constraints,
 )
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_flow_input_builders import (
     CandidateWriterInput,
     build_candidate_writer_input,
@@ -117,6 +120,21 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertEqual(
             json.loads(render.variables["candidate_post_constraints_json"]),
             build_candidate_post_constraints(),
+        )
+        candidate_post_constraints = json.loads(
+            render.variables["candidate_post_constraints_json"]
+        )
+        self.assertEqual(
+            candidate_post_constraints["post_text"]["max_chars"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        )
+        self.assertEqual(
+            candidate_post_constraints["post_text"]["prompt_target_min_chars"],
+            1100,
+        )
+        self.assertEqual(
+            candidate_post_constraints["post_text"]["prompt_target_max_chars"],
+            1200,
         )
         self.assertIn("CANDIDATE_POST_CONSTRAINTS_JSON", render.input_text)
 
