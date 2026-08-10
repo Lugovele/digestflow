@@ -1,0 +1,99 @@
+{
+  "angle_decision": {
+    "angle_to_avoid": [
+      "generic summary",
+      "source-term drift",
+      "unsupported prescription risk",
+      "Do not use as a standalone claim beyond the source evidence.",
+      "generic summary; source-term drift",
+      "unsupported prescription risk; source-term drift",
+      "Do not overstate evidence from a0-summary.",
+      "Do not overstate evidence from a1-kp0.",
+      "Do not overstate evidence from a2-summary."
+    ],
+    "author_position": "The author position is that education needs both education impact and learner adoption to become a useful takeaway.",
+    "authorial_voice_directive": {
+      "authorial_observation": "The author notices that education impact and learner adoption should not be collapsed into one easy conclusion.",
+      "first_person_policy": "allowed_not_required",
+      "forbidden_author_claims": [
+        "personal experience",
+        "professional authority",
+        "direct market exposure",
+        "client or customer stories",
+        "invented emotional reaction",
+        "biographical claims"
+      ],
+      "personal_presence_requirement": "explicit_author_owned_statement_required",
+      "rejected_reading": "Reject treating education impact as proof that learner adoption has been resolved.",
+      "why_distinction_matters": "The distinction matters because readers may treat education impact as the whole story before checking learner adoption."
+    },
+    "controlling_angle": "The stronger education angle is that Education impact becomes more concrete when learner adoption is visible, but adoption alone does not explain educational value.",
+    "main_tension": "The tension is between education impact and learner adoption.",
+    "reader_problem": "Readers may treat education impact as the whole story before checking learner adoption.",
+    "supporting_evidence_ids": [
+      "a0-summary",
+      "a1-kp0",
+      "a2-summary"
+    ]
+  },
+  "benchmark_expected_behavior": {
+    "generic_output_risk": "The post may become generic commentary about preparing students for an AI future.",
+    "investment_advice_risk": "Low. The main risk is education-policy overreach or unsupported curriculum claims.",
+    "metric_hallucination_risk": "The fixture contains several education statistics; the model must not generalize beyond the stated claims.",
+    "must_not_infer": [
+      "Do not claim AI tools automatically improve education outcomes.",
+      "Do not invent new student adoption numbers, school policy statistics, or labor-market projections.",
+      "Do not conflate AI literacy, AI tool usage, and computer science education as the same curriculum.",
+      "Do not present statistics as global facts unless the source frames them that way.",
+      "Do not ignore teacher workload, guidance gaps, funding, policy continuity, or ethics constraints."
+    ],
+    "must_preserve": [
+      "AI literacy lacks a unified definition, creating inconsistent education approaches.",
+      "Teachers need professional development, support, and institutional continuity for AI education to work.",
+      "AI-in-education statistics should remain source claims, including daily student use, formal guidance gaps, and teacher time constraints.",
+      "Computer science education is broader than AI tool usage and includes algorithms, AI, cybersecurity, and problem-solving.",
+      "Ethics and responsible use should remain central to AI literacy discussion."
+    ],
+    "notes": "Good evaluation case for education commentary that separates adoption metrics from institutional readiness and curriculum design.",
+    "preferred_angle": "AI education sources show that adoption is moving faster than institutional readiness. A useful post should separate tool use, AI literacy, and computer science foundations.",
+    "source_dominance_risk": "The statistics article may dominate the angle and turn the post into a numbers recap."
+  },
+  "case_id": "topic_140_digest_126",
+  "digest": {
+    "id": 126,
+    "run_id": 170,
+    "title": "Digest for AI Education Teens"
+  },
+  "post_brief": {
+    "core_point": "The author position is that education needs both education impact and learner adoption to become a useful takeaway.",
+    "cta_direction": "Ask the reader to reconsider this reader problem: Readers may treat education impact as the whole story before checking learner adoption.",
+    "ending_direction": "End by returning to this author position: The author position is that education needs both education impact and learner adoption to become a useful takeaway.",
+    "evidence_to_use": [
+      {
+        "evidence_id": "a0-summary",
+        "evidence_text": "The article explores the challenges and opportunities related to AI literacy and educational AI development from the perspectives of teachers and researchers. The author argues that establishing a national AI literacy framework is essential for creating a cohesive educational strategy and highlights the need for interdisciplinary projects that integrate ethical discussions into AI learning. The conclusion emphasizes the importance of institutionalization and ongoing support for AI education to ensure its sustainability in schools.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a1-kp0",
+        "evidence_text": "30% of K-12 students use AI tools at least once per day.",
+        "role_in_post": "Use this evidence as practical_point support. May support a practical_point role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a2-summary",
+        "evidence_text": "The article emphasizes the critical importance of computer science (CS) education for K-12 students, arguing that it equips them with essential skills for a rapidly changing job market influenced by AI. The author concludes that schools must prioritize CS to prepare students for future careers across various industries while addressing the existing access and participation gaps. By integrating CS into curricula, students transition from passive technology users to active creators, fostering critical thinking and problem-solving skills.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      }
+    ],
+    "opening_direction": "Open with this editorial angle: The stronger education angle is that Education impact becomes more concrete when learner adoption is visible, but adoption alone does not explain educational value.",
+    "pattern_interrupt": "Interrupt the expected framing with this tension: The tension is between education impact and learner adoption.",
+    "practical_point": "Anchor the reader takeaway in this practical point: 30% of K-12 students use AI tools at least once per day."
+  },
+  "source_fixture": "tests/fixtures/linkedin_post_cases/topic_140_digest_126.json",
+  "source_type": "saved_completed_digest",
+  "topic": {
+    "id": 140,
+    "name": "AI Education Teens",
+    "source_mode": "discovery_only"
+  }
+}
