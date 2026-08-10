@@ -5,6 +5,7 @@ import copy
 import inspect
 import json
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -51,7 +52,7 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 
 class FinalPostControlledRepairExecutionTests(SimpleTestCase):
     def test_accepted_initial_attempt_skips_repair(self) -> None:
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(),
@@ -77,7 +78,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertIsNone(result.failure_code)
 
     def test_initial_technical_failure_skips_repair(self) -> None:
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(),
@@ -103,7 +104,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         evaluator_client = QueuedFakeClient(
             _provider_response(json.dumps(_quality_review_payload(passed=False)))
         )
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(repair_provider="gemini"),
@@ -125,7 +126,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(result.repair_invocation_count, 0)
 
     def test_initial_deterministic_gate_failure_skips_repair(self) -> None:
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(),
@@ -148,7 +149,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertIn("initial attempt failed", result.failure_message)
 
     def test_human_review_quality_outcome_skips_repair(self) -> None:
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(),
@@ -176,7 +177,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(result.failure_code, FAILURE_REPAIR_INELIGIBLE)
 
     def test_repair_disabled_skips_repair(self) -> None:
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(repair_enabled=False),
@@ -196,7 +197,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(repair_client.call_count, 0)
 
     def test_exhausted_attempt_budget_skips_repair(self) -> None:
-        repair_client = QueuedFakeClient(_provider_response(_final_post_payload_json()))
+        repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(
@@ -227,7 +228,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             _provider_response(json.dumps(_quality_review_payload(passed=True))),
         )
         repair_client = QueuedFakeClient(
-            _provider_response(_final_post_payload_json(post_text="Repaired human post."))
+            _provider_response(_candidate_json(post_text="Repaired human post."))
         )
         post_brief = _post_brief()
         angle_decision = _angle_decision()
@@ -270,16 +271,57 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         )
         self.assertEqual(
             set(result.repaired_candidate_output.payload),
-            set(_final_post_payload(post_text="Repaired human post.")),
+            set(_candidate_payload(post_text="Repaired human post.")),
         )
         self.assertIn("Repaired human post.", serialized)
         self.assertEqual(request, request_before)
         self.assertEqual(post_brief, post_brief_before)
         self.assertEqual(angle_decision, angle_decision_before)
 
+    def test_repaired_post_uses_candidate_post_gate_not_full_payload_gate(self) -> None:
+        self.assertFalse(
+            hasattr(
+                linkedin_post_controlled_repair_execution,
+                "run_final_post_deterministic_gate",
+            )
+        )
+
+        with patch.object(
+            linkedin_post_controlled_repair_execution,
+            "run_candidate_post_deterministic_gate",
+            wraps=linkedin_post_controlled_repair_execution.run_candidate_post_deterministic_gate,
+        ) as candidate_gate:
+            result = execute_final_post_controlled_repair_attempt(
+                _controlled_request(),
+                candidate_writer_client=QueuedFakeClient(
+                    _provider_response(_candidate_json())
+                ),
+                semantic_grounding_client=_passing_semantic_client(),
+                quality_evaluator_client=QueuedFakeClient(
+                    _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                    _provider_response(json.dumps(_quality_review_payload(passed=True))),
+                ),
+                repair_writer_client=QueuedFakeClient(
+                    _provider_response(_candidate_json(post_text="Repaired human post."))
+                ),
+                **_flow_kwargs(),
+            )
+
+        self.assertEqual(result.terminal_outcome, OUTCOME_ACCEPTED)
+        self.assertGreaterEqual(candidate_gate.call_count, 1)
+        repaired_gate_call = candidate_gate.call_args_list[-1]
+        self.assertEqual(
+            repaired_gate_call.args[0].payload,
+            {"post_text": "Repaired human post."},
+        )
+        self.assertEqual(
+            repaired_gate_call.kwargs["selected_evidence_ids"],
+            ("ev-1", "ev-2"),
+        )
+
     def test_repair_prompt_uses_allowlisted_findings_without_raw_metadata(self) -> None:
         repair_client = QueuedFakeClient(
-            _provider_response(_final_post_payload_json(post_text="Repaired text."))
+            _provider_response(_candidate_json(post_text="Repaired text."))
         )
 
         result = execute_final_post_controlled_repair_attempt(
@@ -302,6 +344,16 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertNotIn("raw_provider_response", prompt_text)
         self.assertIn("human_voice", prompt_text)
         self.assertIn("selected evidence only", prompt_text)
+        for forbidden in (
+            "FinalPostPayload",
+            "hook_variants",
+            "cta_variants",
+            "hashtags",
+            "quality_checks",
+            "carousel_outline",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, prompt_text)
         self.assertEqual(
             json.loads(
                 result.repair_prompt_render.variables["selected_evidence_json"]
@@ -320,7 +372,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             _provider_response(json.dumps(_quality_review_payload(passed=True)))
         )
         repair_client = QueuedFakeClient(
-            _provider_response(_final_post_payload_json(post_text="Grounded repaired text."))
+            _provider_response(_candidate_json(post_text="Grounded repaired text."))
         )
 
         result = execute_final_post_controlled_repair_attempt(
@@ -349,14 +401,14 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                 {
                     "repair_type": "semantic_grounding",
                     "failed_claim_ids": ["c1"],
-                    "repair_scope": "human-facing FinalPostPayload fields",
+                    "repair_scope": "CandidatePost.post_text",
                     "repair_instruction": "Remove unsupported wording.",
                     "decision_reason": "semantic grounding failed: unsupported claim",
                     "preserve": [
                         "selected evidence only",
                         "AngleDecision.controlling_angle",
                         "source qualifications such as likely, may, projected, and risk remains",
-                        "valid FinalPostPayload JSON",
+                        "valid CandidatePost JSON",
                     ],
                     "avoid": [
                         "new facts",
@@ -390,7 +442,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             semantic_grounding_client=semantic_client,
             quality_evaluator_client=evaluator_client,
             repair_writer_client=QueuedFakeClient(
-                _provider_response(_final_post_payload_json(post_text="Still ungrounded."))
+                _provider_response(_candidate_json(post_text="Still ungrounded."))
             ),
             **_flow_kwargs(),
         )
@@ -428,7 +480,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             semantic_grounding_client=semantic_client,
             quality_evaluator_client=evaluator_client,
             repair_writer_client=QueuedFakeClient(
-                _provider_response(_final_post_payload_json(post_text="Repaired text."))
+                _provider_response(_candidate_json(post_text="Repaired text."))
             ),
             **_flow_kwargs(),
         )
@@ -451,7 +503,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         )
         repair_client = QueuedFakeClient(
             _provider_response(
-                _final_post_payload_json(post_text="Repaired text still leaks ev-1.")
+                _candidate_json(post_text="Repaired text still leaks ev-1.")
             )
         )
 
@@ -474,7 +526,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
 
     def test_repaired_quality_fail_does_not_execute_second_repair(self) -> None:
         repair_client = QueuedFakeClient(
-            _provider_response(_final_post_payload_json(post_text="Still too generic."))
+            _provider_response(_candidate_json(post_text="Still too generic."))
         )
 
         result = execute_final_post_controlled_repair_attempt(
@@ -520,7 +572,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
 
     def test_repair_request_failure_does_not_mark_repair_executed(self) -> None:
         repair_client = QueuedFakeClient(
-            _provider_response(_final_post_payload_json(post_text="Should not be called."))
+            _provider_response(_candidate_json(post_text="Should not be called."))
         )
 
         result = execute_final_post_controlled_repair_attempt(
@@ -587,7 +639,9 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                 _provider_response(json.dumps(_quality_review_payload(passed=False)))
             ),
             repair_writer_client=QueuedFakeClient(
-                _provider_response(json.dumps({"post_text": "Missing fields."}))
+                _provider_response(
+                    json.dumps({"post_text": "Unexpected packaging.", "hook_variants": []})
+                )
             ),
             **_flow_kwargs(),
         )
@@ -609,7 +663,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             semantic_grounding_client=_passing_semantic_client(),
             quality_evaluator_client=evaluator_client,
             repair_writer_client=QueuedFakeClient(
-                _provider_response(_final_post_payload_json(post_text="Repaired text."))
+                _provider_response(_candidate_json(post_text="Repaired text."))
             ),
             **_flow_kwargs(),
         )
@@ -630,7 +684,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                 _provider_response(""),
             ),
             repair_writer_client=QueuedFakeClient(
-                _provider_response(_final_post_payload_json(post_text="Repaired text."))
+                _provider_response(_candidate_json(post_text="Repaired text."))
             ),
             **_flow_kwargs(),
         )
@@ -653,7 +707,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                 _provider_response("{not-json"),
             ),
             repair_writer_client=QueuedFakeClient(
-                _provider_response(_final_post_payload_json(post_text="Repaired text."))
+                _provider_response(_candidate_json(post_text="Repaired text."))
             ),
             **_flow_kwargs(),
         )
@@ -676,7 +730,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                 _provider_response(json.dumps(invalid_review)),
             ),
             repair_writer_client=QueuedFakeClient(
-                _provider_response(_final_post_payload_json(post_text="Repaired text."))
+                _provider_response(_candidate_json(post_text="Repaired text."))
             ),
             **_flow_kwargs(),
         )
@@ -944,39 +998,6 @@ def _candidate_payload(
     post_text: str = "Initial candidate text from fake provider.",
 ) -> dict:
     return {"post_text": post_text}
-
-
-def _final_post_payload_json(
-    *,
-    post_text: str = "Initial candidate text from fake provider.",
-) -> str:
-    return json.dumps(_final_post_payload(post_text=post_text))
-
-
-def _final_post_payload(
-    *,
-    post_text: str = "Initial candidate text from fake provider.",
-) -> dict:
-    return {
-        "post_text": post_text,
-        "hook_variants": [
-            "A practical remote work policy starts here.",
-            "Remote policy is not just a document.",
-            "Hybrid work needs clearer operating habits.",
-        ],
-        "cta_variants": [
-            "What would you clarify first in a remote policy?",
-            "Where does your team still need shared expectations?",
-            "What makes hybrid work sustainable in your organization?",
-        ],
-        "hashtags": ["#remotework", "#futureofwork"],
-        "quality_checks": {
-            "linkedin_ready": True,
-            "uses_only_provided_facts": True,
-            "has_clear_point_of_view": True,
-        },
-        "carousel_outline": [],
-    }
 
 
 def _quality_review_payload(

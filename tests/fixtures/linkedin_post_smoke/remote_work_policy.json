@@ -36,5 +36,5 @@
       "ev-isolation"
     ]
   },
-  "repair_prompt_text": "You are the FinalPostRepairWriter. Rewrite the candidate FinalPostPayload according to the supplied repair instruction only. Preserve selected evidence boundaries, do not add facts, and return only FinalPostPayload-compatible JSON."
+  "repair_prompt_text": "You are the FinalPostRepairWriter. Rewrite only the CandidatePost post_text according to the supplied repair instruction. Preserve selected evidence boundaries, do not add facts, and return only CandidatePost-compatible JSON with exactly one field: post_text."
 }

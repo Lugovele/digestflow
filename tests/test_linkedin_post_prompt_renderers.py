@@ -21,7 +21,6 @@ from services.packaging.linkedin_post_flow_input_builders import (
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
     CANDIDATE_POST_PROMPT_FIELDS,
-    FINAL_POST_PAYLOAD_PROMPT_FIELDS,
     QualityEvaluatorPromptRender,
     RepairWriterPromptRender,
     SELECTED_EVIDENCE_PROMPT_FIELDS,
@@ -1116,6 +1115,11 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         render = _repair_writer_render(
             original_candidate_payload={
                 **_candidate_payload(),
+                "hook_variants": ["legacy hook sentinel"],
+                "cta_variants": ["legacy cta sentinel"],
+                "hashtags": ["#LegacySentinel"],
+                "quality_checks": {"linkedin_ready": True},
+                "carousel_outline": ["legacy carousel sentinel"],
                 "provider": "provider-sentinel",
                 "model": "model-sentinel",
                 "raw_provider_response": "raw-provider-sentinel",
@@ -1127,7 +1131,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertEqual(
             set(json.loads(render.variables["original_candidate_payload_json"])),
-            set(FINAL_POST_PAYLOAD_PROMPT_FIELDS),
+            set(CANDIDATE_POST_PROMPT_FIELDS),
         )
         for forbidden in (
             "provider-sentinel",
@@ -1135,6 +1139,11 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             "raw-provider-sentinel",
             "input_tokens",
             "debug-sentinel",
+            "legacy hook sentinel",
+            "legacy cta sentinel",
+            "#LegacySentinel",
+            "legacy carousel sentinel",
+            "linkedin_ready",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, rendered_text)

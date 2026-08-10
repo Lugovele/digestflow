@@ -33,7 +33,7 @@ class LinkedInPostFlowAccessTests(SimpleTestCase):
     def test_no_role_creates_first_final_post_payload_in_core_path(self) -> None:
         self.assertEqual(roles_that_can_create_payload(), ())
 
-    def test_only_repair_agent_can_create_revised_final_post_payload(self) -> None:
+    def test_only_repair_agent_can_create_revised_candidate_post(self) -> None:
         self.assertEqual(roles_that_can_create_revised_payload(), (ROLE_REPAIR_AGENT,))
 
     def test_no_role_may_mutate_existing_payload_in_place(self) -> None:
@@ -72,6 +72,13 @@ class LinkedInPostFlowAccessTests(SimpleTestCase):
     def test_repair_agent_must_handoff_to_deterministic_gate(self) -> None:
         self.assertTrue(can_handoff_to(ROLE_REPAIR_AGENT, ROLE_DETERMINISTIC_GATE))
         self.assertTrue(is_allowed_handoff(ROLE_REPAIR_AGENT, ROLE_DETERMINISTIC_GATE))
+
+    def test_repair_agent_access_contract_uses_candidate_post_boundary(self) -> None:
+        contract = get_access_contract(ROLE_REPAIR_AGENT)
+
+        self.assertIn("CandidatePost", contract.allowed_inputs)
+        self.assertNotIn("FinalPostPayload", contract.allowed_inputs)
+        self.assertEqual(contract.allowed_outputs, ("CandidatePost",))
 
     def test_candidate_writer_must_handoff_to_deterministic_gate(self) -> None:
         self.assertTrue(can_handoff_to(ROLE_CANDIDATE_WRITER, ROLE_DETERMINISTIC_GATE))

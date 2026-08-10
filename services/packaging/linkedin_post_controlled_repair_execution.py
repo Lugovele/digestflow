@@ -25,6 +25,7 @@ from services.packaging.linkedin_post_attempt_outcome import (
 )
 from services.packaging.linkedin_post_candidate_writer_output_adapter import (
     CandidateWriterOutputAdaptationError,
+    build_candidate_writer_output_from_parsed_response,
 )
 from services.packaging.linkedin_post_candidate_writer_parser import (
     CandidateWriterResponseParseError,
@@ -55,9 +56,8 @@ from services.packaging.linkedin_post_controlled_repair_contract import (
     FinalPostControlledRepairResult,
     FinalPostRepairEligibility,
 )
-from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
 from services.packaging.linkedin_post_deterministic_gate import (
-    run_final_post_deterministic_gate,
+    run_candidate_post_deterministic_gate,
 )
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_final_post_attempt_execution import (
@@ -85,12 +85,6 @@ from services.packaging.linkedin_post_flow_decision import (
 )
 from services.packaging.linkedin_post_flow_input_builders import (
     build_post_editorial_input,
-)
-from services.packaging.linkedin_post_pipeline import (
-    FinalPostPayload,
-    LinkedInPostPipelineContractError,
-    final_post_payload_to_dict,
-    validate_final_post_payload,
 )
 from services.packaging.linkedin_post_prompt_renderers import (
     render_quality_evaluator_prompt_input,
@@ -278,9 +272,9 @@ def execute_final_post_controlled_repair_attempt(
         )
 
     try:
-        repaired_candidate_output = _build_repair_writer_output_from_parsed_response(
-            parsed_repair_candidate=parsed_repair_candidate,
-            repair_raw_response=repair_raw_response,
+        repaired_candidate_output = build_candidate_writer_output_from_parsed_response(
+            parsed_candidate=parsed_repair_candidate,
+            raw_response=repair_raw_response,
         )
     except CandidateWriterOutputAdaptationError as exc:
         return _repair_failure_result(
@@ -296,7 +290,7 @@ def execute_final_post_controlled_repair_attempt(
             repair_invocation_count=1,
         )
 
-    repaired_gate = run_final_post_deterministic_gate(
+    repaired_gate = run_candidate_post_deterministic_gate(
         repaired_candidate_output,
         selected_evidence_ids=evidence_ids,
     )
@@ -1037,7 +1031,7 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
                 if grounding_review is not None
                 else []
             ),
-            "repair_scope": "human-facing FinalPostPayload fields",
+            "repair_scope": "CandidatePost.post_text",
             "repair_instruction": _semantic_grounding_repair_instruction(
                 grounding_review,
                 decision.reason,
@@ -1047,7 +1041,7 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
                 "selected evidence only",
                 "AngleDecision.controlling_angle",
                 "source qualifications such as likely, may, projected, and risk remains",
-                "valid FinalPostPayload JSON",
+                "valid CandidatePost JSON",
             ],
             "avoid": [
                 "new facts",
@@ -1059,12 +1053,12 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
     return {
         "repair_type": "editorial",
         "failed_criterion": _primary_failed_criterion(initial_result),
-        "repair_scope": "human-facing FinalPostPayload fields",
+        "repair_scope": "CandidatePost.post_text",
         "repair_instruction": initial_result.final_attempt_outcome.decision.reason,
         "preserve": [
             "selected evidence only",
             "AngleDecision.controlling_angle",
-            "valid FinalPostPayload JSON",
+            "valid CandidatePost JSON",
         ],
         "avoid": [
             "new facts",
@@ -1231,60 +1225,6 @@ def _repair_writer_execution_failure_code(raw_response: Any) -> str:
     if raw_response.execution_error == "empty provider response":
         return FAILURE_REPAIR_WRITER_EMPTY_RESPONSE
     return FAILURE_REPAIR_WRITER_PROVIDER
-
-
-def _build_repair_writer_output_from_parsed_response(
-    *,
-    parsed_repair_candidate: dict[str, Any],
-    repair_raw_response: Any,
-) -> CandidateWriterOutput:
-    """Build a repaired full FinalPostPayload handoff from Repair Writer output."""
-
-    if getattr(repair_raw_response, "execution_error", None):
-        raise CandidateWriterOutputAdaptationError(
-            "raw_response_execution_error",
-            "raw response has an execution error and cannot build repair output.",
-        )
-
-    try:
-        final_post_payload = _final_post_payload_from_dict(parsed_repair_candidate)
-        validate_final_post_payload(final_post_payload)
-    except (KeyError, TypeError, LinkedInPostPipelineContractError) as exc:
-        raise CandidateWriterOutputAdaptationError(
-            FAILURE_REPAIR_WRITER_ADAPTATION,
-            "parsed repair candidate does not satisfy FinalPostPayload structure.",
-        ) from exc
-
-    prompt_metadata = getattr(repair_raw_response, "prompt_metadata", None)
-    return CandidateWriterOutput(
-        payload=final_post_payload_to_dict(final_post_payload),
-        raw_output=getattr(repair_raw_response, "raw_text", None),
-        provider=getattr(repair_raw_response, "provider", None),
-        model=getattr(repair_raw_response, "model", None),
-        prompt_name=(
-            getattr(prompt_metadata, "prompt_name", None)
-            if prompt_metadata is not None
-            else None
-        ),
-        prompt_version=(
-            getattr(prompt_metadata, "prompt_version", None)
-            if prompt_metadata is not None
-            else None
-        ),
-        token_usage=copy.deepcopy(getattr(repair_raw_response, "usage", None)),
-        cost_metadata=None,
-    )
-
-
-def _final_post_payload_from_dict(payload: dict[str, Any]) -> FinalPostPayload:
-    return FinalPostPayload(
-        post_text=payload["post_text"],
-        hook_variants=payload["hook_variants"],
-        cta_variants=payload["cta_variants"],
-        hashtags=payload["hashtags"],
-        quality_checks=payload["quality_checks"],
-        carousel_outline=payload.get("carousel_outline", []),
-    )
 
 
 def _repaired_semantic_execution_failure_code(raw_response: Any) -> str:

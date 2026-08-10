@@ -32,14 +32,6 @@ CANDIDATE_POST_PROMPT_FIELDS = (
 )
 
 
-FINAL_POST_PAYLOAD_PROMPT_FIELDS = (
-    "post_text",
-    "hook_variants",
-    "cta_variants",
-    "hashtags",
-    "quality_checks",
-    "carousel_outline",
-)
 
 SELECTED_EVIDENCE_PROMPT_FIELDS = (
     "evidence_id",
@@ -223,7 +215,7 @@ def render_repair_writer_prompt_input(
     selected_evidence_ids = _selected_evidence_ids_for_repair_prompt(selected_evidence)
     variables = {
         "original_candidate_payload_json": _stable_json(
-            _final_post_payload_for_repair_prompt(original_candidate_payload)
+            _candidate_post_payload_for_prompt(original_candidate_payload)
         ),
         "post_brief_json": _stable_json(
             _post_brief_for_repair_prompt(post_brief, selected_evidence_ids)
@@ -449,18 +441,6 @@ def _candidate_post_payload_for_prompt(candidate_payload: Any) -> dict[str, Any]
         raise TypeError("candidate_payload.post_text must be a non-empty string.")
 
     return {"post_text": post_text}
-
-
-def _final_post_payload_for_repair_prompt(candidate_payload: Any) -> dict[str, Any]:
-    serialized = _serialize_render_value(candidate_payload)
-    if not isinstance(serialized, dict):
-        raise TypeError("candidate_payload must serialize to a dictionary.")
-
-    return {
-        field_name: serialized[field_name]
-        for field_name in FINAL_POST_PAYLOAD_PROMPT_FIELDS
-        if field_name in serialized
-    }
 
 
 def _selected_evidence_for_quality_prompt(selected_evidence: Any) -> list[dict[str, Any]]:

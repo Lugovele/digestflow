@@ -172,7 +172,7 @@ FINAL_POST_AGENT_ACCESS_CONTRACTS = {
         agent_role=ROLE_REPAIR_AGENT,
         access_mode=ACCESS_WRITE_REVISED_PAYLOAD,
         allowed_inputs=(
-            "FinalPostPayload",
+            "CandidatePost",
             "PostBrief",
             "AngleDecision",
             "selected_evidence",
@@ -180,7 +180,7 @@ FINAL_POST_AGENT_ACCESS_CONTRACTS = {
             "QualityReviewResult",
             "TargetedRepairPlan",
         ),
-        allowed_outputs=("FinalPostPayload",),
+        allowed_outputs=("CandidatePost",),
         allowed_payload_actions=("create_revised_payload",),
         forbidden_payload_fields=(),
         may_create_final_post_payload=False,
