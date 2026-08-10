@@ -478,6 +478,7 @@ def _run_record_from_smoke_result(
     quality = sanitized.get("quality_review") if isinstance(sanitized.get("quality_review"), dict) else {}
     grounding = sanitized.get("semantic_grounding_review") if isinstance(sanitized.get("semantic_grounding_review"), dict) else {}
     candidate_payload = sanitized.get("candidate_payload") if isinstance(sanitized.get("candidate_payload"), dict) else {}
+    publication_package = sanitized.get("publication_package") if isinstance(sanitized.get("publication_package"), dict) else {}
     final_outcome_summary = sanitized.get("final_attempt_outcome") if isinstance(sanitized.get("final_attempt_outcome"), dict) else {}
     provider_diagnostics = sanitized.get("provider_response_diagnostics") if isinstance(sanitized.get("provider_response_diagnostics"), dict) else {}
     candidate_writer_diagnostics = _candidate_writer_structural_diagnostics(sanitized)
@@ -510,9 +511,10 @@ def _run_record_from_smoke_result(
         "repair_diagnostics": repair_diagnostics,
         "final_attempt_disposition": smoke_result.final_outcome,
         "post_length": len(smoke_result.final_post_text or ""),
-        "hook_variant_count": candidate_payload.get("hook_variants_count"),
-        "cta_variant_count": candidate_payload.get("cta_variants_count"),
-        "hashtag_count": _length_or_none(candidate_payload.get("hashtags")),
+        "candidate_post_length": candidate_payload.get("post_text_length"),
+        "hook_variant_count": _length_or_none(publication_package.get("hook_variants")),
+        "cta_variant_count": _length_or_none(publication_package.get("cta_variants")),
+        "hashtag_count": _length_or_none(publication_package.get("hashtags")),
         "provider_invocation_counts": copy.deepcopy(smoke_result.invocation_counts),
         "invocation_budget": copy.deepcopy(smoke_result.invocation_budget),
         "provider_models": copy.deepcopy(smoke_result.provider_models),

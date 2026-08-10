@@ -186,6 +186,28 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             result.sanitized_result["quality_review"]["criterion_rationales"],
             {"human_voice": {"rationale": "Human voice is specific."}},
         )
+        self.assertEqual(
+            result.sanitized_result["candidate_payload"],
+            {"post_text_length": len("Accepted smoke post.")},
+        )
+        self.assertEqual(
+            result.sanitized_result["accepted_core_post"],
+            {"post_text": "Accepted smoke post."},
+        )
+        publication_package = result.sanitized_result["publication_package"]
+        self.assertEqual(publication_package["post_text"], "Accepted smoke post.")
+        self.assertEqual(publication_package["hook_variants"], [])
+        self.assertEqual(publication_package["cta_variants"], [])
+        self.assertEqual(publication_package["hashtags"], [])
+        self.assertEqual(publication_package["carousel_outline"], [])
+        self.assertEqual(
+            publication_package["quality_checks"],
+            {
+                "linkedin_ready": True,
+                "uses_only_provided_facts": True,
+                "has_clear_point_of_view": True,
+            },
+        )
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_semantic_grounding_summary_uses_blocking_claim_ids_only(self) -> None:
@@ -239,6 +261,19 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.invocation_counts["quality_evaluator"], 2)
         self.assertEqual(result.invocation_counts["repair_writer"], 1)
         self.assertEqual(result.final_post_text, "Accepted repaired smoke post.")
+        self.assertEqual(
+            result.sanitized_result["repaired_candidate_payload"],
+            {"post_text_length": len("Accepted repaired smoke post.")},
+        )
+        self.assertEqual(
+            result.sanitized_result["accepted_core_post"],
+            {"post_text": "Accepted repaired smoke post."},
+        )
+        self.assertEqual(result.sanitized_result["publication_package"]["hashtags"], [])
+        self.assertEqual(
+            result.sanitized_result["publication_package"]["carousel_outline"],
+            [],
+        )
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_repair_expected_but_not_executed_is_scenario_mismatch(self) -> None:

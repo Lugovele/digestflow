@@ -327,6 +327,10 @@ class LinkedInPostModelExperimentHarnessTests(SimpleTestCase):
         self.assertEqual(record["plan_id"], "gpt_baseline")
         self.assertIn("repair_diagnostics", record)
         self.assertEqual(record["final_post_text"], "Accepted final post")
+        self.assertEqual(record["candidate_post_length"], len("Accepted final post"))
+        self.assertEqual(record["hook_variant_count"], 0)
+        self.assertEqual(record["cta_variant_count"], 0)
+        self.assertEqual(record["hashtag_count"], 0)
 
     def test_secret_sentinel_is_excluded_from_artifacts(self) -> None:
         smoke_runner = Mock(return_value=_smoke_result(secret_fields=True))
@@ -758,10 +762,18 @@ def _smoke_result(
                 "pass": True,
                 "blocking_claim_ids": [],
             },
-            "candidate_payload": {
-                "hook_variants_count": 3,
-                "cta_variants_count": 2,
-                "hashtags": ["#PostFlow", "#LinkedIn"],
+            "candidate_payload": {"post_text_length": len("Accepted final post")},
+            "publication_package": {
+                "post_text": "Accepted final post",
+                "hook_variants": [],
+                "cta_variants": [],
+                "hashtags": [],
+                "carousel_outline": [],
+                "quality_checks": {
+                    "linkedin_ready": True,
+                    "uses_only_provided_facts": True,
+                    "has_clear_point_of_view": True,
+                },
             },
             "final_attempt_outcome": {
                 "terminal_outcome": "accepted",

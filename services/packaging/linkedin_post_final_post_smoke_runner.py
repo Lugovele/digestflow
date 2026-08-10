@@ -63,6 +63,10 @@ from services.packaging.linkedin_post_prompt_registry import (
 from services.packaging.linkedin_post_prompt_renderers import (
     render_candidate_writer_prompt_input,
 )
+from services.packaging.linkedin_post_publication_assembler import (
+    accepted_post_from_payload,
+    assemble_linkedin_publication_package,
+)
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
@@ -879,6 +883,15 @@ def _quality_passed(quality_state: Any) -> bool | None:
     return quality_review.get("pass") is True
 
 
+def _semantic_grounding_passed(semantic_state: Any) -> bool | None:
+    if semantic_state is None:
+        return None
+    grounding_review = getattr(semantic_state, "grounding_review", None)
+    if grounding_review is None:
+        return False
+    return getattr(grounding_review, "passed", None) is True
+
+
 def _controlled_gate_passed(result: Any) -> bool | None:
     repaired_gate = getattr(result, "repaired_deterministic_gate_output", None)
     if repaired_gate is not None:
@@ -895,11 +908,22 @@ def _controlled_quality_passed(result: Any) -> bool | None:
     return _quality_passed(getattr(initial_result, "quality_evaluation_state", None))
 
 
+def _controlled_semantic_grounding_passed(result: Any) -> bool | None:
+    repaired_grounding = getattr(result, "repaired_semantic_grounding_state", None)
+    if repaired_grounding is not None:
+        return _semantic_grounding_passed(repaired_grounding)
+    initial_result = getattr(result, "initial_attempt_result", None)
+    return _semantic_grounding_passed(
+        getattr(initial_result, "semantic_grounding_state", None)
+    )
+
+
 def _sanitize_standalone_result(
     result: Any,
     *,
     include_raw_responses: bool,
 ) -> dict[str, Any]:
+    accepted_payload = _accepted_payload_from_standalone(result)
     return {
         "completed_stage": getattr(result, "completed_stage", None),
         "failure_stage": getattr(result, "failure_stage", None),
@@ -927,6 +951,19 @@ def _sanitize_standalone_result(
             result,
             include_post_text=include_raw_responses,
         ),
+        "accepted_core_post": _accepted_core_post_summary(accepted_payload),
+        "publication_package": _publication_package_summary(
+            accepted_payload,
+            deterministic_gate_passed=_gate_passed(
+                getattr(result, "deterministic_gate_output", None)
+            ),
+            semantic_grounding_passed=_semantic_grounding_passed(
+                getattr(result, "semantic_grounding_state", None)
+            ),
+            quality_passed=_quality_passed(
+                getattr(result, "quality_evaluation_state", None)
+            ),
+        ),
         "quality_review": _quality_review_summary(result),
         "semantic_grounding_review": _semantic_grounding_review_summary(result),
         "provider_response_diagnostics": _provider_response_diagnostics_summary(result),
@@ -943,6 +980,7 @@ def _sanitize_controlled_result(
     *,
     include_raw_responses: bool,
 ) -> dict[str, Any]:
+    accepted_payload = copy.deepcopy(getattr(result, "accepted_payload", None))
     return {
         "repair_eligibility": _to_json_safe(getattr(result, "repair_eligibility", None)),
         "repair_executed": getattr(result, "repair_executed", False),
@@ -972,6 +1010,13 @@ def _sanitize_controlled_result(
         "repaired_candidate_payload": _payload_summary(
             getattr(getattr(result, "repaired_candidate_output", None), "payload", None),
             include_post_text=include_raw_responses,
+        ),
+        "accepted_core_post": _accepted_core_post_summary(accepted_payload),
+        "publication_package": _publication_package_summary(
+            accepted_payload,
+            deterministic_gate_passed=_controlled_gate_passed(result),
+            semantic_grounding_passed=_controlled_semantic_grounding_passed(result),
+            quality_passed=_controlled_quality_passed(result),
         ),
         "repaired_quality_review": _quality_review_summary_from_state(
             getattr(result, "repaired_quality_evaluation_state", None)
@@ -1040,16 +1085,38 @@ def _payload_summary(
 ) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
+    post_text = payload.get("post_text")
     summary = {
-        "hook_variants_count": len(payload.get("hook_variants") or []),
-        "cta_variants_count": len(payload.get("cta_variants") or []),
-        "hashtags": copy.deepcopy(payload.get("hashtags") or []),
-        "quality_checks": copy.deepcopy(payload.get("quality_checks") or {}),
-        "carousel_outline_count": len(payload.get("carousel_outline") or []),
+        "post_text_length": len(post_text) if isinstance(post_text, str) else None,
     }
     if include_post_text:
-        summary["post_text"] = payload.get("post_text")
+        summary["post_text"] = post_text
     return summary
+
+
+def _accepted_core_post_summary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    return accepted_post_from_payload(payload).to_dict()
+
+
+def _publication_package_summary(
+    payload: dict[str, Any] | None,
+    *,
+    deterministic_gate_passed: bool | None,
+    semantic_grounding_passed: bool | None,
+    quality_passed: bool | None,
+) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    package = assemble_linkedin_publication_package(
+        accepted_post_from_payload(payload),
+        deterministic_gate_passed=deterministic_gate_passed is True,
+        semantic_grounding_passed=semantic_grounding_passed is True,
+        quality_passed=quality_passed is True,
+        final_accepted=True,
+    )
+    return package.to_dict()
 
 
 def _quality_review_summary(result: Any) -> dict[str, Any] | None:
