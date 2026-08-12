@@ -52,6 +52,7 @@ DIAGNOSTIC_EXCLUDED_CASE_IDS = ("topic_214_digest_128",)
 SEMANTIC_GROUNDING_PARSER_PATH = "services.packaging.linkedin_post_semantic_grounding_parser.parse_and_normalize_semantic_grounding_response"
 SEMANTIC_GROUNDING_NORMALIZATION_PATH = "services.packaging.linkedin_post_semantic_grounding_contract.normalize_semantic_grounding_review_result"
 DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 2400
+GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 4800
 
 FORBIDDEN_ARTIFACT_KEY_FRAGMENTS = (
     "api_key", "secret", "password", "credential", "header",
@@ -220,7 +221,12 @@ def default_semantic_grounding_benchmark_cases(fixture_root: Path | None = None)
 def default_semantic_grounding_benchmark_plans() -> tuple[SemanticGroundingBenchmarkPlan, ...]:
     return (
         SemanticGroundingBenchmarkPlan(PLAN_GPT_4_1_SEMANTIC_GROUNDING, AI_PROVIDER_OPENAI, OPENAI_FINAL_POST_MODEL),
-        SemanticGroundingBenchmarkPlan(PLAN_GEMINI_3_6_FLASH_SEMANTIC_GROUNDING, AI_PROVIDER_GEMINI, GEMINI_SUPPORTED_MODELS[0]),
+        SemanticGroundingBenchmarkPlan(
+            PLAN_GEMINI_3_6_FLASH_SEMANTIC_GROUNDING,
+            AI_PROVIDER_GEMINI,
+            GEMINI_SUPPORTED_MODELS[0],
+            max_output_tokens=GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        ),
     )
 
 
@@ -496,6 +502,9 @@ def _live_run_record(
             normalization_success=False,
             canonical_error_code=exc.code,
             parser_error_details=_parser_error_details(exc),
+            normalization_error_details=(
+                _normalization_error_details(exc) if normalization_failed else None
+            ),
             response_diagnostics=_raw_response_diagnostics(raw_response),
             semantic_grounding_calls=1,
         )
@@ -573,6 +582,7 @@ def _benchmark_record(
     blocking_claim_ids: list[str] | None = None,
     claim_reviews: list[dict[str, Any]] | None = None,
     parser_error_details: dict[str, Any] | None = None,
+    normalization_error_details: dict[str, Any] | None = None,
     response_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     selected_evidence_ids = [item["evidence_id"] for item in case.selected_evidence]
@@ -614,6 +624,7 @@ def _benchmark_record(
         "failure_code": failure_code,
         "canonical_error_code": canonical_error_code,
         "parser_error_details": copy.deepcopy(parser_error_details),
+        "normalization_error_details": copy.deepcopy(normalization_error_details),
         "response_diagnostics": copy.deepcopy(response_diagnostics),
         "grounding_pass": grounding_pass,
         "blocking_claim_count": blocking_claim_count,
@@ -635,6 +646,12 @@ def _parser_error_details(error: Exception) -> dict[str, Any]:
         "line": getattr(error, "line", None),
         "column": getattr(error, "column", None),
         "position": getattr(error, "position", None),
+    }
+
+
+def _normalization_error_details(error: Exception) -> dict[str, Any]:
+    return {
+        "message": _safe_text(getattr(error, "normalization_error", "")),
     }
 
 

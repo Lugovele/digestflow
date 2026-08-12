@@ -19,6 +19,17 @@ ERROR_MALFORMED_FENCE = "malformed_fence"
 ERROR_MALFORMED_JSON = "malformed_json"
 ERROR_NON_OBJECT_JSON = "non_object_json"
 ERROR_NORMALIZATION_FAILED = "normalization_failed"
+SENSITIVE_NORMALIZATION_ERROR_MARKERS = (
+    "sk-",
+    "bearer ",
+    "x-api-key",
+    "api_key",
+    "secret",
+    "password",
+    "credential",
+    "authorization",
+    "token",
+)
 
 
 class SemanticGroundingResponseParseError(ValueError):
@@ -32,12 +43,14 @@ class SemanticGroundingResponseParseError(ValueError):
         line: int | None = None,
         column: int | None = None,
         position: int | None = None,
+        normalization_error: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.line = line
         self.column = column
         self.position = position
+        self.normalization_error = normalization_error
 
 
 def parse_semantic_grounding_raw_response(
@@ -98,6 +111,7 @@ def parse_and_normalize_semantic_grounding_response(
         raise SemanticGroundingResponseParseError(
             ERROR_NORMALIZATION_FAILED,
             "semantic grounding response failed review normalization.",
+            normalization_error=_safe_normalization_error(str(exc)),
         ) from exc
 
 
@@ -150,3 +164,13 @@ def _extract_fenced_json_text(stripped: str) -> str:
 
 def _reject_non_standard_number(value: str) -> None:
     raise ValueError(f"non-standard JSON number: {value}")
+
+
+def _safe_normalization_error(message: str) -> str:
+    text = " ".join(str(message or "").split())
+    if not text:
+        return ""
+    lowered = text.lower()
+    if any(marker in lowered for marker in SENSITIVE_NORMALIZATION_ERROR_MARKERS):
+        return "redacted safe normalization error"
+    return text[:300]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -62,6 +63,35 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
             )
 
         self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
+        self.assertEqual(
+            error.exception.normalization_error,
+            "semantic grounding claim c1 references unselected evidence ID: unselected",
+        )
+
+    def test_normalization_failure_redacts_sensitive_cause_details(self) -> None:
+        sensitive_messages = (
+            "x-api-key sk-test leaked in error",
+            "authorization token leaked in error",
+            "password credential leaked in error",
+        )
+
+        for message in sensitive_messages:
+            with self.subTest(message=message):
+                with patch(
+                    "services.packaging.linkedin_post_semantic_grounding_parser.normalize_semantic_grounding_review_result",
+                    side_effect=ValueError(message),
+                ):
+                    with self.assertRaises(SemanticGroundingResponseParseError) as error:
+                        parse_and_normalize_semantic_grounding_response(
+                            _raw(json.dumps(_review_payload())),
+                            selected_evidence_ids=("a0-summary",),
+                        )
+
+                self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
+                self.assertEqual(
+                    error.exception.normalization_error,
+                    "redacted safe normalization error",
+                )
 
     def test_legacy_string_repair_instruction_is_normalization_failure(self) -> None:
         payload = _review_payload(passed=False)
@@ -112,6 +142,7 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
                     )
 
                 self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
+                self.assertTrue(error.exception.normalization_error)
 
 
 def _raw(raw_text: str) -> SemanticGroundingRawResponse:

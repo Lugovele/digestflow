@@ -57,6 +57,18 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertEqual(plans[0].model, OPENAI_FINAL_POST_MODEL)
         self.assertEqual(plans[1].provider, "gemini")
         self.assertEqual(plans[1].model, GEMINI_SUPPORTED_MODELS[0])
+        self.assertEqual(
+            plans[0].max_output_tokens,
+            benchmark.DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        )
+        self.assertEqual(
+            plans[1].max_output_tokens,
+            benchmark.GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        )
+        self.assertGreater(
+            plans[1].max_output_tokens,
+            plans[0].max_output_tokens,
+        )
 
     def test_prompt_render_is_deterministic_for_fixed_case(self) -> None:
         case = benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json")
@@ -401,6 +413,15 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertEqual(record["failure_code"], benchmark.FAILURE_NORMALIZATION)
         self.assertTrue(record["parse_success"])
         self.assertFalse(record["normalization_success"])
+        self.assertEqual(
+            record["normalization_error_details"],
+            {
+                "message": (
+                    "semantic grounding claim c1 references unselected evidence "
+                    "ID: unselected"
+                )
+            },
+        )
 
     def test_live_artifacts_persist_normalized_claim_findings_without_raw_prompt_input(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
