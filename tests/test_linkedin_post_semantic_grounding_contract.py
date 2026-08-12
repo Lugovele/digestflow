@@ -6,11 +6,16 @@ import json
 from django.test import SimpleTestCase
 
 from services.packaging.linkedin_post_semantic_grounding_contract import (
+    CLAIM_TYPE_AUTHOR_INTERPRETATION,
+    CLAIM_TYPE_CAUSAL_CLAIM,
+    CLAIM_TYPE_CTA_OR_RHETORICAL,
+    CLAIM_TYPE_METRIC_OR_DATE,
     GROUNDING_STATUS_FAIL,
     GROUNDING_STATUS_PASS,
     SEMANTIC_GROUNDING_SEVERITIES,
     SEMANTIC_GROUNDING_SUPPORT_STATUSES,
     SUPPORT_STATUS_CAUSAL_OVERREACH,
+    SUPPORT_STATUS_NOT_CLAIM,
     SUPPORT_STATUS_PARTIALLY_SUPPORTED,
     SUPPORT_STATUS_SUPPORTED,
     SUPPORT_STATUS_UNSUPPORTED,
@@ -134,6 +139,34 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
             rules["assessment_guidance"]["causal_fidelity"],
         )
 
+    def test_prompt_rules_allow_source_bounded_authorial_synthesis_without_verbatim_wording(
+        self,
+    ) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        synthesis_rules = rules["assessment_guidance"][
+            "source_bounded_authorial_synthesis"
+        ]
+
+        self.assertIn(
+            "Do not mark source-bounded synthesis unsupported solely because the exact wording is absent from evidence.",
+            synthesis_rules,
+        )
+        self.assertIn(
+            "Authorial synthesis still fails when it invents facts, metrics, examples, actors, dates, causal mechanisms, or stronger conditions not present in selected evidence.",
+            synthesis_rules,
+        )
+
+    def test_prompt_rules_require_mixed_claim_splitting(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        splitting_rules = rules["assessment_guidance"]["mixed_claim_splitting"]
+
+        self.assertIn(
+            "Split rhetorical or authorial framing from factual, causal, comparative, predictive, or prescriptive assertions.",
+            splitting_rules,
+        )
+
     def test_directly_supported_claim_passes(self) -> None:
         result = normalize_semantic_grounding_review_result(
             _review_payload(),
@@ -144,6 +177,86 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
         self.assertTrue(result.passed)
         self.assertEqual(result.blocking_claim_ids, ())
         self.assertEqual(result.claim_reviews[0].support_status, SUPPORT_STATUS_SUPPORTED)
+
+    def test_mixed_authorial_sentence_can_split_framing_from_supported_claim(
+        self,
+    ) -> None:
+        payload = _review_payload(
+            claims=[
+                _claim(
+                    claim_id="c1",
+                    claim_text="That distinction matters.",
+                    claim_type=CLAIM_TYPE_CTA_OR_RHETORICAL,
+                    support_status=SUPPORT_STATUS_NOT_CLAIM,
+                    severity="info",
+                    evidence_ids=[],
+                    rationale="Authorial framing, not an evidence-bearing claim.",
+                ),
+                _claim(
+                    claim_id="c2",
+                    claim_text="The adoption number shows exposure.",
+                    claim_type=CLAIM_TYPE_METRIC_OR_DATE,
+                    support_status=SUPPORT_STATUS_SUPPORTED,
+                    severity="info",
+                    evidence_ids=["a0-summary"],
+                    rationale="Selected evidence supports the adoption/exposure fact.",
+                ),
+            ],
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+        self.assertEqual(result.claim_reviews[0].support_status, SUPPORT_STATUS_NOT_CLAIM)
+        self.assertEqual(result.claim_reviews[1].support_status, SUPPORT_STATUS_SUPPORTED)
+
+    def test_source_bounded_synthesis_can_pass_while_invented_causality_blocks(
+        self,
+    ) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    claim_id="c1",
+                    claim_text="The stronger point is that adoption and impact are not the same thing.",
+                    claim_type=CLAIM_TYPE_AUTHOR_INTERPRETATION,
+                    support_status=SUPPORT_STATUS_SUPPORTED,
+                    severity="info",
+                    evidence_ids=["a0-summary"],
+                    rationale="This is bounded by the selected adoption evidence.",
+                ),
+                _claim(
+                    claim_id="c2",
+                    claim_text="Frameworks turn exposure into student learning outcomes.",
+                    claim_type=CLAIM_TYPE_CAUSAL_CLAIM,
+                    support_status=SUPPORT_STATUS_CAUSAL_OVERREACH,
+                    severity=SEVERITY_MAJOR,
+                    evidence_ids=["a0-summary"],
+                    rationale="The selected evidence does not support that causal mechanism.",
+                    repair_hint="Remove the invented causal mechanism.",
+                ),
+            ],
+            failed_claim_ids=["c2"],
+            automatic_fail_reason="invented causal mechanism",
+            repairable=True,
+            repair_instructions=[
+                _repair_instruction("c2", "Remove the invented causal mechanism.")
+            ],
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ("c2",))
+        self.assertEqual(result.claim_reviews[0].support_status, SUPPORT_STATUS_SUPPORTED)
+        self.assertEqual(result.claim_reviews[1].support_status, SUPPORT_STATUS_CAUSAL_OVERREACH)
 
     def test_qualified_forecast_remains_qualified(self) -> None:
         payload = _review_payload(

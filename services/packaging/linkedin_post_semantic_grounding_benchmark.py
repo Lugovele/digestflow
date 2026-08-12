@@ -466,6 +466,7 @@ def _live_run_record(
             execution_status="failed", failure_stage="execution", failure_code=failure_code,
             execution_success=False, parse_success=False, normalization_success=False,
             canonical_error_code=ERROR_EXECUTION_FAILED,
+            response_diagnostics=_raw_response_diagnostics(raw_response),
             semantic_grounding_calls=1,
         )
     if not str(raw_text or "").strip():
@@ -474,6 +475,7 @@ def _live_run_record(
             execution_status="failed", failure_stage="execution", failure_code=FAILURE_EMPTY_RESPONSE,
             execution_success=False, parse_success=False, normalization_success=False,
             canonical_error_code=ERROR_EMPTY_RAW_RESPONSE,
+            response_diagnostics=_raw_response_diagnostics(raw_response),
             semantic_grounding_calls=1,
         )
 
@@ -493,6 +495,8 @@ def _live_run_record(
             parse_success=normalization_failed,
             normalization_success=False,
             canonical_error_code=exc.code,
+            parser_error_details=_parser_error_details(exc),
+            response_diagnostics=_raw_response_diagnostics(raw_response),
             semantic_grounding_calls=1,
         )
 
@@ -512,6 +516,7 @@ def _live_run_record(
         human_review_required=bool(review_payload["requires_human_review"]),
         blocking_claim_ids=review_payload["blocking_claim_ids"],
         claim_reviews=review_payload["claim_reviews"],
+        response_diagnostics=_raw_response_diagnostics(raw_response),
         semantic_grounding_calls=1,
     )
 
@@ -567,6 +572,8 @@ def _benchmark_record(
     human_review_required: bool | None = None,
     blocking_claim_ids: list[str] | None = None,
     claim_reviews: list[dict[str, Any]] | None = None,
+    parser_error_details: dict[str, Any] | None = None,
+    response_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     selected_evidence_ids = [item["evidence_id"] for item in case.selected_evidence]
     return _sanitize_artifact_value({
@@ -606,6 +613,8 @@ def _benchmark_record(
         "failure_stage": failure_stage,
         "failure_code": failure_code,
         "canonical_error_code": canonical_error_code,
+        "parser_error_details": copy.deepcopy(parser_error_details),
+        "response_diagnostics": copy.deepcopy(response_diagnostics),
         "grounding_pass": grounding_pass,
         "blocking_claim_count": blocking_claim_count,
         "blocking_claim_ids": copy.deepcopy(blocking_claim_ids or []),
@@ -619,6 +628,71 @@ def _benchmark_record(
             "publication_packaging": 0,
         },
     })
+
+
+def _parser_error_details(error: Exception) -> dict[str, Any]:
+    return {
+        "line": getattr(error, "line", None),
+        "column": getattr(error, "column", None),
+        "position": getattr(error, "position", None),
+    }
+
+
+def _raw_response_diagnostics(raw_response: Any) -> dict[str, Any]:
+    raw_text = str(getattr(raw_response, "raw_text", "") or "")
+    stripped = raw_text.strip()
+    diagnostics = {
+        "raw_response_character_count": len(raw_text),
+        "stripped_response_character_count": len(stripped),
+        "starts_with_json_object": stripped.startswith("{"),
+        "starts_with_json_array": stripped.startswith("["),
+        "starts_with_code_fence": stripped.startswith("```"),
+        "ends_with_json_object": stripped.endswith("}"),
+        "ends_with_json_array": stripped.endswith("]"),
+        "ends_with_code_fence": stripped.endswith("```"),
+        "brace_balance": raw_text.count("{") - raw_text.count("}"),
+        "bracket_balance": raw_text.count("[") - raw_text.count("]"),
+        "leading_non_json_detected": bool(stripped)
+        and not stripped.startswith(("{", "[", "```")),
+        "trailing_non_json_detected": bool(stripped)
+        and not stripped.endswith(("}", "]", "```")),
+    }
+    metadata = getattr(raw_response, "provider_response_metadata", None)
+    if isinstance(metadata, dict):
+        diagnostics["provider_response_metadata"] = _safe_provider_response_metadata(metadata)
+    usage = getattr(raw_response, "usage", None)
+    if isinstance(usage, dict):
+        diagnostics["usage"] = _safe_token_usage(usage)
+    return diagnostics
+
+
+def _safe_provider_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key in ("provider", "model"):
+        value = metadata.get(key)
+        if isinstance(value, str):
+            safe[key] = value[:100]
+    value = metadata.get("choices_count")
+    if isinstance(value, int) and not isinstance(value, bool):
+        safe["choices_count"] = value
+    for key in ("finish_reasons", "message_content_types"):
+        value = metadata.get(key)
+        if isinstance(value, (list, tuple)):
+            safe[key] = [str(item)[:100] for item in value[:20] if isinstance(item, str)]
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = metadata.get(key)
+        if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+            safe[key] = value
+    return safe
+
+
+def _safe_token_usage(usage: dict[str, Any]) -> dict[str, int | None]:
+    safe: dict[str, int | None] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+            safe[key] = value
+    return safe
 
 
 def _semantic_input_summary(render: Any) -> dict[str, Any]:

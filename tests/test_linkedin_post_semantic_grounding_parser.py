@@ -47,6 +47,9 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
             parse_semantic_grounding_raw_response(_raw("{not-json"))
 
         self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+        self.assertEqual(error.exception.line, 1)
+        self.assertEqual(error.exception.column, 2)
+        self.assertEqual(error.exception.position, 1)
 
     def test_normalization_failure_is_distinct(self) -> None:
         payload = _review_payload()

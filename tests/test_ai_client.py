@@ -204,7 +204,21 @@ class AIProviderConfigTests(SimpleTestCase):
     def test_gemini_json_mode_uses_chat_response_format_once(self, mock_openai):
         response = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content='{"pass": true}'))],
-            model_dump=lambda: {"id": "gemini-json"},
+            model_dump=lambda: {
+                "id": "gemini-json",
+                "model": "gemini-3.6-flash",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": '{"pass": true}'},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                },
+            },
             usage=SimpleNamespace(prompt_tokens=2, completion_tokens=3, total_tokens=5),
         )
         mock_openai.return_value.chat.completions.create.return_value = response
@@ -225,6 +239,19 @@ class AIProviderConfigTests(SimpleTestCase):
         )
         mock_openai.return_value.responses.create.assert_not_called()
         self.assertEqual(result.text, '{"pass": true}')
+        self.assertEqual(
+            result.provider_response_metadata,
+            {
+                "provider": "gemini",
+                "model": "gemini-3.6-flash",
+                "choices_count": 1,
+                "finish_reasons": ["stop"],
+                "message_content_types": ["str"],
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "total_tokens": 5,
+            },
+        )
 
     @override_settings(OPENAI_API_KEY="openai-test-key", OPENAI_TIMEOUT_SECONDS=30)
     @patch("apps.ai.client.OpenAI")

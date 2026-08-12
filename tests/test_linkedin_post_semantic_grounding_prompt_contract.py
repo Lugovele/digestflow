@@ -44,6 +44,21 @@ class LinkedInPostSemanticGroundingPromptContractTests(SimpleTestCase):
 
         self.assertIn("Return only JSON compatible with this shape:", prompt)
 
+    def test_prompt_allows_source_bounded_authorial_synthesis(self) -> None:
+        text = PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("Source-bounded authorial synthesis is allowed", text)
+        self.assertIn("Do not mark authorial synthesis", text)
+        self.assertIn("exact wording is absent", text)
+        self.assertIn("block invented facts", text)
+        self.assertIn("causal mechanisms", text)
+
+    def test_prompt_requires_mixed_claim_splitting(self) -> None:
+        text = PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("Split mixed rhetorical/authorial framing", text)
+        self.assertIn("factual or causal assertions", text)
+
     def test_prompt_does_not_show_legacy_string_repair_instruction_schema(self) -> None:
         prompt = _prompt_text()
 

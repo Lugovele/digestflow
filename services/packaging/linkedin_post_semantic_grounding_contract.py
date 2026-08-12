@@ -334,6 +334,15 @@ def build_semantic_grounding_prompt_rules() -> dict[str, Any]:
                 "One assessable assertion from human-facing post text; split "
                 "compound sentences into separate claims."
             ),
+            "mixed_claim_splitting": [
+                "Split rhetorical or authorial framing from factual, causal, comparative, predictive, or prescriptive assertions.",
+                "Do not make a whole sentence blocking solely because one subclaim needs support.",
+            ],
+            "source_bounded_authorial_synthesis": [
+                "Authorial interpretation does not need verbatim source phrasing when it stays bounded by selected evidence, PostBrief, and AngleDecision.",
+                "Do not mark source-bounded synthesis unsupported solely because the exact wording is absent from evidence.",
+                "Authorial synthesis still fails when it invents facts, metrics, examples, actors, dates, causal mechanisms, or stronger conditions not present in selected evidence.",
+            ],
             "qualification_invariants": [
                 "projected remains projected",
                 "likely remains attributed likelihood",

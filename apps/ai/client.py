@@ -147,7 +147,16 @@ class OpenAICompatibleClient:
         if choices:
             message = getattr(choices[0], "message", None)
             text = str(getattr(message, "content", "") or "")
-        return AIResponse(text=text, raw=raw, usage=_extract_usage(response, raw))
+        return AIResponse(
+            text=text,
+            raw=raw,
+            usage=_extract_usage(response, raw),
+            provider_response_metadata=_build_openai_compatible_chat_metadata(
+                raw,
+                provider=self.provider,
+                model=self.model,
+            ),
+        )
 
 
 class OpenAIClient(OpenAICompatibleClient):
@@ -491,6 +500,48 @@ def _build_anthropic_provider_response_metadata(
         "input_tokens": _safe_metadata_int(usage.get("input_tokens")),
         "output_tokens": _safe_metadata_int(usage.get("output_tokens")),
         "thinking_tokens": _safe_metadata_int(usage.get("thinking_tokens")),
+    }
+
+
+def _build_openai_compatible_chat_metadata(
+    raw: dict[str, Any],
+    *,
+    provider: str,
+    model: str,
+) -> dict[str, Any]:
+    choices = raw.get("choices", [])
+    if not isinstance(choices, list):
+        choices = []
+    finish_reasons: list[str] = []
+    message_content_types: list[str] = []
+    for choice in choices[:20]:
+        if not isinstance(choice, dict):
+            continue
+        finish_reason = _safe_metadata_text(choice.get("finish_reason"))
+        if finish_reason and finish_reason not in finish_reasons:
+            finish_reasons.append(finish_reason)
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            content_type = type(content).__name__
+            if content_type not in message_content_types:
+                message_content_types.append(content_type)
+    usage = raw.get("usage", {})
+    if not isinstance(usage, dict):
+        usage = {}
+    return {
+        "provider": provider,
+        "model": _safe_metadata_text(raw.get("model")) or model,
+        "choices_count": len(choices),
+        "finish_reasons": finish_reasons,
+        "message_content_types": message_content_types,
+        "prompt_tokens": _safe_metadata_int(
+            usage.get("prompt_tokens", usage.get("input_tokens"))
+        ),
+        "completion_tokens": _safe_metadata_int(
+            usage.get("completion_tokens", usage.get("output_tokens"))
+        ),
+        "total_tokens": _safe_metadata_int(usage.get("total_tokens")),
     }
 
 

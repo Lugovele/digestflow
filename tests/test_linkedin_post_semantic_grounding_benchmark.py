@@ -284,6 +284,114 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertEqual(record["failure_code"], benchmark.FAILURE_PARSE)
         self.assertFalse(record["parse_success"])
         self.assertFalse(record["normalization_success"])
+        self.assertEqual(
+            record["response_diagnostics"]["raw_response_character_count"],
+            len("{not-json"),
+        )
+        self.assertTrue(record["response_diagnostics"]["starts_with_json_object"])
+        self.assertFalse(record["response_diagnostics"]["ends_with_json_object"])
+        self.assertEqual(record["response_diagnostics"]["brace_balance"], 1)
+        self.assertEqual(record["parser_error_details"]["line"], 1)
+        self.assertEqual(record["parser_error_details"]["column"], 2)
+
+    def test_live_path_records_safe_provider_metadata_for_parse_failure(self) -> None:
+        result = _single_live_result(
+            _raw(
+                "Before JSON {not-json",
+                provider="gemini",
+                model="gemini-3.6-flash",
+                provider_response_metadata={
+                    "provider": "gemini",
+                    "model": "gemini-3.6-flash",
+                    "choices_count": 1,
+                    "finish_reasons": ["stop"],
+                    "message_content_types": ["str"],
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                },
+            )
+        )
+        diagnostics = result.run_records[0]["response_diagnostics"]
+
+        self.assertTrue(diagnostics["leading_non_json_detected"])
+        self.assertTrue(diagnostics["trailing_non_json_detected"])
+        self.assertEqual(
+            diagnostics["provider_response_metadata"],
+            {
+                "provider": "gemini",
+                "model": "gemini-3.6-flash",
+                "choices_count": 1,
+                "finish_reasons": ["stop"],
+                "message_content_types": ["str"],
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+
+    def test_live_path_allowlists_provider_metadata_for_artifacts(self) -> None:
+        result = _single_live_result(
+            _raw(
+                "{not-json",
+                provider="gemini",
+                model="gemini-3.6-flash",
+                provider_response_metadata={
+                    "provider": "gemini",
+                    "model": "gemini-3.6-flash",
+                    "choices_count": 1,
+                    "finish_reasons": ["stop"],
+                    "message_content_types": ["str"],
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                    "transport_details": {"authorization": "redacted"},
+                    "provider_body": {"raw": "body"},
+                    "raw_text_copy": "not allowed",
+                },
+            )
+        )
+
+        metadata = result.run_records[0]["response_diagnostics"]["provider_response_metadata"]
+        self.assertEqual(
+            metadata,
+            {
+                "provider": "gemini",
+                "model": "gemini-3.6-flash",
+                "choices_count": 1,
+                "finish_reasons": ["stop"],
+                "message_content_types": ["str"],
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+
+    def test_live_path_allowlists_usage_for_artifacts(self) -> None:
+        result = _single_live_result(
+            _raw(
+                "{not-json",
+                provider="gemini",
+                model="gemini-3.6-flash",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                    "transport_details": {"authorization": "redacted"},
+                    "raw_text_copy": "not allowed",
+                },
+            )
+        )
+
+        usage = result.run_records[0]["response_diagnostics"]["usage"]
+        self.assertEqual(
+            usage,
+            {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
 
     def test_live_path_distinguishes_normalization_failure(self) -> None:
         payload = _review_payload(claims=[{**_claim_payload(), "supported_evidence_ids": ["unselected"]}])
@@ -316,6 +424,7 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertIn('"claim_id": "c1"', artifact_text)
         self.assertIn('"support_status": "supported"', artifact_text)
         self.assertIn('"semantic_input_summary"', artifact_text)
+        self.assertIn('"response_diagnostics"', artifact_text)
         self.assertNotIn(case.candidate_payload["post_text"], artifact_text)
         for evidence in case.selected_evidence:
             self.assertNotIn(evidence["evidence_text"], artifact_text)
@@ -378,8 +487,23 @@ def _fake_executor(payload: dict):
     return execute
 
 
-def _raw(raw_text: str, *, provider: str = "openai", model: str = "gpt-4.1-2025-04-14", execution_error: str | None = None) -> SemanticGroundingRawResponse:
-    return SemanticGroundingRawResponse(raw_text=raw_text, provider=provider, model=model, execution_error=execution_error)
+def _raw(
+    raw_text: str,
+    *,
+    provider: str = "openai",
+    model: str = "gpt-4.1-2025-04-14",
+    execution_error: str | None = None,
+    provider_response_metadata: dict | None = None,
+    usage: dict | None = None,
+) -> SemanticGroundingRawResponse:
+    return SemanticGroundingRawResponse(
+        raw_text=raw_text,
+        provider=provider,
+        model=model,
+        execution_error=execution_error,
+        provider_response_metadata=provider_response_metadata,
+        usage=usage,
+    )
 
 
 def _review_payload(*, passed: bool = True, **overrides) -> dict:

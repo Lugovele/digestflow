@@ -24,9 +24,20 @@ ERROR_NORMALIZATION_FAILED = "normalization_failed"
 class SemanticGroundingResponseParseError(ValueError):
     """Raised when a semantic grounding raw response cannot be parsed."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        line: int | None = None,
+        column: int | None = None,
+        position: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.line = line
+        self.column = column
+        self.position = position
 
 
 def parse_semantic_grounding_raw_response(
@@ -54,6 +65,9 @@ def parse_semantic_grounding_raw_response(
         raise SemanticGroundingResponseParseError(
             ERROR_MALFORMED_JSON,
             "semantic grounding raw response is not valid JSON.",
+            line=exc.lineno,
+            column=exc.colno,
+            position=exc.pos,
         ) from exc
     except ValueError as exc:
         raise SemanticGroundingResponseParseError(

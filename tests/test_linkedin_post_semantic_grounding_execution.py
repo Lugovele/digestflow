@@ -66,6 +66,7 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
         self.assertIn("Semantic prompt.", client.prompts[0])
         self.assertNotIn("audit-only", client.prompts[0])
         self.assertEqual(response.raw_text, '{"pass": true, "claims": [], "failed_claim_ids": []}')
+        self.assertEqual(response.provider_response_metadata["finish_reasons"], ["stop"])
 
 
     @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
@@ -248,6 +249,11 @@ class FakeClient:
             text=self.raw_text,
             raw={"id": "resp-1"},
             usage={"total_tokens": 10},
+            provider_response_metadata={
+                "provider": "test",
+                "model": "grounding-model",
+                "finish_reasons": ["stop"],
+            },
         )
 
 

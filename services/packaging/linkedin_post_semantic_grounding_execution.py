@@ -56,6 +56,7 @@ class SemanticGroundingRawResponse:
     prompt_metadata: PromptMetadata | None = None
     usage: dict[str, Any] | None = None
     raw_provider_response: dict[str, Any] | None = None
+    provider_response_metadata: dict[str, Any] | None = None
     execution_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +71,10 @@ class SemanticGroundingRawResponse:
             result["usage"] = copy.deepcopy(self.usage)
         if self.raw_provider_response is not None:
             result["raw_provider_response"] = copy.deepcopy(self.raw_provider_response)
+        if self.provider_response_metadata is not None:
+            result["provider_response_metadata"] = copy.deepcopy(
+                self.provider_response_metadata
+            )
         if self.execution_error is not None:
             result["execution_error"] = self.execution_error
         return result
@@ -155,6 +160,9 @@ def execute_semantic_grounding_prompt(
             prompt_metadata=prompt_metadata,
             usage=copy.deepcopy(response.usage),
             raw_provider_response=copy.deepcopy(response.raw),
+            provider_response_metadata=copy.deepcopy(
+                getattr(response, "provider_response_metadata", None)
+            ),
             execution_error="empty provider response",
         )
 
@@ -165,6 +173,9 @@ def execute_semantic_grounding_prompt(
         prompt_metadata=prompt_metadata,
         usage=copy.deepcopy(response.usage),
         raw_provider_response=copy.deepcopy(response.raw),
+        provider_response_metadata=copy.deepcopy(
+            getattr(response, "provider_response_metadata", None)
+        ),
     )
 
 

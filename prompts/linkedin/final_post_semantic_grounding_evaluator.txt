@@ -15,6 +15,14 @@ knowledge, or assumptions.
 For each factual, causal, comparative, predictive, interpretive, or prescriptive
 claim, create one claim review. Split compound sentences into separate claims.
 Pure rhetorical lines that do not imply a factual state may be marked not_claim.
+Split mixed rhetorical/authorial framing from factual or causal assertions before
+judging support.
+
+Source-bounded authorial synthesis is allowed when it stays within selected
+evidence, PostBrief, and AngleDecision. Do not mark authorial synthesis
+unsupported solely because the exact wording is absent from the evidence. Still
+block invented facts, metrics, examples, actors, dates, causal mechanisms, or
+stronger conditions not present in selected evidence.
 
 Use SEMANTIC_GROUNDING_RULES_JSON as the authoritative source for claim_type,
 support_status, severity, blocking/advisory decisions, pass/fail consistency,
