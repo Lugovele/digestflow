@@ -11,6 +11,7 @@ from django.core.management.base import CommandError
 from django.test import SimpleTestCase
 
 from services.packaging.linkedin_post_semantic_grounding_benchmark import (
+    BENCHMARK_STATUS_COMPLETED,
     BENCHMARK_STATUS_CONFIG_ERROR,
     BENCHMARK_STATUS_DRY_RUN,
     SemanticGroundingBenchmarkArtifacts,
@@ -66,6 +67,35 @@ class BenchmarkLinkedInSemanticGroundingCommandTests(SimpleTestCase):
                 call_command("benchmark_linkedin_semantic_grounding", "--plan", "bad-plan", stdout=io.StringIO())
         fake_runner.assert_not_called()
 
+
+    def test_command_allow_api_sets_live_opt_in_without_writer_quality_or_repair_options(self) -> None:
+        output = io.StringIO()
+        fake_runner = Mock(return_value=_result(run_count=4, status=BENCHMARK_STATUS_COMPLETED, provider_call_count=4))
+        with patch(f"{COMMAND_MODULE}.run_semantic_grounding_benchmark", fake_runner):
+            call_command(
+                "benchmark_linkedin_semantic_grounding",
+                "--experiment-id", "semantic_grounding_live_future",
+                "--case", "tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5/topic_200_digest_134.json",
+                "--case", "tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5/topic_140_digest_126.json",
+                "--plan", "gpt_grounding=openai,gpt-4.1-2025-04-14",
+                "--plan", "gemini_grounding=gemini,gemini-3.6-flash",
+                "--runs-per-plan", "1",
+                "--allow-api",
+                "--output-root", str(self.root / "outputs"),
+                stdout=output,
+            )
+        request = fake_runner.call_args.args[0]
+        self.assertTrue(request.allow_api)
+        self.assertEqual(len(request.cases), 2)
+        self.assertEqual(len(request.plans), 2)
+        self.assertEqual(request.runs_per_plan, 1)
+        text = output.getvalue()
+        self.assertIn("provider_calls: 4", text)
+        source = Path("apps/packaging/management/commands/benchmark_linkedin_semantic_grounding.py").read_text(encoding="utf-8")
+        self.assertNotIn("candidate_writer_model", source)
+        self.assertNotIn("quality_evaluator_model", source)
+        self.assertNotIn("repair_model", source)
+
     def test_command_output_reports_zero_non_grounding_role_invocations(self) -> None:
         output = io.StringIO()
         fake_runner = Mock(return_value=_result(run_count=4))
@@ -103,7 +133,7 @@ class BenchmarkLinkedInSemanticGroundingCommandTests(SimpleTestCase):
         self.assertNotIn("Content" + "Package", source)
 
 
-def _result(*, run_count: int = 1) -> SemanticGroundingBenchmarkResult:
+def _result(*, run_count: int = 1, status: str = BENCHMARK_STATUS_DRY_RUN, provider_call_count: int = 0) -> SemanticGroundingBenchmarkResult:
     artifacts = SemanticGroundingBenchmarkArtifacts(
         output_dir="debug_outputs/final_post_semantic_grounding_benchmarks/exp",
         runs_jsonl="debug_outputs/final_post_semantic_grounding_benchmarks/exp/runs.jsonl",
@@ -113,11 +143,11 @@ def _result(*, run_count: int = 1) -> SemanticGroundingBenchmarkResult:
         grounding_comparison_md="debug_outputs/final_post_semantic_grounding_benchmarks/exp/grounding_comparison.md",
     )
     return SemanticGroundingBenchmarkResult(
-        status=BENCHMARK_STATUS_DRY_RUN,
+        status=status,
         exit_code=0,
         experiment_id="exp",
         run_count=run_count,
-        provider_call_count=0,
+        provider_call_count=provider_call_count,
         artifacts=artifacts,
         run_records=(),
     )

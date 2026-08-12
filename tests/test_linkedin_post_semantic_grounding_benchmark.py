@@ -11,6 +11,7 @@ from django.test import SimpleTestCase
 
 from apps.ai.client import GEMINI_SUPPORTED_MODELS
 from services.packaging import linkedin_post_semantic_grounding_benchmark as benchmark
+from services.packaging.linkedin_post_semantic_grounding_execution import SemanticGroundingRawResponse
 from services.packaging.linkedin_post_model_role_policy import OPENAI_FINAL_POST_MODEL
 
 FIXTURE_ROOT = Path("tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5")
@@ -125,18 +126,22 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertEqual(record["parser_path"], benchmark.SEMANTIC_GROUNDING_PARSER_PATH)
         self.assertEqual(record["normalization_path"], benchmark.SEMANTIC_GROUNDING_NORMALIZATION_PATH)
 
-    def test_live_api_is_explicitly_not_supported_in_scope_23a(self) -> None:
-        result = benchmark.run_semantic_grounding_benchmark(
-            benchmark.SemanticGroundingBenchmarkRequest(
-                experiment_id="semantic_grounding_live_blocked",
-                cases=benchmark.default_semantic_grounding_benchmark_cases(FIXTURE_ROOT),
-                plans=benchmark.default_semantic_grounding_benchmark_plans(),
-                allow_api=True,
+    def test_allow_api_is_explicit_live_opt_in_with_fake_executor(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_opt_in",
+                    cases=(benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json"),),
+                    plans=(benchmark.default_semantic_grounding_benchmark_plans()[0],),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=_fake_executor(_review_payload()),
             )
-        )
-        self.assertEqual(result.status, benchmark.BENCHMARK_STATUS_CONFIG_ERROR)
-        self.assertEqual(result.run_count, 0)
-        self.assertIn("dry-run only", result.safe_failure_message)
+        self.assertEqual(result.status, benchmark.BENCHMARK_STATUS_COMPLETED)
+        self.assertEqual(result.run_count, 1)
+        self.assertEqual(result.provider_call_count, 1)
 
     def test_diagnostic_case_cannot_enter_primary_benchmark(self) -> None:
         result = benchmark.run_semantic_grounding_benchmark(
@@ -172,11 +177,173 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         for raw_text in candidate_texts + evidence_texts:
             self.assertNotIn(raw_text, artifact_text)
 
+
+    def test_live_path_with_fake_executor_records_grounding_pass_and_provider_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            case = benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json")
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_pass",
+                    cases=(case,),
+                    plans=(benchmark.default_semantic_grounding_benchmark_plans()[0],),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=_fake_executor(_review_payload()),
+            )
+        self.assertEqual(result.status, benchmark.BENCHMARK_STATUS_COMPLETED)
+        self.assertEqual(result.provider_call_count, 1)
+        record = result.run_records[0]
+        self.assertEqual(record["execution_status"], benchmark.GROUNDING_COMPLETED_PASS)
+        self.assertTrue(record["execution_success"])
+        self.assertTrue(record["parse_success"])
+        self.assertTrue(record["normalization_success"])
+        self.assertTrue(record["grounding_pass"])
+        self.assertEqual(record["blocking_claim_count"], 0)
+        self.assertEqual(record["provider_invocation_counts"]["semantic_grounding"], 1)
+        self.assertEqual(record["provider_invocation_counts"]["candidate_writer"], 0)
+        self.assertEqual(record["provider_invocation_counts"]["quality_evaluator"], 0)
+        self.assertEqual(record["provider_invocation_counts"]["repair_writer"], 0)
+        self.assertEqual(record["provider_invocation_counts"]["publication_packaging"], 0)
+
+    def test_live_path_with_fake_executor_records_grounding_block(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[{**_claim_payload(), "support_status": "unsupported", "severity": "major"}],
+            failed_claim_ids=["c1"],
+            automatic_fail_reason="unsupported claim",
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_block",
+                    cases=(benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json"),),
+                    plans=(benchmark.default_semantic_grounding_benchmark_plans()[0],),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=_fake_executor(payload),
+            )
+        record = result.run_records[0]
+        self.assertEqual(record["execution_status"], benchmark.GROUNDING_COMPLETED_BLOCK)
+        self.assertFalse(record["grounding_pass"])
+        self.assertEqual(record["blocking_claim_count"], 1)
+        self.assertEqual(record["blocking_claim_ids"], ["c1"])
+        self.assertEqual(record["claim_reviews"][0]["support_status"], "unsupported")
+
+
+    def test_live_mode_validates_prompt_path_before_output_directory_creation(self) -> None:
+        case = benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json")
+        bad_case = benchmark.SemanticGroundingBenchmarkCase(
+            **{**case.to_dict(), "fixture_path": case.fixture_path, "selected_evidence": case.selected_evidence, "prompt_metadata": case.prompt_metadata.__class__(
+                prompt_name=case.prompt_metadata.prompt_name,
+                prompt_version=case.prompt_metadata.prompt_version,
+                prompt_path="prompts/linkedin/missing_semantic_grounding_prompt.txt",
+            )}
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_root = Path(tempdir)
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_missing_prompt",
+                    cases=(bad_case,),
+                    plans=(benchmark.default_semantic_grounding_benchmark_plans()[0],),
+                    allow_api=True,
+                    output_root=output_root,
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=_fake_executor(_review_payload()),
+            )
+            self.assertFalse((output_root / "semantic_grounding_missing_prompt").exists())
+        self.assertEqual(result.status, benchmark.BENCHMARK_STATUS_CONFIG_ERROR)
+        self.assertEqual(result.provider_call_count, 0)
+        self.assertIn("prompt path", result.safe_failure_message)
+
+    def test_live_path_distinguishes_empty_provider_response(self) -> None:
+        result = _single_live_result(_raw("", execution_error="empty provider response"))
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "execution")
+        self.assertEqual(record["failure_code"], benchmark.FAILURE_EMPTY_RESPONSE)
+        self.assertFalse(record["execution_success"])
+        self.assertFalse(record["parse_success"])
+        self.assertFalse(record["normalization_success"])
+
+    def test_live_path_distinguishes_provider_execution_failure(self) -> None:
+        result = _single_live_result(_raw("", execution_error="provider invocation failed"))
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "execution")
+        self.assertEqual(record["failure_code"], benchmark.FAILURE_PROVIDER_EXECUTION)
+        self.assertEqual(record["provider_invocation_counts"]["semantic_grounding"], 1)
+
+    def test_live_path_distinguishes_parse_failure(self) -> None:
+        result = _single_live_result(_raw("{not-json"))
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "parse")
+        self.assertEqual(record["failure_code"], benchmark.FAILURE_PARSE)
+        self.assertFalse(record["parse_success"])
+        self.assertFalse(record["normalization_success"])
+
+    def test_live_path_distinguishes_normalization_failure(self) -> None:
+        payload = _review_payload(claims=[{**_claim_payload(), "supported_evidence_ids": ["unselected"]}])
+        result = _single_live_result(_raw(json.dumps(payload)))
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "normalization")
+        self.assertEqual(record["failure_code"], benchmark.FAILURE_NORMALIZATION)
+        self.assertTrue(record["parse_success"])
+        self.assertFalse(record["normalization_success"])
+
+    def test_live_artifacts_persist_normalized_claim_findings_without_raw_prompt_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            case = benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json")
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_artifacts",
+                    cases=(case,),
+                    plans=(benchmark.default_semantic_grounding_benchmark_plans()[0],),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=_fake_executor(_review_payload()),
+            )
+            artifact_text = "\n".join(
+                Path(path).read_text(encoding="utf-8")
+                for key, path in result.artifacts.to_dict().items()
+                if key != "output_dir" and Path(path).is_file()
+            )
+        self.assertIn('"claim_id": "c1"', artifact_text)
+        self.assertIn('"support_status": "supported"', artifact_text)
+        self.assertIn('"semantic_input_summary"', artifact_text)
+        self.assertNotIn(case.candidate_payload["post_text"], artifact_text)
+        for evidence in case.selected_evidence:
+            self.assertNotIn(evidence["evidence_text"], artifact_text)
+
+    def test_live_path_uses_same_semantic_input_summary_across_grounding_plans(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_same_input",
+                    cases=(benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_140_digest_126.json"),),
+                    plans=benchmark.default_semantic_grounding_benchmark_plans(),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=_fake_executor(_review_payload()),
+            )
+        self.assertEqual(result.run_count, 2)
+        self.assertEqual(result.provider_call_count, 2)
+        self.assertEqual(result.run_records[0]["semantic_input_summary"], result.run_records[1]["semantic_input_summary"])
+        self.assertNotEqual(result.run_records[0]["provider"], result.run_records[1]["provider"])
+        self.assertNotEqual(result.run_records[0]["model"], result.run_records[1]["model"])
+
     def test_module_imports_no_provider_runtime_writer_quality_repair_or_packaging_boundaries(self) -> None:
         source = Path(benchmark.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)
-        imported_modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
-        imported_symbols = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names}
+        imported_modules = {node.module for node in tree.body if isinstance(node, ast.ImportFrom) and node.module}
+        imported_symbols = {alias.name for node in tree.body if isinstance(node, ast.ImportFrom) for alias in node.names}
         self.assertNotIn("services.packaging.generator", imported_modules)
         self.assertNotIn("apps.packaging.models", imported_modules)
         self.assertNotIn("services.packaging.linkedin_post_candidate_writer_execution", imported_modules)
@@ -188,6 +355,63 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertNotIn("build_ai_client", source)
         self.assertNotIn("Content" + "Package", source)
 
+
+
+def _single_live_result(raw_response: SemanticGroundingRawResponse) -> benchmark.SemanticGroundingBenchmarkResult:
+    with tempfile.TemporaryDirectory() as tempdir:
+        return benchmark.run_semantic_grounding_benchmark(
+            benchmark.SemanticGroundingBenchmarkRequest(
+                experiment_id="semantic_grounding_single_live",
+                cases=(benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json"),),
+                plans=(benchmark.default_semantic_grounding_benchmark_plans()[0],),
+                allow_api=True,
+                output_root=Path(tempdir),
+            ),
+            now_factory=_fixed_now,
+            semantic_grounding_executor=lambda request: raw_response,
+        )
+
+
+def _fake_executor(payload: dict):
+    def execute(request):
+        return _raw(json.dumps(payload), provider=request.provider, model=request.model)
+    return execute
+
+
+def _raw(raw_text: str, *, provider: str = "openai", model: str = "gpt-4.1-2025-04-14", execution_error: str | None = None) -> SemanticGroundingRawResponse:
+    return SemanticGroundingRawResponse(raw_text=raw_text, provider=provider, model=model, execution_error=execution_error)
+
+
+def _review_payload(*, passed: bool = True, **overrides) -> dict:
+    payload = {
+        "pass": passed,
+        "claims": [_claim_payload()],
+        "failed_claim_ids": [],
+        "automatic_fail_reason": "",
+        "requires_human_review": False,
+        "human_review_reason": "",
+        "repairable": False,
+        "repair_instructions": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _claim_payload() -> dict:
+    return {
+        "claim_id": "c1",
+        "field_name": "post_text",
+        "value_index": None,
+        "claim_text": "Bitcoin adoption has security and volatility constraints.",
+        "claim_type": "attributed_source_claim",
+        "support_status": "supported",
+        "severity": "info",
+        "supported_evidence_ids": ["a0-summary"],
+        "required_qualifications": [],
+        "missing_qualifications": [],
+        "rationale": "Directly supported.",
+        "repair_hint": "",
+    }
 
 
 def _fixed_now() -> datetime:

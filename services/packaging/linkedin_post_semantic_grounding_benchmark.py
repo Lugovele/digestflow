@@ -35,7 +35,15 @@ DEFAULT_FIXTURE_ROOT = Path("tests/fixtures/linkedin_post_semantic_grounding_ben
 DEFAULT_OUTPUT_ROOT = Path("debug_outputs/final_post_semantic_grounding_benchmarks")
 DEFAULT_EXPERIMENT_ID = "semantic-grounding-gpt-vs-gemini-v1"
 BENCHMARK_STATUS_DRY_RUN = "dry_run"
+BENCHMARK_STATUS_COMPLETED = "completed"
 BENCHMARK_STATUS_CONFIG_ERROR = "config_error"
+
+FAILURE_PROVIDER_EXECUTION = "provider_execution_failure"
+FAILURE_EMPTY_RESPONSE = "empty_response"
+FAILURE_PARSE = "parse_failure"
+FAILURE_NORMALIZATION = "normalization_failure"
+GROUNDING_COMPLETED_PASS = "grounding_completed_pass"
+GROUNDING_COMPLETED_BLOCK = "grounding_completed_block"
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 PLAN_GPT_4_1_SEMANTIC_GROUNDING = "gpt_4_1_semantic_grounding"
 PLAN_GEMINI_3_6_FLASH_SEMANTIC_GROUNDING = "gemini_3_6_flash_semantic_grounding"
@@ -178,6 +186,7 @@ class SemanticGroundingBenchmarkConfigurationError(ValueError):
 
 
 NowFactory = Callable[[], datetime]
+SemanticGroundingExecutor = Callable[[Any], Any]
 
 
 def load_semantic_grounding_benchmark_case(path: str | Path) -> SemanticGroundingBenchmarkCase:
@@ -220,7 +229,12 @@ def build_semantic_grounding_benchmark_prompt_render(case: SemanticGroundingBenc
     return render_semantic_grounding_prompt_input(editorial_input, prompt_metadata=case.prompt_metadata)
 
 
-def run_semantic_grounding_benchmark(request: SemanticGroundingBenchmarkRequest, *, now_factory: NowFactory | None = None) -> SemanticGroundingBenchmarkResult:
+def run_semantic_grounding_benchmark(
+    request: SemanticGroundingBenchmarkRequest,
+    *,
+    now_factory: NowFactory | None = None,
+    semantic_grounding_executor: SemanticGroundingExecutor | None = None,
+) -> SemanticGroundingBenchmarkResult:
     try:
         output_dir = _validate_request(request)["output_dir"]
     except SemanticGroundingBenchmarkConfigurationError as exc:
@@ -239,14 +253,30 @@ def run_semantic_grounding_benchmark(request: SemanticGroundingBenchmarkRequest,
     output_dir.mkdir(parents=True, exist_ok=False)
     artifacts = _artifact_paths(output_dir)
     records: list[dict[str, Any]] = []
+    provider_call_count = 0
     for case in request.cases:
         for plan in request.plans:
             for run_index in range(1, request.runs_per_plan + 1):
                 render = build_semantic_grounding_benchmark_prompt_render(case)
-                records.append(_dry_run_record(request, case, plan, run_index, started_at, _isoformat(now()), render))
+                if request.allow_api:
+                    record = _live_run_record(
+                        request,
+                        case,
+                        plan,
+                        run_index,
+                        started_at,
+                        _isoformat(now()),
+                        render,
+                        semantic_grounding_executor=semantic_grounding_executor,
+                    )
+                    provider_call_count += record.get("provider_invocation_counts", {}).get("semantic_grounding", 0)
+                    records.append(record)
+                else:
+                    records.append(_dry_run_record(request, case, plan, run_index, started_at, _isoformat(now()), render))
     manifest = _manifest(request, output_dir, started_at)
     _write_artifacts(artifacts, manifest, tuple(records))
-    return SemanticGroundingBenchmarkResult(BENCHMARK_STATUS_DRY_RUN, 0, request.experiment_id, len(records), 0, artifacts, run_records=tuple(copy.deepcopy(records)))
+    status = BENCHMARK_STATUS_COMPLETED if request.allow_api else BENCHMARK_STATUS_DRY_RUN
+    return SemanticGroundingBenchmarkResult(status, 0, request.experiment_id, len(records), provider_call_count, artifacts, run_records=tuple(copy.deepcopy(records)))
 
 
 def _post_editorial_input_for_case(case: SemanticGroundingBenchmarkCase):
@@ -266,8 +296,6 @@ def _post_editorial_input_for_case(case: SemanticGroundingBenchmarkCase):
 
 def _validate_request(request: SemanticGroundingBenchmarkRequest) -> dict[str, Any]:
     _validate_identifier(request.experiment_id, "experiment_id")
-    if request.allow_api:
-        raise SemanticGroundingBenchmarkConfigurationError("Scope 23A Semantic Grounding benchmark is dry-run only; live provider execution is a 23B step.")
     if not request.cases:
         raise SemanticGroundingBenchmarkConfigurationError("at least one case is required")
     if not request.plans:
@@ -282,8 +310,8 @@ def _validate_request(request: SemanticGroundingBenchmarkRequest) -> dict[str, A
         seen_cases.add(case.case_id)
         if case.case_id not in CANONICAL_BENCHMARK_CASE_IDS:
             if case.case_id in DIAGNOSTIC_EXCLUDED_CASE_IDS:
-                raise SemanticGroundingBenchmarkConfigurationError(f"case is diagnostic-only and excluded from Scope 23A primary benchmark: {case.case_id}")
-            raise SemanticGroundingBenchmarkConfigurationError(f"case is not an approved Scope 23A canonical benchmark case: {case.case_id}")
+                raise SemanticGroundingBenchmarkConfigurationError(f"case is diagnostic-only and excluded from the primary Semantic Grounding benchmark: {case.case_id}")
+            raise SemanticGroundingBenchmarkConfigurationError(f"case is not an approved canonical Semantic Grounding benchmark case: {case.case_id}")
         if not case.canonical_candidate_valid:
             raise SemanticGroundingBenchmarkConfigurationError(f"case is not canonical-valid for Semantic Grounding benchmark: {case.case_id}")
     seen_plans: set[str] = set()
@@ -292,6 +320,8 @@ def _validate_request(request: SemanticGroundingBenchmarkRequest) -> dict[str, A
         if plan.plan_id in seen_plans:
             raise SemanticGroundingBenchmarkConfigurationError(f"duplicate plan_id: {plan.plan_id}")
         seen_plans.add(plan.plan_id)
+    if request.allow_api:
+        _validate_live_prompt_paths(request)
     output_root = _resolve_output_root(request.output_root)
     output_dir = output_root / request.experiment_id
     if output_dir.exists():
@@ -343,6 +373,21 @@ def _validate_case_payload(payload: dict[str, Any], fixture_path: Path) -> None:
         raise SemanticGroundingBenchmarkConfigurationError("noncanonical fixtures require canonical_exclusion metadata")
 
 
+def _validate_live_prompt_paths(request: SemanticGroundingBenchmarkRequest) -> None:
+    for case in request.cases:
+        prompt_path = case.prompt_metadata.prompt_path
+        if not prompt_path:
+            raise SemanticGroundingBenchmarkConfigurationError("semantic grounding prompt path is required for live benchmark execution")
+        path = (Path(settings.BASE_DIR) / prompt_path).resolve()
+        base_dir = Path(settings.BASE_DIR).resolve()
+        if not _is_relative_to(path, base_dir):
+            raise SemanticGroundingBenchmarkConfigurationError("semantic grounding prompt path must stay inside the repository")
+        if not path.exists():
+            raise SemanticGroundingBenchmarkConfigurationError("semantic grounding prompt path does not exist")
+        if not path.read_text(encoding="utf-8").strip():
+            raise SemanticGroundingBenchmarkConfigurationError("semantic grounding prompt text must be non-empty")
+
+
 def _validate_plan(plan: SemanticGroundingBenchmarkPlan) -> None:
     _validate_identifier(plan.plan_id, "plan_id")
     policy_failure = get_final_post_role_provider_model_policy_failure(
@@ -356,6 +401,132 @@ def _validate_plan(plan: SemanticGroundingBenchmarkPlan) -> None:
         raise SemanticGroundingBenchmarkConfigurationError("json_mode must be a boolean")
 
 
+def _live_run_record(
+    request: SemanticGroundingBenchmarkRequest,
+    case: SemanticGroundingBenchmarkCase,
+    plan: SemanticGroundingBenchmarkPlan,
+    run_index: int,
+    started_at: str,
+    completed_at: str,
+    render: Any,
+    *,
+    semantic_grounding_executor: SemanticGroundingExecutor | None,
+) -> dict[str, Any]:
+    # Keep provider-capable imports out of the dry-run/import path.
+    from services.packaging.linkedin_post_semantic_grounding_execution import (
+        build_semantic_grounding_execution_request,
+        execute_semantic_grounding_prompt,
+        get_semantic_grounding_execution_request_error,
+    )
+    from services.packaging.linkedin_post_semantic_grounding_parser import (
+        ERROR_EMPTY_RAW_RESPONSE,
+        ERROR_EXECUTION_FAILED,
+        ERROR_NORMALIZATION_FAILED,
+        SemanticGroundingResponseParseError,
+        parse_and_normalize_semantic_grounding_response,
+    )
+
+    selected_evidence_ids = tuple(item["evidence_id"] for item in case.selected_evidence)
+    prompt_text = _semantic_grounding_prompt_text(render)
+    execution_request = build_semantic_grounding_execution_request(
+        render,
+        prompt_text=prompt_text,
+        provider=plan.provider,
+        model=plan.model,
+        max_output_tokens=plan.max_output_tokens,
+        json_mode=plan.json_mode,
+        execution_metadata={
+            "experiment_id": request.experiment_id,
+            "case_id": case.case_id,
+            "plan_id": plan.plan_id,
+            "run_index": run_index,
+        },
+    )
+    request_error = get_semantic_grounding_execution_request_error(execution_request)
+    if request_error is not None:
+        return _benchmark_record(
+            request, case, plan, run_index, started_at, completed_at, render,
+            execution_status="failed", failure_stage="request_validation",
+            failure_code=FAILURE_PROVIDER_EXECUTION, execution_request_error=request_error,
+            execution_success=False, parse_success=False, normalization_success=False,
+            semantic_grounding_calls=0,
+        )
+
+    executor = semantic_grounding_executor or execute_semantic_grounding_prompt
+    raw_response = executor(execution_request)
+    execution_error = getattr(raw_response, "execution_error", None)
+    raw_text = getattr(raw_response, "raw_text", "")
+    if execution_error:
+        if execution_error == "empty provider response":
+            failure_code = FAILURE_EMPTY_RESPONSE
+        else:
+            failure_code = FAILURE_PROVIDER_EXECUTION
+        return _benchmark_record(
+            request, case, plan, run_index, started_at, completed_at, render,
+            execution_status="failed", failure_stage="execution", failure_code=failure_code,
+            execution_success=False, parse_success=False, normalization_success=False,
+            canonical_error_code=ERROR_EXECUTION_FAILED,
+            semantic_grounding_calls=1,
+        )
+    if not str(raw_text or "").strip():
+        return _benchmark_record(
+            request, case, plan, run_index, started_at, completed_at, render,
+            execution_status="failed", failure_stage="execution", failure_code=FAILURE_EMPTY_RESPONSE,
+            execution_success=False, parse_success=False, normalization_success=False,
+            canonical_error_code=ERROR_EMPTY_RAW_RESPONSE,
+            semantic_grounding_calls=1,
+        )
+
+    try:
+        grounding_review = parse_and_normalize_semantic_grounding_response(
+            raw_response,
+            selected_evidence_ids=selected_evidence_ids,
+        )
+    except SemanticGroundingResponseParseError as exc:
+        normalization_failed = exc.code == ERROR_NORMALIZATION_FAILED
+        return _benchmark_record(
+            request, case, plan, run_index, started_at, completed_at, render,
+            execution_status="failed",
+            failure_stage="normalization" if normalization_failed else "parse",
+            failure_code=FAILURE_NORMALIZATION if normalization_failed else FAILURE_PARSE,
+            execution_success=True,
+            parse_success=normalization_failed,
+            normalization_success=False,
+            canonical_error_code=exc.code,
+            semantic_grounding_calls=1,
+        )
+
+    review_payload = grounding_review.to_dict()
+    passed = bool(review_payload["pass"])
+    blocking_claim_count = len(review_payload["blocking_claim_ids"])
+    return _benchmark_record(
+        request, case, plan, run_index, started_at, completed_at, render,
+        execution_status=GROUNDING_COMPLETED_PASS if passed else GROUNDING_COMPLETED_BLOCK,
+        failure_stage=None,
+        failure_code=GROUNDING_COMPLETED_PASS if passed else GROUNDING_COMPLETED_BLOCK,
+        execution_success=True,
+        parse_success=True,
+        normalization_success=True,
+        grounding_pass=passed,
+        blocking_claim_count=blocking_claim_count,
+        human_review_required=bool(review_payload["requires_human_review"]),
+        blocking_claim_ids=review_payload["blocking_claim_ids"],
+        claim_reviews=review_payload["claim_reviews"],
+        semantic_grounding_calls=1,
+    )
+
+
+def _semantic_grounding_prompt_text(render: Any) -> str:
+    prompt_path = getattr(render, "prompt_path", None)
+    if not prompt_path:
+        raise SemanticGroundingBenchmarkConfigurationError("semantic grounding prompt path is required for live benchmark execution")
+    path = (Path(settings.BASE_DIR) / prompt_path).resolve()
+    base_dir = Path(settings.BASE_DIR).resolve()
+    if not _is_relative_to(path, base_dir):
+        raise SemanticGroundingBenchmarkConfigurationError("semantic grounding prompt path must stay inside the repository")
+    return path.read_text(encoding="utf-8")
+
+
 def _dry_run_record(
     request: SemanticGroundingBenchmarkRequest,
     case: SemanticGroundingBenchmarkCase,
@@ -364,6 +535,38 @@ def _dry_run_record(
     started_at: str,
     completed_at: str,
     render: Any,
+) -> dict[str, Any]:
+    return _benchmark_record(
+        request, case, plan, run_index, started_at, completed_at, render,
+        execution_status=BENCHMARK_STATUS_DRY_RUN, failure_stage=None, failure_code=None,
+        execution_success=None, parse_success=None, normalization_success=None,
+        semantic_grounding_calls=0,
+    )
+
+
+def _benchmark_record(
+    request: SemanticGroundingBenchmarkRequest,
+    case: SemanticGroundingBenchmarkCase,
+    plan: SemanticGroundingBenchmarkPlan,
+    run_index: int,
+    started_at: str,
+    completed_at: str,
+    render: Any,
+    *,
+    execution_status: str,
+    failure_stage: str | None,
+    failure_code: str | None,
+    execution_success: bool | None,
+    parse_success: bool | None,
+    normalization_success: bool | None,
+    semantic_grounding_calls: int,
+    execution_request_error: str | None = None,
+    canonical_error_code: str | None = None,
+    grounding_pass: bool | None = None,
+    blocking_claim_count: int | None = None,
+    human_review_required: bool | None = None,
+    blocking_claim_ids: list[str] | None = None,
+    claim_reviews: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     selected_evidence_ids = [item["evidence_id"] for item in case.selected_evidence]
     return _sanitize_artifact_value({
@@ -375,7 +578,8 @@ def _dry_run_record(
         "run_id": f"{case.case_id}__{plan.plan_id}__{run_index}",
         "started_at": started_at,
         "completed_at": completed_at,
-        "execution_status": BENCHMARK_STATUS_DRY_RUN,
+        "execution_status": execution_status,
+        "execution_success": execution_success,
         "provider": plan.provider,
         "model": plan.model,
         "max_output_tokens": plan.max_output_tokens,
@@ -394,22 +598,25 @@ def _dry_run_record(
             "prompt_version": render.prompt_version,
             "prompt_path": render.prompt_path,
         },
-        "execution_request_error": None,
+        "execution_request_error": execution_request_error,
         "parser_path": SEMANTIC_GROUNDING_PARSER_PATH,
         "normalization_path": SEMANTIC_GROUNDING_NORMALIZATION_PATH,
-        "parse_success": None,
-        "normalization_success": None,
-        "failure_stage": None,
-        "failure_code": None,
-        "grounding_pass": None,
-        "blocking_claim_count": None,
-        "human_review_required": None,
-        "claim_reviews": [],
+        "parse_success": parse_success,
+        "normalization_success": normalization_success,
+        "failure_stage": failure_stage,
+        "failure_code": failure_code,
+        "canonical_error_code": canonical_error_code,
+        "grounding_pass": grounding_pass,
+        "blocking_claim_count": blocking_claim_count,
+        "blocking_claim_ids": copy.deepcopy(blocking_claim_ids or []),
+        "human_review_required": human_review_required,
+        "claim_reviews": copy.deepcopy(claim_reviews or []),
         "provider_invocation_counts": {
             "candidate_writer": 0,
-            "semantic_grounding": 0,
+            "semantic_grounding": semantic_grounding_calls,
             "quality_evaluator": 0,
             "repair_writer": 0,
+            "publication_packaging": 0,
         },
     })
 
@@ -458,6 +665,7 @@ def _manifest(request: SemanticGroundingBenchmarkRequest, output_dir: Path, star
         "git_head": _git_head_or_none(),
         "output_dir": str(output_dir),
         "allow_api": request.allow_api,
+        "dry_run": not request.allow_api,
         "runs_per_plan": request.runs_per_plan,
         "cases": [
             {
@@ -502,8 +710,8 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
 def _report_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ...]) -> str:
     lines = [
         "# Isolated Semantic Grounding Benchmark", "",
-        f"Experiment: `{manifest['experiment_id']}`", f"Runs: {len(run_records)}", "Provider calls: 0", "",
-        "This Scope 23A artifact is dry-run only. It fixes CandidatePost text and varies only future Semantic Grounding provider/model plans.", "",
+        f"Experiment: `{manifest['experiment_id']}`", f"Runs: {len(run_records)}", f"Provider calls: {_provider_calls(run_records)}", "",
+        _report_scope_sentence(manifest), "",
         "## Runs", "",
         "| Case | Plan | Provider | Model | Status | Grounding pass | Blocking claims | Human review |",
         "| --- | --- | --- | --- | --- | --- | ---: | --- |",
@@ -515,25 +723,56 @@ def _report_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ..
     return "\n".join(lines) + "\n"
 
 
+def _report_scope_sentence(manifest: dict[str, Any]) -> str:
+    if manifest.get("dry_run"):
+        return "This dry-run artifact fixes CandidatePost text and varies only future Semantic Grounding provider/model plans."
+    return "This live benchmark artifact fixes CandidatePost text and varies only Semantic Grounding provider/model plans."
+
+
 def _comparison_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ...]) -> str:
     lines = [
         "# Semantic Grounding Comparison", "", f"Experiment: `{manifest['experiment_id']}`", "",
-        "Grounding labels are local to each case. This dry-run artifact does not identify a winner.", "",
+        "Grounding labels are local to each case. This artifact does not identify a winner.", "",
     ]
+    model_mapping: list[tuple[str, str, str, str]] = []
     for case_id in sorted({str(record.get("case_id")) for record in run_records}):
         lines.extend([f"## Case `{case_id}`", ""])
         for index, record in enumerate([item for item in run_records if item.get("case_id") == case_id], start=1):
+            label = f"Grounding {chr(ord('A') + index - 1)}"
+            model_mapping.append((case_id, label, str(record.get("provider")), str(record.get("model"))))
             lines.extend([
-                f"### Grounding {chr(ord('A') + index - 1)}", "",
-                f"provider: {record.get('provider')}",
-                f"model: {record.get('model')}",
+                f"### {label}", "",
+                f"execution_status: {record.get('execution_status')}",
+                f"parse_success: {record.get('parse_success')}",
                 f"normalization_success: {record.get('normalization_success')}",
                 f"grounding_pass: {record.get('grounding_pass')}",
                 f"blocking_claim_count: {record.get('blocking_claim_count')}",
                 f"human_review_required: {record.get('human_review_required')}",
-                "claim_level_findings: []", "",
+                "",
+                "| Claim | Support | Severity | Blocking | Evidence | Human Review | Finding |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
             ])
-    return "\n".join(lines)
+            for claim in record.get("claim_reviews") or []:
+                evidence = ", ".join(claim.get("supported_evidence_ids") or [])
+                blocking = claim.get("claim_id") in (record.get("blocking_claim_ids") or [])
+                lines.append(
+                    f"| {claim.get('claim_id')} | {claim.get('support_status')} | {claim.get('severity')} | {blocking} | {evidence} | {record.get('human_review_required')} | {claim.get('rationale')} |"
+                )
+            if not record.get("claim_reviews"):
+                lines.append("|  |  |  |  |  |  |  |")
+            lines.append("")
+    lines.extend(["## Model Mapping", ""])
+    for case_id, label, provider, model in model_mapping:
+        lines.append(f"- `{case_id}` {label}: `{provider}` / `{model}`")
+    return "\n".join(lines) + "\n"
+
+
+def _provider_calls(run_records: tuple[dict[str, Any], ...]) -> int:
+    total = 0
+    for record in run_records:
+        counts = record.get("provider_invocation_counts") or {}
+        total += sum(value for value in counts.values() if isinstance(value, int))
+    return total
 
 
 def _validate_identifier(value: str, field_name: str) -> None:

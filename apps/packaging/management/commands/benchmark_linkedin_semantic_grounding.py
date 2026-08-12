@@ -18,7 +18,7 @@ from services.packaging.linkedin_post_semantic_grounding_benchmark import (
 
 
 class Command(BaseCommand):
-    help = "Run an isolated dry-run Semantic Grounding benchmark. No provider calls."
+    help = "Run an isolated Semantic Grounding benchmark. Live mode requires --allow-api."
     requires_system_checks: list[str] = []
 
     def add_arguments(self, parser):
@@ -31,7 +31,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--allow-api",
             action="store_true",
-            help="Unsupported in Scope 23A; live execution belongs to a future scope.",
+            help="Explicitly allow live Semantic Grounding provider execution.",
         )
 
     def handle(self, *args, **options):
@@ -60,7 +60,7 @@ class Command(BaseCommand):
         self.stdout.write(f"run_count: {result.run_count}")
         self.stdout.write(f"dry_run: {not request.allow_api}")
         self.stdout.write(f"allow_api: {request.allow_api}")
-        self.stdout.write("provider_calls: 0")
+        self.stdout.write(f"provider_calls: {result.provider_call_count}")
         self.stdout.write("candidate_writer_invocations: 0")
         self.stdout.write("quality_evaluator_invocations: 0")
         self.stdout.write("repair_writer_invocations: 0")
