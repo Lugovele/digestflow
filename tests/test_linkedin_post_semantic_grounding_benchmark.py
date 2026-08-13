@@ -121,6 +121,31 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
             self.assertEqual(len(records), 4)
             self.assertTrue(all(sum(record["provider_invocation_counts"].values()) == 0 for record in records))
 
+    def test_dry_run_records_provider_specific_plan_budgets(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_dry_run_budgets",
+                    cases=benchmark.default_semantic_grounding_benchmark_cases(FIXTURE_ROOT),
+                    plans=benchmark.default_semantic_grounding_benchmark_plans(),
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        observed = {
+            record["provider"]: record["max_output_tokens"]
+            for record in result.run_records
+        }
+
+        self.assertEqual(
+            observed,
+            {
+                "openai": benchmark.DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+                "gemini": benchmark.GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            },
+        )
+
     def test_dry_run_records_grounding_result_schema_placeholders(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             result = benchmark.run_semantic_grounding_benchmark(
@@ -468,6 +493,47 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertEqual(result.run_records[0]["semantic_input_summary"], result.run_records[1]["semantic_input_summary"])
         self.assertNotEqual(result.run_records[0]["provider"], result.run_records[1]["provider"])
         self.assertNotEqual(result.run_records[0]["model"], result.run_records[1]["model"])
+
+    def test_live_path_passes_provider_specific_budget_to_execution_request(self) -> None:
+        captured_requests = []
+
+        def fake_executor(request):
+            captured_requests.append(request)
+            return _raw(json.dumps(_review_payload()), provider=request.provider, model=request.model)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_request_budgets",
+                    cases=(
+                        benchmark.load_semantic_grounding_benchmark_case(
+                            FIXTURE_ROOT / "topic_200_digest_134.json"
+                        ),
+                    ),
+                    plans=benchmark.default_semantic_grounding_benchmark_plans(),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        request_budgets = {
+            request.provider: request.max_output_tokens for request in captured_requests
+        }
+        record_budgets = {
+            record["provider"]: record["max_output_tokens"]
+            for record in result.run_records
+        }
+
+        self.assertEqual(
+            request_budgets,
+            {
+                "openai": benchmark.DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+                "gemini": benchmark.GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            },
+        )
+        self.assertEqual(record_budgets, request_budgets)
 
     def test_module_imports_no_provider_runtime_writer_quality_repair_or_packaging_boundaries(self) -> None:
         source = Path(benchmark.__file__).read_text(encoding="utf-8")

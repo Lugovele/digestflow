@@ -14,6 +14,8 @@ from services.packaging.linkedin_post_semantic_grounding_benchmark import (
     BENCHMARK_STATUS_COMPLETED,
     BENCHMARK_STATUS_CONFIG_ERROR,
     BENCHMARK_STATUS_DRY_RUN,
+    DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
     SemanticGroundingBenchmarkArtifacts,
     SemanticGroundingBenchmarkResult,
 )
@@ -59,6 +61,26 @@ class BenchmarkLinkedInSemanticGroundingCommandTests(SimpleTestCase):
         self.assertEqual(plan.plan_id, "gpt_plan")
         self.assertEqual(plan.provider, "openai")
         self.assertEqual(plan.model, "gpt-4.1-2025-04-14")
+        self.assertEqual(
+            plan.max_output_tokens,
+            DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        )
+
+    def test_command_custom_gemini_plan_uses_benchmark_gemini_budget(self) -> None:
+        fake_runner = Mock(return_value=_result())
+        with patch(f"{COMMAND_MODULE}.run_semantic_grounding_benchmark", fake_runner):
+            call_command(
+                "benchmark_linkedin_semantic_grounding",
+                "--experiment-id", "semantic_grounding_gemini_budget",
+                "--plan", "gemini_grounding=gemini,gemini-3.6-flash",
+                "--output-root", str(self.root / "outputs"),
+                stdout=io.StringIO(),
+            )
+
+        plan = fake_runner.call_args.args[0].plans[0]
+
+        self.assertEqual(plan.provider, "gemini")
+        self.assertEqual(plan.max_output_tokens, GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS)
 
     def test_malformed_plan_argument_is_rejected(self) -> None:
         fake_runner = Mock(return_value=_result())
@@ -89,6 +111,13 @@ class BenchmarkLinkedInSemanticGroundingCommandTests(SimpleTestCase):
         self.assertEqual(len(request.cases), 2)
         self.assertEqual(len(request.plans), 2)
         self.assertEqual(request.runs_per_plan, 1)
+        self.assertEqual(
+            [plan.max_output_tokens for plan in request.plans],
+            [
+                DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+                GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            ],
+        )
         text = output.getvalue()
         self.assertIn("provider_calls: 4", text)
         source = Path("apps/packaging/management/commands/benchmark_linkedin_semantic_grounding.py").read_text(encoding="utf-8")

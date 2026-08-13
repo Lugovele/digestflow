@@ -167,6 +167,55 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
             splitting_rules,
         )
 
+    def test_prompt_rules_include_rhetorical_negation_guidance(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        negation_rules = rules["assessment_guidance"]["rhetorical_negation"]
+
+        self.assertIn(
+            "Evaluate apparent, common-reading, or setup propositions in nearby discourse context when the author immediately rejects or qualifies them.",
+            negation_rules,
+        )
+        self.assertIn(
+            "Still check embedded factual, metric, predictive, causal, comparative, or prescriptive assertions against selected evidence.",
+            negation_rules,
+        )
+        self.assertIn(
+            "This exception does not apply to endorsed claims followed by unrelated contrast, preference, or dislike.",
+            negation_rules,
+        )
+
+    def test_prompt_rules_include_rhetorical_negation_golden_cases(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+
+        examples = rules["assessment_guidance"]["rhetorical_negation_examples"]
+        by_post_text = {example["post_text"]: example["expected"] for example in examples}
+
+        self.assertIn(
+            "Add a projected 16.99% CAGR, and the growth story looks settled. I don't think it is.",
+            by_post_text,
+        )
+        self.assertIn(
+            "Check the 16.99% projection against evidence",
+            by_post_text[
+                "Add a projected 16.99% CAGR, and the growth story looks settled. I don't think it is."
+            ],
+        )
+        self.assertIn(
+            "The projected CAGR proves the market is now stable.",
+            by_post_text,
+        )
+        self.assertIn("causal overreach", by_post_text["The projected CAGR proves the market is now stable."])
+        self.assertIn("The market is now stable. But adoption still matters.", by_post_text)
+        self.assertIn(
+            "endorsed evidence-bound claim",
+            by_post_text["The market is now stable. But adoption still matters."],
+        )
+        self.assertIn(
+            "At first glance, the numbers make the market look settled. The risk evidence says otherwise.",
+            by_post_text,
+        )
+
     def test_directly_supported_claim_passes(self) -> None:
         result = normalize_semantic_grounding_review_result(
             _review_payload(),

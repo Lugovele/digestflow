@@ -338,6 +338,36 @@ def build_semantic_grounding_prompt_rules() -> dict[str, Any]:
                 "Split rhetorical or authorial framing from factual, causal, comparative, predictive, or prescriptive assertions.",
                 "Do not make a whole sentence blocking solely because one subclaim needs support.",
             ],
+            "rhetorical_negation": [
+                "Evaluate apparent, common-reading, or setup propositions in nearby discourse context when the author immediately rejects or qualifies them.",
+                "If a proposition is clearly presented as a mistaken or apparent reading and immediately rejected, do not treat that proposition as the author's endorsed factual or causal claim.",
+                "This exception does not apply to endorsed claims followed by unrelated contrast, preference, or dislike.",
+                "Still check embedded factual, metric, predictive, causal, comparative, or prescriptive assertions against selected evidence.",
+            ],
+            "rhetorical_negation_examples": [
+                {
+                    "post_text": "Add a projected 16.99% CAGR, and the growth story looks settled. I don't think it is.",
+                    "expected": (
+                        "Check the 16.99% projection against evidence; do not block solely "
+                        "because the rejected setup says the growth story looks settled."
+                    ),
+                },
+                {
+                    "post_text": "The projected CAGR proves the market is now stable.",
+                    "expected": "Treat endorsed stability proof as causal overreach when unsupported.",
+                },
+                {
+                    "post_text": "The market is now stable. But adoption still matters.",
+                    "expected": "Treat market stability as an endorsed evidence-bound claim.",
+                },
+                {
+                    "post_text": "At first glance, the numbers make the market look settled. The risk evidence says otherwise.",
+                    "expected": (
+                        "Treat the settled-market reading as apparent framing rejected "
+                        "by the risk-evidence sentence."
+                    ),
+                },
+            ],
             "source_bounded_authorial_synthesis": [
                 "Authorial interpretation does not need verbatim source phrasing when it stays bounded by selected evidence, PostBrief, and AngleDecision.",
                 "Do not mark source-bounded synthesis unsupported solely because the exact wording is absent from evidence.",

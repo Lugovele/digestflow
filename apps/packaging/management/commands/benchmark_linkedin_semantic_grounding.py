@@ -14,6 +14,7 @@ from services.packaging.linkedin_post_semantic_grounding_benchmark import (
     default_semantic_grounding_benchmark_plans,
     load_semantic_grounding_benchmark_case,
     run_semantic_grounding_benchmark,
+    semantic_grounding_benchmark_max_output_tokens_for_provider,
 )
 
 
@@ -87,4 +88,12 @@ def _parse_plan(value: str) -> SemanticGroundingBenchmarkPlan:
     fields = [field.strip() for field in raw_fields.split(",")]
     if len(fields) != 2:
         raise CommandError("--plan must include provider,model")
-    return SemanticGroundingBenchmarkPlan(plan_id=plan_id.strip(), provider=fields[0], model=fields[1])
+    provider = fields[0]
+    return SemanticGroundingBenchmarkPlan(
+        plan_id=plan_id.strip(),
+        provider=provider,
+        model=fields[1],
+        max_output_tokens=semantic_grounding_benchmark_max_output_tokens_for_provider(
+            provider
+        ),
+    )

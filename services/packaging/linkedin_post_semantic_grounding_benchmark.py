@@ -225,9 +225,17 @@ def default_semantic_grounding_benchmark_plans() -> tuple[SemanticGroundingBench
             PLAN_GEMINI_3_6_FLASH_SEMANTIC_GROUNDING,
             AI_PROVIDER_GEMINI,
             GEMINI_SUPPORTED_MODELS[0],
-            max_output_tokens=GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            max_output_tokens=semantic_grounding_benchmark_max_output_tokens_for_provider(
+                AI_PROVIDER_GEMINI
+            ),
         ),
     )
+
+
+def semantic_grounding_benchmark_max_output_tokens_for_provider(provider: str) -> int:
+    if str(provider or "").strip().lower() == AI_PROVIDER_GEMINI:
+        return GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
+    return DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
 
 
 def build_semantic_grounding_benchmark_prompt_render(case: SemanticGroundingBenchmarkCase):

@@ -24,6 +24,13 @@ unsupported solely because the exact wording is absent from the evidence. Still
 block invented facts, metrics, examples, actors, dates, causal mechanisms, or
 stronger conditions not present in selected evidence.
 
+Evaluate rhetorical setup in local discourse context. If the post presents an
+apparent or common-reading proposition and immediately rejects or qualifies it,
+do not treat the rejected proposition as the author's endorsed claim. This does
+not make embedded factual, metric, predictive, causal, comparative, or
+prescriptive assertions optional; check those components against selected
+evidence.
+
 Use SEMANTIC_GROUNDING_RULES_JSON as the authoritative source for claim_type,
 support_status, severity, blocking/advisory decisions, pass/fail consistency,
 repairability, human review, automatic fail, qualification, and causal-fidelity

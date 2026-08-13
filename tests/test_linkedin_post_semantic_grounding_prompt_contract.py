@@ -59,6 +59,14 @@ class LinkedInPostSemanticGroundingPromptContractTests(SimpleTestCase):
         self.assertIn("Split mixed rhetorical/authorial framing", text)
         self.assertIn("factual or causal assertions", text)
 
+    def test_prompt_requires_rhetorical_setup_to_use_local_discourse_context(self) -> None:
+        text = PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("Evaluate rhetorical setup in local discourse context", text)
+        self.assertIn("immediately rejects or qualifies it", text)
+        self.assertIn("rejected proposition", text)
+        self.assertIn("embedded factual, metric, predictive, causal", text)
+
     def test_prompt_does_not_show_legacy_string_repair_instruction_schema(self) -> None:
         prompt = _prompt_text()
 
