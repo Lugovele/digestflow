@@ -67,6 +67,15 @@ class LinkedInPostSemanticGroundingPromptContractTests(SimpleTestCase):
         self.assertIn("rejected proposition", text)
         self.assertIn("embedded factual, metric, predictive, causal", text)
 
+
+    def test_prompt_treats_forecast_wording_as_projection_qualifier(self) -> None:
+        text = PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("treat forecast", text)
+        self.assertIn("projection qualifiers", text)
+        self.assertIn("forecast is aggressive", text)
+        self.assertIn("guaranteed outcome", text)
+
     def test_prompt_does_not_show_legacy_string_repair_instruction_schema(self) -> None:
         prompt = _prompt_text()
 

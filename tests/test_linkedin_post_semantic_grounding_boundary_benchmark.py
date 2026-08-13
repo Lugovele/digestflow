@@ -322,6 +322,355 @@ class LinkedInPostSemanticGroundingBoundaryBenchmarkTests(SimpleTestCase):
         self.assertNotIn("Content" + "Package", source)
 
 
+    def test_resume_dry_run_reuses_nine_evaluable_cells_and_plans_twenty_three_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(Path(tempdir) / "resume", 9)
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+            self.assertEqual(result.status, boundary.STATUS_DRY_RUN)
+            self.assertEqual(result.provider_call_count, 0)
+            self.assertEqual(result.planned_provider_call_count, 23)
+            provenances = [record["result_provenance"] for record in result.run_records]
+            self.assertEqual(
+                provenances.count(boundary.PROVENANCE_HISTORICAL_REUSED),
+                9,
+            )
+            self.assertEqual(
+                provenances.count(boundary.PROVENANCE_RETRY_PLANNED),
+                23,
+            )
+            retry_records = [
+                record
+                for record in result.run_records
+                if record["result_provenance"] == boundary.PROVENANCE_RETRY_PLANNED
+            ]
+            self.assertTrue(retry_records)
+            self.assertEqual(
+                {record["execution_failure_classification"] for record in retry_records},
+                {boundary.FAILURE_CLASS_INCONCLUSIVE},
+            )
+            manifest = json.loads(
+                Path(result.artifacts.manifest_json).read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["historical_reused_cell_count"], 9)
+            self.assertEqual(manifest["retry_eligible_cell_count"], 23)
+
+    def test_resume_live_does_not_reexecute_successful_cells(self) -> None:
+        calls = []
+
+        def fake_executor(request):
+            calls.append(request.execution_metadata["run_id"])
+            return _raw(_review_payload())
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(Path(tempdir) / "resume", 31)
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    allow_api=True,
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        self.assertEqual(result.provider_call_count, 1)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            sum(
+                1
+                for record in result.run_records
+                if record["result_provenance"] == boundary.PROVENANCE_HISTORICAL_REUSED
+            ),
+            31,
+        )
+
+
+    def test_resume_does_not_reuse_historical_dry_run_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(Path(tempdir) / "resume", 32)
+            runs_path = resume_dir / "runs.jsonl"
+            records = [json.loads(line) for line in runs_path.read_text(encoding="utf-8").splitlines()]
+            records[0]["execution_status"] = boundary.RUN_STATUS_DRY_RUN
+            records[0]["execution_success"] = None
+            records[0]["parse_success"] = None
+            records[0]["normalization_success"] = None
+            records[0]["grounding_pass"] = None
+            records[0]["failure_stage"] = None
+            records[0]["failure_code"] = None
+            _write_runs_jsonl(runs_path, records)
+
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.planned_provider_call_count, 1)
+        first = result.run_records[0]
+        self.assertEqual(first["result_provenance"], boundary.PROVENANCE_RETRY_PLANNED)
+        self.assertEqual(first["execution_status"], boundary.RUN_STATUS_DRY_RUN)
+
+    def test_historical_failure_classification_is_allowlisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(Path(tempdir) / "resume", 9)
+            runs_path = resume_dir / "runs.jsonl"
+            records = [json.loads(line) for line in runs_path.read_text(encoding="utf-8").splitlines()]
+            records[9]["execution_failure_classification"] = "RAW UNSAFE CLASSIFICATION"
+            _write_runs_jsonl(runs_path, records)
+
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+        retry_record = result.run_records[9]
+        self.assertEqual(retry_record["result_provenance"], boundary.PROVENANCE_RETRY_PLANNED)
+        self.assertEqual(
+            retry_record["execution_failure_classification"],
+            boundary.FAILURE_CLASS_INCONCLUSIVE,
+        )
+        self.assertNotIn("RAW UNSAFE CLASSIFICATION", json.dumps(result.to_dict()))
+
+    def test_resume_does_not_retry_parse_failures_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(
+                Path(tempdir) / "resume",
+                9,
+                parse_failure_indexes={10},
+            )
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.planned_provider_call_count, 22)
+        parse_record = next(
+            record
+            for record in result.run_records
+            if record["failure_code"] == boundary.FAILURE_PARSE
+        )
+        self.assertEqual(
+            parse_record["result_provenance"],
+            boundary.PROVENANCE_HISTORICAL_REUSED,
+        )
+
+    def test_resume_blocks_incompatible_historical_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(Path(tempdir) / "resume", 32)
+            runs_path = resume_dir / "runs.jsonl"
+            records = [json.loads(line) for line in runs_path.read_text(encoding="utf-8").splitlines()]
+            records[0]["max_output_tokens"] = 9999
+            _write_runs_jsonl(runs_path, records)
+
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.status, boundary.STATUS_CONFIG_ERROR)
+        self.assertIn("incompatible", result.safe_failure_message)
+
+    def test_execution_failure_records_safe_diagnostics_and_classification(self) -> None:
+        cases = boundary.load_semantic_grounding_boundary_cases()
+        plans = (boundary.default_semantic_grounding_boundary_plans()[0],)
+
+        def fake_executor(request):
+            return SemanticGroundingRawResponse(
+                raw_text="",
+                provider=request.provider,
+                model=request.model,
+                execution_error="provider invocation failed",
+                execution_diagnostics={
+                    "exception_class": "RateLimitError",
+                    "provider": request.provider,
+                    "model": request.model,
+                    "http_status": 429,
+                    "error_code": "rate_limit_exceeded",
+                    "retryable": True,
+                    "timeout": False,
+                    "rate_limited": True,
+                    "message": "sk-secret should not be retained",
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=cases,
+                    plans=plans,
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        record = result.run_records[0]
+        self.assertEqual(record["failure_code"], boundary.FAILURE_PROVIDER_EXECUTION)
+        self.assertEqual(
+            record["execution_failure_classification"],
+            boundary.FAILURE_CLASS_RATE_LIMIT,
+        )
+        diagnostics = record["response_diagnostics"]["execution_diagnostics"]
+        self.assertEqual(diagnostics["http_status"], 429)
+        self.assertNotIn("sk-secret", json.dumps(record))
+
+
+    def test_execution_diagnostics_omit_arbitrary_exception_message_text(self) -> None:
+        cases = boundary.load_semantic_grounding_boundary_cases()
+        plans = (boundary.default_semantic_grounding_boundary_plans()[0],)
+
+        def fake_executor(request):
+            return SemanticGroundingRawResponse(
+                raw_text="",
+                provider=request.provider,
+                model=request.model,
+                execution_error="provider invocation failed",
+                execution_diagnostics={
+                    "exception_class": "ProviderError",
+                    "provider": request.provider,
+                    "model": request.model,
+                    "http_status": 500,
+                    "error_code": "server_error",
+                    "retryable": True,
+                    "timeout": False,
+                    "rate_limited": False,
+                    "message": "RAW PROMPT BODY SHOULD NOT BE STORED",
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=cases,
+                    plans=plans,
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        serialized = json.dumps(result.to_dict(), ensure_ascii=False)
+        self.assertNotIn("RAW PROMPT BODY", serialized)
+        diagnostics = result.run_records[0]["response_diagnostics"]["execution_diagnostics"]
+        self.assertEqual(
+            diagnostics["message"],
+            "provider execution failed; raw diagnostic message omitted",
+        )
+
+
+    def test_historical_reuse_allowlists_failure_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(
+                Path(tempdir) / "resume",
+                9,
+                parse_failure_indexes={10},
+            )
+            runs_path = resume_dir / "runs.jsonl"
+            records = [json.loads(line) for line in runs_path.read_text(encoding="utf-8").splitlines()]
+            records[9]["execution_failure_classification"] = "RAW REUSED CLASSIFICATION"
+            _write_runs_jsonl(runs_path, records)
+
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+        reused_record = result.run_records[9]
+        self.assertEqual(
+            reused_record["result_provenance"],
+            boundary.PROVENANCE_HISTORICAL_REUSED,
+        )
+        self.assertEqual(
+            reused_record["execution_failure_classification"],
+            boundary.FAILURE_CLASS_INCONCLUSIVE,
+        )
+        self.assertNotIn("RAW REUSED CLASSIFICATION", json.dumps(result.to_dict()))
+
+    def test_historical_reuse_drops_raw_response_and_unsafe_diagnostic_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            resume_dir = _write_historical_resume_fixture(Path(tempdir) / "resume", 32)
+            runs_path = resume_dir / "runs.jsonl"
+            records = [json.loads(line) for line in runs_path.read_text(encoding="utf-8").splitlines()]
+            records[0]["raw_text"] = "RAW PROVIDER TEXT SHOULD NOT BE REUSED"
+            records[0]["raw_provider_response"] = {"body": "RAW PROVIDER REPLY"}
+            records[0]["headers"] = {"x-provider": "unsafe"}
+            records[0]["response_diagnostics"] = {
+                "execution_diagnostics": {
+                    "message": "RAW PROMPT BODY SHOULD NOT BE REUSED",
+                }
+            }
+            _write_runs_jsonl(runs_path, records)
+
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=boundary.load_semantic_grounding_boundary_cases(),
+                    plans=boundary.default_semantic_grounding_boundary_plans(),
+                    output_root=Path(tempdir) / "outputs",
+                    retry_failed_from=resume_dir,
+                ),
+                now_factory=_fixed_now,
+            )
+
+        reused = result.run_records[0]
+        self.assertEqual(reused["result_provenance"], boundary.PROVENANCE_HISTORICAL_REUSED)
+        serialized = json.dumps(result.to_dict(), ensure_ascii=False)
+        self.assertNotIn("RAW PROVIDER TEXT", serialized)
+        self.assertNotIn("RAW PROVIDER REPLY", serialized)
+        self.assertNotIn("RAW PROMPT BODY", serialized)
+        self.assertNotIn("headers", serialized.lower())
+
+    def test_forecast_valid_case_remains_projection_qualified(self) -> None:
+        case = next(
+            item
+            for item in boundary.load_semantic_grounding_boundary_cases()
+            if item.case_id == "forecast_vs_certainty_valid"
+        )
+
+        self.assertEqual(case.expected_label, boundary.EXPECTED_VALID)
+        self.assertFalse(case.expected_blocking)
+        self.assertIn(
+            "The forecast is aggressive: 16.99% CAGR through 2035.",
+            case.candidate_post,
+        )
+
+
 def _record(**overrides) -> dict:
     record = {
         "plan_id": "gpt_grounding",
@@ -381,6 +730,81 @@ def _raw(payload: dict) -> SemanticGroundingRawResponse:
         raw_text=json.dumps(payload),
         provider="openai",
         model="gpt-4.1-2025-04-14",
+    )
+
+
+def _write_historical_resume_fixture(
+    output_root: Path,
+    successful_evaluable_count: int,
+    *,
+    parse_failure_indexes: set[int] | None = None,
+) -> Path:
+    parse_failure_indexes = parse_failure_indexes or set()
+
+    def fake_executor(request):
+        case_id = request.execution_metadata["case_id"]
+        case = next(
+            item for item in boundary.load_semantic_grounding_boundary_cases() if item.case_id == case_id
+        )
+        return _raw(_review_payload(passed=not case.expected_blocking, blocking=case.expected_blocking))
+
+    result = boundary.run_semantic_grounding_boundary_benchmark(
+        boundary.SemanticGroundingBoundaryRequest(
+            cases=boundary.load_semantic_grounding_boundary_cases(),
+            plans=boundary.default_semantic_grounding_boundary_plans(),
+            allow_api=True,
+            output_root=output_root.parent,
+            experiment_id=output_root.name,
+        ),
+        now_factory=_fixed_now,
+        semantic_grounding_executor=fake_executor,
+    )
+    records = [copy for copy in result.run_records]
+    for index, record in enumerate(records, 1):
+        if index <= successful_evaluable_count:
+            continue
+        record["execution_status"] = boundary.RUN_STATUS_FAILED
+        record["execution_success"] = False
+        record["parse_success"] = False
+        record["normalization_success"] = False
+        record["grounding_pass"] = None
+        record["blocking_claim_count"] = None
+        record["blocking_claim_ids"] = []
+        record["human_review_required"] = None
+        record["claim_reviews"] = []
+        record["must_inspect_fragment_coverage"] = []
+        record["provider_invocation_counts"] = {
+            "candidate_writer": 0,
+            "semantic_grounding": 1,
+            "quality_evaluator": 0,
+            "repair_writer": 0,
+            "publication_packaging": 0,
+        }
+        if index in parse_failure_indexes:
+            record["failure_stage"] = "parse"
+            record["failure_code"] = boundary.FAILURE_PARSE
+            record["execution_success"] = True
+            record["response_diagnostics"] = {
+                "raw_response_character_count": 12,
+                "stripped_response_character_count": 12,
+            }
+        else:
+            record["failure_stage"] = "execution"
+            record["failure_code"] = boundary.FAILURE_PROVIDER_EXECUTION
+            record["response_diagnostics"] = {
+                "raw_response_character_count": 0,
+                "stripped_response_character_count": 0,
+            }
+        record["boundary_outcome"] = boundary.classify_boundary_run(record)
+    _write_runs_jsonl(Path(result.artifacts.runs_jsonl), records)
+    return Path(result.artifacts.output_dir)
+
+
+def _write_runs_jsonl(path: Path, records: list[dict]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(record, ensure_ascii=False, sort_keys=True) for record in records)
+        + "\n",
+        encoding="utf-8",
     )
 
 

@@ -6,7 +6,7 @@ runtime wiring.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import copy
 import csv
@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 from typing import Any, Callable
 
 from django.conf import settings
@@ -73,6 +74,20 @@ FAILURE_PROVIDER_EXECUTION = "provider_execution_failure"
 FAILURE_EMPTY_RESPONSE = "empty_response"
 FAILURE_PARSE = "parse_failure"
 FAILURE_NORMALIZATION = "normalization_failure"
+
+FAILURE_CLASS_RATE_LIMIT = "PROVIDER_RATE_LIMIT_PATTERN"
+FAILURE_CLASS_CLIENT_LIFECYCLE = "CLIENT_LIFECYCLE_PATTERN"
+FAILURE_CLASS_SHARED_TRANSPORT = "SHARED_TRANSPORT_FAILURE"
+FAILURE_CLASS_COMMAND_ORCHESTRATION = "COMMAND_ORCHESTRATION_FAILURE"
+FAILURE_CLASS_AUTH = "AUTH_FAILURE"
+FAILURE_CLASS_TIMEOUT = "TIMEOUT_PATTERN"
+FAILURE_CLASS_OTHER = "OTHER"
+FAILURE_CLASS_INCONCLUSIVE = "INCONCLUSIVE"
+
+PROVENANCE_HISTORICAL_REUSED = "historical_reused"
+PROVENANCE_LIVE_EXECUTED = "live_executed"
+PROVENANCE_RETRY_PLANNED = "retry_planned"
+PROVENANCE_PLANNED = "planned"
 
 OUTCOME_VALID_PRESERVED = "valid_preserved"
 OUTCOME_FALSE_POSITIVE = "false_positive"
@@ -188,6 +203,16 @@ class SemanticGroundingBoundaryPlan:
 
 
 @dataclass(frozen=True)
+class SemanticGroundingBoundaryExecutionPolicy:
+    inter_call_delay_seconds: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "inter_call_delay_seconds": self.inter_call_delay_seconds,
+        }
+
+
+@dataclass(frozen=True)
 class SemanticGroundingBoundaryRequest:
     experiment_id: str = DEFAULT_EXPERIMENT_ID
     cases: tuple[SemanticGroundingBoundaryCase, ...] = ()
@@ -197,6 +222,10 @@ class SemanticGroundingBoundaryRequest:
     output_root: Path | None = None
     false_positive_weight: float = FALSE_POSITIVE_WEIGHT
     false_negative_weight: float = FALSE_NEGATIVE_WEIGHT
+    retry_failed_from: Path | None = None
+    execution_policy: SemanticGroundingBoundaryExecutionPolicy = field(
+        default_factory=SemanticGroundingBoundaryExecutionPolicy
+    )
 
 
 @dataclass(frozen=True)
@@ -346,12 +375,28 @@ def run_semantic_grounding_boundary_benchmark(
     artifacts = _artifact_paths(output_dir)
     records: list[dict[str, Any]] = []
     provider_call_count = 0
+    resume_records = _load_resume_records(request.retry_failed_from)
 
     for case in request.cases:
         for plan in request.plans:
             for run_index in range(1, request.runs_per_plan + 1):
                 render = build_boundary_semantic_grounding_prompt_render(case)
-                if request.allow_api:
+                historical = _compatible_historical_record(
+                    resume_records,
+                    request,
+                    case,
+                    plan,
+                    run_index,
+                    render,
+                )
+                if historical is not None and _is_reusable_historical_record(historical):
+                    record = _historical_reuse_record(
+                        historical,
+                        request,
+                        started_at=started_at,
+                        completed_at=_isoformat(now()),
+                    )
+                elif request.allow_api:
                     record = _live_run_record(
                         request,
                         case,
@@ -365,6 +410,8 @@ def run_semantic_grounding_boundary_benchmark(
                     provider_call_count += record["provider_invocation_counts"][
                         "semantic_grounding"
                     ]
+                    if request.execution_policy.inter_call_delay_seconds > 0:
+                        time.sleep(request.execution_policy.inter_call_delay_seconds)
                 else:
                     record = _dry_run_record(
                         request,
@@ -374,6 +421,24 @@ def run_semantic_grounding_boundary_benchmark(
                         started_at,
                         _isoformat(now()),
                         render,
+                        result_provenance=(
+                            PROVENANCE_RETRY_PLANNED
+                            if historical is not None
+                            else PROVENANCE_PLANNED
+                        ),
+                        resume_source_run_id=(
+                            historical.get("run_id") if historical else None
+                        ),
+                        resume_source_artifact=(
+                            _resume_source_artifact(request.retry_failed_from)
+                            if historical is not None
+                            else None
+                        ),
+                        execution_failure_classification=(
+                            _historical_failure_classification(historical)
+                            if historical is not None
+                            else None
+                        ),
                     )
                 records.append(record)
 
@@ -699,6 +764,10 @@ def _validate_request(request: SemanticGroundingBoundaryRequest) -> Path:
         raise SemanticGroundingBoundaryBenchmarkConfigurationError(
             "boundary scoring weights must be positive"
         )
+    _validate_execution_policy(request.execution_policy)
+    if request.retry_failed_from is not None:
+        _load_resume_records(request.retry_failed_from)
+        _planned_provider_calls(request)
     if request.allow_api:
         _validate_live_prompt_paths(request.cases)
     output_root = _resolve_output_root(request.output_root)
@@ -730,6 +799,19 @@ def _validate_plan(plan: SemanticGroundingBoundaryPlan) -> None:
     if not isinstance(plan.json_mode, bool):
         raise SemanticGroundingBoundaryBenchmarkConfigurationError(
             "json_mode must be a boolean"
+        )
+
+
+def _validate_execution_policy(
+    policy: SemanticGroundingBoundaryExecutionPolicy,
+) -> None:
+    if (
+        isinstance(policy.inter_call_delay_seconds, bool)
+        or not isinstance(policy.inter_call_delay_seconds, (int, float))
+        or policy.inter_call_delay_seconds < 0
+    ):
+        raise SemanticGroundingBoundaryBenchmarkConfigurationError(
+            "inter_call_delay_seconds must be a non-negative number"
         )
 
 
@@ -771,6 +853,7 @@ def _live_run_record(
             "case_id": case.case_id,
             "plan_id": plan.plan_id,
             "run_index": run_index,
+            "run_id": _run_id(case, plan, run_index),
         },
     )
     request_error = get_semantic_grounding_execution_request_error(execution_request)
@@ -820,7 +903,11 @@ def _live_run_record(
             parse_success=False,
             normalization_success=False,
             response_diagnostics=_raw_response_diagnostics(raw_response),
+            execution_failure_classification=_execution_failure_classification(
+                raw_response
+            ),
             semantic_grounding_calls=1,
+            result_provenance=PROVENANCE_LIVE_EXECUTED,
         )
     if not str(raw_text or "").strip():
         return _boundary_record(
@@ -839,7 +926,11 @@ def _live_run_record(
             parse_success=False,
             normalization_success=False,
             response_diagnostics=_raw_response_diagnostics(raw_response),
+            execution_failure_classification=_execution_failure_classification(
+                raw_response
+            ),
             semantic_grounding_calls=1,
+            result_provenance=PROVENANCE_LIVE_EXECUTED,
         )
 
     try:
@@ -870,6 +961,7 @@ def _live_run_record(
             ),
             response_diagnostics=_raw_response_diagnostics(raw_response),
             semantic_grounding_calls=1,
+            result_provenance=PROVENANCE_LIVE_EXECUTED,
         )
 
     review_payload = grounding_review.to_dict()
@@ -896,6 +988,7 @@ def _live_run_record(
         claim_reviews=review_payload["claim_reviews"],
         response_diagnostics=_raw_response_diagnostics(raw_response),
         semantic_grounding_calls=1,
+        result_provenance=PROVENANCE_LIVE_EXECUTED,
     )
 
 
@@ -907,6 +1000,10 @@ def _dry_run_record(
     started_at: str,
     completed_at: str,
     render: Any,
+    result_provenance: str = PROVENANCE_PLANNED,
+    resume_source_run_id: str | None = None,
+    resume_source_artifact: str | None = None,
+    execution_failure_classification: str | None = None,
 ) -> dict[str, Any]:
     return _boundary_record(
         request,
@@ -923,6 +1020,10 @@ def _dry_run_record(
         parse_success=None,
         normalization_success=None,
         semantic_grounding_calls=0,
+        result_provenance=result_provenance,
+        resume_source_run_id=resume_source_run_id,
+        resume_source_artifact=resume_source_artifact,
+        execution_failure_classification=execution_failure_classification,
     )
 
 
@@ -952,6 +1053,10 @@ def _boundary_record(
     parser_error_details: dict[str, Any] | None = None,
     normalization_error_details: dict[str, Any] | None = None,
     response_diagnostics: dict[str, Any] | None = None,
+    execution_failure_classification: str | None = None,
+    result_provenance: str = PROVENANCE_LIVE_EXECUTED,
+    resume_source_run_id: str | None = None,
+    resume_source_artifact: str | None = None,
 ) -> dict[str, Any]:
     fragments = _fragment_coverage(
         case.must_inspect_fragments,
@@ -987,6 +1092,7 @@ def _boundary_record(
             "normalization_success": normalization_success,
             "failure_stage": failure_stage,
             "failure_code": failure_code,
+            "execution_failure_classification": execution_failure_classification,
             "canonical_error_code": canonical_error_code,
             "execution_request_error": execution_request_error,
             "parser_path": PARSER_PATH,
@@ -1008,6 +1114,12 @@ def _boundary_record(
             "parser_error_details": copy.deepcopy(parser_error_details),
             "normalization_error_details": copy.deepcopy(normalization_error_details),
             "response_diagnostics": copy.deepcopy(response_diagnostics),
+            "result_provenance": result_provenance,
+            "resume_source_run_id": resume_source_run_id,
+            "resume_source_artifact": resume_source_artifact,
+            "execution_policy": request.execution_policy.to_dict(),
+            "execution_attempt_index": 1,
+            "execution_attempt_count": 1,
             "provider_invocation_counts": {
                 "candidate_writer": 0,
                 "semantic_grounding": semantic_grounding_calls,
@@ -1019,6 +1131,228 @@ def _boundary_record(
     )
     record["boundary_outcome"] = classify_boundary_run(record)
     return record
+
+
+def _run_id(
+    case: SemanticGroundingBoundaryCase,
+    plan: SemanticGroundingBoundaryPlan,
+    run_index: int,
+) -> str:
+    return f"{case.case_id}__{plan.plan_id}__{run_index}"
+
+
+def _load_resume_records(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    resume_path = Path(path)
+    if resume_path.is_dir():
+        resume_path = resume_path / "runs.jsonl"
+    if not resume_path.exists():
+        raise SemanticGroundingBoundaryBenchmarkConfigurationError(
+            f"retry_failed_from runs artifact does not exist: {resume_path}"
+        )
+    records: dict[str, dict[str, Any]] = {}
+    for line_number, line in enumerate(resume_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SemanticGroundingBoundaryBenchmarkConfigurationError(
+                f"retry_failed_from runs artifact contains invalid JSONL at line {line_number}"
+            ) from exc
+        run_id = record.get("run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise SemanticGroundingBoundaryBenchmarkConfigurationError(
+                f"retry_failed_from record missing run_id at line {line_number}"
+            )
+        if run_id in records:
+            raise SemanticGroundingBoundaryBenchmarkConfigurationError(
+                f"retry_failed_from contains duplicate run_id: {run_id}"
+            )
+        records[run_id] = record
+    return records
+
+
+def _compatible_historical_record(
+    resume_records: dict[str, dict[str, Any]],
+    request: SemanticGroundingBoundaryRequest,
+    case: SemanticGroundingBoundaryCase,
+    plan: SemanticGroundingBoundaryPlan,
+    run_index: int,
+    render: Any,
+) -> dict[str, Any] | None:
+    if not resume_records:
+        return None
+    run_id = _run_id(case, plan, run_index)
+    historical = resume_records.get(run_id)
+    if historical is None:
+        return None
+    mismatches = []
+    expected_scalars = {
+        "case_id": case.case_id,
+        "plan_id": plan.plan_id,
+        "run_index": run_index,
+        "provider": plan.provider,
+        "model": plan.model,
+        "max_output_tokens": plan.max_output_tokens,
+        "json_mode": plan.json_mode,
+        "expected_label": case.expected_label,
+        "expected_blocking": case.expected_blocking,
+    }
+    for key, expected in expected_scalars.items():
+        if historical.get(key) != expected:
+            mismatches.append(key)
+    if historical.get("semantic_input_summary") != _semantic_input_summary(render):
+        mismatches.append("semantic_input_summary")
+    if mismatches:
+        raise SemanticGroundingBoundaryBenchmarkConfigurationError(
+            "retry_failed_from record is incompatible for "
+            f"{run_id}: " + ", ".join(sorted(mismatches))
+        )
+    return historical
+
+
+def _is_reusable_historical_record(record: dict[str, Any]) -> bool:
+    return _is_evaluable(record) or record.get("failure_stage") in {
+        "parse",
+        "normalization",
+    }
+
+
+def _is_retryable_historical_failure(record: dict[str, Any]) -> bool:
+    return not _is_reusable_historical_record(record)
+
+
+def _historical_reuse_record(
+    historical: dict[str, Any],
+    request: SemanticGroundingBoundaryRequest,
+    *,
+    started_at: str,
+    completed_at: str,
+) -> dict[str, Any]:
+    allowed_keys = {
+        "schema_version",
+        "benchmark_type",
+        "case_id",
+        "pair_id",
+        "category",
+        "semantic_topic",
+        "rhetorical_intent",
+        "expected_label",
+        "expected_blocking",
+        "expected_issue_type",
+        "voice_sensitive",
+        "boundary_delta",
+        "plan_id",
+        "provider",
+        "model",
+        "max_output_tokens",
+        "json_mode",
+        "run_index",
+        "run_id",
+        "execution_status",
+        "execution_success",
+        "parse_success",
+        "normalization_success",
+        "failure_stage",
+        "failure_code",
+        "canonical_error_code",
+        "execution_request_error",
+        "parser_path",
+        "normalization_path",
+        "grounding_pass",
+        "blocking_claim_count",
+        "blocking_claim_ids",
+        "human_review_required",
+        "claim_reviews",
+        "must_inspect_fragments",
+        "must_inspect_fragment_coverage",
+        "semantic_input_summary",
+        "rendered_variable_names",
+        "prompt_metadata",
+        "parser_error_details",
+        "normalization_error_details",
+        "boundary_outcome",
+    }
+    record = _sanitize_artifact_value(
+        {key: copy.deepcopy(historical.get(key)) for key in allowed_keys if key in historical}
+    )
+    record["experiment_id"] = request.experiment_id
+    record["started_at"] = started_at
+    record["completed_at"] = completed_at
+    record["result_provenance"] = PROVENANCE_HISTORICAL_REUSED
+    record["resume_source_run_id"] = historical.get("run_id")
+    record["resume_source_artifact"] = _resume_source_artifact(request.retry_failed_from)
+    record["execution_failure_classification"] = _historical_failure_classification(
+        historical
+    )
+    record["execution_policy"] = request.execution_policy.to_dict()
+    record["execution_attempt_index"] = 0
+    record["execution_attempt_count"] = 0
+    record["provider_invocation_counts"] = {
+        "candidate_writer": 0,
+        "semantic_grounding": 0,
+        "quality_evaluator": 0,
+        "repair_writer": 0,
+        "publication_packaging": 0,
+    }
+    record["boundary_outcome"] = classify_boundary_run(record)
+    return record
+
+
+def _resume_source_artifact(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    resume_path = Path(path)
+    if resume_path.is_dir():
+        resume_path = resume_path / "runs.jsonl"
+    return str(resume_path)
+
+
+def _historical_failure_classification(record: dict[str, Any]) -> str | None:
+    value = record.get("execution_failure_classification")
+    allowed = {
+        FAILURE_CLASS_RATE_LIMIT,
+        FAILURE_CLASS_CLIENT_LIFECYCLE,
+        FAILURE_CLASS_SHARED_TRANSPORT,
+        FAILURE_CLASS_COMMAND_ORCHESTRATION,
+        FAILURE_CLASS_AUTH,
+        FAILURE_CLASS_TIMEOUT,
+        FAILURE_CLASS_OTHER,
+        FAILURE_CLASS_INCONCLUSIVE,
+    }
+    if isinstance(value, str) and value in allowed:
+        return value
+    if isinstance(value, str) and value:
+        return FAILURE_CLASS_INCONCLUSIVE
+    if record.get("failure_stage") == "execution":
+        return FAILURE_CLASS_INCONCLUSIVE
+    return None
+
+
+def _execution_failure_classification(raw_response: Any) -> str:
+    diagnostics = getattr(raw_response, "execution_diagnostics", None)
+    if not isinstance(diagnostics, dict) or not diagnostics:
+        return FAILURE_CLASS_INCONCLUSIVE
+    http_status = diagnostics.get("http_status")
+    message = str(diagnostics.get("message") or "").lower()
+    exception_class = str(diagnostics.get("exception_class") or "").lower()
+    if diagnostics.get("rate_limited") is True or http_status == 429:
+        return FAILURE_CLASS_RATE_LIMIT
+    if diagnostics.get("timeout") is True:
+        return FAILURE_CLASS_TIMEOUT
+    if http_status in {401, 403}:
+        return FAILURE_CLASS_AUTH
+    if isinstance(http_status, int) and 500 <= http_status <= 599:
+        return FAILURE_CLASS_SHARED_TRANSPORT
+    if any(fragment in exception_class or fragment in message for fragment in ("connection", "network", "transport")):
+        return FAILURE_CLASS_SHARED_TRANSPORT
+    if any(fragment in exception_class or fragment in message for fragment in ("closed", "lifecycle", "event loop")):
+        return FAILURE_CLASS_CLIENT_LIFECYCLE
+    if "command" in exception_class or "subprocess" in exception_class:
+        return FAILURE_CLASS_COMMAND_ORCHESTRATION
+    return FAILURE_CLASS_OTHER
 
 
 def _metrics_for_records(
@@ -1262,6 +1596,12 @@ def _manifest(
             ),
             "category_count": len({case.category for case in request.cases}),
             "planned_provider_call_count": _planned_provider_calls(request),
+            "execution_policy": request.execution_policy.to_dict(),
+            "retry_failed_from": (
+                str(request.retry_failed_from) if request.retry_failed_from else None
+            ),
+            "historical_reused_cell_count": _historical_reused_cell_count(request),
+            "retry_eligible_cell_count": _retry_eligible_cell_count(request),
             "scoring": {
                 "false_positive_weight": request.false_positive_weight,
                 "false_negative_weight": request.false_negative_weight,
@@ -1319,6 +1659,9 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                 "grounding_pass",
                 "blocking_claim_count",
                 "boundary_outcome",
+                "result_provenance",
+                "execution_failure_classification",
+                "resume_source_run_id",
                 "provider_calls",
             ),
         )
@@ -1338,6 +1681,11 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     "grounding_pass": record.get("grounding_pass"),
                     "blocking_claim_count": record.get("blocking_claim_count"),
                     "boundary_outcome": record.get("boundary_outcome"),
+                    "result_provenance": record.get("result_provenance"),
+                    "execution_failure_classification": record.get(
+                        "execution_failure_classification"
+                    ),
+                    "resume_source_run_id": record.get("resume_source_run_id"),
                     "provider_calls": sum(
                         value for value in counts.values() if isinstance(value, int)
                     ),
@@ -1450,7 +1798,61 @@ def _validate_live_prompt_paths(
 
 
 def _planned_provider_calls(request: SemanticGroundingBoundaryRequest) -> int:
-    return len(request.cases) * len(request.plans) * request.runs_per_plan
+    if request.retry_failed_from is None:
+        return len(request.cases) * len(request.plans) * request.runs_per_plan
+    resume_records = _load_resume_records(request.retry_failed_from)
+    planned = 0
+    for case in request.cases:
+        for plan in request.plans:
+            for run_index in range(1, request.runs_per_plan + 1):
+                render = build_boundary_semantic_grounding_prompt_render(case)
+                historical = _compatible_historical_record(
+                    resume_records,
+                    request,
+                    case,
+                    plan,
+                    run_index,
+                    render,
+                )
+                if historical is None or not _is_reusable_historical_record(historical):
+                    planned += 1
+    return planned
+
+
+def _historical_reused_cell_count(request: SemanticGroundingBoundaryRequest) -> int:
+    if request.retry_failed_from is None:
+        return 0
+    return _historical_resume_counts(request)["reused"]
+
+
+def _retry_eligible_cell_count(request: SemanticGroundingBoundaryRequest) -> int:
+    if request.retry_failed_from is None:
+        return 0
+    return _historical_resume_counts(request)["retry_eligible"]
+
+
+def _historical_resume_counts(request: SemanticGroundingBoundaryRequest) -> dict[str, int]:
+    resume_records = _load_resume_records(request.retry_failed_from)
+    counts = {"reused": 0, "retry_eligible": 0}
+    for case in request.cases:
+        for plan in request.plans:
+            for run_index in range(1, request.runs_per_plan + 1):
+                render = build_boundary_semantic_grounding_prompt_render(case)
+                historical = _compatible_historical_record(
+                    resume_records,
+                    request,
+                    case,
+                    plan,
+                    run_index,
+                    render,
+                )
+                if historical is None:
+                    counts["retry_eligible"] += 1
+                elif _is_reusable_historical_record(historical):
+                    counts["reused"] += 1
+                else:
+                    counts["retry_eligible"] += 1
+    return counts
 
 
 def _provider_calls(run_records: tuple[dict[str, Any], ...]) -> int:
@@ -1494,7 +1896,39 @@ def _raw_response_diagnostics(raw_response: Any) -> dict[str, Any]:
     usage = getattr(raw_response, "usage", None)
     if isinstance(usage, dict):
         diagnostics["usage"] = _safe_token_usage(usage)
+    execution_diagnostics = getattr(raw_response, "execution_diagnostics", None)
+    if isinstance(execution_diagnostics, dict):
+        diagnostics["execution_diagnostics"] = _safe_execution_diagnostics(
+            execution_diagnostics
+        )
     return diagnostics
+
+
+def _safe_execution_diagnostics(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key in (
+        "exception_class",
+        "provider",
+        "model",
+        "http_status",
+        "error_code",
+        "retryable",
+        "timeout",
+        "rate_limited",
+        "message",
+    ):
+        value = diagnostics.get(key)
+        if isinstance(value, str):
+            safe[key] = (
+                "provider execution failed; raw diagnostic message omitted"
+                if key == "message" and value.strip()
+                else _safe_text(value)
+            )
+        elif isinstance(value, bool) or value is None:
+            safe[key] = value
+        elif isinstance(value, int):
+            safe[key] = value
+    return _sanitize_artifact_value(safe)
 
 
 def _safe_provider_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from django.conf import settings
@@ -24,6 +25,18 @@ DEFAULT_MAX_OUTPUT_TOKENS = 2400
 MIN_MAX_OUTPUT_TOKENS = 2000
 DEFAULT_JSON_MODE = True
 STAGE_NAME = "semantic grounding"
+SAFE_EXECUTION_MESSAGE_MAX_LENGTH = 240
+SECRET_MARKERS = (
+    "sk-",
+    "bearer",
+    "authorization",
+    "x-api-key",
+    "api_key",
+    "secret",
+    "password",
+    "credential",
+    "token",
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +70,7 @@ class SemanticGroundingRawResponse:
     usage: dict[str, Any] | None = None
     raw_provider_response: dict[str, Any] | None = None
     provider_response_metadata: dict[str, Any] | None = None
+    execution_diagnostics: dict[str, Any] | None = None
     execution_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +89,8 @@ class SemanticGroundingRawResponse:
             result["provider_response_metadata"] = copy.deepcopy(
                 self.provider_response_metadata
             )
+        if self.execution_diagnostics is not None:
+            result["execution_diagnostics"] = copy.deepcopy(self.execution_diagnostics)
         if self.execution_error is not None:
             result["execution_error"] = self.execution_error
         return result
@@ -142,12 +158,17 @@ def execute_semantic_grounding_prompt(
             json_mode=request.json_mode,
             allow_json_mode_fallback=False,
         )
-    except Exception:  # pragma: no cover - covered with fake failure.
+    except Exception as exc:  # pragma: no cover - covered with fake failure.
         return SemanticGroundingRawResponse(
             raw_text="",
             provider=request.provider,
             model=request.model,
             prompt_metadata=prompt_metadata,
+            execution_diagnostics=build_safe_execution_diagnostics(
+                exc,
+                provider=request.provider,
+                model=request.model,
+            ),
             execution_error="provider invocation failed",
         )
 
@@ -177,6 +198,33 @@ def execute_semantic_grounding_prompt(
             getattr(response, "provider_response_metadata", None)
         ),
     )
+
+
+def build_safe_execution_diagnostics(
+    exc: BaseException,
+    *,
+    provider: str,
+    model: str,
+) -> dict[str, Any]:
+    http_status = _safe_http_status(exc)
+    message = _sanitize_execution_message(str(exc))
+    safe_code = _safe_error_code(exc)
+    exception_class = exc.__class__.__name__[:120]
+    return {
+        "exception_class": exception_class,
+        "provider": str(provider or "")[:120],
+        "model": str(model or "")[:120],
+        "http_status": http_status,
+        "error_code": safe_code,
+        "retryable": _is_retryable_execution_error(exc, http_status),
+        "timeout": _is_timeout_error(exc),
+        "rate_limited": (
+            http_status == 429
+            or "rate" in str(safe_code or "").lower()
+            or "ratelimit" in exception_class.lower()
+        ),
+        "message": message,
+    }
 
 
 def get_semantic_grounding_execution_request_error(
@@ -237,3 +285,54 @@ def _prompt_metadata_from_render(render: object) -> PromptMetadata | None:
         prompt_version=getattr(render, "prompt_version", "") or "",
         prompt_path=getattr(render, "prompt_path", None),
     )
+
+
+def _safe_http_status(exc: BaseException) -> int | None:
+    for attr_name in ("status_code", "status", "http_status"):
+        value = getattr(exc, attr_name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    response = getattr(exc, "response", None)
+    value = getattr(response, "status_code", None)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _safe_error_code(exc: BaseException) -> str | None:
+    value = getattr(exc, "code", None) or getattr(exc, "error_code", None)
+    if value is None:
+        return None
+    raw_text = str(value or "")
+    if any(marker in raw_text.lower() for marker in SECRET_MARKERS):
+        return "redacted_error_code"
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_text.strip())
+    return text[:120] or None
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    text = f"{exc.__class__.__name__} {exc}".lower()
+    return "timeout" in text or "timed out" in text
+
+
+def _is_retryable_execution_error(
+    exc: BaseException,
+    http_status: int | None,
+) -> bool | None:
+    if http_status is not None:
+        if http_status in {408, 409, 425, 429} or 500 <= http_status <= 599:
+            return True
+        if 400 <= http_status < 500:
+            return False
+    if _is_timeout_error(exc):
+        return True
+    text = f"{exc.__class__.__name__} {exc}".lower()
+    if any(marker in text for marker in ("connection", "temporar", "rate limit")):
+        return True
+    return None
+
+
+def _sanitize_execution_message(value: str) -> str:
+    if str(value or "").strip():
+        return "provider execution failed; raw exception message omitted"
+    return ""

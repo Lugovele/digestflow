@@ -8,6 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from services.packaging.linkedin_post_semantic_grounding_boundary_benchmark import (
     DEFAULT_EXPERIMENT_ID,
+    SemanticGroundingBoundaryExecutionPolicy,
     SemanticGroundingBoundaryPlan,
     SemanticGroundingBoundaryRequest,
     default_semantic_grounding_boundary_plans,
@@ -29,6 +30,8 @@ class Command(BaseCommand):
         parser.add_argument("--plan", action="append", default=[])
         parser.add_argument("--runs-per-plan", type=int, default=1)
         parser.add_argument("--output-root")
+        parser.add_argument("--retry-failed-from")
+        parser.add_argument("--inter-call-delay-seconds", type=float, default=0.0)
         parser.add_argument("--dry-run", action="store_true")
         parser.add_argument(
             "--allow-api",
@@ -56,6 +59,14 @@ class Command(BaseCommand):
             runs_per_plan=options["runs_per_plan"],
             allow_api=bool(options["allow_api"]),
             output_root=Path(options["output_root"]) if options.get("output_root") else None,
+            retry_failed_from=(
+                Path(options["retry_failed_from"])
+                if options.get("retry_failed_from")
+                else None
+            ),
+            execution_policy=SemanticGroundingBoundaryExecutionPolicy(
+                inter_call_delay_seconds=options["inter_call_delay_seconds"],
+            ),
         )
         result = run_semantic_grounding_boundary_benchmark(request)
         self.stdout.write("=== POSTFLOW SEMANTIC GROUNDING BOUNDARY BENCHMARK ===")
@@ -68,6 +79,12 @@ class Command(BaseCommand):
         self.stdout.write(f"provider_calls: {result.provider_call_count}")
         self.stdout.write(
             f"planned_live_provider_calls: {result.planned_provider_call_count}"
+        )
+        if request.retry_failed_from:
+            self.stdout.write(f"retry_failed_from: {request.retry_failed_from}")
+        self.stdout.write(
+            "inter_call_delay_seconds: "
+            f"{request.execution_policy.inter_call_delay_seconds}"
         )
         self.stdout.write("candidate_writer_invocations: 0")
         self.stdout.write("quality_evaluator_invocations: 0")

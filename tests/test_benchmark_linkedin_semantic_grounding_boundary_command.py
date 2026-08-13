@@ -17,6 +17,7 @@ from services.packaging.linkedin_post_semantic_grounding_boundary_benchmark impo
     STATUS_COMPLETED,
     STATUS_CONFIG_ERROR,
     STATUS_DRY_RUN,
+    SemanticGroundingBoundaryExecutionPolicy,
 )
 
 
@@ -128,6 +129,29 @@ class BenchmarkLinkedInSemanticGroundingBoundaryCommandTests(SimpleTestCase):
                     stdout=io.StringIO(),
                 )
         self.assertEqual(raised.exception.code, 1)
+
+
+    def test_command_passes_retry_failed_from_and_execution_policy(self) -> None:
+        fake_runner = Mock(return_value=_result(provider_call_count=0))
+        with patch(f"{COMMAND_MODULE}.run_semantic_grounding_boundary_benchmark", fake_runner):
+            call_command(
+                "benchmark_linkedin_semantic_grounding_boundary",
+                "--retry-failed-from",
+                str(self.root / "previous"),
+                "--inter-call-delay-seconds",
+                "0",
+                "--output-root",
+                str(self.root / "outputs"),
+                stdout=io.StringIO(),
+            )
+
+        request = fake_runner.call_args.args[0]
+        self.assertEqual(request.retry_failed_from, self.root / "previous")
+        self.assertIsInstance(
+            request.execution_policy,
+            SemanticGroundingBoundaryExecutionPolicy,
+        )
+        self.assertEqual(request.execution_policy.inter_call_delay_seconds, 0)
 
     def test_command_imports_no_provider_smoke_or_runtime_boundaries(self) -> None:
         source = Path(

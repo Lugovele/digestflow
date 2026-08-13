@@ -31,6 +31,11 @@ not make embedded factual, metric, predictive, causal, comparative, or
 prescriptive assertions optional; check those components against selected
 evidence.
 
+For projection claims, treat forecast, projected, outlook, expected, and similar
+wording as projection qualifiers when the sentence remains framed as a forecast.
+Do not block a claim merely because it says a forecast is aggressive. Still block
+unqualified certainty language that turns a forecast into a guaranteed outcome.
+
 Use SEMANTIC_GROUNDING_RULES_JSON as the authoritative source for claim_type,
 support_status, severity, blocking/advisory decisions, pass/fail consistency,
 repairability, human review, automatic fail, qualification, and causal-fidelity

@@ -14,6 +14,7 @@ from services.packaging.linkedin_post_semantic_grounding_execution import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     SemanticGroundingRawResponse,
     build_semantic_grounding_execution_request,
+    build_safe_execution_diagnostics,
     execute_semantic_grounding_prompt,
 )
 
@@ -190,6 +191,24 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
         self.assertEqual(response.raw_text, "")
         self.assertEqual(response.execution_error, "provider invocation failed")
         self.assertNotIn("secret provider details", json.dumps(response.to_dict()))
+
+
+    def test_safe_execution_diagnostics_redacts_secret_bearing_error_code(self) -> None:
+        class ProviderError(Exception):
+            code = "sk-secret-token-like-code"
+
+        diagnostics = build_safe_execution_diagnostics(
+            ProviderError("ordinary provider failure"),
+            provider="openai",
+            model="gpt-4.1-2025-04-14",
+        )
+
+        self.assertEqual(diagnostics["error_code"], "redacted_error_code")
+        self.assertNotIn("sk-secret", json.dumps(diagnostics))
+        self.assertEqual(
+            diagnostics["message"],
+            "provider execution failed; raw exception message omitted",
+        )
 
     def test_empty_response_is_execution_error(self) -> None:
         client = FakeClient("")
