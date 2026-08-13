@@ -1,0 +1,867 @@
+﻿{
+  "schema_version": "2026-08-13",
+  "corpus_id": "semantic_grounding_boundary_v1",
+  "provenance": "hand-authored deterministic fixtures",
+  "cases": [
+    {
+      "case_id": "authorial_synthesis_valid",
+      "pair_id": "authorial_synthesis",
+      "category": "authorial_synthesis",
+      "semantic_topic": "crypto adoption and risk",
+      "rhetorical_intent": "contrast growth evidence with unresolved risk evidence",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "a0-summary",
+          "evidence_text": "A crypto ownership survey says 30% of Americans own cryptocurrency and 61% of owners plan to invest more this year, while security concerns and market volatility continue to limit broader adoption.",
+          "role_in_post": "Use as adoption and risk evidence."
+        },
+        {
+          "evidence_id": "a1-kp0",
+          "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+          "role_in_post": "Use as forecast context, not proof that risk is resolved."
+        }
+      ],
+      "candidate_post": "Growth signals don't erase the risk signals. They're answering different questions.",
+      "post_brief": {
+        "opening_direction": "Open by resisting a simple growth story.",
+        "pattern_interrupt": "Growth evidence remains conditional on risk evidence.",
+        "core_point": "Adoption and forecasts matter, but they do not settle security or volatility concerns.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "a0-summary",
+            "evidence_text": "A crypto ownership survey says 30% of Americans own cryptocurrency and 61% of owners plan to invest more this year, while security concerns and market volatility continue to limit broader adoption.",
+            "role_in_post": "Use as adoption and risk evidence."
+          },
+          {
+            "evidence_id": "a1-kp0",
+            "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+            "role_in_post": "Use as forecast context, not proof that risk is resolved."
+          }
+        ],
+        "practical_point": "Check whether growth evidence actually resolves the risk evidence.",
+        "ending_direction": "End with the distinction between growth and risk.",
+        "cta_direction": "Ask readers to separate evidence types before drawing conclusions."
+      },
+      "angle_decision": {
+        "controlling_angle": "Visible crypto growth evidence remains conditional on unresolved risk evidence.",
+        "reader_problem": "Readers may treat adoption and forecasts as one clean growth narrative.",
+        "author_position": "The author argues that growth and risk evidence answer different questions.",
+        "main_tension": "Adoption growth versus unresolved security and volatility concerns.",
+        "supporting_evidence_ids": [
+          "a0-summary",
+          "a1-kp0"
+        ],
+        "angle_to_avoid": [
+          "do not claim risk is over"
+        ]
+      },
+      "notes": "Valid synthesis stays bounded by selected evidence.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "Growth signals don't erase the risk signals"
+      ],
+      "boundary_delta": "valid contrast without resolving risk"
+    },
+    {
+      "case_id": "authorial_synthesis_invalid",
+      "pair_id": "authorial_synthesis",
+      "category": "authorial_synthesis",
+      "semantic_topic": "crypto adoption and risk",
+      "rhetorical_intent": "contrast growth evidence with unresolved risk evidence",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "invented_conclusion",
+      "evidence": [
+        {
+          "evidence_id": "a0-summary",
+          "evidence_text": "A crypto ownership survey says 30% of Americans own cryptocurrency and 61% of owners plan to invest more this year, while security concerns and market volatility continue to limit broader adoption.",
+          "role_in_post": "Use as adoption and risk evidence."
+        },
+        {
+          "evidence_id": "a1-kp0",
+          "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+          "role_in_post": "Use as forecast context, not proof that risk is resolved."
+        }
+      ],
+      "candidate_post": "Growth signals prove the risk phase is over.",
+      "post_brief": {
+        "opening_direction": "Open by resisting a simple growth story.",
+        "pattern_interrupt": "Growth evidence remains conditional on risk evidence.",
+        "core_point": "Adoption and forecasts matter, but they do not settle security or volatility concerns.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "a0-summary",
+            "evidence_text": "A crypto ownership survey says 30% of Americans own cryptocurrency and 61% of owners plan to invest more this year, while security concerns and market volatility continue to limit broader adoption.",
+            "role_in_post": "Use as adoption and risk evidence."
+          },
+          {
+            "evidence_id": "a1-kp0",
+            "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+            "role_in_post": "Use as forecast context, not proof that risk is resolved."
+          }
+        ],
+        "practical_point": "Check whether growth evidence actually resolves the risk evidence.",
+        "ending_direction": "End with the distinction between growth and risk.",
+        "cta_direction": "Ask readers to separate evidence types before drawing conclusions."
+      },
+      "angle_decision": {
+        "controlling_angle": "Visible crypto growth evidence remains conditional on unresolved risk evidence.",
+        "reader_problem": "Readers may treat adoption and forecasts as one clean growth narrative.",
+        "author_position": "The author argues that growth and risk evidence answer different questions.",
+        "main_tension": "Adoption growth versus unresolved security and volatility concerns.",
+        "supporting_evidence_ids": [
+          "a0-summary",
+          "a1-kp0"
+        ],
+        "angle_to_avoid": [
+          "do not claim risk is over"
+        ]
+      },
+      "notes": "Invalid version turns coexistence into resolution.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "risk phase is over"
+      ],
+      "boundary_delta": "invented resolution of risk"
+    },
+    {
+      "case_id": "coexistence_vs_causation_valid",
+      "pair_id": "coexistence_vs_causation",
+      "category": "coexistence_vs_causation",
+      "semantic_topic": "crypto ownership constraints",
+      "rhetorical_intent": "name constraints without inventing a causal direction",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "b0-summary",
+          "evidence_text": "Crypto ownership is rising, and the same report says security concerns and volatility remain major limits on broader adoption.",
+          "role_in_post": "Use as coexistence evidence."
+        }
+      ],
+      "candidate_post": "Security concerns and volatility remain major limits on adoption.",
+      "post_brief": {
+        "opening_direction": "Open with adoption still facing constraints.",
+        "pattern_interrupt": "Rising ownership does not remove adoption limits.",
+        "core_point": "Security concerns and volatility remain limits alongside ownership growth.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "b0-summary",
+            "evidence_text": "Crypto ownership is rising, and the same report says security concerns and volatility remain major limits on broader adoption.",
+            "role_in_post": "Use as coexistence evidence."
+          }
+        ],
+        "practical_point": "Separate coexistence from causation.",
+        "ending_direction": "End by naming the adoption limits.",
+        "cta_direction": "Ask readers to avoid causal shortcuts."
+      },
+      "angle_decision": {
+        "controlling_angle": "Ownership growth and adoption limits coexist in the evidence.",
+        "reader_problem": "Readers may infer causation from adjacent facts.",
+        "author_position": "The author keeps the causal relationship bounded.",
+        "main_tension": "Growth sits beside constraints.",
+        "supporting_evidence_ids": [
+          "b0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not claim ownership causes volatility"
+        ]
+      },
+      "notes": "Valid version states the limitation directly.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "remain major limits on adoption"
+      ],
+      "boundary_delta": "coexistence without causal mechanism"
+    },
+    {
+      "case_id": "coexistence_vs_causation_invalid",
+      "pair_id": "coexistence_vs_causation",
+      "category": "coexistence_vs_causation",
+      "semantic_topic": "crypto ownership constraints",
+      "rhetorical_intent": "name constraints without inventing a causal direction",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "causal_overreach",
+      "evidence": [
+        {
+          "evidence_id": "b0-summary",
+          "evidence_text": "Crypto ownership is rising, and the same report says security concerns and volatility remain major limits on broader adoption.",
+          "role_in_post": "Use as coexistence evidence."
+        }
+      ],
+      "candidate_post": "Rising ownership is causing security concerns and volatility.",
+      "post_brief": {
+        "opening_direction": "Open with adoption still facing constraints.",
+        "pattern_interrupt": "Rising ownership does not remove adoption limits.",
+        "core_point": "Security concerns and volatility remain limits alongside ownership growth.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "b0-summary",
+            "evidence_text": "Crypto ownership is rising, and the same report says security concerns and volatility remain major limits on broader adoption.",
+            "role_in_post": "Use as coexistence evidence."
+          }
+        ],
+        "practical_point": "Separate coexistence from causation.",
+        "ending_direction": "End by naming the adoption limits.",
+        "cta_direction": "Ask readers to avoid causal shortcuts."
+      },
+      "angle_decision": {
+        "controlling_angle": "Ownership growth and adoption limits coexist in the evidence.",
+        "reader_problem": "Readers may infer causation from adjacent facts.",
+        "author_position": "The author keeps the causal relationship bounded.",
+        "main_tension": "Growth sits beside constraints.",
+        "supporting_evidence_ids": [
+          "b0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not claim ownership causes volatility"
+        ]
+      },
+      "notes": "Invalid version invents causal direction.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "Rising ownership is causing"
+      ],
+      "boundary_delta": "causal mechanism invented"
+    },
+    {
+      "case_id": "forecast_vs_certainty_valid",
+      "pair_id": "forecast_vs_certainty",
+      "category": "forecast_vs_certainty",
+      "semantic_topic": "market growth forecast",
+      "rhetorical_intent": "use a strong forecast phrase without turning projection into fact",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "c0-kp0",
+          "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+          "role_in_post": "Use as a projected forecast."
+        }
+      ],
+      "candidate_post": "The forecast is aggressive: 16.99% CAGR through 2035.",
+      "post_brief": {
+        "opening_direction": "Open with a punchy forecast framing.",
+        "pattern_interrupt": "Keep projected growth projected.",
+        "core_point": "The growth number is a forecast, not a guaranteed outcome.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "c0-kp0",
+            "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+            "role_in_post": "Use as a projected forecast."
+          }
+        ],
+        "practical_point": "Do not turn projections into certainty.",
+        "ending_direction": "End on the forecast boundary.",
+        "cta_direction": "Ask readers to check projected language."
+      },
+      "angle_decision": {
+        "controlling_angle": "A forecast can be strong without becoming certain.",
+        "reader_problem": "Readers may treat projected CAGR as a guaranteed annual result.",
+        "author_position": "The author preserves the forecast qualifier.",
+        "main_tension": "Projected growth versus guaranteed growth.",
+        "supporting_evidence_ids": [
+          "c0-kp0"
+        ],
+        "angle_to_avoid": [
+          "do not say will grow every year"
+        ]
+      },
+      "notes": "Valid version keeps forecast status intact.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "forecast is aggressive"
+      ],
+      "boundary_delta": "strong but still projected"
+    },
+    {
+      "case_id": "forecast_vs_certainty_invalid",
+      "pair_id": "forecast_vs_certainty",
+      "category": "forecast_vs_certainty",
+      "semantic_topic": "market growth forecast",
+      "rhetorical_intent": "use a strong forecast phrase without turning projection into fact",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "forecast_as_fact",
+      "evidence": [
+        {
+          "evidence_id": "c0-kp0",
+          "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+          "role_in_post": "Use as a projected forecast."
+        }
+      ],
+      "candidate_post": "The market will grow 16.99% every year through 2035.",
+      "post_brief": {
+        "opening_direction": "Open with a punchy forecast framing.",
+        "pattern_interrupt": "Keep projected growth projected.",
+        "core_point": "The growth number is a forecast, not a guaranteed outcome.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "c0-kp0",
+            "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+            "role_in_post": "Use as a projected forecast."
+          }
+        ],
+        "practical_point": "Do not turn projections into certainty.",
+        "ending_direction": "End on the forecast boundary.",
+        "cta_direction": "Ask readers to check projected language."
+      },
+      "angle_decision": {
+        "controlling_angle": "A forecast can be strong without becoming certain.",
+        "reader_problem": "Readers may treat projected CAGR as a guaranteed annual result.",
+        "author_position": "The author preserves the forecast qualifier.",
+        "main_tension": "Projected growth versus guaranteed growth.",
+        "supporting_evidence_ids": [
+          "c0-kp0"
+        ],
+        "angle_to_avoid": [
+          "do not say will grow every year"
+        ]
+      },
+      "notes": "Invalid version turns projection into certainty.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "will grow 16.99% every year"
+      ],
+      "boundary_delta": "projected converted to certain"
+    },
+    {
+      "case_id": "attribution_precision_valid",
+      "pair_id": "attribution_precision",
+      "category": "attribution_precision",
+      "semantic_topic": "market sentiment attribution",
+      "rhetorical_intent": "keep attribution attached to the named source group",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "d0-summary",
+          "evidence_text": "K33 Research analysis says Bitcoin likely hit its lowest point near $60,000 in February and describes current market sentiment as extremely cautious among traders.",
+          "role_in_post": "Use as attributed analysis of market sentiment."
+        }
+      ],
+      "candidate_post": "Analysts describe sentiment as extremely cautious.",
+      "post_brief": {
+        "opening_direction": "Open with cautious sentiment.",
+        "pattern_interrupt": "Do not invent who said the market is turning.",
+        "core_point": "The evidence attributes caution to analysis, not direct trader testimony.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "d0-summary",
+            "evidence_text": "K33 Research analysis says Bitcoin likely hit its lowest point near $60,000 in February and describes current market sentiment as extremely cautious among traders.",
+            "role_in_post": "Use as attributed analysis of market sentiment."
+          }
+        ],
+        "practical_point": "Preserve source attribution.",
+        "ending_direction": "End on attribution precision.",
+        "cta_direction": "Ask readers to keep analysis and testimony separate."
+      },
+      "angle_decision": {
+        "controlling_angle": "Attribution precision matters when describing market sentiment.",
+        "reader_problem": "Readers may treat analyst descriptions as direct trader claims.",
+        "author_position": "The author preserves who made the claim.",
+        "main_tension": "Analyst interpretation versus invented market participant testimony.",
+        "supporting_evidence_ids": [
+          "d0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not invent trader testimony"
+        ]
+      },
+      "notes": "Valid version keeps attribution general and bounded.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "Analysts describe sentiment"
+      ],
+      "boundary_delta": "attribution preserved"
+    },
+    {
+      "case_id": "attribution_precision_invalid",
+      "pair_id": "attribution_precision",
+      "category": "attribution_precision",
+      "semantic_topic": "market sentiment attribution",
+      "rhetorical_intent": "keep attribution attached to the named source group",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "unsupported_attribution",
+      "evidence": [
+        {
+          "evidence_id": "d0-summary",
+          "evidence_text": "K33 Research analysis says Bitcoin likely hit its lowest point near $60,000 in February and describes current market sentiment as extremely cautious among traders.",
+          "role_in_post": "Use as attributed analysis of market sentiment."
+        }
+      ],
+      "candidate_post": "Traders themselves say the market is entering a bear cycle.",
+      "post_brief": {
+        "opening_direction": "Open with cautious sentiment.",
+        "pattern_interrupt": "Do not invent who said the market is turning.",
+        "core_point": "The evidence attributes caution to analysis, not direct trader testimony.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "d0-summary",
+            "evidence_text": "K33 Research analysis says Bitcoin likely hit its lowest point near $60,000 in February and describes current market sentiment as extremely cautious among traders.",
+            "role_in_post": "Use as attributed analysis of market sentiment."
+          }
+        ],
+        "practical_point": "Preserve source attribution.",
+        "ending_direction": "End on attribution precision.",
+        "cta_direction": "Ask readers to keep analysis and testimony separate."
+      },
+      "angle_decision": {
+        "controlling_angle": "Attribution precision matters when describing market sentiment.",
+        "reader_problem": "Readers may treat analyst descriptions as direct trader claims.",
+        "author_position": "The author preserves who made the claim.",
+        "main_tension": "Analyst interpretation versus invented market participant testimony.",
+        "supporting_evidence_ids": [
+          "d0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not invent trader testimony"
+        ]
+      },
+      "notes": "Invalid version invents trader testimony.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "Traders themselves say"
+      ],
+      "boundary_delta": "speaker substituted"
+    },
+    {
+      "case_id": "rhetorical_rejection_valid",
+      "pair_id": "rhetorical_rejection",
+      "category": "rhetorical_rejection",
+      "semantic_topic": "growth-story rhetoric",
+      "rhetorical_intent": "set up a tempting reading and immediately reject it",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "e0-kp0",
+          "evidence_text": "The crypto market is projected to grow at a CAGR of 16.99% from 2025 to 2035, while adoption still faces security and volatility limits.",
+          "role_in_post": "Use as projected growth and unresolved risk evidence."
+        }
+      ],
+      "candidate_post": "The numbers make the growth story look settled. I don't think it is.",
+      "post_brief": {
+        "opening_direction": "Open with a tempting settled-growth reading.",
+        "pattern_interrupt": "Immediately reject the settled reading.",
+        "core_point": "Projected growth does not settle the market story because risk limits remain.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "e0-kp0",
+            "evidence_text": "The crypto market is projected to grow at a CAGR of 16.99% from 2025 to 2035, while adoption still faces security and volatility limits.",
+            "role_in_post": "Use as projected growth and unresolved risk evidence."
+          }
+        ],
+        "practical_point": "Read rhetorical setup in discourse context.",
+        "ending_direction": "End by preserving the rejected reading distinction.",
+        "cta_direction": "Ask readers to check whether a setup is endorsed."
+      },
+      "angle_decision": {
+        "controlling_angle": "A rejected rhetorical setup should not be treated as the author's endorsed claim.",
+        "reader_problem": "Readers may mistake a setup sentence for an endorsed conclusion.",
+        "author_position": "The author rejects the settled-growth reading.",
+        "main_tension": "Tempting growth story versus rejected certainty.",
+        "supporting_evidence_ids": [
+          "e0-kp0"
+        ],
+        "angle_to_avoid": [
+          "do not treat rejected setup as endorsement"
+        ]
+      },
+      "notes": "Valid version immediately rejects the setup.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "I don't think it is"
+      ],
+      "boundary_delta": "rhetorical setup rejected"
+    },
+    {
+      "case_id": "rhetorical_rejection_invalid",
+      "pair_id": "rhetorical_rejection",
+      "category": "rhetorical_rejection",
+      "semantic_topic": "growth-story rhetoric",
+      "rhetorical_intent": "set up a tempting reading and immediately reject it",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "unsupported_strengthening",
+      "evidence": [
+        {
+          "evidence_id": "e0-kp0",
+          "evidence_text": "The crypto market is projected to grow at a CAGR of 16.99% from 2025 to 2035, while adoption still faces security and volatility limits.",
+          "role_in_post": "Use as projected growth and unresolved risk evidence."
+        }
+      ],
+      "candidate_post": "The numbers prove the growth story is settled.",
+      "post_brief": {
+        "opening_direction": "Open with a tempting settled-growth reading.",
+        "pattern_interrupt": "Immediately reject the settled reading.",
+        "core_point": "Projected growth does not settle the market story because risk limits remain.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "e0-kp0",
+            "evidence_text": "The crypto market is projected to grow at a CAGR of 16.99% from 2025 to 2035, while adoption still faces security and volatility limits.",
+            "role_in_post": "Use as projected growth and unresolved risk evidence."
+          }
+        ],
+        "practical_point": "Read rhetorical setup in discourse context.",
+        "ending_direction": "End by preserving the rejected reading distinction.",
+        "cta_direction": "Ask readers to check whether a setup is endorsed."
+      },
+      "angle_decision": {
+        "controlling_angle": "A rejected rhetorical setup should not be treated as the author's endorsed claim.",
+        "reader_problem": "Readers may mistake a setup sentence for an endorsed conclusion.",
+        "author_position": "The author rejects the settled-growth reading.",
+        "main_tension": "Tempting growth story versus rejected certainty.",
+        "supporting_evidence_ids": [
+          "e0-kp0"
+        ],
+        "angle_to_avoid": [
+          "do not treat rejected setup as endorsement"
+        ]
+      },
+      "notes": "Invalid version endorses settled growth.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "prove the growth story is settled"
+      ],
+      "boundary_delta": "rejection removed"
+    },
+    {
+      "case_id": "metaphor_without_new_fact_valid",
+      "pair_id": "metaphor_without_new_fact",
+      "category": "metaphor_without_new_fact",
+      "semantic_topic": "adoption as headline",
+      "rhetorical_intent": "use metaphor without adding hidden facts",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "f0-summary",
+          "evidence_text": "Survey data shows crypto ownership is high, while security concerns and volatility continue to limit broader adoption.",
+          "role_in_post": "Use as adoption evidence qualified by limits."
+        }
+      ],
+      "candidate_post": "Adoption numbers are the headline, not the verdict.",
+      "post_brief": {
+        "opening_direction": "Open with a metaphor about adoption numbers.",
+        "pattern_interrupt": "Do not let the metaphor add a new fact.",
+        "core_point": "Adoption numbers matter but do not settle adoption quality or risk.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "f0-summary",
+            "evidence_text": "Survey data shows crypto ownership is high, while security concerns and volatility continue to limit broader adoption.",
+            "role_in_post": "Use as adoption evidence qualified by limits."
+          }
+        ],
+        "practical_point": "Permit bounded metaphor while blocking invented content.",
+        "ending_direction": "End on the distinction between signal and verdict.",
+        "cta_direction": "Ask readers to separate rhetoric from new factual claims."
+      },
+      "angle_decision": {
+        "controlling_angle": "Metaphor is allowed when it stays bounded by evidence.",
+        "reader_problem": "Readers may over-police strong phrasing or miss real invention.",
+        "author_position": "The author treats adoption as signal, not verdict.",
+        "main_tension": "Distinctive phrasing versus unsupported new fact.",
+        "supporting_evidence_ids": [
+          "f0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not invent collapse"
+        ]
+      },
+      "notes": "Valid metaphor does not introduce a market collapse.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "headline, not the verdict"
+      ],
+      "boundary_delta": "metaphor without added factual content"
+    },
+    {
+      "case_id": "metaphor_without_new_fact_invalid",
+      "pair_id": "metaphor_without_new_fact",
+      "category": "metaphor_without_new_fact",
+      "semantic_topic": "adoption as headline",
+      "rhetorical_intent": "use metaphor without adding hidden facts",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "invented_fact",
+      "evidence": [
+        {
+          "evidence_id": "f0-summary",
+          "evidence_text": "Survey data shows crypto ownership is high, while security concerns and volatility continue to limit broader adoption.",
+          "role_in_post": "Use as adoption evidence qualified by limits."
+        }
+      ],
+      "candidate_post": "Adoption numbers are hiding a market collapse.",
+      "post_brief": {
+        "opening_direction": "Open with a metaphor about adoption numbers.",
+        "pattern_interrupt": "Do not let the metaphor add a new fact.",
+        "core_point": "Adoption numbers matter but do not settle adoption quality or risk.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "f0-summary",
+            "evidence_text": "Survey data shows crypto ownership is high, while security concerns and volatility continue to limit broader adoption.",
+            "role_in_post": "Use as adoption evidence qualified by limits."
+          }
+        ],
+        "practical_point": "Permit bounded metaphor while blocking invented content.",
+        "ending_direction": "End on the distinction between signal and verdict.",
+        "cta_direction": "Ask readers to separate rhetoric from new factual claims."
+      },
+      "angle_decision": {
+        "controlling_angle": "Metaphor is allowed when it stays bounded by evidence.",
+        "reader_problem": "Readers may over-police strong phrasing or miss real invention.",
+        "author_position": "The author treats adoption as signal, not verdict.",
+        "main_tension": "Distinctive phrasing versus unsupported new fact.",
+        "supporting_evidence_ids": [
+          "f0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not invent collapse"
+        ]
+      },
+      "notes": "Invalid metaphor introduces unsupported collapse.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "hiding a market collapse"
+      ],
+      "boundary_delta": "metaphor adds unsupported fact"
+    },
+    {
+      "case_id": "multi_source_synthesis_valid",
+      "pair_id": "multi_source_synthesis",
+      "category": "multi_source_synthesis",
+      "semantic_topic": "education technology usage and outcomes",
+      "rhetorical_intent": "combine sources without inventing outcome proof",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "g0-summary",
+          "evidence_text": "One education technology report shows high classroom usage of an AI tutoring tool.",
+          "role_in_post": "Use as usage evidence."
+        },
+        {
+          "evidence_id": "g1-summary",
+          "evidence_text": "A separate study says learning outcomes were not measured and warns that adoption data should not be read as proof of educational impact.",
+          "role_in_post": "Use as outcome-limitation evidence."
+        }
+      ],
+      "candidate_post": "One source shows usage. Another shows structural limits. Put together, they argue against reading usage as impact.",
+      "post_brief": {
+        "opening_direction": "Open with the tension between usage and outcomes.",
+        "pattern_interrupt": "Usage evidence is not impact evidence.",
+        "core_point": "High usage and missing outcome measurement should be synthesized without claiming improvement.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "g0-summary",
+            "evidence_text": "One education technology report shows high classroom usage of an AI tutoring tool.",
+            "role_in_post": "Use as usage evidence."
+          },
+          {
+            "evidence_id": "g1-summary",
+            "evidence_text": "A separate study says learning outcomes were not measured and warns that adoption data should not be read as proof of educational impact.",
+            "role_in_post": "Use as outcome-limitation evidence."
+          }
+        ],
+        "practical_point": "Do not confuse reach with learning.",
+        "ending_direction": "End with usage not equaling impact.",
+        "cta_direction": "Ask readers what the evidence actually measured."
+      },
+      "angle_decision": {
+        "controlling_angle": "Usage evidence should not be inflated into learning-outcome evidence.",
+        "reader_problem": "Readers may treat adoption data as proof of impact.",
+        "author_position": "The author synthesizes usage and limits without inventing improvement.",
+        "main_tension": "Reach versus measured learning.",
+        "supporting_evidence_ids": [
+          "g0-summary",
+          "g1-summary"
+        ],
+        "angle_to_avoid": [
+          "do not claim learning improvement"
+        ]
+      },
+      "notes": "Valid multi-source synthesis is bounded.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "reading usage as impact"
+      ],
+      "boundary_delta": "two sources synthesized without outcome claim"
+    },
+    {
+      "case_id": "multi_source_synthesis_invalid",
+      "pair_id": "multi_source_synthesis",
+      "category": "multi_source_synthesis",
+      "semantic_topic": "education technology usage and outcomes",
+      "rhetorical_intent": "combine sources without inventing outcome proof",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "unsupported_outcome_claim",
+      "evidence": [
+        {
+          "evidence_id": "g0-summary",
+          "evidence_text": "One education technology report shows high classroom usage of an AI tutoring tool.",
+          "role_in_post": "Use as usage evidence."
+        },
+        {
+          "evidence_id": "g1-summary",
+          "evidence_text": "A separate study says learning outcomes were not measured and warns that adoption data should not be read as proof of educational impact.",
+          "role_in_post": "Use as outcome-limitation evidence."
+        }
+      ],
+      "candidate_post": "Together, the studies prove AI improves learning outcomes.",
+      "post_brief": {
+        "opening_direction": "Open with the tension between usage and outcomes.",
+        "pattern_interrupt": "Usage evidence is not impact evidence.",
+        "core_point": "High usage and missing outcome measurement should be synthesized without claiming improvement.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "g0-summary",
+            "evidence_text": "One education technology report shows high classroom usage of an AI tutoring tool.",
+            "role_in_post": "Use as usage evidence."
+          },
+          {
+            "evidence_id": "g1-summary",
+            "evidence_text": "A separate study says learning outcomes were not measured and warns that adoption data should not be read as proof of educational impact.",
+            "role_in_post": "Use as outcome-limitation evidence."
+          }
+        ],
+        "practical_point": "Do not confuse reach with learning.",
+        "ending_direction": "End with usage not equaling impact.",
+        "cta_direction": "Ask readers what the evidence actually measured."
+      },
+      "angle_decision": {
+        "controlling_angle": "Usage evidence should not be inflated into learning-outcome evidence.",
+        "reader_problem": "Readers may treat adoption data as proof of impact.",
+        "author_position": "The author synthesizes usage and limits without inventing improvement.",
+        "main_tension": "Reach versus measured learning.",
+        "supporting_evidence_ids": [
+          "g0-summary",
+          "g1-summary"
+        ],
+        "angle_to_avoid": [
+          "do not claim learning improvement"
+        ]
+      },
+      "notes": "Invalid version invents learning improvement.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "prove AI improves learning outcomes"
+      ],
+      "boundary_delta": "outcome proof invented"
+    },
+    {
+      "case_id": "editorial_compression_valid",
+      "pair_id": "editorial_compression",
+      "category": "editorial_compression",
+      "semantic_topic": "usage versus learning",
+      "rhetorical_intent": "compress the distinction without distorting meaning",
+      "expected_label": "VALID_STRONG_VOICE",
+      "expected_blocking": false,
+      "expected_issue_type": "",
+      "evidence": [
+        {
+          "evidence_id": "h0-summary",
+          "evidence_text": "A usage report shows that students used the tool, but it did not measure what students learned.",
+          "role_in_post": "Use as usage-not-learning evidence."
+        }
+      ],
+      "candidate_post": "Usage tells you the tool reached students. It doesn't tell you what they learned.",
+      "post_brief": {
+        "opening_direction": "Open with a compressed usage-versus-learning distinction.",
+        "pattern_interrupt": "Reach is not outcome.",
+        "core_point": "Usage data says the tool reached students, not that students learned.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "h0-summary",
+            "evidence_text": "A usage report shows that students used the tool, but it did not measure what students learned.",
+            "role_in_post": "Use as usage-not-learning evidence."
+          }
+        ],
+        "practical_point": "Ask what was actually measured.",
+        "ending_direction": "End by separating reach from learning.",
+        "cta_direction": "Ask readers not to overread usage."
+      },
+      "angle_decision": {
+        "controlling_angle": "Usage data can show reach without proving learning.",
+        "reader_problem": "Readers may read usage as learning.",
+        "author_position": "The author compresses the distinction without changing it.",
+        "main_tension": "Measured use versus unmeasured outcomes.",
+        "supporting_evidence_ids": [
+          "h0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not claim students learned nothing"
+        ]
+      },
+      "notes": "Valid compression is strong and source-bounded.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "doesn't tell you what they learned"
+      ],
+      "boundary_delta": "compression without distortion"
+    },
+    {
+      "case_id": "editorial_compression_invalid",
+      "pair_id": "editorial_compression",
+      "category": "editorial_compression",
+      "semantic_topic": "usage versus learning",
+      "rhetorical_intent": "compress the distinction without distorting meaning",
+      "expected_label": "INVALID_SEMANTIC_OVERREACH",
+      "expected_blocking": true,
+      "expected_issue_type": "unsupported_strengthening",
+      "evidence": [
+        {
+          "evidence_id": "h0-summary",
+          "evidence_text": "A usage report shows that students used the tool, but it did not measure what students learned.",
+          "role_in_post": "Use as usage-not-learning evidence."
+        }
+      ],
+      "candidate_post": "Usage tells you students learned nothing.",
+      "post_brief": {
+        "opening_direction": "Open with a compressed usage-versus-learning distinction.",
+        "pattern_interrupt": "Reach is not outcome.",
+        "core_point": "Usage data says the tool reached students, not that students learned.",
+        "evidence_to_use": [
+          {
+            "evidence_id": "h0-summary",
+            "evidence_text": "A usage report shows that students used the tool, but it did not measure what students learned.",
+            "role_in_post": "Use as usage-not-learning evidence."
+          }
+        ],
+        "practical_point": "Ask what was actually measured.",
+        "ending_direction": "End by separating reach from learning.",
+        "cta_direction": "Ask readers not to overread usage."
+      },
+      "angle_decision": {
+        "controlling_angle": "Usage data can show reach without proving learning.",
+        "reader_problem": "Readers may read usage as learning.",
+        "author_position": "The author compresses the distinction without changing it.",
+        "main_tension": "Measured use versus unmeasured outcomes.",
+        "supporting_evidence_ids": [
+          "h0-summary"
+        ],
+        "angle_to_avoid": [
+          "do not claim students learned nothing"
+        ]
+      },
+      "notes": "Invalid version turns unmeasured learning into negative learning outcome.",
+      "voice_sensitive": true,
+      "must_inspect_fragments": [
+        "students learned nothing"
+      ],
+      "boundary_delta": "unmeasured outcome distorted into negative outcome"
+    }
+  ]
+}
