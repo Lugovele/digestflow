@@ -278,6 +278,34 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(post_brief, post_brief_before)
         self.assertEqual(angle_decision, angle_decision_before)
 
+    def test_anthropic_repair_writer_executes_when_allowed_by_role_policy(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Claude repaired post."))
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(
+                repair_provider="anthropic",
+                repair_model="claude-sonnet-5",
+            ),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(_quality_review_payload(passed=True))),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertTrue(result.repair_executed)
+        self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(result.repaired_candidate_output.provider, "anthropic")
+        self.assertEqual(result.repaired_candidate_output.model, "claude-sonnet-5")
+        self.assertEqual(result.accepted_payload["post_text"], "Claude repaired post.")
+
     def test_repaired_post_uses_candidate_post_gate_not_full_payload_gate(self) -> None:
         self.assertFalse(
             hasattr(
@@ -818,6 +846,7 @@ def _controlled_request(
     initial_attempt_request: FinalPostAttemptRequest | None = None,
     repair_enabled: bool = True,
     repair_provider: str | None = "openai",
+    repair_model: str = OPENAI_FINAL_POST_MODEL,
     max_controlled_attempts: int = 2,
     execution_metadata: dict | None = None,
 ) -> FinalPostControlledRepairRequest:
@@ -827,7 +856,7 @@ def _controlled_request(
         ),
         repair_prompt_text="Repair Writer prompt text.",
         repair_provider=repair_provider,
-        repair_model=OPENAI_FINAL_POST_MODEL,
+        repair_model=repair_model,
         repair_max_output_tokens=1200,
         repair_enabled=repair_enabled,
         max_controlled_attempts=max_controlled_attempts,

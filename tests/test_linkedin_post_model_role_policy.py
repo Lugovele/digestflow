@@ -106,17 +106,22 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
                     )
                 )
 
-    def test_repair_writer_accepts_only_openai_gpt_4_1(self) -> None:
-        self.assertIsNone(
-            get_final_post_role_provider_model_policy_failure(
-                role=FINAL_POST_ROLE_REPAIR_WRITER,
-                provider="openai",
-                model="gpt-4.1-2025-04-14",
-            )
-        )
+    def test_repair_writer_accepts_openai_gpt_4_1_and_claude_sonnet_5(self) -> None:
+        for provider, model in (
+            ("openai", "gpt-4.1-2025-04-14"),
+            ("anthropic", "claude-sonnet-5"),
+        ):
+            with self.subTest(provider=provider):
+                self.assertIsNone(
+                    get_final_post_role_provider_model_policy_failure(
+                        role=FINAL_POST_ROLE_REPAIR_WRITER,
+                        provider=provider,
+                        model=model,
+                    )
+                )
         for provider, model in (
             ("gemini", "gemini-3.6-flash"),
-            ("anthropic", "claude-sonnet-5"),
+            ("anthropic", "unsupported-model"),
         ):
             with self.subTest(provider=provider):
                 self.assertIsNotNone(
@@ -207,7 +212,7 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
         ):
             validate_final_post_role_provider_model(
                 role=FINAL_POST_ROLE_REPAIR_WRITER,
-                provider="anthropic",
+                provider="gemini",
                 model="claude-sonnet-5",
             )
 
@@ -263,6 +268,7 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
             (FINAL_POST_ROLE_QUALITY_EVALUATOR, "openai", "gpt-4.1-2025-04-14"),
             (FINAL_POST_ROLE_QUALITY_EVALUATOR, "gemini", "gemini-3.6-flash"),
             (FINAL_POST_ROLE_REPAIR_WRITER, "openai", "gpt-4.1-2025-04-14"),
+            (FINAL_POST_ROLE_REPAIR_WRITER, "anthropic", "claude-sonnet-5"),
         )
 
         for role, provider, model in cases:

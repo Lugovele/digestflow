@@ -1,0 +1,23 @@
+{
+  "case_id": "topic_200_digest_134__gpt_v2",
+  "source_fixture_path": "tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_200_digest_134__gpt_v2.json",
+  "repair_instruction": {
+    "failed_criterion": "author_point_of_view",
+    "repair_scope": "post_text",
+    "repair_instruction": "Strengthen the author-owned point of view so the post feels less like a polished market recap and more like a clear interpretation of the evidence.",
+    "preserve": [
+      "selected evidence facts",
+      "controlling angle",
+      "CandidatePost shape"
+    ],
+    "avoid": [
+      "new facts",
+      "evidence IDs",
+      "debug fields",
+      "additional payload fields",
+      "unsupported personal experience"
+    ],
+    "repair_type": "editorial"
+  },
+  "repair_prompt_text": "You are the FinalPostRepairWriter. Rewrite only the CandidatePost post_text according to the supplied repair instruction. Preserve selected evidence boundaries, do not add facts, and return only CandidatePost-compatible JSON with exactly one field: post_text."
+}

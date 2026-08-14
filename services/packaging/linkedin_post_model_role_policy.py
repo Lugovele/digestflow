@@ -67,6 +67,7 @@ FINAL_POST_ROLE_PROVIDER_MODEL_POLICY: Mapping[str, Mapping[str, tuple[str, ...]
             FINAL_POST_ROLE_REPAIR_WRITER: MappingProxyType(
                 {
                     AI_PROVIDER_OPENAI: (OPENAI_FINAL_POST_MODEL,),
+                    AI_PROVIDER_ANTHROPIC: ("claude-sonnet-5",),
                 }
             ),
         }

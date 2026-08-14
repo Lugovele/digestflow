@@ -199,19 +199,30 @@ class RepairWriterExecutionTests(SimpleTestCase):
         mock_build_ai_client.assert_not_called()
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
-    def test_anthropic_repair_writer_config_returns_error_without_provider_call(
+    def test_anthropic_repair_writer_config_is_allowed_and_calls_provider(
         self,
         mock_build_ai_client,
     ) -> None:
-        raw_response = execute_repair_writer_prompt(
-            _request(provider="anthropic", model="claude-sonnet-5")
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text": "Repaired by Claude."}',
+            raw={"id": "anthropic_repair"},
+            usage={"total_tokens": 21},
         )
+        request = _request(provider="anthropic", model="claude-sonnet-5")
 
-        self.assertIn(
-            "unsupported PostFlow final post role/provider/model",
-            raw_response.execution_error,
+        raw_response = execute_repair_writer_prompt(request)
+
+        mock_build_ai_client.assert_called_once_with(
+            provider="anthropic",
+            model="claude-sonnet-5",
         )
-        mock_build_ai_client.assert_not_called()
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=False,
+        )
+        self.assertEqual(raw_response.raw_text, '{"post_text": "Repaired by Claude."}')
+        self.assertIsNone(raw_response.execution_error)
 
     def test_response_to_dict_is_json_serializable(self) -> None:
         response = RepairWriterRawResponse(

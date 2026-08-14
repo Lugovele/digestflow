@@ -1,0 +1,36 @@
+{
+  "case_id": "topic_140_digest_126",
+  "source_fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5/topic_140_digest_126.json",
+  "editorial_classification": "STRONG",
+  "frozen_input_reconstruction": "DIRECT",
+  "case_selection_note": "Strong Claude education anchor retained from the v1 comparison.",
+  "known_historical_quality_result": {
+    "author_point_of_view": 5,
+    "cta": 3,
+    "failed_criteria": [
+      "cta"
+    ],
+    "human_voice": 5,
+    "pass": false,
+    "total_score": 41
+  },
+  "repair_instruction": {
+    "failed_criterion": "cta",
+    "repair_scope": "post_text",
+    "repair_instruction": "Strengthen the ending so it gives the reader a clearer reflective next step while preserving the existing evidence boundaries and author-owned distinction.",
+    "preserve": [
+      "selected evidence facts",
+      "controlling angle",
+      "human voice",
+      "CandidatePost shape"
+    ],
+    "avoid": [
+      "new facts",
+      "evidence IDs",
+      "debug fields",
+      "additional payload fields"
+    ],
+    "repair_type": "editorial"
+  },
+  "repair_prompt_text": "You are the FinalPostRepairWriter. Rewrite only the CandidatePost post_text according to the supplied repair instruction. Preserve selected evidence boundaries, do not add facts, and return only CandidatePost-compatible JSON with exactly one field: post_text."
+}

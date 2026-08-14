@@ -114,6 +114,7 @@ from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_QUALITY_EVALUATOR,
     FINAL_POST_ROLE_REPAIR_WRITER,
     FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+    get_final_post_role_provider_model_policy_failure,
 )
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
@@ -1113,10 +1114,15 @@ def _gate_failure_message(gate_output: Any) -> str:
 def _repair_writer_request_error(request: Any) -> str | None:
     if not request.provider:
         return "missing repair writer provider"
-    if request.provider != "openai":
-        return f"unsupported repair writer provider: {request.provider}"
     if not request.model:
         return "missing repair writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_REPAIR_WRITER,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,
