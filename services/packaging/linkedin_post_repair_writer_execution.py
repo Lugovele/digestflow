@@ -19,6 +19,9 @@ from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_REPAIR_WRITER,
     get_final_post_role_provider_model_policy_failure,
 )
+from services.packaging.linkedin_post_provider_diagnostics import (
+    build_safe_provider_error_diagnostics,
+)
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 
 
@@ -32,6 +35,14 @@ PROVIDER_RESPONSE_METADATA_FIELDS = (
     "provider_max_output_tokens",
     "provider_reported_output_tokens",
     "provider_output_limit_reached",
+    "provider_prompt_tokens",
+    "provider_visible_output_tokens",
+    "provider_total_tokens",
+    "provider_hidden_output_tokens",
+    "provider_combined_output_tokens",
+    "provider_output_budget_utilization_percent",
+    "provider_reasoning_tokens",
+    "provider_thinking_tokens",
 )
 
 
@@ -64,6 +75,7 @@ class RepairWriterRawResponse:
     usage: dict[str, Any] | None = None
     raw_provider_response: dict[str, Any] | None = None
     provider_response_metadata: dict[str, Any] | None = None
+    execution_diagnostics: dict[str, Any] | None = None
     execution_error: str | None = None
     execution_metadata: dict[str, Any] | None = None
 
@@ -83,6 +95,8 @@ class RepairWriterRawResponse:
             result["provider_response_metadata"] = copy.deepcopy(
                 self.provider_response_metadata
             )
+        if self.execution_diagnostics is not None:
+            result["execution_diagnostics"] = copy.deepcopy(self.execution_diagnostics)
         if self.execution_error is not None:
             result["execution_error"] = self.execution_error
         if self.execution_metadata is not None:
@@ -152,12 +166,24 @@ def execute_repair_writer_prompt(
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
         )
-    except Exception:  # pragma: no cover - covered with fake failure.
+    except Exception as exc:  # pragma: no cover - covered with fake failure.
         return RepairWriterRawResponse(
             raw_text="",
             provider=request.provider,
             model=request.model,
             prompt_metadata=prompt_metadata,
+            execution_diagnostics=build_safe_provider_error_diagnostics(
+                exc,
+                provider=request.provider,
+                model=request.model,
+                endpoint_family="responses"
+                if request.provider == "openai"
+                else "openai_compatible_chat"
+                if request.provider == "gemini"
+                else "messages"
+                if request.provider == "anthropic"
+                else "unknown",
+            ),
             execution_error="provider invocation failed",
             execution_metadata=execution_metadata,
         )
@@ -257,9 +283,19 @@ def _sanitize_provider_response_metadata(metadata: Any) -> dict[str, Any] | None
         if field_name in (
             "provider_max_output_tokens",
             "provider_reported_output_tokens",
+            "provider_prompt_tokens",
+            "provider_visible_output_tokens",
+            "provider_total_tokens",
+            "provider_hidden_output_tokens",
+            "provider_combined_output_tokens",
+            "provider_reasoning_tokens",
+            "provider_thinking_tokens",
         ):
             if _is_non_negative_int(value):
                 sanitized[field_name] = value
+        elif field_name == "provider_output_budget_utilization_percent":
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+                sanitized[field_name] = round(float(value), 2)
         elif field_name == "provider_output_limit_reached":
             if value is None or isinstance(value, bool):
                 sanitized[field_name] = value

@@ -5,6 +5,7 @@ import inspect
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from django.test import SimpleTestCase
 from django.test import override_settings
@@ -22,6 +23,9 @@ from services.packaging.linkedin_post_quality_evaluator_execution import (
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_prompt_renderers import (
     QualityEvaluatorPromptRender,
+)
+from services.packaging.linkedin_post_provider_diagnostics import (
+    PROVIDER_ERROR_AUTHENTICATION,
 )
 
 
@@ -60,15 +64,27 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 12},
             raw_provider_response={"id": "resp_1"},
+            provider_response_metadata={"provider_finish_reason": "completed"},
+            execution_diagnostics={"provider_error_category": "AUTHENTICATION"},
         )
 
         serialized = response.to_dict()
         serialized["usage"]["total_tokens"] = 99
         serialized["raw_provider_response"]["id"] = "changed"
+        serialized["provider_response_metadata"]["provider_finish_reason"] = "changed"
+        serialized["execution_diagnostics"]["provider_error_category"] = "OTHER"
 
         self.assertEqual(serialized["raw_text"], '{"pass": true}')
         self.assertEqual(response.usage, {"total_tokens": 12})
         self.assertEqual(response.raw_provider_response, {"id": "resp_1"})
+        self.assertEqual(
+            response.provider_response_metadata,
+            {"provider_finish_reason": "completed"},
+        )
+        self.assertEqual(
+            response.execution_diagnostics,
+            {"provider_error_category": "AUTHENTICATION"},
+        )
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.build_ai_client")
     def test_successful_execution_calls_provider_once_and_returns_raw_response(
@@ -80,6 +96,11 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
             text='{"scores": {"hook": 4}}',
             raw={"id": "resp_123", "status": "completed"},
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            provider_response_metadata={
+                "provider": "openai",
+                "provider_finish_reason": "completed",
+                "provider_max_output_tokens": 2400,
+            },
         )
         mock_build_ai_client.return_value.generate_text.return_value = provider_response
 
@@ -100,6 +121,10 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.model, "gpt-4.1-2025-04-14")
         self.assertEqual(raw_response.usage, provider_response.usage)
         self.assertEqual(raw_response.raw_provider_response, provider_response.raw)
+        self.assertEqual(
+            raw_response.provider_response_metadata,
+            provider_response.provider_response_metadata,
+        )
         self.assertIsNone(raw_response.execution_error)
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.build_ai_client")
@@ -231,6 +256,9 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
                         text=empty_value,
                         raw={"id": "empty"},
                         usage={"total_tokens": 3},
+                        provider_response_metadata={
+                            "provider_finish_reason": "completed",
+                        },
                     )
                 )
 
@@ -242,6 +270,10 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
                     "empty provider response",
                 )
                 self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
+                self.assertEqual(
+                    raw_response.provider_response_metadata,
+                    {"provider_finish_reason": "completed"},
+                )
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.build_ai_client")
     def test_provider_failure_returns_execution_error_without_downstream_calls(
@@ -250,12 +282,26 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
     ) -> None:
         request = _request()
         request_before = copy.deepcopy(request)
-        mock_build_ai_client.return_value.generate_text.side_effect = RuntimeError("boom")
+        mock_build_ai_client.return_value.generate_text.side_effect = _ProviderError(
+            "secret auth failure",
+            status_code=401,
+            code="authentication_error",
+        )
 
         raw_response = execute_quality_evaluator_prompt(request)
 
         self.assertEqual(raw_response.raw_text, "")
         self.assertEqual(raw_response.execution_error, "provider invocation failed")
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_error_category"],
+            PROVIDER_ERROR_AUTHENTICATION,
+        )
+        self.assertEqual(raw_response.execution_diagnostics["provider_http_status"], 401)
+        self.assertFalse(raw_response.execution_diagnostics["provider_error_retryable"])
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_endpoint_family"],
+            "responses",
+        )
         self.assertEqual(request, request_before)
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.build_ai_client")
@@ -567,3 +613,16 @@ def _prompt_metadata() -> PromptMetadata:
         prompt_version="1.0",
         prompt_path="prompts/linkedin/final_post_quality_evaluator.txt",
     )
+
+
+class _ProviderError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code

@@ -34,6 +34,9 @@ from services.packaging.linkedin_post_model_role_policy import (
     OPENAI_FINAL_POST_MODEL,
     get_final_post_role_provider_model_policy_failure,
 )
+from services.packaging.linkedin_post_provider_diagnostics import (
+    sanitize_provider_error_diagnostics,
+)
 from services.packaging.linkedin_post_prompt_registry import (
     PROMPT_FINAL_POST_QUALITY_EVALUATOR,
     get_prompt_contract,
@@ -971,6 +974,9 @@ def _text_digest(value: Any) -> dict[str, Any]:
 def _raw_response_diagnostics(raw_response: QualityEvaluatorRawResponse) -> dict[str, Any]:
     raw = str(raw_response.raw_text or "")
     stripped = raw.strip()
+    provider_metadata = _safe_provider_response_metadata(
+        getattr(raw_response, "provider_response_metadata", None)
+    )
     diagnostics: dict[str, Any] = {
         "raw_response_character_count": len(raw),
         "stripped_response_character_count": len(stripped),
@@ -979,10 +985,60 @@ def _raw_response_diagnostics(raw_response: QualityEvaluatorRawResponse) -> dict
         "ends_with_json_object": stripped.endswith("}"),
         "ends_with_code_fence": stripped.endswith("```"),
         "brace_balance": raw.count("{") - raw.count("}"),
+        "provider_error_diagnostics": sanitize_provider_error_diagnostics(
+            getattr(raw_response, "execution_diagnostics", None)
+        ),
+        **provider_metadata,
     }
     if isinstance(raw_response.usage, dict):
         diagnostics["usage"] = _safe_token_usage(raw_response.usage)
     return diagnostics
+
+
+def _safe_provider_response_metadata(metadata: Any) -> dict[str, Any]:
+    result = {
+        "provider_finish_reason": None,
+        "provider_stop_reason": None,
+        "provider_max_output_tokens": None,
+        "provider_reported_output_tokens": None,
+        "provider_output_limit_reached": None,
+        "provider_prompt_tokens": None,
+        "provider_visible_output_tokens": None,
+        "provider_total_tokens": None,
+        "provider_hidden_output_tokens": None,
+        "provider_combined_output_tokens": None,
+        "provider_output_budget_utilization_percent": None,
+        "provider_reasoning_tokens": None,
+        "provider_thinking_tokens": None,
+    }
+    if not isinstance(metadata, dict):
+        return result
+    for key in result:
+        value = metadata.get(key)
+        if key == "provider_output_limit_reached":
+            if value is None or isinstance(value, bool):
+                result[key] = value
+        elif key in (
+            "provider_max_output_tokens",
+            "provider_reported_output_tokens",
+            "provider_prompt_tokens",
+            "provider_visible_output_tokens",
+            "provider_total_tokens",
+            "provider_hidden_output_tokens",
+            "provider_combined_output_tokens",
+            "provider_reasoning_tokens",
+            "provider_thinking_tokens",
+        ):
+            if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+                result[key] = value
+        elif key == "provider_output_budget_utilization_percent":
+            if value is None:
+                result[key] = None
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                result[key] = round(float(value), 2)
+        elif value is None or isinstance(value, str):
+            result[key] = value[:120] if isinstance(value, str) else None
+    return result
 
 
 def _quality_input_summary(render: QualityEvaluatorPromptRender) -> dict[str, Any]:

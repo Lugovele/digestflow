@@ -31,6 +31,9 @@ from services.packaging.linkedin_post_quality_evaluator_benchmark import (
 from services.packaging.linkedin_post_quality_evaluator_execution import (
     QualityEvaluatorRawResponse,
 )
+from services.packaging.linkedin_post_provider_diagnostics import (
+    PROVIDER_ERROR_AUTHENTICATION,
+)
 from services.packaging.linkedin_post_quality_rubric_contract import QUALITY_CRITERIA
 
 
@@ -277,6 +280,20 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
                 provider="openai",
                 model="gpt-4.1-2025-04-14",
                 execution_error="empty provider response",
+                execution_diagnostics={
+                    "provider_error_type": "AuthenticationError",
+                    "provider_error_code": "authentication_error",
+                    "provider_http_status": 401,
+                    "provider_error_category": PROVIDER_ERROR_AUTHENTICATION,
+                    "provider_error_retryable": False,
+                    "provider_endpoint_family": "responses",
+                    "provider_model": "gpt-4.1-2025-04-14",
+                    "provider_error_message_safe": (
+                        "provider execution failed; raw exception message omitted"
+                    ),
+                    "raw_prompt": "secret prompt text",
+                    "raw_provider_message": "secret prompt text",
+                },
             )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -297,6 +314,15 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
         self.assertEqual(record["failure_code"], "quality_evaluator_empty_response")
         self.assertFalse(record["parse_success"])
         self.assertFalse(record["normalization_success"])
+        provider_error = record["response_diagnostics"]["provider_error_diagnostics"]
+        self.assertEqual(
+            provider_error["provider_error_category"],
+            PROVIDER_ERROR_AUTHENTICATION,
+        )
+        self.assertEqual(provider_error["provider_http_status"], 401)
+        self.assertNotIn("prompt", json.dumps(provider_error).lower())
+        self.assertNotIn("raw_prompt", provider_error)
+        self.assertNotIn("raw_provider_message", provider_error)
 
     def test_live_fake_parse_failure_records_parse_failure(self) -> None:
         def fake_executor(_request):
@@ -486,7 +512,9 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
         self.assertNotIn(dangerous_text, result_text)
         self.assertNotIn(dangerous_evidence, result_text)
         self.assertIn("reason_summary", artifact_text)
-        self.assertNotIn("reason\":", artifact_text)
+        self.assertNotIn("\"reason\":", artifact_text)
+        self.assertNotIn("\"failure_reason\":", artifact_text)
+        self.assertNotIn("\"automatic_fail_reason\":", artifact_text)
 
     def test_render_contains_quality_evaluator_inputs_without_plan_specific_drift(self) -> None:
         case = default_quality_evaluator_benchmark_cases()[0]

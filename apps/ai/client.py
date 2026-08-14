@@ -56,6 +56,21 @@ class AIProviderConfig:
     base_url: str | None = None
 
 
+class AIProviderRequestError(RuntimeError):
+    """Sanitized provider request failure with safe diagnostic attributes."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+
+
 INPUT_COST_PER_1K_TOKENS = 0.005
 OUTPUT_COST_PER_1K_TOKENS = 0.015
 
@@ -248,8 +263,27 @@ class AnthropicMessagesClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 raw_bytes = response.read()
-        except (HTTPError, URLError, TimeoutError, OSError):
-            raise RuntimeError("anthropic provider request failed") from None
+        except HTTPError as exc:
+            raise AIProviderRequestError(
+                "anthropic provider request failed",
+                status_code=exc.code,
+                code=f"http_{exc.code}",
+            ) from None
+        except TimeoutError:
+            raise AIProviderRequestError(
+                "anthropic provider request failed",
+                code="timeout",
+            ) from None
+        except URLError:
+            raise AIProviderRequestError(
+                "anthropic provider request failed",
+                code="url_error",
+            ) from None
+        except OSError:
+            raise AIProviderRequestError(
+                "anthropic provider request failed",
+                code="os_error",
+            ) from None
 
         try:
             raw = json.loads(raw_bytes.decode("utf-8"))
@@ -506,6 +540,9 @@ def _build_anthropic_provider_response_metadata(
         if block_type and block_type not in block_types:
             block_types.append(block_type)
     stop_reason = _safe_metadata_text(raw.get("stop_reason"))
+    input_tokens = _safe_metadata_int(usage.get("input_tokens"))
+    output_tokens = _safe_metadata_int(usage.get("output_tokens"))
+    thinking_tokens = _safe_metadata_int(usage.get("thinking_tokens"))
     return {
         "provider": AI_PROVIDER_ANTHROPIC,
         "model": _safe_metadata_text(raw.get("model")) or model,
@@ -513,15 +550,26 @@ def _build_anthropic_provider_response_metadata(
         "provider_stop_reason": stop_reason,
         "provider_finish_reason": None,
         "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
-        "provider_reported_output_tokens": _safe_metadata_int(usage.get("output_tokens")),
+        "provider_reported_output_tokens": output_tokens,
         "provider_output_limit_reached": _provider_output_limit_reached(
             finish_reason=None,
             stop_reason=stop_reason,
         ),
+        **_provider_token_accounting_metadata(
+            prompt_tokens=input_tokens,
+            visible_output_tokens=output_tokens,
+            total_tokens=(
+                input_tokens + output_tokens
+                if input_tokens is not None and output_tokens is not None
+                else None
+            ),
+            max_output_tokens=max_output_tokens,
+            thinking_tokens=thinking_tokens,
+        ),
         "content_block_types": block_types[:20],
-        "input_tokens": _safe_metadata_int(usage.get("input_tokens")),
-        "output_tokens": _safe_metadata_int(usage.get("output_tokens")),
-        "thinking_tokens": _safe_metadata_int(usage.get("thinking_tokens")),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "thinking_tokens": thinking_tokens,
     }
 
 
@@ -553,6 +601,19 @@ def _build_openai_compatible_chat_metadata(
     if not isinstance(usage, dict):
         usage = {}
     finish_reason = finish_reasons[0] if len(finish_reasons) == 1 else None
+    prompt_tokens = _safe_metadata_int(
+        usage.get("prompt_tokens", usage.get("input_tokens"))
+    )
+    completion_tokens = _safe_metadata_int(
+        usage.get("completion_tokens", usage.get("output_tokens"))
+    )
+    total_tokens = _safe_metadata_int(usage.get("total_tokens"))
+    completion_details = usage.get("completion_tokens_details")
+    if not isinstance(completion_details, dict):
+        completion_details = {}
+    reasoning_tokens = _safe_metadata_int(
+        completion_details.get("reasoning_tokens")
+    )
     return {
         "provider": provider,
         "model": _safe_metadata_text(raw.get("model")) or model,
@@ -561,21 +622,22 @@ def _build_openai_compatible_chat_metadata(
         "provider_finish_reason": finish_reason,
         "provider_stop_reason": None,
         "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
-        "provider_reported_output_tokens": _safe_metadata_int(
-            usage.get("completion_tokens", usage.get("output_tokens"))
-        ),
+        "provider_reported_output_tokens": completion_tokens,
         "provider_output_limit_reached": _provider_output_limit_reached(
             finish_reason=finish_reason,
             stop_reason=None,
         ),
+        **_provider_token_accounting_metadata(
+            prompt_tokens=prompt_tokens,
+            visible_output_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            max_output_tokens=max_output_tokens,
+            reasoning_tokens=reasoning_tokens,
+        ),
         "message_content_types": message_content_types,
-        "prompt_tokens": _safe_metadata_int(
-            usage.get("prompt_tokens", usage.get("input_tokens"))
-        ),
-        "completion_tokens": _safe_metadata_int(
-            usage.get("completion_tokens", usage.get("output_tokens"))
-        ),
-        "total_tokens": _safe_metadata_int(usage.get("total_tokens")),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
     }
 
 
@@ -594,18 +656,34 @@ def _build_openai_responses_metadata(
         incomplete_details = {}
     status = _safe_metadata_text(raw.get("status"))
     finish_reason = _safe_metadata_text(incomplete_details.get("reason")) or status
+    prompt_tokens = _safe_metadata_int(
+        usage.get("input_tokens", usage.get("prompt_tokens"))
+    )
+    output_tokens = _safe_metadata_int(
+        usage.get("output_tokens", usage.get("completion_tokens"))
+    )
+    total_tokens = _safe_metadata_int(usage.get("total_tokens"))
+    output_details = usage.get("output_tokens_details")
+    if not isinstance(output_details, dict):
+        output_details = {}
+    reasoning_tokens = _safe_metadata_int(output_details.get("reasoning_tokens"))
     return {
         "provider": provider,
         "model": _safe_metadata_text(raw.get("model")) or model,
         "provider_finish_reason": finish_reason,
         "provider_stop_reason": None,
         "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
-        "provider_reported_output_tokens": _safe_metadata_int(
-            usage.get("output_tokens", usage.get("completion_tokens"))
-        ),
+        "provider_reported_output_tokens": output_tokens,
         "provider_output_limit_reached": _provider_output_limit_reached(
             finish_reason=finish_reason,
             stop_reason=None,
+        ),
+        **_provider_token_accounting_metadata(
+            prompt_tokens=prompt_tokens,
+            visible_output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            max_output_tokens=max_output_tokens,
+            reasoning_tokens=reasoning_tokens,
         ),
     }
 
@@ -623,6 +701,60 @@ def _provider_output_limit_reached(
     if reason in {"stop", "end_turn", "completed", "complete"}:
         return False
     return None
+
+
+def _provider_token_accounting_metadata(
+    *,
+    prompt_tokens: int | None,
+    visible_output_tokens: int | None,
+    total_tokens: int | None,
+    max_output_tokens: int,
+    reasoning_tokens: int | None = None,
+    thinking_tokens: int | None = None,
+) -> dict[str, int | float | None]:
+    hidden_output_tokens = _provider_hidden_output_tokens(
+        prompt_tokens=prompt_tokens,
+        visible_output_tokens=visible_output_tokens,
+        total_tokens=total_tokens,
+    )
+    combined_output_tokens = (
+        visible_output_tokens + hidden_output_tokens
+        if visible_output_tokens is not None and hidden_output_tokens is not None
+        else None
+    )
+    return {
+        "provider_prompt_tokens": prompt_tokens,
+        "provider_visible_output_tokens": visible_output_tokens,
+        "provider_total_tokens": total_tokens,
+        "provider_hidden_output_tokens": hidden_output_tokens,
+        "provider_combined_output_tokens": combined_output_tokens,
+        "provider_output_budget_utilization_percent": (
+            round((combined_output_tokens / max_output_tokens) * 100, 2)
+            if combined_output_tokens is not None
+            and not isinstance(max_output_tokens, bool)
+            and isinstance(max_output_tokens, int)
+            and max_output_tokens > 0
+            else None
+        ),
+        "provider_reasoning_tokens": reasoning_tokens,
+        "provider_thinking_tokens": thinking_tokens,
+    }
+
+
+def _provider_hidden_output_tokens(
+    *,
+    prompt_tokens: int | None,
+    visible_output_tokens: int | None,
+    total_tokens: int | None,
+) -> int | None:
+    if (
+        prompt_tokens is None
+        or visible_output_tokens is None
+        or total_tokens is None
+    ):
+        return None
+    hidden = total_tokens - prompt_tokens - visible_output_tokens
+    return hidden if hidden >= 0 else None
 
 
 def _safe_metadata_text(value: Any) -> str | None:

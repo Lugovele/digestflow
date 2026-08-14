@@ -2,6 +2,7 @@ import json
 import traceback
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from django.test import SimpleTestCase
 from django.test import override_settings
@@ -168,6 +169,14 @@ class OpenAIClientGenerateTextTests(SimpleTestCase):
                 "provider_max_output_tokens": 500,
                 "provider_reported_output_tokens": 4,
                 "provider_output_limit_reached": False,
+                "provider_prompt_tokens": 3,
+                "provider_visible_output_tokens": 4,
+                "provider_total_tokens": None,
+                "provider_hidden_output_tokens": None,
+                "provider_combined_output_tokens": None,
+                "provider_output_budget_utilization_percent": None,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": None,
             },
         )
 
@@ -202,6 +211,14 @@ class OpenAIClientGenerateTextTests(SimpleTestCase):
                 "provider_max_output_tokens": 500,
                 "provider_reported_output_tokens": 500,
                 "provider_output_limit_reached": True,
+                "provider_prompt_tokens": 8,
+                "provider_visible_output_tokens": 500,
+                "provider_total_tokens": None,
+                "provider_hidden_output_tokens": None,
+                "provider_combined_output_tokens": None,
+                "provider_output_budget_utilization_percent": None,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": None,
             },
         )
 
@@ -319,12 +336,118 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider_max_output_tokens": 300,
                 "provider_reported_output_tokens": 3,
                 "provider_output_limit_reached": False,
+                "provider_prompt_tokens": 2,
+                "provider_visible_output_tokens": 3,
+                "provider_total_tokens": 5,
+                "provider_hidden_output_tokens": 0,
+                "provider_combined_output_tokens": 3,
+                "provider_output_budget_utilization_percent": 1.0,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": None,
                 "message_content_types": ["str"],
                 "prompt_tokens": 2,
                 "completion_tokens": 3,
                 "total_tokens": 5,
             },
         )
+
+    @override_settings(
+        GEMINI_API_KEY="gemini-test-key",
+        OPENAI_TIMEOUT_SECONDS=30,
+    )
+    @patch("apps.ai.client.OpenAI")
+    def test_gemini_metadata_accounts_for_hidden_output_tokens(self, mock_openai):
+        examples = (
+            (2067, 70, 3863, 1726, 1796, 99.78),
+            (2079, 69, 3875, 1727, 1796, 99.78),
+            (2185, 219, 3934, 1530, 1749, 97.17),
+        )
+
+        for (
+            prompt_tokens,
+            visible_tokens,
+            total_tokens,
+            hidden_tokens,
+            combined_tokens,
+            utilization,
+        ) in examples:
+            with self.subTest(total_tokens=total_tokens):
+                mock_openai.reset_mock()
+                mock_openai.return_value.chat.completions.create.return_value = SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content='{"post_text":"x"}'))],
+                    model_dump=lambda: {
+                        "model": "gemini-3.6-flash",
+                        "choices": [{"finish_reason": "length", "message": {"content": "x"}}],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": visible_tokens,
+                            "total_tokens": total_tokens,
+                        },
+                    },
+                    usage=SimpleNamespace(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=visible_tokens,
+                        total_tokens=total_tokens,
+                    ),
+                )
+                client = build_ai_client("gemini", "gemini-3.6-flash")
+
+                response = client.generate_text(
+                    "Prompt",
+                    max_output_tokens=1800,
+                    json_mode=False,
+                )
+
+                metadata = response.provider_response_metadata
+                self.assertEqual(metadata["provider_visible_output_tokens"], visible_tokens)
+                self.assertEqual(metadata["provider_hidden_output_tokens"], hidden_tokens)
+                self.assertEqual(metadata["provider_combined_output_tokens"], combined_tokens)
+                self.assertEqual(
+                    metadata["provider_output_budget_utilization_percent"],
+                    utilization,
+                )
+
+    @override_settings(
+        GEMINI_API_KEY="gemini-test-key",
+        OPENAI_TIMEOUT_SECONDS=30,
+    )
+    @patch("apps.ai.client.OpenAI")
+    def test_gemini_metadata_leaves_hidden_accounting_null_when_not_derivable(
+        self,
+        mock_openai,
+    ):
+        cases = (
+            ({"prompt_tokens": 2, "completion_tokens": 3}, 1800),
+            ({"prompt_tokens": 10, "completion_tokens": 9, "total_tokens": 15}, 1800),
+            ({"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, 0),
+        )
+
+        for usage, max_output_tokens in cases:
+            with self.subTest(usage=usage, max_output_tokens=max_output_tokens):
+                mock_openai.reset_mock()
+                mock_openai.return_value.chat.completions.create.return_value = SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="Gemini"))],
+                    model_dump=lambda: {
+                        "model": "gemini-3.6-flash",
+                        "choices": [{"finish_reason": "stop", "message": {"content": "Gemini"}}],
+                        "usage": dict(usage),
+                    },
+                    usage=SimpleNamespace(**usage),
+                )
+                client = build_ai_client("gemini", "gemini-3.6-flash")
+
+                response = client.generate_text(
+                    "Prompt",
+                    max_output_tokens=max_output_tokens,
+                )
+
+                metadata = response.provider_response_metadata
+                if usage.get("total_tokens", 0) - usage.get("prompt_tokens", 0) - usage.get("completion_tokens", 0) < 0:
+                    self.assertIsNone(metadata["provider_hidden_output_tokens"])
+                if max_output_tokens == 0:
+                    self.assertIsNone(
+                        metadata["provider_output_budget_utilization_percent"]
+                    )
 
     @override_settings(OPENAI_API_KEY="openai-test-key", OPENAI_TIMEOUT_SECONDS=30)
     @patch("apps.ai.client.OpenAI")
@@ -406,6 +529,14 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider_max_output_tokens": 400,
                 "provider_reported_output_tokens": 3,
                 "provider_output_limit_reached": None,
+                "provider_prompt_tokens": 2,
+                "provider_visible_output_tokens": 3,
+                "provider_total_tokens": 5,
+                "provider_hidden_output_tokens": 0,
+                "provider_combined_output_tokens": 3,
+                "provider_output_budget_utilization_percent": 0.75,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": None,
                 "content_block_types": ["text"],
                 "input_tokens": 2,
                 "output_tokens": 3,
@@ -619,7 +750,13 @@ class AIProviderConfigTests(SimpleTestCase):
     @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
     @patch("apps.ai.client.urlopen")
     def test_anthropic_http_error_is_sanitized_and_not_retried(self, mock_urlopen):
-        mock_urlopen.side_effect = OSError("secret anthropic provider body")
+        mock_urlopen.side_effect = HTTPError(
+            ANTHROPIC_MESSAGES_ENDPOINT,
+            429,
+            "secret anthropic provider body",
+            {},
+            None,
+        )
         client = build_ai_client("anthropic", "claude-sonnet-5")
 
         with self.assertRaisesRegex(RuntimeError, "anthropic provider request failed") as cm:
@@ -633,6 +770,8 @@ class AIProviderConfigTests(SimpleTestCase):
             )
         )
         self.assertNotIn("secret anthropic provider body", str(cm.exception))
+        self.assertEqual(cm.exception.status_code, 429)
+        self.assertEqual(cm.exception.code, "http_429")
         self.assertIsNone(cm.exception.__cause__)
         self.assertTrue(cm.exception.__suppress_context__)
         self.assertNotIn("secret anthropic provider body", formatted_traceback)
@@ -810,6 +949,14 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider_max_output_tokens": 1200,
                 "provider_reported_output_tokens": 0,
                 "provider_output_limit_reached": False,
+                "provider_prompt_tokens": 7,
+                "provider_visible_output_tokens": 0,
+                "provider_total_tokens": 7,
+                "provider_hidden_output_tokens": 0,
+                "provider_combined_output_tokens": 0,
+                "provider_output_budget_utilization_percent": 0.0,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": None,
                 "content_block_types": ["tool_use"],
                 "input_tokens": 7,
                 "output_tokens": 0,
@@ -863,6 +1010,14 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider_max_output_tokens": 1200,
                 "provider_reported_output_tokens": 13,
                 "provider_output_limit_reached": True,
+                "provider_prompt_tokens": 11,
+                "provider_visible_output_tokens": 13,
+                "provider_total_tokens": 24,
+                "provider_hidden_output_tokens": 0,
+                "provider_combined_output_tokens": 13,
+                "provider_output_budget_utilization_percent": 1.08,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": 13,
                 "content_block_types": ["thinking"],
                 "input_tokens": 11,
                 "output_tokens": 13,

@@ -6,6 +6,7 @@ import inspect
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from django.test import SimpleTestCase
 from django.test import override_settings
@@ -19,6 +20,10 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     RepairWriterRawResponse,
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
+)
+from services.packaging.linkedin_post_provider_diagnostics import (
+    PROVIDER_ERROR_RATE_LIMIT,
+    PROVIDER_ERROR_UNSUPPORTED_PARAMETER,
 )
 
 
@@ -51,6 +56,10 @@ class RepairWriterExecutionTests(SimpleTestCase):
                 "provider": "openai",
                 "provider_output_limit_reached": False,
             },
+            execution_diagnostics={
+                "provider_error_category": "RATE_LIMIT",
+                "provider_error_retryable": True,
+            },
             execution_metadata={"attempt": {"index": 1}},
         )
 
@@ -60,6 +69,7 @@ class RepairWriterExecutionTests(SimpleTestCase):
         serialized["provider_response_metadata"][
             "provider_output_limit_reached"
         ] = True
+        serialized["execution_diagnostics"]["provider_error_category"] = "OTHER"
         serialized["execution_metadata"]["attempt"]["index"] = 2
 
         self.assertEqual(serialized["raw_text"], '{"post_text": "Repaired"}')
@@ -68,6 +78,13 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertEqual(
             response.provider_response_metadata,
             {"provider": "openai", "provider_output_limit_reached": False},
+        )
+        self.assertEqual(
+            response.execution_diagnostics,
+            {
+                "provider_error_category": "RATE_LIMIT",
+                "provider_error_retryable": True,
+            },
         )
         self.assertEqual(response.execution_metadata, {"attempt": {"index": 1}})
 
@@ -88,6 +105,14 @@ class RepairWriterExecutionTests(SimpleTestCase):
                 "provider_max_output_tokens": 1800,
                 "provider_reported_output_tokens": 5,
                 "provider_output_limit_reached": False,
+                "provider_prompt_tokens": 10,
+                "provider_visible_output_tokens": 5,
+                "provider_total_tokens": 15,
+                "provider_hidden_output_tokens": 0,
+                "provider_combined_output_tokens": 5,
+                "provider_output_budget_utilization_percent": 0.28,
+                "provider_reasoning_tokens": None,
+                "provider_thinking_tokens": None,
                 "raw_provider_secret": "do-not-serialize",
             },
         )
@@ -117,6 +142,12 @@ class RepairWriterExecutionTests(SimpleTestCase):
                 "provider_max_output_tokens": 1800,
                 "provider_reported_output_tokens": 5,
                 "provider_output_limit_reached": False,
+                "provider_prompt_tokens": 10,
+                "provider_visible_output_tokens": 5,
+                "provider_total_tokens": 15,
+                "provider_hidden_output_tokens": 0,
+                "provider_combined_output_tokens": 5,
+                "provider_output_budget_utilization_percent": 0.28,
             },
         )
 
@@ -169,15 +200,57 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self,
         mock_build_ai_client,
     ) -> None:
-        mock_build_ai_client.return_value.generate_text.side_effect = RuntimeError(
-            "secret provider details"
+        mock_build_ai_client.return_value.generate_text.side_effect = _ProviderError(
+            "secret provider details",
+            status_code=400,
+            code="unsupported_parameter",
         )
 
         raw_response = execute_repair_writer_prompt(_request())
 
         self.assertEqual(raw_response.raw_text, "")
         self.assertEqual(raw_response.execution_error, "provider invocation failed")
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_error_category"],
+            PROVIDER_ERROR_UNSUPPORTED_PARAMETER,
+        )
+        self.assertEqual(raw_response.execution_diagnostics["provider_http_status"], 400)
+        self.assertFalse(raw_response.execution_diagnostics["provider_error_retryable"])
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_endpoint_family"],
+            "responses",
+        )
         self.assertNotIn("secret provider details", json.dumps(raw_response.to_dict()))
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_anthropic_http_error_preserves_safe_diagnostic_status(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        mock_build_ai_client.return_value.generate_text.side_effect = HTTPError(
+            "https://api.anthropic.com/v1/messages",
+            429,
+            "secret anthropic provider body",
+            {},
+            None,
+        )
+
+        raw_response = execute_repair_writer_prompt(
+            _request(provider="anthropic", model="claude-sonnet-5")
+        )
+
+        self.assertEqual(raw_response.execution_error, "provider invocation failed")
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_error_category"],
+            PROVIDER_ERROR_RATE_LIMIT,
+        )
+        self.assertEqual(raw_response.execution_diagnostics["provider_http_status"], 429)
+        self.assertTrue(raw_response.execution_diagnostics["provider_error_retryable"])
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_endpoint_family"],
+            "messages",
+        )
+        self.assertNotIn("secret anthropic provider body", json.dumps(raw_response.to_dict()))
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_provider_value_error_returns_sanitized_execution_error(
@@ -370,6 +443,19 @@ def _prompt_metadata() -> PromptMetadata:
         prompt_version="1.0",
         prompt_path=None,
     )
+
+
+class _ProviderError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
 
 
 def _imported_modules(tree: ast.AST) -> set[str]:

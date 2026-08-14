@@ -39,6 +39,9 @@ from services.packaging.linkedin_post_final_post_payload_contract import (
 from services.packaging.linkedin_post_repair_writer_execution import (
     RepairWriterRawResponse,
 )
+from services.packaging.linkedin_post_provider_diagnostics import (
+    PROVIDER_ERROR_RATE_LIMIT,
+)
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
     COMPLETE_PLAIN_JSON,
     NON_JSON_RESPONSE,
@@ -306,6 +309,20 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
                 provider=request.provider,
                 model=request.model,
                 execution_error="empty provider response",
+                execution_diagnostics={
+                    "provider_error_type": "RateLimitError",
+                    "provider_error_code": "rate_limit_exceeded",
+                    "provider_http_status": 429,
+                    "provider_error_category": PROVIDER_ERROR_RATE_LIMIT,
+                    "provider_error_retryable": True,
+                    "provider_endpoint_family": "responses",
+                    "provider_model": request.model,
+                    "provider_error_message_safe": (
+                        "provider execution failed; raw exception message omitted"
+                    ),
+                    "raw_prompt": "secret prompt text",
+                    "raw_provider_message": "secret prompt text",
+                },
             )
 
         def grounding_executor(request):
@@ -332,7 +349,142 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
 
         record = result.run_records[0]
         self.assertEqual(record["failure_code"], "repair_writer_empty_response")
+        provider_error = record["response_diagnostics"]["provider_error_diagnostics"]
+        self.assertEqual(
+            provider_error["provider_error_category"],
+            PROVIDER_ERROR_RATE_LIMIT,
+        )
+        self.assertEqual(provider_error["provider_http_status"], 429)
+        self.assertNotIn("prompt", json.dumps(provider_error).lower())
+        self.assertNotIn("raw_prompt", provider_error)
+        self.assertNotIn("raw_provider_message", provider_error)
         self.assertEqual(calls, {"grounding": 0, "quality": 0})
+
+    def test_downstream_quality_execution_failure_records_provider_diagnostics(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[1]
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": "Repaired post with a clearer reflective ending."}),
+                provider=request.provider,
+                model=request.model,
+                prompt_metadata=PromptMetadata(
+                    prompt_name=request.rendered_prompt_input.prompt_name,
+                    prompt_version=request.rendered_prompt_input.prompt_version,
+                    prompt_path=request.rendered_prompt_input.prompt_path,
+                ),
+                usage={"total_tokens": 10},
+                raw_provider_response={"id": "repair"},
+            )
+
+        def grounding_executor(request):
+            return SemanticGroundingRawResponse(
+                raw_text=json.dumps(_passing_grounding_payload()),
+                provider=request.provider,
+                model=request.model,
+                usage={"total_tokens": 11},
+                raw_provider_response={"id": "grounding"},
+            )
+
+        def quality_executor(request):
+            return QualityEvaluatorRawResponse(
+                raw_text="",
+                provider=request.provider,
+                model=request.model,
+                execution_error="provider invocation failed",
+                execution_diagnostics={
+                    "provider_error_type": "RateLimitError",
+                    "provider_error_code": "rate_limit_exceeded",
+                    "provider_http_status": 429,
+                    "provider_error_category": PROVIDER_ERROR_RATE_LIMIT,
+                    "provider_error_retryable": True,
+                    "provider_endpoint_family": "responses",
+                    "provider_model": request.model,
+                    "provider_error_message_safe": (
+                        "provider execution failed; raw exception message omitted"
+                    ),
+                    "raw_prompt": "secret prompt text",
+                    "raw_provider_message": "secret prompt text",
+                },
+            )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+                semantic_grounding_executor=grounding_executor,
+                quality_evaluator_executor=quality_executor,
+            )
+
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "quality_evaluator_execution")
+        quality_metadata = record["quality_evaluation"]["metadata"]
+        provider_error = quality_metadata["provider_error_diagnostics"]
+        self.assertEqual(provider_error["provider_error_category"], PROVIDER_ERROR_RATE_LIMIT)
+        self.assertEqual(provider_error["provider_http_status"], 429)
+        self.assertNotIn("prompt", json.dumps(provider_error).lower())
+        self.assertNotIn("raw_prompt", provider_error)
+        self.assertNotIn("raw_provider_message", provider_error)
+
+    def test_gemini_accounting_metadata_is_recorded_in_response_diagnostics(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[2]
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text='```json\n{"post_text": "unterminated',
+                provider=request.provider,
+                model=request.model,
+                execution_error=None,
+                usage={
+                    "prompt_tokens": 2067,
+                    "completion_tokens": 70,
+                    "total_tokens": 3863,
+                },
+                raw_provider_response={"id": "gemini"},
+                provider_response_metadata={
+                    "provider": "gemini",
+                    "model": "gemini-3.6-flash",
+                    "provider_finish_reason": "length",
+                    "provider_max_output_tokens": 1800,
+                    "provider_reported_output_tokens": 70,
+                    "provider_output_limit_reached": True,
+                    "provider_prompt_tokens": 2067,
+                    "provider_visible_output_tokens": 70,
+                    "provider_total_tokens": 3863,
+                    "provider_hidden_output_tokens": 1726,
+                    "provider_combined_output_tokens": 1796,
+                    "provider_output_budget_utilization_percent": 99.78,
+                },
+            )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+            )
+
+        diagnostics = result.run_records[0]["response_diagnostics"]
+        self.assertEqual(diagnostics["provider_visible_output_tokens"], 70)
+        self.assertEqual(diagnostics["provider_hidden_output_tokens"], 1726)
+        self.assertEqual(diagnostics["provider_combined_output_tokens"], 1796)
+        self.assertEqual(
+            diagnostics["provider_output_budget_utilization_percent"],
+            99.78,
+        )
 
     def test_adaptation_failure_records_safe_structural_diagnostics(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]
