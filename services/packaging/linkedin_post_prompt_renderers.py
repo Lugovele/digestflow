@@ -215,7 +215,11 @@ def render_repair_writer_prompt_input(
     prompt_metadata: PromptMetadata | None = None,
 ) -> RepairWriterPromptRender:
     selected_evidence_ids = _selected_evidence_ids_for_repair_prompt(selected_evidence)
+    candidate_post_constraints = build_candidate_post_constraints()
     variables = {
+        "repair_writer_length_guidance": _repair_writer_length_guidance(
+            candidate_post_constraints
+        ),
         "original_candidate_payload_json": _stable_json(
             _candidate_post_payload_for_prompt(original_candidate_payload)
         ),
@@ -451,6 +455,43 @@ def _candidate_post_length_instruction(
     )
 
 
+def _repair_writer_length_guidance(
+    candidate_post_constraints: dict[str, Any],
+) -> str:
+    post_text_constraints = candidate_post_constraints.get("post_text")
+    if not isinstance(post_text_constraints, dict):
+        raise TypeError("candidate_post_constraints.post_text must be a dictionary.")
+    hard_max_chars = post_text_constraints.get("max_chars")
+    if not isinstance(hard_max_chars, int):
+        raise TypeError(
+            "candidate_post_constraints.post_text.max_chars must be an integer."
+        )
+    if hard_max_chars <= 0:
+        raise ValueError("candidate post max_chars must be positive.")
+
+    return (
+        "REPAIR LENGTH DISCIPLINE:\n"
+        "Keep the repaired post_text at or below the original post length when "
+        "practical.\n\n"
+        "HARD MAXIMUM:\n"
+        f"The final repaired post_text MUST be <= {hard_max_chars} characters. "
+        f"More than {hard_max_chars} characters is a hard CandidatePost failure.\n\n"
+        "REPAIR STRATEGY:\n"
+        "If the original candidate is close to the hard maximum, replace, "
+        "compress, or rewrite existing text rather than appending new material.\n\n"
+        "CTA / ENDING REPAIRS:\n"
+        "If the requested repair concerns CTA or ending quality, prefer replacing "
+        "the existing final sentence or paragraph. Preserve the rest of the post "
+        "when possible, do not append redundant closing material, and keep exactly "
+        "one clear reader-facing CTA when the repair instruction requires one.\n\n"
+        "AUTHOR POINT OF VIEW REPAIRS:\n"
+        "If the requested repair concerns author_point_of_view, strengthen the "
+        "author-owned interpretation by replacing or tightening existing "
+        "editorial language. Do not add multiple redundant stance statements or "
+        "append extra interpretive conclusions purely to satisfy POV."
+    )
+
+
 def _personal_presence_instruction_for_prompt(
     authorial_voice_directive: dict[str, Any],
 ) -> str:
@@ -621,6 +662,7 @@ def _build_input_text(variables: dict[str, str]) -> str:
 
 def _build_repair_writer_input_text(variables: dict[str, str]) -> str:
     sections = [
+        ("REPAIR_WRITER_LENGTH_GUIDANCE", variables["repair_writer_length_guidance"]),
         ("ORIGINAL_CANDIDATE_PAYLOAD_JSON", variables["original_candidate_payload_json"]),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),

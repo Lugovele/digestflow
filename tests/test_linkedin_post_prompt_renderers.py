@@ -62,6 +62,7 @@ SEMANTIC_GROUNDING_VARIABLES = (
 )
 
 REPAIR_WRITER_VARIABLES = (
+    "repair_writer_length_guidance",
     "original_candidate_payload_json",
     "post_brief_json",
     "angle_decision_json",
@@ -1172,6 +1173,97 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertIsInstance(render, RepairWriterPromptRender)
         self.assertEqual(tuple(render.variables), REPAIR_WRITER_VARIABLES)
+
+    def test_repair_writer_input_text_has_exact_section_order(self) -> None:
+        render = _repair_writer_render()
+        headers = [
+            "## REPAIR_WRITER_LENGTH_GUIDANCE",
+            "## ORIGINAL_CANDIDATE_PAYLOAD_JSON",
+            "## POST_BRIEF_JSON",
+            "## ANGLE_DECISION_JSON",
+            "## SELECTED_EVIDENCE_JSON",
+            "## DETERMINISTIC_FINDINGS_JSON",
+            "## QUALITY_FINDINGS_JSON",
+            "## REPAIR_INSTRUCTION_JSON",
+            "## REPAIR_ATTEMPT_JSON",
+        ]
+
+        self.assertEqual(
+            [line for line in render.input_text.splitlines() if line.startswith("## ")],
+            headers,
+        )
+        for header in headers:
+            self.assertEqual(render.input_text.count(header), 1)
+        self.assertNotIn("```", render.input_text)
+
+    def test_repair_writer_render_includes_direct_numeric_length_guidance(self) -> None:
+        render = _repair_writer_render()
+        guidance = render.variables["repair_writer_length_guidance"]
+
+        self.assertIn("REPAIR LENGTH DISCIPLINE:", guidance)
+        self.assertIn("at or below the original post length", guidance)
+        self.assertIn("HARD MAXIMUM:", guidance)
+        self.assertIn("post_text MUST be <= 1300 characters", guidance)
+        self.assertIn("More than 1300 characters is a hard CandidatePost failure", guidance)
+        self.assertIn("REPAIR_WRITER_LENGTH_GUIDANCE", render.input_text)
+        self.assertIn(guidance, render.input_text)
+
+    def test_repair_writer_length_guidance_derives_from_candidate_post_constraints(
+        self,
+    ) -> None:
+        injected_constraints = {
+            "post_text": {
+                "type": "string",
+                "required": True,
+                "min_chars": 1,
+                "max_chars": 999,
+                "prompt_target_min_chars": 700,
+                "prompt_target_max_chars": 850,
+            },
+            "allowed_fields": ["post_text"],
+            "forbidden_fields": [],
+        }
+
+        with mock.patch.object(
+            linkedin_post_prompt_renderers,
+            "build_candidate_post_constraints",
+            return_value=injected_constraints,
+        ) as build_constraints:
+            render = _repair_writer_render()
+
+        build_constraints.assert_called_once_with()
+        self.assertIn(
+            "post_text MUST be <= 999 characters",
+            render.variables["repair_writer_length_guidance"],
+        )
+        self.assertIn(
+            "More than 999 characters is a hard CandidatePost failure",
+            render.variables["repair_writer_length_guidance"],
+        )
+
+    def test_repair_writer_length_guidance_prefers_replace_or_compress_over_append(
+        self,
+    ) -> None:
+        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+
+        self.assertIn("replace, compress, or rewrite existing text", guidance)
+        self.assertIn("rather than appending new material", guidance)
+
+    def test_repair_writer_length_guidance_calibrates_cta_repairs(self) -> None:
+        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+
+        self.assertIn("CTA / ENDING REPAIRS:", guidance)
+        self.assertIn("prefer replacing the existing final sentence or paragraph", guidance)
+        self.assertIn("do not append redundant closing material", guidance)
+        self.assertIn("keep exactly one clear reader-facing CTA", guidance)
+
+    def test_repair_writer_length_guidance_calibrates_author_pov_repairs(self) -> None:
+        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+
+        self.assertIn("AUTHOR POINT OF VIEW REPAIRS:", guidance)
+        self.assertIn("replacing or tightening existing editorial language", guidance)
+        self.assertIn("Do not add multiple redundant stance statements", guidance)
+        self.assertIn("append extra interpretive conclusions", guidance)
 
     def test_repair_writer_render_preserves_selected_evidence_boundary(self) -> None:
         editorial_input = _post_editorial_input()
