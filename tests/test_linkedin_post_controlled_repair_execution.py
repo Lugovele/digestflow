@@ -114,7 +114,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_controlled_repair_attempt(
-            _controlled_request(repair_provider="gemini"),
+            _controlled_request(repair_provider="gemini", repair_model="unsupported-model"),
             candidate_writer_client=candidate_client,
             semantic_grounding_client=semantic_client,
             quality_evaluator_client=evaluator_client,

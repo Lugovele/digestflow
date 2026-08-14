@@ -104,7 +104,7 @@ from services.packaging.linkedin_post_semantic_grounding_parser import (
 
 
 BENCHMARK_SCHEMA_VERSION = "2026-08-14"
-DEFAULT_EXPERIMENT_ID = "repair-writer-gpt-vs-claude-v1"
+DEFAULT_EXPERIMENT_ID = "repair-writer-gpt-vs-claude-vs-gemini-v1"
 DEFAULT_OUTPUT_ROOT = Path("debug_outputs/final_post_repair_writer_benchmarks")
 DEFAULT_FIXTURE_ROOT = Path("tests/fixtures/linkedin_post_repair_writer_benchmark")
 BENCHMARK_STATUS_DRY_RUN = "dry_run"
@@ -112,6 +112,7 @@ BENCHMARK_STATUS_COMPLETED = "completed"
 BENCHMARK_STATUS_CONFIG_ERROR = "config_error"
 PLAN_GPT_REPAIR = "gpt_repair"
 PLAN_CLAUDE_REPAIR = "claude_repair"
+PLAN_GEMINI_REPAIR = "gemini_repair"
 RECONSTRUCTION_DIRECT = "DIRECT"
 RECONSTRUCTION_DETERMINISTIC = "DETERMINISTIC_RECONSTRUCTION"
 REPAIR_WRITER_JSON_MODE = False
@@ -371,6 +372,11 @@ def default_repair_writer_benchmark_plans() -> tuple[RepairWriterBenchmarkPlan, 
             PLAN_CLAUDE_REPAIR,
             AI_PROVIDER_ANTHROPIC,
             "claude-sonnet-5",
+        ),
+        RepairWriterBenchmarkPlan(
+            PLAN_GEMINI_REPAIR,
+            AI_PROVIDER_GEMINI,
+            "gemini-3.6-flash",
         ),
     )
 
@@ -1209,6 +1215,11 @@ def _payload_preservation(
     non_post_text_repaired = {
         key: value for key, value in repaired_payload.items() if key != "post_text"
     }
+    original_post_text = str(original_payload.get("post_text") or "")
+    repaired_post_text = str(repaired_payload.get("post_text") or "")
+    original_length = len(original_post_text)
+    repaired_length = len(repaired_post_text)
+    character_delta = repaired_length - original_length
     return {
         "only_post_text_changed": (
             original_keys == repaired_keys == {"post_text"}
@@ -1217,6 +1228,14 @@ def _payload_preservation(
         "non_post_text_fields_identical": non_post_text_original == non_post_text_repaired,
         "original_keys": sorted(original_keys),
         "repaired_keys": sorted(repaired_keys),
+        "original_character_count": original_length,
+        "repaired_character_count": repaired_length,
+        "character_delta": character_delta,
+        "character_delta_percent": (
+            round((character_delta / original_length) * 100, 2)
+            if original_length
+            else None
+        ),
     }
 
 
@@ -1463,6 +1482,12 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
         lines.extend([f"## Case `{case_id}`", ""])
         for record in [item for item in records if item.get("case_id") == case_id]:
             preservation = record.get("payload_preservation") or {}
+            repair_diagnostics = record.get("repair_adapter_diagnostics") or {}
+            grounding = record.get("semantic_grounding") or {}
+            quality = record.get("quality_evaluation") or {}
+            quality_scores = quality.get("scores") or {}
+            projection = record.get("adjudication_projection") or {}
+            decision = ((projection.get("decision_ready_result") or {}).get("decision") or {})
             lines.extend(
                 [
                     f"### {record.get('plan_id')}",
@@ -1470,11 +1495,42 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
                     f"provider/model: `{record.get('provider')}` / `{record.get('model')}`",
                     f"status: {record.get('execution_status')}",
                     f"failure_code: {record.get('failure_code')}",
+                    f"repair_adaptation_success: {record.get('repair_adapter_diagnostics') is not None and record.get('failure_stage') != 'repair_writer_adaptation'}",
+                    f"post_text_within_limit: {repair_diagnostics.get('post_text_within_candidate_max_length')}",
+                    f"deterministic_gate_passed: {_record_gate_passed(record)}",
+                    f"semantic_grounding_passed: {grounding.get('pass')}",
+                    f"blocking_claims: {len(grounding.get('failed_claim_ids') or [])}",
+                    f"quality_passed: {quality.get('pass')}",
+                    f"quality_total_score: {quality.get('total_score')}",
+                    f"quality_hook: {quality_scores.get('hook')}",
+                    f"quality_controlling_angle: {quality_scores.get('controlling_angle')}",
+                    f"quality_evidence: {quality_scores.get('evidence')}",
+                    f"quality_author_point_of_view: {quality_scores.get('author_point_of_view')}",
+                    f"quality_human_voice: {quality_scores.get('human_voice')}",
+                    f"quality_practical_value: {quality_scores.get('practical_value')}",
+                    f"quality_cta: {quality_scores.get('cta')}",
+                    f"final_action: {decision.get('action')}",
                     f"only_post_text_changed: {preservation.get('only_post_text_changed')}",
+                    f"original_character_count: {preservation.get('original_character_count')}",
+                    f"repaired_character_count: {preservation.get('repaired_character_count')}",
+                    f"character_delta: {preservation.get('character_delta')}",
+                    f"repair_target: {record.get('repair_instruction', {}).get('failed_criterion')}",
                     "",
                 ]
             )
     return "\n".join(lines) + "\n"
+
+
+def _record_gate_passed(record: dict[str, Any]) -> bool | None:
+    gate = record.get("repaired_gate")
+    if not isinstance(gate, dict):
+        return None
+    diagnostics = gate.get("diagnostics") or {}
+    return (
+        gate.get("validation_passed") is True
+        and diagnostics.get("deterministic_checks_passed") is True
+        and diagnostics.get("system_linkedin_ready") is True
+    )
 
 
 def _resolve_output_root(output_root: Path | None) -> Path:

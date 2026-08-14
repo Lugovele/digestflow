@@ -106,10 +106,11 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
                     )
                 )
 
-    def test_repair_writer_accepts_openai_gpt_4_1_and_claude_sonnet_5(self) -> None:
+    def test_repair_writer_accepts_gpt_claude_and_gemini_benchmark_models(self) -> None:
         for provider, model in (
             ("openai", "gpt-4.1-2025-04-14"),
             ("anthropic", "claude-sonnet-5"),
+            ("gemini", "gemini-3.6-flash"),
         ):
             with self.subTest(provider=provider):
                 self.assertIsNone(
@@ -120,7 +121,8 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
                     )
                 )
         for provider, model in (
-            ("gemini", "gemini-3.6-flash"),
+            ("gemini", "unsupported-model"),
+            ("gemini", "gpt-4.1-2025-04-14"),
             ("anthropic", "unsupported-model"),
         ):
             with self.subTest(provider=provider):
@@ -269,6 +271,7 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
             (FINAL_POST_ROLE_QUALITY_EVALUATOR, "gemini", "gemini-3.6-flash"),
             (FINAL_POST_ROLE_REPAIR_WRITER, "openai", "gpt-4.1-2025-04-14"),
             (FINAL_POST_ROLE_REPAIR_WRITER, "anthropic", "claude-sonnet-5"),
+            (FINAL_POST_ROLE_REPAIR_WRITER, "gemini", "gemini-3.6-flash"),
         )
 
         for role, provider, model in cases:

@@ -89,7 +89,7 @@ class BenchmarkLinkedInRepairWriterCommandTests(SimpleTestCase):
                 stdout=io.StringIO(),
             )
 
-            output_dir = Path(tempdir) / "repair-writer-gpt-vs-claude-v1"
+            output_dir = Path(tempdir) / "repair-writer-gpt-vs-claude-vs-gemini-v1"
 
             self.assertTrue((output_dir / "manifest.json").exists())
             self.assertTrue((output_dir / "runs.jsonl").exists())

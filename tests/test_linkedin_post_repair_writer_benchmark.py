@@ -19,6 +19,7 @@ from services.packaging.linkedin_post_repair_writer_benchmark import (
     FIXED_SEMANTIC_GROUNDING_MODEL,
     FIXED_SEMANTIC_GROUNDING_PROVIDER,
     PLAN_CLAUDE_REPAIR,
+    PLAN_GEMINI_REPAIR,
     PLAN_GPT_REPAIR,
     REPAIR_WRITER_JSON_MODE,
     REPAIR_WRITER_MAX_OUTPUT_TOKENS,
@@ -63,13 +64,20 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(cases[1].frozen_input_reconstruction, "DETERMINISTIC_RECONSTRUCTION")
         self.assertEqual(cases[2].frozen_input_reconstruction, "DETERMINISTIC_RECONSTRUCTION")
 
-    def test_default_plans_compare_only_gpt_and_claude_repair_writers(self) -> None:
+    def test_default_plans_compare_gpt_claude_and_gemini_repair_writers(self) -> None:
         plans = default_repair_writer_benchmark_plans()
 
-        self.assertEqual(tuple(plan.plan_id for plan in plans), (PLAN_GPT_REPAIR, PLAN_CLAUDE_REPAIR))
-        self.assertEqual(tuple(plan.provider for plan in plans), ("openai", "anthropic"))
-        self.assertEqual(tuple(plan.max_output_tokens for plan in plans), (1200, 1200))
-        self.assertEqual(tuple(plan.json_mode for plan in plans), (False, False))
+        self.assertEqual(
+            tuple(plan.plan_id for plan in plans),
+            (PLAN_GPT_REPAIR, PLAN_CLAUDE_REPAIR, PLAN_GEMINI_REPAIR),
+        )
+        self.assertEqual(tuple(plan.provider for plan in plans), ("openai", "anthropic", "gemini"))
+        self.assertEqual(
+            tuple(plan.model for plan in plans),
+            ("gpt-4.1-2025-04-14", "claude-sonnet-5", "gemini-3.6-flash"),
+        )
+        self.assertEqual(tuple(plan.max_output_tokens for plan in plans), (1200, 1200, 1200))
+        self.assertEqual(tuple(plan.json_mode for plan in plans), (False, False, False))
 
     def test_default_case_excludes_gpt_v5_diagnostic_case(self) -> None:
         self.assertNotIn(
@@ -112,7 +120,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
 
         self.assertEqual(result.status, BENCHMARK_STATUS_DRY_RUN)
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.run_count, 6)
+        self.assertEqual(result.run_count, 9)
         self.assertEqual(result.provider_call_count, 0)
         for record in result.run_records:
             self.assertEqual(record["provider_invocation_counts"]["candidate_writer_provider_api_calls"], 0)
@@ -135,11 +143,39 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             )
             manifest = json.loads(Path(result.artifacts.manifest_json).read_text(encoding="utf-8"))
 
-        self.assertEqual(manifest["planned_live_accounting"]["logical_repair_runs"], 6)
-        self.assertEqual(manifest["planned_live_accounting"]["planned_repair_writer_calls"], 6)
-        self.assertEqual(manifest["planned_live_accounting"]["planned_semantic_grounding_calls"], 6)
-        self.assertEqual(manifest["planned_live_accounting"]["planned_quality_evaluator_calls"], 6)
-        self.assertEqual(manifest["planned_live_accounting"]["planned_max_provider_calls"], 18)
+        self.assertEqual(manifest["planned_live_accounting"]["logical_repair_runs"], 9)
+        self.assertEqual(manifest["planned_live_accounting"]["planned_repair_writer_calls"], 9)
+        self.assertEqual(manifest["planned_live_accounting"]["planned_semantic_grounding_calls"], 9)
+        self.assertEqual(manifest["planned_live_accounting"]["planned_quality_evaluator_calls"], 9)
+        self.assertEqual(manifest["planned_live_accounting"]["planned_max_provider_calls"], 27)
+
+    def test_default_plans_have_identical_prompt_input_hash_for_each_case(self) -> None:
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=default_repair_writer_benchmark_cases(),
+                    plans=default_repair_writer_benchmark_plans(),
+                    allow_api=False,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        by_case: dict[str, set[str]] = {}
+        for record in result.run_records:
+            by_case.setdefault(record["case_id"], set()).add(
+                record["input_parity"]["repair_prompt_input_sha256"]
+            )
+
+        self.assertEqual(
+            set(by_case),
+            {
+                "topic_140_digest_126",
+                "topic_214_digest_128__claude_v3",
+                "topic_200_digest_134__gpt_v2",
+            },
+        )
+        self.assertTrue(all(len(hashes) == 1 for hashes in by_case.values()))
 
     def test_live_path_uses_only_repair_plan_provider_and_fixed_downstream_roles(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]
@@ -196,6 +232,9 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
                 semantic_grounding_executor=grounding_executor,
                 quality_evaluator_executor=quality_executor,
             )
+            comparison_text = Path(result.artifacts.repair_comparison_md).read_text(
+                encoding="utf-8"
+            )
 
         self.assertEqual(result.status, BENCHMARK_STATUS_COMPLETED)
         self.assertEqual(result.provider_call_count, 3)
@@ -218,6 +257,8 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertIn("raw_text_sha256", record["response_diagnostics"])
         self.assertIn("raw_text_length", record["response_diagnostics"])
         self.assertIn("raw_response_character_count", record["response_diagnostics"])
+        self.assertNotIn(case.candidate_payload["post_text"], comparison_text)
+        self.assertNotIn("Repaired post with a clearer reflective ending.", comparison_text)
 
     def test_repair_writer_failure_blocks_downstream_evaluators(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]
@@ -315,7 +356,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertIn("raw_text_length", runs_text)
         self.assertNotIn("raw_text\":", runs_text)
 
-    def test_configuration_rejects_gemini_repair_writer_plan(self) -> None:
+    def test_configuration_accepts_gemini_repair_writer_plan_for_benchmark(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]
 
         with TemporaryDirectory() as tempdir:
@@ -334,8 +375,10 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
                 )
             )
 
-        self.assertEqual(result.status, "config_error")
-        self.assertIn("unsupported PostFlow final post role/provider/model", result.safe_failure_message)
+        self.assertEqual(result.status, "dry_run")
+        self.assertEqual(result.run_count, 1)
+        self.assertEqual(result.run_records[0]["provider"], "gemini")
+        self.assertEqual(result.run_records[0]["model"], "gemini-3.6-flash")
 
     def test_artifacts_do_not_include_raw_prompts_or_provider_payloads(self) -> None:
         with TemporaryDirectory() as tempdir:
