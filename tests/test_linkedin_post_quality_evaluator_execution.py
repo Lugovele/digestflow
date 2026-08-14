@@ -290,19 +290,22 @@ class QualityEvaluatorExecutionTests(SimpleTestCase):
 
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.build_ai_client")
-    def test_gemini_quality_evaluator_config_returns_error_without_provider_call(
+    def test_gemini_quality_evaluator_config_uses_injected_client_without_constructing_provider(
         self,
         mock_build_ai_client,
     ) -> None:
-        raw_response = execute_quality_evaluator_prompt(
-            _request(provider="gemini", model="gemini-3.6-flash")
+        request = _request(provider="gemini", model="gemini-3.6-flash")
+        fake_client = RecordingQualityEvaluatorClient(
+            SimpleNamespace(text='{"pass": true}', raw={"id": "gemini-fake"}, usage={"total_tokens": 9})
         )
 
-        self.assertIn(
-            "unsupported PostFlow final post role/provider/model",
-            raw_response.execution_error,
-        )
+        raw_response = execute_quality_evaluator_prompt(request, client=fake_client)
+
         mock_build_ai_client.assert_not_called()
+        self.assertIsNone(raw_response.execution_error)
+        self.assertEqual(raw_response.provider, "gemini")
+        self.assertEqual(raw_response.model, "gemini-3.6-flash")
+        self.assertEqual(fake_client.kwargs["json_mode"], True)
 
     @patch("services.packaging.linkedin_post_quality_evaluator_execution.build_ai_client")
     def test_anthropic_quality_evaluator_config_returns_error_without_provider_call(

@@ -80,19 +80,24 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
                     )
                 )
 
-    def test_quality_evaluator_accepts_only_openai_gpt_4_1(self) -> None:
-        self.assertIsNone(
-            get_final_post_role_provider_model_policy_failure(
-                role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
-                provider="openai",
-                model="gpt-4.1-2025-04-14",
-            )
-        )
+    def test_quality_evaluator_accepts_openai_gpt_4_1_and_gemini_3_6_flash(self) -> None:
         for provider, model in (
+            ("openai", "gpt-4.1-2025-04-14"),
             ("gemini", "gemini-3.6-flash"),
-            ("anthropic", "claude-sonnet-5"),
         ):
-            with self.subTest(provider=provider):
+            with self.subTest(provider=provider, model=model):
+                self.assertIsNone(
+                    get_final_post_role_provider_model_policy_failure(
+                        role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
+                        provider=provider,
+                        model=model,
+                    )
+                )
+        for provider, model in (
+            ("anthropic", "claude-sonnet-5"),
+            ("gemini", "unsupported-model"),
+        ):
+            with self.subTest(provider=provider, model=model):
                 self.assertIsNotNone(
                     get_final_post_role_provider_model_policy_failure(
                         role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
@@ -158,8 +163,8 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
     def test_failure_contains_only_safe_role_provider_model_fields(self) -> None:
         failure = get_final_post_role_provider_model_policy_failure(
             role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
-            provider="gemini",
-            model="gemini-3.6-flash",
+            provider="anthropic",
+            model="claude-sonnet-5",
         )
 
         self.assertEqual(
@@ -167,8 +172,8 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
             {
                 "code": FINAL_POST_ROLE_PROVIDER_MODEL_POLICY_FAILURE_CODE,
                 "role": "quality_evaluator",
-                "provider": "gemini",
-                "model": "gemini-3.6-flash",
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
                 "message": str(failure),
             },
         )
@@ -202,8 +207,8 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
         ):
             validate_final_post_role_provider_model(
                 role=FINAL_POST_ROLE_REPAIR_WRITER,
-                provider="gemini",
-                model="gemini-3.6-flash",
+                provider="anthropic",
+                model="claude-sonnet-5",
             )
 
     def test_normalize_role_strips_and_lowercases(self) -> None:
@@ -256,6 +261,7 @@ class FinalPostModelRolePolicyTests(SimpleTestCase):
             (FINAL_POST_ROLE_SEMANTIC_GROUNDING, "openai", "gpt-4.1-2025-04-14"),
             (FINAL_POST_ROLE_SEMANTIC_GROUNDING, "gemini", "gemini-3.6-flash"),
             (FINAL_POST_ROLE_QUALITY_EVALUATOR, "openai", "gpt-4.1-2025-04-14"),
+            (FINAL_POST_ROLE_QUALITY_EVALUATOR, "gemini", "gemini-3.6-flash"),
             (FINAL_POST_ROLE_REPAIR_WRITER, "openai", "gpt-4.1-2025-04-14"),
         )
 
