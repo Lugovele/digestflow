@@ -33,7 +33,7 @@ class BenchmarkLinkedInQualityEvaluatorCommandTests(SimpleTestCase):
         request = runner.call_args.args[0]
         self.assertFalse(request.allow_api)
         self.assertEqual(request.experiment_id, DEFAULT_EXPERIMENT_ID)
-        self.assertEqual(len(request.cases), 2)
+        self.assertEqual(len(request.cases), 6)
         self.assertEqual(len(request.plans), 2)
         self.assertIn("status: dry_run", stdout.getvalue())
         self.assertIn("provider_calls: 0", stdout.getvalue())
@@ -89,7 +89,7 @@ def _command_result() -> QualityEvaluatorBenchmarkResult:
         status=BENCHMARK_STATUS_DRY_RUN,
         exit_code=0,
         experiment_id=DEFAULT_EXPERIMENT_ID,
-        run_count=4,
+        run_count=12,
         provider_call_count=0,
         artifacts=QualityEvaluatorBenchmarkArtifacts(
             output_dir="debug_outputs/final_post_quality_evaluator_benchmarks/test",

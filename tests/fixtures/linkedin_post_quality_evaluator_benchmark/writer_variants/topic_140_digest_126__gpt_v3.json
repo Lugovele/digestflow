@@ -1,0 +1,109 @@
+{
+  "angle_decision": {
+    "angle_to_avoid": [
+      "generic summary",
+      "source-term drift",
+      "unsupported prescription risk",
+      "Do not use as a standalone claim beyond the source evidence.",
+      "generic summary; source-term drift",
+      "unsupported prescription risk; source-term drift",
+      "Do not overstate evidence from a0-summary.",
+      "Do not overstate evidence from a1-kp0.",
+      "Do not overstate evidence from a2-summary."
+    ],
+    "author_position": "The author position is that education needs both education impact and learner adoption to become a useful takeaway.",
+    "authorial_voice_directive": {
+      "authorial_observation": "The author notices that education impact and learner adoption should not be collapsed into one easy conclusion.",
+      "first_person_policy": "allowed_not_required",
+      "forbidden_author_claims": [
+        "personal experience",
+        "professional authority",
+        "direct market exposure",
+        "client or customer stories",
+        "invented emotional reaction",
+        "biographical claims"
+      ],
+      "personal_presence_requirement": "explicit_author_owned_statement_required",
+      "rejected_reading": "Reject treating education impact as proof that learner adoption has been resolved.",
+      "why_distinction_matters": "The distinction matters because readers may treat education impact as the whole story before checking learner adoption."
+    },
+    "controlling_angle": "The stronger education angle is that Education impact becomes more concrete when learner adoption is visible, but adoption alone does not explain educational value.",
+    "main_tension": "The tension is between education impact and learner adoption.",
+    "reader_problem": "Readers may treat education impact as the whole story before checking learner adoption.",
+    "supporting_evidence_ids": [
+      "a0-summary",
+      "a1-kp0",
+      "a2-summary"
+    ]
+  },
+  "base_case_id": "topic_140_digest_126",
+  "candidate_payload": {
+    "post_text": "Education outcomes get most of the attention, but I notice it's a mistake to treat impact as proof that learners are truly adopting new skills or mindsets. For example, while initiatives like national AI literacy frameworks and stronger computer science education can offer long-term value and address real gaps, the real measure of educational value appears when we see meaningful learner adoption—in action, not just in principle.\n\nConsider that 30% of K-12 students now use AI tools at least once per day. This signals shifting behavior, but adoption alone isn’t enough. The full value of education emerges only when both the intended impact and actual learner adoption align. Before drawing conclusions from education headlines or policy wins, it’s worth asking: Are we seeing just systems change, or real student uptake that unlocks those promised benefits?"
+  },
+  "candidate_post_character_length": 862,
+  "candidate_validity_status": "CANONICAL_VALID",
+  "canonical_candidate_valid": true,
+  "case_id": "topic_140_digest_126__gpt_v3",
+  "case_selection_note": "Short, generic education post with confused impact/adoption framing; useful weak mechanically valid contrast against the strong Claude education anchor.",
+  "editorial_classification": "WEAK",
+  "frozen_input_reconstruction": "DETERMINISTIC_RECONSTRUCTION",
+  "known_grounding_result": {
+    "blocking_claim_count": 1,
+    "contradicted_claim_count": 0,
+    "pass": false,
+    "unsupported_claim_count": 0
+  },
+  "known_historical_quality_result": null,
+  "post_brief": {
+    "core_point": "The author position is that education needs both education impact and learner adoption to become a useful takeaway.",
+    "cta_direction": "Ask the reader to reconsider this reader problem: Readers may treat education impact as the whole story before checking learner adoption.",
+    "ending_direction": "End by returning to this author position: The author position is that education needs both education impact and learner adoption to become a useful takeaway.",
+    "evidence_to_use": [
+      {
+        "evidence_id": "a0-summary",
+        "evidence_text": "The article explores the challenges and opportunities related to AI literacy and educational AI development from the perspectives of teachers and researchers. The author argues that establishing a national AI literacy framework is essential for creating a cohesive educational strategy and highlights the need for interdisciplinary projects that integrate ethical discussions into AI learning. The conclusion emphasizes the importance of institutionalization and ongoing support for AI education to ensure its sustainability in schools.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a1-kp0",
+        "evidence_text": "30% of K-12 students use AI tools at least once per day.",
+        "role_in_post": "Use this evidence as practical_point support. May support a practical_point role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a2-summary",
+        "evidence_text": "The article emphasizes the critical importance of computer science (CS) education for K-12 students, arguing that it equips them with essential skills for a rapidly changing job market influenced by AI. The author concludes that schools must prioritize CS to prepare students for future careers across various industries while addressing the existing access and participation gaps. By integrating CS into curricula, students transition from passive technology users to active creators, fostering critical thinking and problem-solving skills.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      }
+    ],
+    "opening_direction": "Open with this editorial angle: The stronger education angle is that Education impact becomes more concrete when learner adoption is visible, but adoption alone does not explain educational value.",
+    "pattern_interrupt": "Interrupt the expected framing with this tension: The tension is between education impact and learner adoption.",
+    "practical_point": "Anchor the reader takeaway in this practical point: 30% of K-12 students use AI tools at least once per day."
+  },
+  "schema_version": "2026-08-14",
+  "selected_evidence": [
+    {
+      "evidence_id": "a0-summary",
+      "evidence_text": "The article explores the challenges and opportunities related to AI literacy and educational AI development from the perspectives of teachers and researchers. The author argues that establishing a national AI literacy framework is essential for creating a cohesive educational strategy and highlights the need for interdisciplinary projects that integrate ethical discussions into AI learning. The conclusion emphasizes the importance of institutionalization and ongoing support for AI education to ensure its sustainability in schools.",
+      "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+    },
+    {
+      "evidence_id": "a1-kp0",
+      "evidence_text": "30% of K-12 students use AI tools at least once per day.",
+      "role_in_post": "Use this evidence as practical_point support. May support a practical_point role in a later LinkedIn post."
+    },
+    {
+      "evidence_id": "a2-summary",
+      "evidence_text": "The article emphasizes the critical importance of computer science (CS) education for K-12 students, arguing that it equips them with essential skills for a rapidly changing job market influenced by AI. The author concludes that schools must prioritize CS to prepare students for future careers across various industries while addressing the existing access and participation gaps. By integrating CS into curricula, students transition from passive technology users to active creators, fostering critical thinking and problem-solving skills.",
+      "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+    }
+  ],
+  "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v3",
+  "source_git_commit": "725ce6a78f2e63c6ffcf0ec0ef135240f74fe369",
+  "source_plan_id": "gpt_writer_gpt_fixed",
+  "source_run_id": "topic_140_digest_126__gpt_writer_gpt_fixed__run_1",
+  "source_run_index": 1,
+  "source_runs_jsonl": "debug_outputs/final_post_model_experiments/writer-claude-vs-gpt-candidatepost-v3/runs.jsonl",
+  "source_smoke_fixture": "tests/fixtures/linkedin_post_smoke/writer_benchmarks/topic_140_digest_126.json",
+  "writer_model": "gpt-4.1-2025-04-14",
+  "writer_provider": "openai"
+}

@@ -4,12 +4,14 @@ import ast
 import json
 import tempfile
 from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 
 from django.test import SimpleTestCase
 
 from services.packaging.linkedin_post_attempt_adjudication import QUALITY_EVALUATION_READY
 from services.packaging.linkedin_post_quality_evaluator_benchmark import (
+    BENCHMARK_SCHEMA_VERSION,
     BENCHMARK_STATUS_COMPLETED,
     BENCHMARK_STATUS_DRY_RUN,
     DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS,
@@ -18,9 +20,11 @@ from services.packaging.linkedin_post_quality_evaluator_benchmark import (
     PLAN_GPT_QUALITY,
     QualityEvaluatorBenchmarkPlan,
     QualityEvaluatorBenchmarkRequest,
+    QualityEvaluatorBenchmarkConfigurationError,
     build_quality_evaluator_benchmark_prompt_render,
     default_quality_evaluator_benchmark_cases,
     default_quality_evaluator_benchmark_plans,
+    load_quality_evaluator_benchmark_case,
     quality_evaluator_benchmark_max_output_tokens_for_provider,
     run_quality_evaluator_benchmark,
 )
@@ -36,7 +40,14 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
 
         self.assertEqual(
             [case.case_id for case in cases],
-            ["topic_200_digest_134", "topic_140_digest_126"],
+            [
+                "topic_200_digest_134",
+                "topic_140_digest_126",
+                "topic_140_digest_126__gpt_v3",
+                "topic_200_digest_134__gpt_v2",
+                "topic_214_digest_128__gpt_v5",
+                "topic_214_digest_128__claude_v3",
+            ],
         )
         self.assertTrue(all(case.canonical_candidate_valid for case in cases))
         self.assertEqual(
@@ -44,6 +55,106 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
             cases[0].angle_decision["supporting_evidence_ids"],
         )
         self.assertEqual(cases[0].selected_evidence, tuple(cases[0].post_brief["evidence_to_use"]))
+
+    def test_strong_anchors_are_retained(self) -> None:
+        cases = default_quality_evaluator_benchmark_cases()
+
+        anchors = {case.case_id: case for case in cases[:2]}
+        self.assertEqual(set(anchors), {"topic_200_digest_134", "topic_140_digest_126"})
+        self.assertTrue(all(case.writer_provider == "anthropic" for case in anchors.values()))
+        self.assertTrue(all(case.editorial_classification == "STRONG" for case in anchors.values()))
+
+    def test_additional_cases_include_weak_generic_and_cta_diagnostic_metadata(self) -> None:
+        cases = {case.case_id: case for case in default_quality_evaluator_benchmark_cases()}
+
+        self.assertEqual(cases["topic_140_digest_126__gpt_v3"].editorial_classification, "WEAK")
+        self.assertEqual(cases["topic_200_digest_134__gpt_v2"].editorial_classification, "BORDERLINE")
+        self.assertEqual(cases["topic_214_digest_128__gpt_v5"].editorial_classification, "GENERIC")
+        self.assertEqual(cases["topic_214_digest_128__claude_v3"].editorial_classification, "CTA_DIAGNOSTIC")
+        self.assertTrue(
+            all(
+                cases[case_id].frozen_input_reconstruction == "DETERMINISTIC_RECONSTRUCTION"
+                for case_id in (
+                    "topic_140_digest_126__gpt_v3",
+                    "topic_200_digest_134__gpt_v2",
+                    "topic_214_digest_128__gpt_v5",
+                    "topic_214_digest_128__claude_v3",
+                )
+            )
+        )
+
+    def test_fixture_metadata_must_match_approved_case_metadata(self) -> None:
+        case_payload = default_quality_evaluator_benchmark_cases()[2].to_dict()
+        case_payload["editorial_classification"] = "STRONG"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture_path = Path(temp_dir) / "topic_140_digest_126__gpt_v3.json"
+            fixture_path.write_text(json.dumps(case_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                QualityEvaluatorBenchmarkConfigurationError,
+                "unexpected editorial_classification",
+            ):
+                load_quality_evaluator_benchmark_case(fixture_path)
+
+    def test_fixture_frozen_identity_must_match_approved_case_metadata(self) -> None:
+        base_payload = default_quality_evaluator_benchmark_cases()[2].to_dict()
+        tampered_values = {
+            "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v1",
+            "source_git_commit": "0" * 40,
+            "writer_provider": "anthropic",
+            "writer_model": "claude-sonnet-5",
+            "frozen_input_reconstruction": "DIRECT",
+            "case_selection_note": "Different rationale.",
+        }
+
+        for field, value in tampered_values.items():
+            with self.subTest(field=field):
+                case_payload = dict(base_payload)
+                case_payload[field] = value
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    fixture_path = Path(temp_dir) / "topic_140_digest_126__gpt_v3.json"
+                    fixture_path.write_text(json.dumps(case_payload), encoding="utf-8")
+
+                    with self.assertRaisesRegex(
+                        QualityEvaluatorBenchmarkConfigurationError,
+                        f"unexpected {field}",
+                    ):
+                        load_quality_evaluator_benchmark_case(fixture_path)
+
+    def test_fixture_candidate_post_text_hash_must_match_approved_case_metadata(self) -> None:
+        case_payload = default_quality_evaluator_benchmark_cases()[2].to_dict()
+        case_payload["candidate_payload"]["post_text"] += " Drift."
+        case_payload["candidate_post_character_length"] = len(case_payload["candidate_payload"]["post_text"])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture_path = Path(temp_dir) / "topic_140_digest_126__gpt_v3.json"
+            fixture_path.write_text(json.dumps(case_payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                QualityEvaluatorBenchmarkConfigurationError,
+                "unexpected candidate_payload.post_text",
+            ):
+                load_quality_evaluator_benchmark_case(fixture_path)
+
+    def test_request_validation_rejects_manually_constructed_case_identity_drift(self) -> None:
+        case = default_quality_evaluator_benchmark_cases()[2]
+        drifted_case = replace(case, writer_model="claude-sonnet-5")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = run_quality_evaluator_benchmark(
+                QualityEvaluatorBenchmarkRequest(
+                    experiment_id="quality-evaluator-manual-case-drift",
+                    cases=(drifted_case,),
+                    plans=default_quality_evaluator_benchmark_plans(),
+                    output_root=Path(temp_dir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.status, "config_error")
+        self.assertIn("unexpected writer_model", result.safe_failure_message)
 
     def test_default_plans_compare_gpt_and_gemini_quality_evaluator(self) -> None:
         plans = default_quality_evaluator_benchmark_plans()
@@ -79,7 +190,7 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
 
         self.assertEqual(result.status, BENCHMARK_STATUS_DRY_RUN)
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.run_count, 4)
+        self.assertEqual(result.run_count, 12)
         self.assertEqual(result.provider_call_count, 0)
         self.assertTrue(all(record["provider_invocation_counts"]["quality_evaluator"] == 0 for record in result.run_records))
         self.assertTrue(all(record["provider_invocation_counts"]["candidate_writer"] == 0 for record in result.run_records))
@@ -103,6 +214,24 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
         self.assertNotEqual(first["provider"], second["provider"])
         self.assertEqual(first["quality_input_summary"], second["quality_input_summary"])
         self.assertEqual(first["prompt_metadata"], second["prompt_metadata"])
+
+    def test_input_hashes_are_identical_across_plans_for_every_default_case(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = run_quality_evaluator_benchmark(
+                QualityEvaluatorBenchmarkRequest(
+                    experiment_id="quality-evaluator-all-hash-test",
+                    cases=default_quality_evaluator_benchmark_cases(),
+                    plans=default_quality_evaluator_benchmark_plans(),
+                    output_root=Path(temp_dir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        for case_id in {record["case_id"] for record in result.run_records}:
+            case_records = [record for record in result.run_records if record["case_id"] == case_id]
+            self.assertEqual(len(case_records), 2)
+            self.assertEqual(case_records[0]["quality_input_summary"], case_records[1]["quality_input_summary"])
+            self.assertEqual(case_records[0]["prompt_metadata"], case_records[1]["prompt_metadata"])
 
     def test_live_fake_success_flows_through_parser_normalizer_and_adjudication(self) -> None:
         def fake_executor(_request):
@@ -246,6 +375,28 @@ class QualityEvaluatorBenchmarkTests(SimpleTestCase):
         self.assertNotIn("raw_provider_response", artifact_text)
         self.assertNotIn("prompt_text", artifact_text)
         self.assertNotIn("sk-", artifact_text.lower())
+
+    def test_report_contains_discrimination_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = run_quality_evaluator_benchmark(
+                QualityEvaluatorBenchmarkRequest(
+                    experiment_id="quality-evaluator-discrimination-report",
+                    cases=default_quality_evaluator_benchmark_cases(),
+                    plans=default_quality_evaluator_benchmark_plans(),
+                    output_root=Path(temp_dir),
+                ),
+                now_factory=_fixed_now,
+            )
+            report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
+            manifest = json.loads(Path(result.artifacts.manifest_json).read_text(encoding="utf-8"))
+
+        self.assertIn("## Discrimination Summary", report_text)
+        self.assertIn("| topic_140_digest_126__gpt_v3 | WEAK |", report_text)
+        self.assertIn("| topic_214_digest_128__gpt_v5 | GENERIC |", report_text)
+        self.assertIn("| STRONG |", report_text)
+        self.assertIn("| WEAK/GENERIC |", report_text)
+        self.assertEqual(manifest["schema_version"], BENCHMARK_SCHEMA_VERSION)
+        self.assertEqual(manifest["planned_live_quality_evaluator_calls"], 12)
 
 
     def test_live_artifacts_summarize_evaluator_free_text_without_storing_quotes(self) -> None:

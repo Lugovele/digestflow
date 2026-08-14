@@ -58,14 +58,10 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
 
-BENCHMARK_SCHEMA_VERSION = "2026-08-13"
-SOURCE_EXPERIMENT_ID = "writer-claude-vs-gpt-candidatepost-v5"
-SOURCE_GIT_COMMIT = "b830bb95e84acb43f00a3f7abdb508d89a584beb"
-FIXED_WRITER_PROVIDER = "anthropic"
-FIXED_WRITER_MODEL = "claude-sonnet-5"
+BENCHMARK_SCHEMA_VERSION = "2026-08-14"
 DEFAULT_FIXTURE_ROOT = Path("tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5")
 DEFAULT_OUTPUT_ROOT = Path("debug_outputs/final_post_quality_evaluator_benchmarks")
-DEFAULT_EXPERIMENT_ID = "quality-evaluator-gpt-vs-gemini-v1"
+DEFAULT_EXPERIMENT_ID = "quality-evaluator-gpt-vs-gemini-v2"
 BENCHMARK_STATUS_DRY_RUN = "dry_run"
 BENCHMARK_STATUS_COMPLETED = "completed"
 BENCHMARK_STATUS_CONFIG_ERROR = "config_error"
@@ -75,8 +71,111 @@ FAILURE_PARSE = "quality_evaluator_parse_failure"
 FAILURE_NORMALIZATION = "quality_evaluator_normalization_failure"
 PLAN_GPT_QUALITY = "gpt_quality"
 PLAN_GEMINI_QUALITY = "gemini_quality"
-CANONICAL_BENCHMARK_CASE_IDS = ("topic_200_digest_134", "topic_140_digest_126")
+CLASSIFICATION_STRONG = "STRONG"
+CLASSIFICATION_BORDERLINE = "BORDERLINE"
+CLASSIFICATION_WEAK = "WEAK"
+CLASSIFICATION_GENERIC = "GENERIC"
+CLASSIFICATION_CTA_DIAGNOSTIC = "CTA_DIAGNOSTIC"
+CLASSIFICATIONS = (
+    CLASSIFICATION_STRONG,
+    CLASSIFICATION_BORDERLINE,
+    CLASSIFICATION_WEAK,
+    CLASSIFICATION_GENERIC,
+    CLASSIFICATION_CTA_DIAGNOSTIC,
+)
+RECONSTRUCTION_DIRECT = "DIRECT"
+RECONSTRUCTION_DETERMINISTIC = "DETERMINISTIC_RECONSTRUCTION"
+CANONICAL_BENCHMARK_CASE_IDS = (
+    "topic_200_digest_134",
+    "topic_140_digest_126",
+    "topic_140_digest_126__gpt_v3",
+    "topic_200_digest_134__gpt_v2",
+    "topic_214_digest_128__gpt_v5",
+    "topic_214_digest_128__claude_v3",
+)
 DIAGNOSTIC_EXCLUDED_CASE_IDS = ("topic_214_digest_128",)
+DEFAULT_BENCHMARK_CASE_FIXTURES = (
+    DEFAULT_FIXTURE_ROOT / "topic_200_digest_134.json",
+    DEFAULT_FIXTURE_ROOT / "topic_140_digest_126.json",
+    Path("tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_140_digest_126__gpt_v3.json"),
+    Path("tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_200_digest_134__gpt_v2.json"),
+    Path("tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_214_digest_128__gpt_v5.json"),
+    Path("tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_214_digest_128__claude_v3.json"),
+)
+APPROVED_CASE_METADATA: dict[str, dict[str, str]] = {
+    "topic_200_digest_134": {
+        "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v5",
+        "source_git_commit": "b830bb95e84acb43f00a3f7abdb508d89a584beb",
+        "writer_provider": "anthropic",
+        "writer_model": "claude-sonnet-5",
+        "candidate_post_sha256": "ea906b00cac9764267b8aea65026ea701d9718a47e93ae297a9c999e78a884dc",
+        "editorial_classification": CLASSIFICATION_STRONG,
+        "frozen_input_reconstruction": RECONSTRUCTION_DIRECT,
+        "case_selection_note": "Strong Claude crypto anchor retained from the v1 comparison.",
+    },
+    "topic_140_digest_126": {
+        "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v5",
+        "source_git_commit": "b830bb95e84acb43f00a3f7abdb508d89a584beb",
+        "writer_provider": "anthropic",
+        "writer_model": "claude-sonnet-5",
+        "candidate_post_sha256": "776d84ea1c136ba9ca01673e8ffc35576278ead861def801421d0ae905aea15a",
+        "editorial_classification": CLASSIFICATION_STRONG,
+        "frozen_input_reconstruction": RECONSTRUCTION_DIRECT,
+        "case_selection_note": "Strong Claude education anchor retained from the v1 comparison.",
+    },
+    "topic_140_digest_126__gpt_v3": {
+        "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v3",
+        "source_git_commit": "725ce6a78f2e63c6ffcf0ec0ef135240f74fe369",
+        "writer_provider": "openai",
+        "writer_model": "gpt-4.1-2025-04-14",
+        "candidate_post_sha256": "f586d13759b8c03708c78c5d56497a53dfcacf5b1395a615614a615e9ab22c82",
+        "editorial_classification": CLASSIFICATION_WEAK,
+        "frozen_input_reconstruction": RECONSTRUCTION_DETERMINISTIC,
+        "case_selection_note": (
+            "Short, generic education post with confused impact/adoption framing; "
+            "useful weak mechanically valid contrast against the strong Claude education anchor."
+        ),
+    },
+    "topic_200_digest_134__gpt_v2": {
+        "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v2",
+        "source_git_commit": "20330a07c285fa6f1970ba873127516f92503369",
+        "writer_provider": "openai",
+        "writer_model": "gpt-4.1-2025-04-14",
+        "candidate_post_sha256": "7861d8dbe6aaabd2be992490aab62cd7a88a6c765489eb1fc9d3b60b6b754562",
+        "editorial_classification": CLASSIFICATION_BORDERLINE,
+        "frozen_input_reconstruction": RECONSTRUCTION_DETERMINISTIC,
+        "case_selection_note": (
+            "Polished crypto post that historically scored high while still failing author point of view; "
+            "useful for detecting over-scoring of smooth generic prose."
+        ),
+    },
+    "topic_214_digest_128__gpt_v5": {
+        "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v5",
+        "source_git_commit": "b830bb95e84acb43f00a3f7abdb508d89a584beb",
+        "writer_provider": "openai",
+        "writer_model": "gpt-4.1-2025-04-14",
+        "candidate_post_sha256": "1fee44a96dce31cd0a8e45f87480004725bfa1bdc75d186560b55827302222dc",
+        "editorial_classification": CLASSIFICATION_GENERIC,
+        "frozen_input_reconstruction": RECONSTRUCTION_DETERMINISTIC,
+        "case_selection_note": (
+            "Corporate future-of-work post with weak author presence and unsupported broad claims; "
+            "useful weak/generic workplace contrast."
+        ),
+    },
+    "topic_214_digest_128__claude_v3": {
+        "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v3",
+        "source_git_commit": "725ce6a78f2e63c6ffcf0ec0ef135240f74fe369",
+        "writer_provider": "anthropic",
+        "writer_model": "claude-sonnet-5",
+        "candidate_post_sha256": "b60cf818e00c1ea2f449a44ac989af03490ea1a407e5b48a3046f55b468c6873",
+        "editorial_classification": CLASSIFICATION_CTA_DIAGNOSTIC,
+        "frozen_input_reconstruction": RECONSTRUCTION_DETERMINISTIC,
+        "case_selection_note": (
+            "Strong human-voice workplace post with historical CTA failure; "
+            "useful diagnostic for literal versus reflective CTA interpretation."
+        ),
+    },
+}
 DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS = 2400
 GEMINI_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS = 4800
 QUALITY_EVALUATOR_PARSER_PATH = "services.packaging.linkedin_post_quality_evaluator_parser.parse_and_normalize_quality_evaluator_response"
@@ -105,6 +204,9 @@ class QualityEvaluatorBenchmarkCase:
     selected_evidence: tuple[dict[str, Any], ...]
     prompt_metadata: PromptMetadata
     candidate_validity_status: str
+    editorial_classification: str
+    frozen_input_reconstruction: str
+    case_selection_note: str
     canonical_exclusion: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -123,6 +225,9 @@ class QualityEvaluatorBenchmarkCase:
             "selected_evidence": copy.deepcopy(list(self.selected_evidence)),
             "prompt_metadata": self.prompt_metadata.to_dict(),
             "candidate_validity_status": self.candidate_validity_status,
+            "editorial_classification": self.editorial_classification,
+            "frozen_input_reconstruction": self.frozen_input_reconstruction,
+            "case_selection_note": self.case_selection_note,
             "canonical_exclusion": copy.deepcopy(self.canonical_exclusion),
         }
 
@@ -212,6 +317,7 @@ def load_quality_evaluator_benchmark_case(path: str | Path) -> QualityEvaluatorB
     fixture_path = Path(path)
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
     _validate_case_payload(payload, fixture_path)
+    metadata_payload = APPROVED_CASE_METADATA[payload["case_id"]]
     metadata = prompt_contract_to_prompt_metadata(
         get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)
     )
@@ -230,6 +336,18 @@ def load_quality_evaluator_benchmark_case(path: str | Path) -> QualityEvaluatorB
         selected_evidence=tuple(copy.deepcopy(payload["selected_evidence"])),
         prompt_metadata=metadata,
         candidate_validity_status=payload["candidate_validity_status"],
+        editorial_classification=payload.get(
+            "editorial_classification",
+            metadata_payload["editorial_classification"],
+        ),
+        frozen_input_reconstruction=payload.get(
+            "frozen_input_reconstruction",
+            metadata_payload["frozen_input_reconstruction"],
+        ),
+        case_selection_note=payload.get(
+            "case_selection_note",
+            metadata_payload["case_selection_note"],
+        ),
         canonical_exclusion=copy.deepcopy(payload.get("canonical_exclusion")),
     )
 
@@ -237,10 +355,15 @@ def load_quality_evaluator_benchmark_case(path: str | Path) -> QualityEvaluatorB
 def default_quality_evaluator_benchmark_cases(
     fixture_root: Path | None = None,
 ) -> tuple[QualityEvaluatorBenchmarkCase, ...]:
-    root = DEFAULT_FIXTURE_ROOT if fixture_root is None else fixture_root
+    if fixture_root is None:
+        return tuple(
+            load_quality_evaluator_benchmark_case(path)
+            for path in DEFAULT_BENCHMARK_CASE_FIXTURES
+        )
+    root = Path(fixture_root)
     return tuple(
-        load_quality_evaluator_benchmark_case(root / f"{case_id}.json")
-        for case_id in CANONICAL_BENCHMARK_CASE_IDS
+        load_quality_evaluator_benchmark_case(root / path.relative_to("tests/fixtures"))
+        for path in DEFAULT_BENCHMARK_CASE_FIXTURES
     )
 
 
@@ -342,7 +465,7 @@ def _candidate_output_for_case(case: QualityEvaluatorBenchmarkCase) -> Candidate
         raw_output=None,
         provider=case.writer_provider,
         model=case.writer_model,
-        prompt_name="fixed_claude_sonnet_5_v5_candidate",
+        prompt_name="frozen_candidate_writer_output",
         prompt_version=case.source_experiment_id,
         token_usage=None,
         cost_metadata=None,
@@ -375,6 +498,17 @@ def _validate_request(request: QualityEvaluatorBenchmarkRequest) -> Path:
             raise QualityEvaluatorBenchmarkConfigurationError(
                 f"case is not canonical-valid for Quality Evaluator benchmark: {case.case_id}"
             )
+        _validate_case_matches_approved_metadata(
+            case_id=case.case_id,
+            source_experiment_id=case.source_experiment_id,
+            source_git_commit=case.source_git_commit,
+            writer_provider=case.writer_provider,
+            writer_model=case.writer_model,
+            candidate_post_text=str(case.candidate_payload.get("post_text") or ""),
+            editorial_classification=case.editorial_classification,
+            frozen_input_reconstruction=case.frozen_input_reconstruction,
+            case_selection_note=case.case_selection_note,
+        )
     seen_plans: set[str] = set()
     for plan in request.plans:
         _validate_plan(plan)
@@ -404,14 +538,10 @@ def _validate_case_payload(payload: dict[str, Any], fixture_path: Path) -> None:
     missing = [field for field in required if field not in payload]
     if missing:
         raise QualityEvaluatorBenchmarkConfigurationError("benchmark fixture missing required fields: " + ", ".join(missing))
-    if payload["source_experiment_id"] != SOURCE_EXPERIMENT_ID:
-        raise QualityEvaluatorBenchmarkConfigurationError("unexpected source_experiment_id")
-    if payload["source_git_commit"] != SOURCE_GIT_COMMIT:
-        raise QualityEvaluatorBenchmarkConfigurationError("unexpected source_git_commit")
-    if payload["writer_provider"] != FIXED_WRITER_PROVIDER:
-        raise QualityEvaluatorBenchmarkConfigurationError("unexpected writer_provider")
-    if payload["writer_model"] != FIXED_WRITER_MODEL:
-        raise QualityEvaluatorBenchmarkConfigurationError("unexpected writer_model")
+    if payload["case_id"] not in APPROVED_CASE_METADATA:
+        raise QualityEvaluatorBenchmarkConfigurationError(
+            f"case is not approved for Quality Evaluator benchmark: {payload['case_id']}"
+        )
     candidate_payload = payload["candidate_payload"]
     if not isinstance(candidate_payload, dict) or set(candidate_payload) != {"post_text"}:
         raise QualityEvaluatorBenchmarkConfigurationError("candidate_payload must contain only post_text")
@@ -420,6 +550,18 @@ def _validate_case_payload(payload: dict[str, Any], fixture_path: Path) -> None:
         raise QualityEvaluatorBenchmarkConfigurationError("candidate_payload.post_text must be non-empty")
     if payload["candidate_post_character_length"] != len(post_text):
         raise QualityEvaluatorBenchmarkConfigurationError("candidate_post_character_length must match post_text")
+    metadata = APPROVED_CASE_METADATA[payload["case_id"]]
+    _validate_case_matches_approved_metadata(
+        case_id=payload["case_id"],
+        source_experiment_id=payload["source_experiment_id"],
+        source_git_commit=payload["source_git_commit"],
+        writer_provider=payload["writer_provider"],
+        writer_model=payload["writer_model"],
+        candidate_post_text=post_text,
+        editorial_classification=payload.get("editorial_classification", metadata["editorial_classification"]),
+        frozen_input_reconstruction=payload.get("frozen_input_reconstruction", metadata["frozen_input_reconstruction"]),
+        case_selection_note=payload.get("case_selection_note", metadata["case_selection_note"]),
+    )
     if not isinstance(payload["canonical_candidate_valid"], bool):
         raise QualityEvaluatorBenchmarkConfigurationError("canonical_candidate_valid must be a boolean")
     selected_evidence = payload["selected_evidence"]
@@ -434,6 +576,35 @@ def _validate_case_payload(payload: dict[str, Any], fixture_path: Path) -> None:
     evidence_ids = [item.get("evidence_id") for item in selected_evidence]
     if evidence_ids != angle_decision.get("supporting_evidence_ids"):
         raise QualityEvaluatorBenchmarkConfigurationError("selected evidence IDs must match AngleDecision")
+
+
+def _validate_case_matches_approved_metadata(
+    *,
+    case_id: str,
+    source_experiment_id: str,
+    source_git_commit: str,
+    writer_provider: str,
+    writer_model: str,
+    candidate_post_text: str,
+    editorial_classification: str,
+    frozen_input_reconstruction: str,
+    case_selection_note: str,
+) -> None:
+    metadata = APPROVED_CASE_METADATA[case_id]
+    expected_fields = {
+        "source_experiment_id": source_experiment_id,
+        "source_git_commit": source_git_commit,
+        "writer_provider": writer_provider,
+        "writer_model": writer_model,
+        "editorial_classification": editorial_classification,
+        "frozen_input_reconstruction": frozen_input_reconstruction,
+        "case_selection_note": case_selection_note,
+    }
+    for field, value in expected_fields.items():
+        if value != metadata[field]:
+            raise QualityEvaluatorBenchmarkConfigurationError(f"unexpected {field}")
+    if _sha256(candidate_post_text) != metadata["candidate_post_sha256"]:
+        raise QualityEvaluatorBenchmarkConfigurationError("unexpected candidate_payload.post_text")
 
 
 def _validate_live_prompt_paths(request: QualityEvaluatorBenchmarkRequest) -> None:
@@ -641,6 +812,9 @@ def _record(
         "source_git_commit": case.source_git_commit,
         "writer_provider": case.writer_provider,
         "writer_model": case.writer_model,
+        "editorial_classification": case.editorial_classification,
+        "frozen_input_reconstruction": case.frozen_input_reconstruction,
+        "case_selection_note": case.case_selection_note,
         "candidate_post_character_length": case.candidate_post_character_length,
         "selected_evidence_ids": list(_selected_evidence_ids(case)),
         "quality_input_summary": _quality_input_summary(render),
@@ -852,8 +1026,8 @@ def _manifest(request: QualityEvaluatorBenchmarkRequest, output_dir: Path, start
         "schema_version": BENCHMARK_SCHEMA_VERSION,
         "experiment_id": request.experiment_id,
         "benchmark_type": "isolated_quality_evaluator",
-        "source_experiment_id": SOURCE_EXPERIMENT_ID,
-        "source_git_commit": SOURCE_GIT_COMMIT,
+        "source_experiment_ids": sorted({case.source_experiment_id for case in request.cases}),
+        "source_git_commits": sorted({case.source_git_commit for case in request.cases}),
         "created_at": started_at,
         "output_dir": str(output_dir),
         "allow_api": request.allow_api,
@@ -865,6 +1039,11 @@ def _manifest(request: QualityEvaluatorBenchmarkRequest, output_dir: Path, start
                 "fixture_path": str(case.fixture_path),
                 "candidate_post_character_length": case.candidate_post_character_length,
                 "canonical_candidate_valid": case.canonical_candidate_valid,
+                "editorial_classification": case.editorial_classification,
+                "frozen_input_reconstruction": case.frozen_input_reconstruction,
+                "case_selection_note": case.case_selection_note,
+                "writer_provider": case.writer_provider,
+                "writer_model": case.writer_model,
             }
             for case in request.cases
         ],
@@ -897,8 +1076,9 @@ def _write_artifacts(
 
 def _write_summary_csv(path: Path, records: tuple[dict[str, Any], ...]) -> None:
     fields = (
-        "case_id", "plan_id", "provider", "model", "run_index", "execution_status",
-        "parse_success", "normalization_success", "total_score", "pass",
+        "case_id", "editorial_classification", "plan_id", "provider", "model",
+        "run_index", "execution_status", "parse_success",
+        "normalization_success", "total_score", "pass",
         "failed_criteria", "quality_evaluator_attempts", "provider_api_calls",
     )
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -909,6 +1089,7 @@ def _write_summary_csv(path: Path, records: tuple[dict[str, Any], ...]) -> None:
             counts = record.get("provider_invocation_counts") or {}
             writer.writerow({
                 "case_id": record.get("case_id"),
+                "editorial_classification": record.get("editorial_classification"),
                 "plan_id": record.get("plan_id"),
                 "provider": record.get("provider"),
                 "model": record.get("model"),
@@ -931,18 +1112,20 @@ def _report_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ...]) 
         f"Runs: {len(records)}",
         f"Provider calls: {_provider_calls(records)}", "",
         "This artifact fixes candidate final post text and varies only Quality Evaluator provider/model plans.", "",
-        "| Case | Plan | Provider | Model | Status | Total | Pass | Decision |",
-        "| --- | --- | --- | --- | --- | ---: | --- | --- |",
+        "| Case | Classification | Plan | Provider | Model | Status | Total | Pass | Decision |",
+        "| --- | --- | --- | --- | --- | --- | ---: | --- | --- |",
     ]
     for record in records:
         review = record.get("quality_review") or {}
         decision = record.get("adjudication_projection") or {}
         action = (decision.get("decision") or {}).get("action")
         lines.append(
-            f"| {record.get('case_id')} | {record.get('plan_id')} | {record.get('provider')} | "
+            f"| {record.get('case_id')} | {record.get('editorial_classification')} | "
+            f"{record.get('plan_id')} | {record.get('provider')} | "
             f"{record.get('model')} | {record.get('execution_status')} | {review.get('total_score')} | "
             f"{review.get('pass')} | {action} |"
         )
+    lines.extend(_discrimination_summary_lines(records))
     return "\n".join(lines) + "\n"
 
 
@@ -978,6 +1161,77 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
             lines.append("")
         lines.extend(_delta_lines(case_records))
     return "\n".join(lines) + "\n"
+
+
+def _discrimination_summary_lines(records: tuple[dict[str, Any], ...]) -> list[str]:
+    lines = [
+        "",
+        "## Discrimination Summary",
+        "",
+        "| Case | Classification | GPT total | Gemini total | GPT action | Gemini action |",
+        "| --- | --- | ---: | ---: | --- | --- |",
+    ]
+    for case_id in sorted({str(record.get("case_id")) for record in records}):
+        case_records = [record for record in records if record.get("case_id") == case_id]
+        classification = str(case_records[0].get("editorial_classification") or "")
+        gpt = _record_for_plan(case_records, PLAN_GPT_QUALITY)
+        gemini = _record_for_plan(case_records, PLAN_GEMINI_QUALITY)
+        lines.append(
+            f"| {case_id} | {classification} | {_total_score(gpt)} | "
+            f"{_total_score(gemini)} | {_decision_action(gpt)} | {_decision_action(gemini)} |"
+        )
+    lines.extend([
+        "",
+        "### Aggregate Averages",
+        "",
+        "| Classification group | GPT average total | Gemini average total |",
+        "| --- | ---: | ---: |",
+        f"| STRONG | {_average_total(records, (CLASSIFICATION_STRONG,), PLAN_GPT_QUALITY)} | "
+        f"{_average_total(records, (CLASSIFICATION_STRONG,), PLAN_GEMINI_QUALITY)} |",
+        f"| WEAK/GENERIC | {_average_total(records, (CLASSIFICATION_WEAK, CLASSIFICATION_GENERIC), PLAN_GPT_QUALITY)} | "
+        f"{_average_total(records, (CLASSIFICATION_WEAK, CLASSIFICATION_GENERIC), PLAN_GEMINI_QUALITY)} |",
+    ])
+    return lines
+
+
+def _record_for_plan(records: list[dict[str, Any]], plan_id: str) -> dict[str, Any] | None:
+    for record in records:
+        if record.get("plan_id") == plan_id:
+            return record
+    return None
+
+
+def _total_score(record: dict[str, Any] | None) -> str:
+    if not record:
+        return ""
+    score = (record.get("quality_review") or {}).get("total_score")
+    return "" if score is None else str(score)
+
+
+def _decision_action(record: dict[str, Any] | None) -> str:
+    if not record:
+        return ""
+    projection = record.get("adjudication_projection") or {}
+    return str((projection.get("decision") or {}).get("action") or "")
+
+
+def _average_total(
+    records: tuple[dict[str, Any], ...],
+    classifications: tuple[str, ...],
+    plan_id: str,
+) -> str:
+    scores: list[int] = []
+    for record in records:
+        if record.get("plan_id") != plan_id:
+            continue
+        if record.get("editorial_classification") not in classifications:
+            continue
+        score = (record.get("quality_review") or {}).get("total_score")
+        if isinstance(score, int) and not isinstance(score, bool):
+            scores.append(score)
+    if not scores:
+        return ""
+    return f"{sum(scores) / len(scores):.1f}"
 
 
 def _delta_lines(records: list[dict[str, Any]]) -> list[str]:

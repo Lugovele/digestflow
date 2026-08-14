@@ -1,0 +1,118 @@
+{
+  "angle_decision": {
+    "angle_to_avoid": [
+      "generic summary",
+      "source-term drift",
+      "unsupported prescription risk",
+      "Do not use as a standalone claim beyond the source evidence.",
+      "generic summary; source-term drift",
+      "unsupported prescription risk; source-term drift",
+      "Do not overstate evidence from a0-summary.",
+      "Do not overstate evidence from a1-kp0.",
+      "Do not overstate evidence from a2-summary."
+    ],
+    "author_position": "The author position is that crypto-market growth should be read as conditional: adoption and forecasts matter, but security concerns, volatility, and positioning risk still shape what the evidence can support.",
+    "authorial_voice_directive": {
+      "authorial_observation": "The author notices that growth evidence and confidence and risk evidence should not be collapsed into one easy conclusion.",
+      "first_person_policy": "allowed_not_required",
+      "forbidden_author_claims": [
+        "personal experience",
+        "professional authority",
+        "direct market exposure",
+        "client or customer stories",
+        "invented emotional reaction",
+        "biographical claims"
+      ],
+      "personal_presence_requirement": "explicit_author_owned_statement_required",
+      "rejected_reading": "Reject treating growth evidence as proof that confidence and risk evidence has been resolved.",
+      "why_distinction_matters": "The distinction matters because readers may treat ownership, investment intent, or market forecasts as one clean growth story before checking the confidence and risk evidence."
+    },
+    "controlling_angle": "The stronger crypto-market angle is not that adoption or forecasts settle the market story, but that visible growth evidence remains conditional on confidence and risk evidence.",
+    "main_tension": "The tension is between visible growth evidence and unresolved confidence or risk evidence.",
+    "reader_problem": "Readers may treat ownership, investment intent, or market forecasts as one clean growth story before checking the confidence and risk evidence.",
+    "supporting_evidence_ids": [
+      "a0-summary",
+      "a1-kp0",
+      "a2-summary"
+    ]
+  },
+  "base_case_id": "topic_200_digest_134",
+  "candidate_payload": {
+    "post_text": "Crypto market headlines often spotlight adoption rates and bullish growth projections—30% of Americans now own crypto, and forecasts expect nearly 17% CAGR through 2035. Yet, I see a real risk in treating these signals as proof the market’s confidence and risk landscape has been resolved. Beneath the surface, security concerns, ongoing volatility, and a cautious trader sentiment still act as critical constraints, with broad adoption remaining tied to trust and stable infrastructure. Even recent stability claims are tempered by the recognition that market pessimism and caution may be stabilizing prices rather than driving robust confidence. \n\nBefore treating crypto’s story as a clean growth narrative, let’s reconsider: growth evidence doesn’t erase risk. Adoption and forecast optimism matter, but the true shape of the market remains conditional on resolving its core risks. As crypto continues to evolve, distinguishing between momentum and genuine confidence is not just smart skepticism—it’s essential for seeing the real picture."
+  },
+  "candidate_post_character_length": 1043,
+  "candidate_validity_status": "CANONICAL_VALID",
+  "canonical_candidate_valid": true,
+  "case_id": "topic_200_digest_134__gpt_v2",
+  "case_selection_note": "Polished crypto post that historically scored high while still failing author point of view; useful for detecting over-scoring of smooth generic prose.",
+  "editorial_classification": "BORDERLINE",
+  "frozen_input_reconstruction": "DETERMINISTIC_RECONSTRUCTION",
+  "known_grounding_result": {
+    "blocking_claim_count": 0,
+    "contradicted_claim_count": 0,
+    "pass": true,
+    "unsupported_claim_count": 0
+  },
+  "known_historical_quality_result": {
+    "author_point_of_view": 4,
+    "cta": 5,
+    "failed_criteria": [
+      "author_point_of_view"
+    ],
+    "human_voice": 4,
+    "pass": false,
+    "total_score": 42
+  },
+  "post_brief": {
+    "core_point": "The author position is that crypto-market growth should be read as conditional: adoption and forecasts matter, but security concerns, volatility, and positioning risk still shape what the evidence can support.",
+    "cta_direction": "Ask the reader to reconsider this reader problem: Readers may treat ownership, investment intent, or market forecasts as one clean growth story before checking the confidence and risk evidence.",
+    "ending_direction": "End by returning to this author position: The author position is that crypto-market growth should be read as conditional: adoption and forecasts matter, but security concerns, volatility, and positioning risk still shape what the evidence can support.",
+    "evidence_to_use": [
+      {
+        "evidence_id": "a0-summary",
+        "evidence_text": "The article analyzes the current state of cryptocurrency ownership in the U.S., revealing that 30% of Americans own cryptocurrencies and that 61% of these owners plan to invest further in the coming year. The author argues that while President Trump's pro-crypto policies have sparked renewed interest and some stability, fundamental issues like security concerns and market volatility continue to limit broader adoption. The conclusion emphasizes the need for improved security infrastructure to enhance public trust and facilitate mainstream acceptance.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a1-kp0",
+        "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+        "role_in_post": "Use this evidence as proof support. Treat market projection or positioning evidence as context for the thesis, not as a reader instruction."
+      },
+      {
+        "evidence_id": "a2-summary",
+        "evidence_text": "The article presents an analysis from K33 Research indicating that Bitcoin's price likely hit its lowest point of $60,000 in February, distinguishing this bear market from previous downturns. The author's main argument is that the current market sentiment is marked by extreme caution among traders, which limits the potential for significant further declines. The conclusion is that while risks remain, the pessimism may actually stabilize the market, suggesting that a more moderate bear cycle could follow.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      }
+    ],
+    "opening_direction": "Open with this editorial angle: The stronger crypto-market angle is not that adoption or forecasts settle the market story, but that visible growth evidence remains conditional on confidence and risk evidence.",
+    "pattern_interrupt": "Interrupt the expected framing with this tension: The tension is between visible growth evidence and unresolved confidence or risk evidence.",
+    "practical_point": "Before treating the market story as settled, check whether growth evidence is being qualified by confidence or risk evidence."
+  },
+  "schema_version": "2026-08-14",
+  "selected_evidence": [
+    {
+      "evidence_id": "a0-summary",
+      "evidence_text": "The article analyzes the current state of cryptocurrency ownership in the U.S., revealing that 30% of Americans own cryptocurrencies and that 61% of these owners plan to invest further in the coming year. The author argues that while President Trump's pro-crypto policies have sparked renewed interest and some stability, fundamental issues like security concerns and market volatility continue to limit broader adoption. The conclusion emphasizes the need for improved security infrastructure to enhance public trust and facilitate mainstream acceptance.",
+      "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+    },
+    {
+      "evidence_id": "a1-kp0",
+      "evidence_text": "The cryptocurrency market is projected to grow at a CAGR of 16.99% from 2025 to 2035.",
+      "role_in_post": "Use this evidence as proof support. Treat market projection or positioning evidence as context for the thesis, not as a reader instruction."
+    },
+    {
+      "evidence_id": "a2-summary",
+      "evidence_text": "The article presents an analysis from K33 Research indicating that Bitcoin's price likely hit its lowest point of $60,000 in February, distinguishing this bear market from previous downturns. The author's main argument is that the current market sentiment is marked by extreme caution among traders, which limits the potential for significant further declines. The conclusion is that while risks remain, the pessimism may actually stabilize the market, suggesting that a more moderate bear cycle could follow.",
+      "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+    }
+  ],
+  "source_experiment_id": "writer-claude-vs-gpt-candidatepost-v2",
+  "source_git_commit": "20330a07c285fa6f1970ba873127516f92503369",
+  "source_plan_id": "gpt_writer_gpt_fixed",
+  "source_run_id": "topic_200_digest_134__gpt_writer_gpt_fixed__run_1",
+  "source_run_index": 1,
+  "source_runs_jsonl": "debug_outputs/final_post_model_experiments/writer-claude-vs-gpt-candidatepost-v2/runs.jsonl",
+  "source_smoke_fixture": "tests/fixtures/linkedin_post_smoke/writer_benchmarks/topic_200_digest_134.json",
+  "writer_model": "gpt-4.1-2025-04-14",
+  "writer_provider": "openai"
+}
