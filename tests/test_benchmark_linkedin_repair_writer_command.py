@@ -55,7 +55,7 @@ class BenchmarkLinkedInRepairWriterCommandTests(SimpleTestCase):
                 "--case",
                 fixture,
                 "--plan",
-                "claude_repair=anthropic,claude-sonnet-5,1200",
+                "claude_repair=anthropic,claude-sonnet-5,1800",
                 "--output-root",
                 tempdir,
                 stdout=stdout,

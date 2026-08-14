@@ -30,6 +30,12 @@ POST_TEXT_BLANK = "POST_TEXT_BLANK"
 POST_TEXT_TOO_LONG = "POST_TEXT_TOO_LONG"
 CANDIDATE_POST_OTHER_VALIDATION_FAILURE = "CANDIDATE_POST_OTHER_VALIDATION_FAILURE"
 UNKNOWN = "UNKNOWN"
+COMPLETE_PLAIN_JSON = "COMPLETE_PLAIN_JSON"
+COMPLETE_FENCED_JSON = "COMPLETE_FENCED_JSON"
+TRUNCATED_INSIDE_JSON = "TRUNCATED_INSIDE_JSON"
+TRUNCATED_AFTER_JSON_BEFORE_FENCE = "TRUNCATED_AFTER_JSON_BEFORE_FENCE"
+MALFORMED_FENCE_NOT_TRUNCATED = "MALFORMED_FENCE_NOT_TRUNCATED"
+NON_JSON_RESPONSE = "NON_JSON_RESPONSE"
 
 STRUCTURAL_FAILURE_CATEGORIES = (
     POST_TEXT_MISSING,
@@ -40,6 +46,17 @@ STRUCTURAL_FAILURE_CATEGORIES = (
     CANDIDATE_POST_OTHER_VALIDATION_FAILURE,
     UNKNOWN,
 )
+RESPONSE_STRUCTURE_CLASSIFICATIONS = (
+    COMPLETE_PLAIN_JSON,
+    COMPLETE_FENCED_JSON,
+    TRUNCATED_INSIDE_JSON,
+    TRUNCATED_AFTER_JSON_BEFORE_FENCE,
+    MALFORMED_FENCE_NOT_TRUNCATED,
+    NON_JSON_RESPONSE,
+    UNKNOWN,
+)
+PREFIX_EXCERPT_MAX_CHARS = 80
+SUFFIX_EXCERPT_MAX_CHARS = 120
 
 
 @dataclass(frozen=True)
@@ -63,10 +80,24 @@ class RepairWriterStructuralDiagnostics:
     ends_with_json_object: bool | None = None
     starts_with_code_fence: bool | None = None
     ends_with_code_fence: bool | None = None
+    raw_response_prefix_excerpt: str | None = None
+    raw_response_suffix_excerpt: str | None = None
+    opening_fence_language: str | None = None
+    contains_json_object_start_after_fence: bool | None = None
+    contains_json_object_end: bool | None = None
+    json_brace_balance: int | None = None
+    json_string_appears_unterminated: bool | None = None
+    markdown_fence_count: int | None = None
+    response_structure_classification: str | None = None
 
     def __post_init__(self) -> None:
         if self.structural_failure_category not in STRUCTURAL_FAILURE_CATEGORIES:
             raise ValueError("unsupported structural failure category")
+        if (
+            self.response_structure_classification is not None
+            and self.response_structure_classification not in RESPONSE_STRUCTURE_CLASSIFICATIONS
+        ):
+            raise ValueError("unsupported response structure classification")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +122,21 @@ class RepairWriterStructuralDiagnostics:
             "ends_with_json_object": self.ends_with_json_object,
             "starts_with_code_fence": self.starts_with_code_fence,
             "ends_with_code_fence": self.ends_with_code_fence,
+            "raw_response_prefix_excerpt": self.raw_response_prefix_excerpt,
+            "raw_response_suffix_excerpt": self.raw_response_suffix_excerpt,
+            "opening_fence_language": self.opening_fence_language,
+            "contains_json_object_start_after_fence": (
+                self.contains_json_object_start_after_fence
+            ),
+            "contains_json_object_end": self.contains_json_object_end,
+            "json_brace_balance": self.json_brace_balance,
+            "json_string_appears_unterminated": (
+                self.json_string_appears_unterminated
+            ),
+            "markdown_fence_count": self.markdown_fence_count,
+            "response_structure_classification": (
+                self.response_structure_classification
+            ),
         }
 
 
@@ -151,16 +197,217 @@ def _raw_response_shape(repair_raw_response: Any | None) -> dict[str, Any]:
             "ends_with_json_object": None,
             "starts_with_code_fence": None,
             "ends_with_code_fence": None,
+            "raw_response_prefix_excerpt": None,
+            "raw_response_suffix_excerpt": None,
+            "opening_fence_language": None,
+            "contains_json_object_start_after_fence": None,
+            "contains_json_object_end": None,
+            "json_brace_balance": None,
+            "json_string_appears_unterminated": None,
+            "markdown_fence_count": None,
+            "response_structure_classification": None,
         }
     text = str(repair_raw_response.raw_text or "")
+    return build_repair_writer_response_structure_diagnostics(
+        text,
+        provider_output_limit_reached=_provider_output_limit_reached(
+            repair_raw_response
+        ),
+    )
+
+
+def build_repair_writer_response_structure_diagnostics(
+    raw_text: str,
+    *,
+    provider_output_limit_reached: bool | None = None,
+) -> dict[str, Any]:
+    text = str(raw_text or "")
     stripped = text.strip()
+    json_text = _json_region_for_shape(stripped)
+    scan = _scan_json_shape(json_text)
     return {
         "raw_response_character_count": len(text),
         "starts_with_json_object": stripped.startswith("{"),
         "ends_with_json_object": stripped.endswith("}"),
         "starts_with_code_fence": stripped.startswith("```"),
         "ends_with_code_fence": stripped.endswith("```"),
+        "raw_response_prefix_excerpt": _safe_excerpt(text, PREFIX_EXCERPT_MAX_CHARS),
+        "raw_response_suffix_excerpt": _safe_suffix_excerpt(
+            text,
+            SUFFIX_EXCERPT_MAX_CHARS,
+        ),
+        "opening_fence_language": _opening_fence_language(stripped),
+        "contains_json_object_start_after_fence": (
+            _body_after_opening_fence(stripped).lstrip().startswith("{")
+            if stripped.startswith("```")
+            else False
+        ),
+        "contains_json_object_end": scan["contains_json_object_end"],
+        "json_brace_balance": scan["brace_balance"],
+        "json_string_appears_unterminated": scan["unterminated_string"],
+        "markdown_fence_count": stripped.count("```"),
+        "response_structure_classification": _classify_response_structure(
+            stripped,
+            scan,
+            provider_output_limit_reached=provider_output_limit_reached,
+        ),
     }
+
+
+def _provider_output_limit_reached(repair_raw_response: Any) -> bool | None:
+    metadata = getattr(repair_raw_response, "provider_response_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("provider_output_limit_reached")
+    return value if value is None or isinstance(value, bool) else None
+
+
+def _json_region_for_shape(stripped: str) -> str:
+    if not stripped.startswith("```"):
+        return stripped
+    return _body_after_opening_fence(stripped).removesuffix("```").strip()
+
+
+def _body_after_opening_fence(stripped: str) -> str:
+    if "\n" not in stripped:
+        return ""
+    return stripped.split("\n", 1)[1]
+
+
+def _opening_fence_language(stripped: str) -> str | None:
+    if not stripped.startswith("```"):
+        return None
+    first_line = stripped.splitlines()[0].strip()
+    if not first_line.startswith("```"):
+        return None
+    language = first_line[3:]
+    if language in {"", "json"}:
+        return language
+    return "other"
+
+
+def _scan_json_shape(text: str) -> dict[str, Any]:
+    balance = 0
+    in_string = False
+    escaped = False
+    contains_end = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            balance += 1
+        elif char == "}":
+            balance -= 1
+            contains_end = True
+    return {
+        "brace_balance": balance,
+        "unterminated_string": in_string,
+        "contains_json_object_end": contains_end,
+    }
+
+
+def _classify_response_structure(
+    stripped: str,
+    scan: dict[str, Any],
+    *,
+    provider_output_limit_reached: bool | None,
+) -> str:
+    if not stripped:
+        return NON_JSON_RESPONSE
+    if _is_complete_plain_json(stripped, scan):
+        return COMPLETE_PLAIN_JSON
+    if _is_complete_fenced_json(stripped, scan):
+        return COMPLETE_FENCED_JSON
+    if provider_output_limit_reached is True:
+        if stripped.startswith("```") and scan["brace_balance"] == 0 and scan["contains_json_object_end"]:
+            return TRUNCATED_AFTER_JSON_BEFORE_FENCE
+        if stripped.startswith("{") or stripped.startswith("```"):
+            return TRUNCATED_INSIDE_JSON
+    if "```" in stripped:
+        return MALFORMED_FENCE_NOT_TRUNCATED
+    if not stripped.startswith("{"):
+        return NON_JSON_RESPONSE
+    return UNKNOWN
+
+
+def _is_complete_plain_json(stripped: str, scan: dict[str, Any]) -> bool:
+    return (
+        stripped.startswith("{")
+        and stripped.endswith("}")
+        and scan["brace_balance"] == 0
+        and not scan["unterminated_string"]
+    )
+
+
+def _is_complete_fenced_json(stripped: str, scan: dict[str, Any]) -> bool:
+    if not stripped.startswith("```") or not stripped.endswith("```"):
+        return False
+    if stripped.count("```") != 2:
+        return False
+    opening = stripped.splitlines()[0].strip() if stripped.splitlines() else ""
+    if opening not in {"```", "```json"}:
+        return False
+    body = _body_after_opening_fence(stripped).removesuffix("```").strip()
+    return (
+        body.startswith("{")
+        and body.endswith("}")
+        and scan["brace_balance"] == 0
+        and not scan["unterminated_string"]
+    )
+
+
+def _safe_excerpt(text: str, max_chars: int) -> str:
+    excerpt = _mask_json_string_content(str(text or ""))
+    excerpt = excerpt.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    return excerpt[:max_chars]
+
+
+def _safe_suffix_excerpt(text: str, max_chars: int) -> str:
+    excerpt = _mask_json_string_content(str(text or ""))
+    excerpt = excerpt.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    return excerpt[-max_chars:]
+
+
+def _mask_json_string_content(text: str) -> str:
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    emitted_marker = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                result.append('"')
+                in_string = False
+                emitted_marker = False
+            elif not emitted_marker:
+                result.append("...")
+                emitted_marker = True
+            continue
+        if char.isalnum() or char in {"_", "-"}:
+            if not emitted_marker:
+                result.append("...")
+                emitted_marker = True
+            continue
+        emitted_marker = False
+        result.append(char)
+        if char == '"':
+            in_string = True
+            emitted_marker = False
+    return "".join(result)
 
 
 def _validation_error_field(

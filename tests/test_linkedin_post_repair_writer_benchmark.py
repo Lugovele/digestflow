@@ -40,6 +40,8 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     RepairWriterRawResponse,
 )
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
+    COMPLETE_PLAIN_JSON,
+    NON_JSON_RESPONSE,
     POST_TEXT_TOO_LONG,
     UNKNOWN,
 )
@@ -76,7 +78,10 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             tuple(plan.model for plan in plans),
             ("gpt-4.1-2025-04-14", "claude-sonnet-5", "gemini-3.6-flash"),
         )
-        self.assertEqual(tuple(plan.max_output_tokens for plan in plans), (1200, 1200, 1200))
+        self.assertEqual(
+            tuple(plan.max_output_tokens for plan in plans),
+            (1800, 1800, 1800),
+        )
         self.assertEqual(tuple(plan.json_mode for plan in plans), (False, False, False))
 
     def test_default_case_excludes_gpt_v5_diagnostic_case(self) -> None:
@@ -105,6 +110,12 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertIn("repair_instruction_json", render.variables)
         self.assertIn(case.candidate_payload["post_text"][:80], render.input_text)
         self.assertIn(case.repair_instruction["repair_instruction"][:80], render.input_text)
+
+    def test_repair_prompt_output_contract_rejects_fences_and_trailing_prose(self) -> None:
+        self.assertIn("Return exactly one plain JSON object", linkedin_post_repair_writer_benchmark.REPAIR_PROMPT_TEXT)
+        self.assertIn('{"post_text":"..."}', linkedin_post_repair_writer_benchmark.REPAIR_PROMPT_TEXT)
+        self.assertIn("Do not wrap the JSON in markdown or code fences", linkedin_post_repair_writer_benchmark.REPAIR_PROMPT_TEXT)
+        self.assertIn("Do not include prose before or after the JSON", linkedin_post_repair_writer_benchmark.REPAIR_PROMPT_TEXT)
 
     def test_dry_run_writes_artifacts_and_makes_zero_provider_calls(self) -> None:
         with TemporaryDirectory() as tempdir:
@@ -195,6 +206,15 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
                 ),
                 usage={"total_tokens": 10},
                 raw_provider_response={"id": "repair"},
+                provider_response_metadata={
+                    "provider": request.provider,
+                    "model": request.model,
+                    "provider_finish_reason": "stop",
+                    "provider_stop_reason": None,
+                    "provider_max_output_tokens": REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                    "provider_reported_output_tokens": 10,
+                    "provider_output_limit_reached": False,
+                },
             )
 
         def grounding_executor(request):
@@ -256,7 +276,22 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertTrue(diagnostics["post_text_within_candidate_max_length"])
         self.assertIn("raw_text_sha256", record["response_diagnostics"])
         self.assertIn("raw_text_length", record["response_diagnostics"])
-        self.assertIn("raw_response_character_count", record["response_diagnostics"])
+        self.assertEqual(record["response_diagnostics"]["provider_finish_reason"], "stop")
+        self.assertEqual(
+            record["response_diagnostics"]["provider_max_output_tokens"],
+            REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+        )
+        self.assertFalse(
+            record["response_diagnostics"]["provider_output_limit_reached"]
+        )
+        response_structure = record["response_diagnostics"][
+            "response_structure_diagnostics"
+        ]
+        self.assertEqual(
+            response_structure["response_structure_classification"],
+            COMPLETE_PLAIN_JSON,
+        )
+        self.assertIn("raw_response_character_count", response_structure)
         self.assertNotIn(case.candidate_payload["post_text"], comparison_text)
         self.assertNotIn("Repaired post with a clearer reflective ending.", comparison_text)
 
@@ -355,6 +390,52 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertIn("raw_text_sha256", runs_text)
         self.assertIn("raw_text_length", runs_text)
         self.assertNotIn("raw_text\":", runs_text)
+
+    def test_parse_failure_does_not_persist_non_json_raw_response_excerpts(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[2]
+        raw_prose = "Here is the repaired post with secret live provider prose."
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text=raw_prose,
+                provider=request.provider,
+                model=request.model,
+                prompt_metadata=None,
+                usage={"total_tokens": 9},
+                raw_provider_response={"id": "repair"},
+                provider_response_metadata={
+                    "provider": request.provider,
+                    "model": request.model,
+                    "provider_finish_reason": "stop",
+                    "provider_max_output_tokens": REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                    "provider_reported_output_tokens": 9,
+                    "provider_output_limit_reached": False,
+                },
+            )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+            )
+            runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+
+        diagnostics = result.run_records[0]["response_diagnostics"]
+        response_structure = diagnostics["response_structure_diagnostics"]
+        self.assertEqual(result.run_records[0]["failure_stage"], "repair_writer_parse")
+        self.assertEqual(
+            response_structure["response_structure_classification"],
+            NON_JSON_RESPONSE,
+        )
+        self.assertNotIn(raw_prose, runs_text)
+        self.assertNotIn("secret live provider prose", runs_text)
 
     def test_configuration_accepts_gemini_repair_writer_plan_for_benchmark(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]

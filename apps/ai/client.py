@@ -123,7 +123,17 @@ class OpenAICompatibleClient:
 
         raw = response.model_dump()
         text = response.output_text
-        return AIResponse(text=text, raw=raw, usage=_extract_usage(response, raw))
+        return AIResponse(
+            text=text,
+            raw=raw,
+            usage=_extract_usage(response, raw),
+            provider_response_metadata=_build_openai_responses_metadata(
+                raw,
+                provider=self.provider,
+                model=self.model,
+                max_output_tokens=max_output_tokens,
+            ),
+        )
 
     def _generate_chat_completion(
         self,
@@ -155,6 +165,7 @@ class OpenAICompatibleClient:
                 raw,
                 provider=self.provider,
                 model=self.model,
+                max_output_tokens=max_output_tokens,
             ),
         )
 
@@ -252,6 +263,7 @@ class AnthropicMessagesClient:
         metadata = _build_anthropic_provider_response_metadata(
             raw,
             model=self.model,
+            max_output_tokens=max_output_tokens,
         )
         return AIResponse(
             text=text,
@@ -485,6 +497,7 @@ def _build_anthropic_provider_response_metadata(
     raw: dict[str, Any],
     *,
     model: str,
+    max_output_tokens: int,
 ) -> dict[str, Any]:
     usage = raw.get("usage", {})
     block_types: list[str] = []
@@ -492,10 +505,19 @@ def _build_anthropic_provider_response_metadata(
         block_type = _safe_metadata_text(block.get("type"))
         if block_type and block_type not in block_types:
             block_types.append(block_type)
+    stop_reason = _safe_metadata_text(raw.get("stop_reason"))
     return {
         "provider": AI_PROVIDER_ANTHROPIC,
         "model": _safe_metadata_text(raw.get("model")) or model,
-        "stop_reason": _safe_metadata_text(raw.get("stop_reason")),
+        "stop_reason": stop_reason,
+        "provider_stop_reason": stop_reason,
+        "provider_finish_reason": None,
+        "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
+        "provider_reported_output_tokens": _safe_metadata_int(usage.get("output_tokens")),
+        "provider_output_limit_reached": _provider_output_limit_reached(
+            finish_reason=None,
+            stop_reason=stop_reason,
+        ),
         "content_block_types": block_types[:20],
         "input_tokens": _safe_metadata_int(usage.get("input_tokens")),
         "output_tokens": _safe_metadata_int(usage.get("output_tokens")),
@@ -508,6 +530,7 @@ def _build_openai_compatible_chat_metadata(
     *,
     provider: str,
     model: str,
+    max_output_tokens: int,
 ) -> dict[str, Any]:
     choices = raw.get("choices", [])
     if not isinstance(choices, list):
@@ -529,11 +552,22 @@ def _build_openai_compatible_chat_metadata(
     usage = raw.get("usage", {})
     if not isinstance(usage, dict):
         usage = {}
+    finish_reason = finish_reasons[0] if len(finish_reasons) == 1 else None
     return {
         "provider": provider,
         "model": _safe_metadata_text(raw.get("model")) or model,
         "choices_count": len(choices),
         "finish_reasons": finish_reasons,
+        "provider_finish_reason": finish_reason,
+        "provider_stop_reason": None,
+        "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
+        "provider_reported_output_tokens": _safe_metadata_int(
+            usage.get("completion_tokens", usage.get("output_tokens"))
+        ),
+        "provider_output_limit_reached": _provider_output_limit_reached(
+            finish_reason=finish_reason,
+            stop_reason=None,
+        ),
         "message_content_types": message_content_types,
         "prompt_tokens": _safe_metadata_int(
             usage.get("prompt_tokens", usage.get("input_tokens"))
@@ -543,6 +577,52 @@ def _build_openai_compatible_chat_metadata(
         ),
         "total_tokens": _safe_metadata_int(usage.get("total_tokens")),
     }
+
+
+def _build_openai_responses_metadata(
+    raw: dict[str, Any],
+    *,
+    provider: str,
+    model: str,
+    max_output_tokens: int,
+) -> dict[str, Any]:
+    usage = raw.get("usage", {})
+    if not isinstance(usage, dict):
+        usage = {}
+    incomplete_details = raw.get("incomplete_details")
+    if not isinstance(incomplete_details, dict):
+        incomplete_details = {}
+    status = _safe_metadata_text(raw.get("status"))
+    finish_reason = _safe_metadata_text(incomplete_details.get("reason")) or status
+    return {
+        "provider": provider,
+        "model": _safe_metadata_text(raw.get("model")) or model,
+        "provider_finish_reason": finish_reason,
+        "provider_stop_reason": None,
+        "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
+        "provider_reported_output_tokens": _safe_metadata_int(
+            usage.get("output_tokens", usage.get("completion_tokens"))
+        ),
+        "provider_output_limit_reached": _provider_output_limit_reached(
+            finish_reason=finish_reason,
+            stop_reason=None,
+        ),
+    }
+
+
+def _provider_output_limit_reached(
+    *,
+    finish_reason: str | None,
+    stop_reason: str | None,
+) -> bool | None:
+    reason = (finish_reason or stop_reason or "").strip().lower()
+    if not reason:
+        return None
+    if reason in {"length", "max_tokens", "max_output_tokens"}:
+        return True
+    if reason in {"stop", "end_turn", "completed", "complete"}:
+        return False
+    return None
 
 
 def _safe_metadata_text(value: Any) -> str | None:

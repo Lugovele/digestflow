@@ -137,6 +137,74 @@ class OpenAIClientGenerateTextTests(SimpleTestCase):
 
         mock_openai.return_value.responses.create.assert_called_once()
 
+    @override_settings(
+        OPENAI_API_KEY="test-key",
+        OPENAI_MODEL="gpt-4.1-2025-04-14",
+        OPENAI_TIMEOUT_SECONDS=30,
+    )
+    @patch("apps.ai.client.OpenAI")
+    def test_openai_responses_metadata_records_normal_completion(self, mock_openai):
+        mock_openai.return_value.responses.create.return_value = SimpleNamespace(
+            output_text="completed text",
+            model_dump=lambda: {
+                "id": "resp_completed",
+                "model": "gpt-4.1-2025-04-14",
+                "status": "completed",
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+            usage=SimpleNamespace(input_tokens=3, output_tokens=4, total_tokens=7),
+        )
+
+        response = OpenAIClient().generate_text("Prompt", max_output_tokens=500)
+
+        self.assertEqual(response.text, "completed text")
+        self.assertEqual(
+            response.provider_response_metadata,
+            {
+                "provider": "openai",
+                "model": "gpt-4.1-2025-04-14",
+                "provider_finish_reason": "completed",
+                "provider_stop_reason": None,
+                "provider_max_output_tokens": 500,
+                "provider_reported_output_tokens": 4,
+                "provider_output_limit_reached": False,
+            },
+        )
+
+    @override_settings(
+        OPENAI_API_KEY="test-key",
+        OPENAI_MODEL="gpt-4.1-2025-04-14",
+        OPENAI_TIMEOUT_SECONDS=30,
+    )
+    @patch("apps.ai.client.OpenAI")
+    def test_openai_responses_metadata_detects_max_output_tokens(self, mock_openai):
+        mock_openai.return_value.responses.create.return_value = SimpleNamespace(
+            output_text='{"post_text":"partial"}',
+            model_dump=lambda: {
+                "id": "resp_incomplete",
+                "model": "gpt-4.1-2025-04-14",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"input_tokens": 8, "output_tokens": 500},
+            },
+            usage=SimpleNamespace(input_tokens=8, output_tokens=500, total_tokens=508),
+        )
+
+        response = OpenAIClient().generate_text("Prompt", max_output_tokens=500)
+
+        self.assertEqual(
+            response.provider_response_metadata,
+            {
+                "provider": "openai",
+                "model": "gpt-4.1-2025-04-14",
+                "provider_finish_reason": "max_output_tokens",
+                "provider_stop_reason": None,
+                "provider_max_output_tokens": 500,
+                "provider_reported_output_tokens": 500,
+                "provider_output_limit_reached": True,
+            },
+        )
+
 
 class AIProviderConfigTests(SimpleTestCase):
     @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
@@ -246,6 +314,11 @@ class AIProviderConfigTests(SimpleTestCase):
                 "model": "gemini-3.6-flash",
                 "choices_count": 1,
                 "finish_reasons": ["stop"],
+                "provider_finish_reason": "stop",
+                "provider_stop_reason": None,
+                "provider_max_output_tokens": 300,
+                "provider_reported_output_tokens": 3,
+                "provider_output_limit_reached": False,
                 "message_content_types": ["str"],
                 "prompt_tokens": 2,
                 "completion_tokens": 3,
@@ -328,6 +401,11 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider": "anthropic",
                 "model": "claude-sonnet-5",
                 "stop_reason": None,
+                "provider_stop_reason": None,
+                "provider_finish_reason": None,
+                "provider_max_output_tokens": 400,
+                "provider_reported_output_tokens": 3,
+                "provider_output_limit_reached": None,
                 "content_block_types": ["text"],
                 "input_tokens": 2,
                 "output_tokens": 3,
@@ -727,6 +805,11 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider": "anthropic",
                 "model": "claude-sonnet-5",
                 "stop_reason": "end_turn",
+                "provider_stop_reason": "end_turn",
+                "provider_finish_reason": None,
+                "provider_max_output_tokens": 1200,
+                "provider_reported_output_tokens": 0,
+                "provider_output_limit_reached": False,
                 "content_block_types": ["tool_use"],
                 "input_tokens": 7,
                 "output_tokens": 0,
@@ -775,6 +858,11 @@ class AIProviderConfigTests(SimpleTestCase):
                 "provider": "anthropic",
                 "model": "claude-sonnet-5",
                 "stop_reason": "max_tokens",
+                "provider_stop_reason": "max_tokens",
+                "provider_finish_reason": None,
+                "provider_max_output_tokens": 1200,
+                "provider_reported_output_tokens": 13,
+                "provider_output_limit_reached": True,
                 "content_block_types": ["thinking"],
                 "input_tokens": 11,
                 "output_tokens": 13,

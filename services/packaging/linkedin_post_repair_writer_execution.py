@@ -22,8 +22,17 @@ from services.packaging.linkedin_post_model_role_policy import (
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 
 
-DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 1200
+DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 1800
 STAGE_NAME = "repair writer"
+PROVIDER_RESPONSE_METADATA_FIELDS = (
+    "provider",
+    "model",
+    "provider_finish_reason",
+    "provider_stop_reason",
+    "provider_max_output_tokens",
+    "provider_reported_output_tokens",
+    "provider_output_limit_reached",
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,7 @@ class RepairWriterRawResponse:
     prompt_metadata: PromptMetadata | None = None
     usage: dict[str, Any] | None = None
     raw_provider_response: dict[str, Any] | None = None
+    provider_response_metadata: dict[str, Any] | None = None
     execution_error: str | None = None
     execution_metadata: dict[str, Any] | None = None
 
@@ -69,6 +79,10 @@ class RepairWriterRawResponse:
             result["usage"] = copy.deepcopy(self.usage)
         if self.raw_provider_response is not None:
             result["raw_provider_response"] = copy.deepcopy(self.raw_provider_response)
+        if self.provider_response_metadata is not None:
+            result["provider_response_metadata"] = copy.deepcopy(
+                self.provider_response_metadata
+            )
         if self.execution_error is not None:
             result["execution_error"] = self.execution_error
         if self.execution_metadata is not None:
@@ -149,6 +163,9 @@ def execute_repair_writer_prompt(
         )
 
     raw_text = response.text
+    provider_response_metadata = _sanitize_provider_response_metadata(
+        getattr(response, "provider_response_metadata", None)
+    )
     if raw_text is None or not str(raw_text).strip():
         return RepairWriterRawResponse(
             raw_text=str(raw_text or ""),
@@ -157,6 +174,7 @@ def execute_repair_writer_prompt(
             prompt_metadata=prompt_metadata,
             usage=copy.deepcopy(response.usage),
             raw_provider_response=copy.deepcopy(response.raw),
+            provider_response_metadata=provider_response_metadata,
             execution_error="empty provider response",
             execution_metadata=execution_metadata,
         )
@@ -168,6 +186,7 @@ def execute_repair_writer_prompt(
         prompt_metadata=prompt_metadata,
         usage=copy.deepcopy(response.usage),
         raw_provider_response=copy.deepcopy(response.raw),
+        provider_response_metadata=provider_response_metadata,
         execution_metadata=execution_metadata,
     )
 
@@ -227,3 +246,27 @@ def _prompt_metadata_from_render(
         prompt_version=render.prompt_version or "",
         prompt_path=render.prompt_path,
     )
+
+
+def _sanitize_provider_response_metadata(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    sanitized: dict[str, Any] = {}
+    for field_name in PROVIDER_RESPONSE_METADATA_FIELDS:
+        value = metadata.get(field_name)
+        if field_name in (
+            "provider_max_output_tokens",
+            "provider_reported_output_tokens",
+        ):
+            if _is_non_negative_int(value):
+                sanitized[field_name] = value
+        elif field_name == "provider_output_limit_reached":
+            if value is None or isinstance(value, bool):
+                sanitized[field_name] = value
+        elif isinstance(value, str) and value.strip():
+            sanitized[field_name] = value.strip()[:120]
+    return sanitized or None
+
+
+def _is_non_negative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0

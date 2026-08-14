@@ -80,6 +80,7 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     execute_repair_writer_prompt,
 )
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
+    build_repair_writer_response_structure_diagnostics,
     build_repair_writer_structural_diagnostics,
 )
 from services.packaging.linkedin_post_semantic_grounding_contract import (
@@ -129,7 +130,10 @@ REPAIR_PROMPT_TEXT = (
     "You are the FinalPostRepairWriter. Rewrite only the CandidatePost post_text "
     "according to the supplied repair instruction. Preserve selected evidence "
     "boundaries, do not add facts, and return only CandidatePost-compatible JSON "
-    "with exactly one field: post_text."
+    "with exactly one field: post_text. Return exactly one plain JSON object "
+    'with this shape: {"post_text":"..."}. Do not wrap the JSON in markdown '
+    "or code fences. Do not include prose before or after the JSON. The "
+    "complete response must end immediately after the closing JSON brace."
 )
 DEFAULT_BENCHMARK_CASE_FIXTURES = (
     DEFAULT_FIXTURE_ROOT / "topic_140_digest_126.json",
@@ -1272,20 +1276,46 @@ def _quality_execution_failure_code(raw_response: QualityEvaluatorRawResponse) -
 
 def _raw_response_diagnostics(raw_response: Any) -> dict[str, Any]:
     raw_text = str(raw_response.raw_text or "")
-    stripped = raw_text.strip()
+    metadata = _safe_provider_response_metadata(
+        getattr(raw_response, "provider_response_metadata", None)
+    )
+    structure = build_repair_writer_response_structure_diagnostics(
+        raw_text,
+        provider_output_limit_reached=metadata.get("provider_output_limit_reached"),
+    )
     return {
         "provider": raw_response.provider,
         "model": raw_response.model,
         "raw_text_sha256": _sha256(raw_text),
         "raw_text_length": len(raw_text),
-        "raw_response_character_count": len(raw_text),
-        "starts_with_json_object": stripped.startswith("{"),
-        "ends_with_json_object": stripped.endswith("}"),
-        "starts_with_code_fence": stripped.startswith("```"),
-        "ends_with_code_fence": stripped.endswith("```"),
         "usage": _safe_token_usage(raw_response.usage or {}),
         "execution_error": raw_response.execution_error,
+        **metadata,
+        "response_structure_diagnostics": structure,
     }
+
+
+def _safe_provider_response_metadata(metadata: Any) -> dict[str, Any]:
+    result = {
+        "provider_finish_reason": None,
+        "provider_stop_reason": None,
+        "provider_max_output_tokens": None,
+        "provider_reported_output_tokens": None,
+        "provider_output_limit_reached": None,
+    }
+    if not isinstance(metadata, dict):
+        return result
+    for key in result:
+        value = metadata.get(key)
+        if key == "provider_output_limit_reached":
+            if value is None or isinstance(value, bool):
+                result[key] = value
+        elif key in ("provider_max_output_tokens", "provider_reported_output_tokens"):
+            if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+                result[key] = value
+        elif value is None or isinstance(value, str):
+            result[key] = value[:120] if isinstance(value, str) else None
+    return result
 
 
 def _safe_token_usage(usage: dict[str, Any]) -> dict[str, int | None]:

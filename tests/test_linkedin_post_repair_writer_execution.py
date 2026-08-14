@@ -14,6 +14,7 @@ from services.packaging import linkedin_post_repair_writer_execution
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 from services.packaging.linkedin_post_repair_writer_execution import (
+    DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     RepairWriterExecutionRequest,
     RepairWriterRawResponse,
     build_repair_writer_execution_request,
@@ -46,17 +47,28 @@ class RepairWriterExecutionTests(SimpleTestCase):
             prompt_metadata=_prompt_metadata(),
             usage={"total_tokens": 12},
             raw_provider_response={"id": "resp_1"},
+            provider_response_metadata={
+                "provider": "openai",
+                "provider_output_limit_reached": False,
+            },
             execution_metadata={"attempt": {"index": 1}},
         )
 
         serialized = response.to_dict()
         serialized["usage"]["total_tokens"] = 99
         serialized["raw_provider_response"]["id"] = "changed"
+        serialized["provider_response_metadata"][
+            "provider_output_limit_reached"
+        ] = True
         serialized["execution_metadata"]["attempt"]["index"] = 2
 
         self.assertEqual(serialized["raw_text"], '{"post_text": "Repaired"}')
         self.assertEqual(response.usage, {"total_tokens": 12})
         self.assertEqual(response.raw_provider_response, {"id": "resp_1"})
+        self.assertEqual(
+            response.provider_response_metadata,
+            {"provider": "openai", "provider_output_limit_reached": False},
+        )
         self.assertEqual(response.execution_metadata, {"attempt": {"index": 1}})
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
@@ -69,6 +81,15 @@ class RepairWriterExecutionTests(SimpleTestCase):
             text='{"post_text": "Repaired post"}',
             raw={"id": "resp_123"},
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            provider_response_metadata={
+                "provider": "openai",
+                "model": "gpt-4.1-2025-04-14",
+                "provider_finish_reason": "stop",
+                "provider_max_output_tokens": 1800,
+                "provider_reported_output_tokens": 5,
+                "provider_output_limit_reached": False,
+                "raw_provider_secret": "do-not-serialize",
+            },
         )
         mock_build_ai_client.return_value.generate_text.return_value = provider_response
 
@@ -87,6 +108,17 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertEqual(raw_response.provider, "openai")
         self.assertEqual(raw_response.model, "gpt-4.1-2025-04-14")
         self.assertIsNone(raw_response.execution_error)
+        self.assertEqual(
+            raw_response.provider_response_metadata,
+            {
+                "provider": "openai",
+                "model": "gpt-4.1-2025-04-14",
+                "provider_finish_reason": "stop",
+                "provider_max_output_tokens": 1800,
+                "provider_reported_output_tokens": 5,
+                "provider_output_limit_reached": False,
+            },
+        )
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_execution_does_not_mutate_render_request_or_metadata(
@@ -117,12 +149,20 @@ class RepairWriterExecutionTests(SimpleTestCase):
             text=" ",
             raw={"id": "empty"},
             usage={"total_tokens": 3},
+            provider_response_metadata={
+                "provider": "openai",
+                "provider_output_limit_reached": True,
+            },
         )
 
         raw_response = execute_repair_writer_prompt(_request())
 
         self.assertEqual(raw_response.execution_error, "empty provider response")
         self.assertEqual(raw_response.raw_provider_response, {"id": "empty"})
+        self.assertEqual(
+            raw_response.provider_response_metadata,
+            {"provider": "openai", "provider_output_limit_reached": True},
+        )
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_provider_failure_returns_sanitized_execution_error(
@@ -158,10 +198,6 @@ class RepairWriterExecutionTests(SimpleTestCase):
     def test_request_errors_do_not_call_provider(self, mock_build_ai_client) -> None:
         invalid_requests = (
             (_request(provider=""), "missing repair writer provider"),
-            (
-                _request(provider="gemini"),
-                "unsupported PostFlow final post role/provider/model: role=repair_writer provider=gemini model=gpt-4.1-2025-04-14",
-            ),
             (_request(model=""), "missing repair writer model"),
             (
                 _request(max_output_tokens=0),
@@ -184,19 +220,38 @@ class RepairWriterExecutionTests(SimpleTestCase):
 
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
-    def test_gemini_repair_writer_config_returns_error_without_provider_call(
+    def test_gemini_repair_writer_config_is_allowed_and_calls_provider(
         self,
         mock_build_ai_client,
     ) -> None:
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text": "Repaired by Gemini."}',
+            raw={"id": "gemini_repair"},
+            usage={"total_tokens": 19},
+            provider_response_metadata={
+                "provider": "gemini",
+                "model": "gemini-3.6-flash",
+                "provider_finish_reason": "stop",
+                "provider_stop_reason": None,
+                "provider_max_output_tokens": 1800,
+                "provider_reported_output_tokens": 19,
+                "provider_output_limit_reached": False,
+            },
+        )
         raw_response = execute_repair_writer_prompt(
             _request(provider="gemini", model="gemini-3.6-flash")
         )
 
-        self.assertIn(
-            "unsupported PostFlow final post role/provider/model",
-            raw_response.execution_error,
+        mock_build_ai_client.assert_called_once_with(
+            provider="gemini",
+            model="gemini-3.6-flash",
         )
-        mock_build_ai_client.assert_not_called()
+        self.assertEqual(raw_response.raw_text, '{"post_text": "Repaired by Gemini."}')
+        self.assertIsNone(raw_response.execution_error)
+        self.assertEqual(
+            raw_response.provider_response_metadata["provider_output_limit_reached"],
+            False,
+        )
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_anthropic_repair_writer_config_is_allowed_and_calls_provider(
@@ -207,6 +262,15 @@ class RepairWriterExecutionTests(SimpleTestCase):
             text='{"post_text": "Repaired by Claude."}',
             raw={"id": "anthropic_repair"},
             usage={"total_tokens": 21},
+            provider_response_metadata={
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "provider_stop_reason": "end_turn",
+                "provider_finish_reason": None,
+                "provider_max_output_tokens": 1800,
+                "provider_reported_output_tokens": 21,
+                "provider_output_limit_reached": False,
+            },
         )
         request = _request(provider="anthropic", model="claude-sonnet-5")
 
@@ -275,7 +339,7 @@ def _request(
     prompt_text: str = "Repair writer prompt.",
     provider: str = "openai",
     model: str = "gpt-4.1-2025-04-14",
-    max_output_tokens: object = 1200,
+    max_output_tokens: object = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     execution_metadata: dict | None = None,
 ) -> RepairWriterExecutionRequest:
     return RepairWriterExecutionRequest(

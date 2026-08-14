@@ -14,12 +14,19 @@ from services.packaging.linkedin_post_final_post_payload_contract import (
 )
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
     CANDIDATE_POST_OTHER_VALIDATION_FAILURE,
+    COMPLETE_FENCED_JSON,
+    COMPLETE_PLAIN_JSON,
+    MALFORMED_FENCE_NOT_TRUNCATED,
+    NON_JSON_RESPONSE,
     POST_TEXT_BLANK,
     POST_TEXT_EMPTY,
     POST_TEXT_MISSING,
     POST_TEXT_TOO_LONG,
     POST_TEXT_WRONG_TYPE,
+    TRUNCATED_AFTER_JSON_BEFORE_FENCE,
+    TRUNCATED_INSIDE_JSON,
     UNKNOWN,
+    build_repair_writer_response_structure_diagnostics,
     build_repair_writer_structural_diagnostics,
 )
 
@@ -129,6 +136,141 @@ class RepairWriterStructuralDiagnosticsTests(SimpleTestCase):
         self.assertTrue(diagnostics.ends_with_code_fence)
         self.assertFalse(diagnostics.starts_with_json_object)
         self.assertFalse(diagnostics.ends_with_json_object)
+        self.assertEqual(diagnostics.opening_fence_language, "json")
+        self.assertEqual(diagnostics.markdown_fence_count, 2)
+        self.assertTrue(diagnostics.contains_json_object_start_after_fence)
+        self.assertTrue(diagnostics.contains_json_object_end)
+        self.assertEqual(diagnostics.json_brace_balance, 0)
+        self.assertFalse(diagnostics.json_string_appears_unterminated)
+        self.assertEqual(
+            diagnostics.response_structure_classification,
+            COMPLETE_FENCED_JSON,
+        )
+
+    def test_response_shape_classifies_complete_plain_json(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '{"post_text":"ok"}'
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            COMPLETE_PLAIN_JSON,
+        )
+        self.assertTrue(diagnostics["starts_with_json_object"])
+        self.assertTrue(diagnostics["ends_with_json_object"])
+
+    def test_response_shape_classifies_complete_json_fence(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```json\n{"post_text":"ok"}\n```'
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            COMPLETE_FENCED_JSON,
+        )
+        self.assertEqual(diagnostics["opening_fence_language"], "json")
+
+    def test_response_shape_classifies_complete_generic_fence(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```\n{"post_text":"ok"}\n```'
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            COMPLETE_FENCED_JSON,
+        )
+        self.assertEqual(diagnostics["opening_fence_language"], "")
+
+    def test_response_shape_classifies_truncated_inside_json(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```json\n{"post_text":"unfinished',
+            provider_output_limit_reached=True,
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            TRUNCATED_INSIDE_JSON,
+        )
+        self.assertTrue(diagnostics["json_string_appears_unterminated"])
+
+    def test_response_shape_classifies_truncated_after_json_before_fence(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```json\n{"post_text":"ok"}',
+            provider_output_limit_reached=True,
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            TRUNCATED_AFTER_JSON_BEFORE_FENCE,
+        )
+        self.assertTrue(diagnostics["contains_json_object_end"])
+
+    def test_response_shape_rejects_complete_json_with_missing_fence_without_limit(
+        self,
+    ) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```json\n{"post_text":"ok"}',
+            provider_output_limit_reached=False,
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            MALFORMED_FENCE_NOT_TRUNCATED,
+        )
+
+    def test_response_shape_classifies_malformed_opening_fence(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '``` json\n{"post_text":"ok"}\n```'
+        )
+
+        self.assertEqual(diagnostics["opening_fence_language"], "other")
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            MALFORMED_FENCE_NOT_TRUNCATED,
+        )
+
+    def test_response_shape_does_not_expose_malformed_fence_language(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```Here is secret provider prose\n{"post_text":"ok"}\n```'
+        )
+        serialized = json.dumps(diagnostics, sort_keys=True)
+
+        self.assertEqual(diagnostics["opening_fence_language"], "other")
+        self.assertNotIn("Here is secret provider prose", serialized)
+        self.assertNotIn("secret provider", serialized)
+
+    def test_response_shape_classifies_non_json_prose(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            "Here is the repaired post."
+        )
+
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            NON_JSON_RESPONSE,
+        )
+
+    def test_response_shape_rejects_multiple_fenced_blocks(self) -> None:
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            '```json\n{"post_text":"one"}\n```\n```json\n{"post_text":"two"}\n```'
+        )
+
+        self.assertEqual(diagnostics["markdown_fence_count"], 4)
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            MALFORMED_FENCE_NOT_TRUNCATED,
+        )
+
+    def test_response_shape_excerpts_are_bounded_and_masked(self) -> None:
+        secret = "secret repaired post " * 20
+        diagnostics = build_repair_writer_response_structure_diagnostics(
+            json.dumps({"post_text": secret})
+        )
+        serialized = json.dumps(diagnostics, sort_keys=True)
+
+        self.assertLessEqual(len(diagnostics["raw_response_prefix_excerpt"]), 80)
+        self.assertLessEqual(len(diagnostics["raw_response_suffix_excerpt"]), 120)
+        self.assertNotIn(secret, serialized)
+        self.assertNotIn("secret repaired post", serialized)
 
     def test_serialized_diagnostics_do_not_include_raw_values_or_provider_payloads(
         self,
