@@ -32,8 +32,15 @@ from services.packaging.linkedin_post_repair_writer_benchmark import (
 from services.packaging.linkedin_post_quality_evaluator_execution import (
     QualityEvaluatorRawResponse,
 )
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_repair_writer_execution import (
     RepairWriterRawResponse,
+)
+from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
+    POST_TEXT_TOO_LONG,
+    UNKNOWN,
 )
 from services.packaging.linkedin_post_semantic_grounding_execution import (
     SemanticGroundingRawResponse,
@@ -112,6 +119,8 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             self.assertEqual(record["provider_invocation_counts"]["repair_writer_provider_api_calls"], 0)
             self.assertEqual(record["provider_invocation_counts"]["semantic_grounding_provider_api_calls"], 0)
             self.assertEqual(record["provider_invocation_counts"]["quality_evaluator_provider_api_calls"], 0)
+            self.assertIn("repair_adapter_diagnostics", record)
+            self.assertIsNone(record["repair_adapter_diagnostics"])
 
     def test_manifest_accounts_for_logical_and_max_live_calls(self) -> None:
         with TemporaryDirectory() as tempdir:
@@ -201,6 +210,14 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(len(calls["quality"]), 1)
         self.assertEqual(calls["quality"][0].provider, FIXED_QUALITY_EVALUATOR_PROVIDER)
         self.assertEqual(calls["quality"][0].model, FIXED_QUALITY_EVALUATOR_MODEL)
+        record = result.run_records[0]
+        diagnostics = record["repair_adapter_diagnostics"]
+        self.assertEqual(diagnostics["structural_failure_category"], UNKNOWN)
+        self.assertEqual(diagnostics["parsed_top_level_keys"], ["post_text"])
+        self.assertTrue(diagnostics["post_text_within_candidate_max_length"])
+        self.assertIn("raw_text_sha256", record["response_diagnostics"])
+        self.assertIn("raw_text_length", record["response_diagnostics"])
+        self.assertIn("raw_response_character_count", record["response_diagnostics"])
 
     def test_repair_writer_failure_blocks_downstream_evaluators(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]
@@ -240,6 +257,63 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         record = result.run_records[0]
         self.assertEqual(record["failure_code"], "repair_writer_empty_response")
         self.assertEqual(calls, {"grounding": 0, "quality": 0})
+
+    def test_adaptation_failure_records_safe_structural_diagnostics(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[1]
+        calls = {"grounding": 0, "quality": 0}
+        overlength = "x" * (FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1)
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": overlength}),
+                provider=request.provider,
+                model=request.model,
+                prompt_metadata=None,
+                usage={"total_tokens": 10},
+                raw_provider_response={"id": "repair"},
+            )
+
+        def grounding_executor(request):
+            calls["grounding"] += 1
+            raise AssertionError("semantic grounding should not run")
+
+        def quality_executor(request):
+            calls["quality"] += 1
+            raise AssertionError("quality evaluator should not run")
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+                semantic_grounding_executor=grounding_executor,
+                quality_evaluator_executor=quality_executor,
+            )
+            runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+
+        record = result.run_records[0]
+        diagnostics = record["repair_adapter_diagnostics"]
+        self.assertEqual(record["failure_stage"], "repair_writer_adaptation")
+        self.assertEqual(record["failure_code"], "repair_writer_adaptation_failure")
+        self.assertEqual(record["parser_error_details"]["code"], "invalid_candidate_post")
+        self.assertEqual(record["adaptation_error_details"]["code"], "invalid_candidate_post")
+        self.assertEqual(diagnostics["structural_failure_category"], POST_TEXT_TOO_LONG)
+        self.assertEqual(
+            diagnostics["post_text_character_count"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
+        )
+        self.assertFalse(diagnostics["post_text_within_candidate_max_length"])
+        self.assertEqual(calls, {"grounding": 0, "quality": 0})
+        self.assertNotIn(overlength, runs_text)
+        self.assertIn("raw_text_sha256", runs_text)
+        self.assertIn("raw_text_length", runs_text)
+        self.assertNotIn("raw_text\":", runs_text)
 
     def test_configuration_rejects_gemini_repair_writer_plan(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]

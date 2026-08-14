@@ -111,6 +111,7 @@ class FinalPostControlledRepairResult:
     repair_prompt_render: object | dict | None = None
     repair_writer_raw_response: object | dict | None = None
     parsed_repair_candidate: dict[str, Any] | None = None
+    repair_writer_structural_diagnostics: object | dict | None = None
     repaired_candidate_output: object | dict | None = None
     repaired_deterministic_gate_output: object | dict | None = None
     repaired_semantic_grounding_prompt_render: object | dict | None = None
@@ -146,6 +147,9 @@ class FinalPostControlledRepairResult:
             ),
             "parsed_repair_candidate": _serialize_repair_value(
                 self.parsed_repair_candidate
+            ),
+            "repair_writer_structural_diagnostics": _serialize_repair_value(
+                self.repair_writer_structural_diagnostics
             ),
             "repaired_candidate_output": _serialize_repair_value(
                 self.repaired_candidate_output

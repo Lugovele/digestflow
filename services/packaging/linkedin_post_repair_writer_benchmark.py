@@ -79,6 +79,9 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
 )
+from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
+    build_repair_writer_structural_diagnostics,
+)
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
     GROUNDING_STATUS_NEEDS_HUMAN_REVIEW,
@@ -164,6 +167,10 @@ FORBIDDEN_ARTIFACT_KEY_FRAGMENTS = (
     "prompt_text",
     "raw_text",
     "raw_provider_response",
+)
+SAFE_ARTIFACT_DIAGNOSTIC_KEYS = (
+    "raw_text_sha256",
+    "raw_text_length",
 )
 
 RepairWriterExecutor = Callable[[RepairWriterExecutionRequest], RepairWriterRawResponse]
@@ -523,6 +530,11 @@ def _live_record(
             raw_response=raw_repair,
         )
     except CandidateWriterOutputAdaptationError as exc:
+        repair_adapter_diagnostics = build_repair_writer_structural_diagnostics(
+            parsed_repair_candidate=parsed,
+            adaptation_error=exc,
+            repair_raw_response=raw_repair,
+        )
         return _record(
             request,
             case,
@@ -539,8 +551,14 @@ def _live_record(
             semantic_grounding_provider_api_calls=0,
             quality_evaluator_provider_api_calls=0,
             parser_error_details={"code": exc.code, "message": _safe_text(str(exc))},
+            adaptation_error_details={"code": exc.code, "message": _safe_text(str(exc))},
+            repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
             response_diagnostics=_raw_response_diagnostics(raw_repair),
         )
+    repair_adapter_diagnostics = build_repair_writer_structural_diagnostics(
+        parsed_repair_candidate=parsed,
+        repair_raw_response=raw_repair,
+    )
     gate_output = run_candidate_post_deterministic_gate(
         repaired_output,
         selected_evidence_ids=_selected_evidence_ids(case),
@@ -565,6 +583,7 @@ def _live_record(
             repaired_payload=repaired_output.payload,
             repaired_gate=gate_output.to_dict(),
             payload_preservation=preservation,
+            repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
             response_diagnostics=_raw_response_diagnostics(raw_repair),
         )
     post_editorial_input = build_post_editorial_input(
@@ -600,6 +619,7 @@ def _live_record(
             repaired_gate=gate_output.to_dict(),
             semantic_grounding=grounding_state.to_dict(),
             payload_preservation=preservation,
+            repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
             response_diagnostics=_raw_response_diagnostics(raw_repair),
         )
     quality_state, quality_calls, quality_failure = _run_quality_evaluator(
@@ -641,6 +661,7 @@ def _live_record(
         quality_evaluation=quality_state.to_dict(),
         adjudication_projection=outcome.to_dict(),
         payload_preservation=preservation,
+        repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
         response_diagnostics=_raw_response_diagnostics(raw_repair),
     )
 
@@ -889,6 +910,8 @@ def _record(
     adjudication_projection: dict[str, Any] | None = None,
     payload_preservation: dict[str, Any] | None = None,
     parser_error_details: dict[str, Any] | None = None,
+    adaptation_error_details: dict[str, Any] | None = None,
+    repair_adapter_diagnostics: dict[str, Any] | None = None,
     response_diagnostics: dict[str, Any] | None = None,
     execution_request_error: str | None = None,
 ) -> dict[str, Any]:
@@ -951,6 +974,8 @@ def _record(
         "adjudication_projection": copy.deepcopy(adjudication_projection),
         "payload_preservation": copy.deepcopy(payload_preservation),
         "parser_error_details": copy.deepcopy(parser_error_details),
+        "adaptation_error_details": copy.deepcopy(adaptation_error_details),
+        "repair_adapter_diagnostics": copy.deepcopy(repair_adapter_diagnostics),
         "response_diagnostics": copy.deepcopy(response_diagnostics),
         "execution_request_error": execution_request_error,
     }
@@ -1227,11 +1252,18 @@ def _quality_execution_failure_code(raw_response: QualityEvaluatorRawResponse) -
 
 
 def _raw_response_diagnostics(raw_response: Any) -> dict[str, Any]:
+    raw_text = str(raw_response.raw_text or "")
+    stripped = raw_text.strip()
     return {
         "provider": raw_response.provider,
         "model": raw_response.model,
-        "raw_text_sha256": _sha256(str(raw_response.raw_text or "")),
-        "raw_text_length": len(str(raw_response.raw_text or "")),
+        "raw_text_sha256": _sha256(raw_text),
+        "raw_text_length": len(raw_text),
+        "raw_response_character_count": len(raw_text),
+        "starts_with_json_object": stripped.startswith("{"),
+        "ends_with_json_object": stripped.endswith("}"),
+        "starts_with_code_fence": stripped.startswith("```"),
+        "ends_with_code_fence": stripped.endswith("```"),
         "usage": _safe_token_usage(raw_response.usage or {}),
         "execution_error": raw_response.execution_error,
     }
@@ -1482,7 +1514,10 @@ def _sanitize_artifact_value(value: Any) -> Any:
         safe = {}
         for key, item in value.items():
             key_text = str(key)
-            if any(fragment in key_text.lower() for fragment in FORBIDDEN_ARTIFACT_KEY_FRAGMENTS):
+            if (
+                key_text not in SAFE_ARTIFACT_DIAGNOSTIC_KEYS
+                and any(fragment in key_text.lower() for fragment in FORBIDDEN_ARTIFACT_KEY_FRAGMENTS)
+            ):
                 continue
             safe[key_text] = _sanitize_artifact_value(item)
         return safe

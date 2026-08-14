@@ -40,6 +40,9 @@ from services.packaging.linkedin_post_controlled_repair_execution import (
 from services.packaging.linkedin_post_final_post_attempt_contract import (
     FinalPostAttemptRequest,
 )
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+)
 from services.packaging.linkedin_post_flow_decision import FinalPostDecisionPolicy
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
@@ -47,6 +50,10 @@ from services.packaging.linkedin_post_prompt_renderers import (
 from services.packaging.linkedin_post_model_role_policy import OPENAI_FINAL_POST_MODEL
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
+)
+from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
+    CANDIDATE_POST_OTHER_VALIDATION_FAILURE,
+    POST_TEXT_TOO_LONG,
 )
 
 
@@ -676,6 +683,45 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
 
         self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_ADAPTATION)
         self.assertEqual(result.repair_invocation_count, 1)
+        self.assertEqual(
+            result.repair_writer_structural_diagnostics.structural_failure_category,
+            CANDIDATE_POST_OTHER_VALIDATION_FAILURE,
+        )
+        self.assertEqual(
+            result.repair_writer_structural_diagnostics.parsed_top_level_keys,
+            ("hook_variants", "post_text"),
+        )
+
+    def test_repair_adaptation_failure_records_post_text_length_diagnostics(
+        self,
+    ) -> None:
+        overlength = "x" * (FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1)
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False)))
+            ),
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(json.dumps({"post_text": overlength}))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_ADAPTATION)
+        diagnostics = result.repair_writer_structural_diagnostics
+        serialized_diagnostics = json.dumps(diagnostics.to_dict(), sort_keys=True)
+        self.assertEqual(diagnostics.structural_failure_category, POST_TEXT_TOO_LONG)
+        self.assertEqual(
+            diagnostics.post_text_character_count,
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
+        )
+        self.assertFalse(diagnostics.post_text_within_candidate_max_length)
+        self.assertNotIn(overlength, serialized_diagnostics)
 
     def test_repaired_evaluator_provider_failure_is_distinct(self) -> None:
         evaluator_client = QueuedThenFailingClient(

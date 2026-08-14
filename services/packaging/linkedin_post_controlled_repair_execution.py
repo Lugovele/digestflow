@@ -109,6 +109,9 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
 )
+from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
+    build_repair_writer_structural_diagnostics,
+)
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_CANDIDATE_WRITER,
     FINAL_POST_ROLE_QUALITY_EVALUATOR,
@@ -278,6 +281,11 @@ def execute_final_post_controlled_repair_attempt(
             raw_response=repair_raw_response,
         )
     except CandidateWriterOutputAdaptationError as exc:
+        repair_writer_structural_diagnostics = build_repair_writer_structural_diagnostics(
+            parsed_repair_candidate=parsed_repair_candidate,
+            adaptation_error=exc,
+            repair_raw_response=repair_raw_response,
+        )
         return _repair_failure_result(
             request=request,
             initial_result=initial_result,
@@ -288,8 +296,13 @@ def execute_final_post_controlled_repair_attempt(
             repair_prompt_render=repair_prompt_render,
             repair_writer_raw_response=repair_raw_response,
             parsed_repair_candidate=parsed_repair_candidate,
+            repair_writer_structural_diagnostics=repair_writer_structural_diagnostics,
             repair_invocation_count=1,
         )
+    repair_writer_structural_diagnostics = build_repair_writer_structural_diagnostics(
+        parsed_repair_candidate=parsed_repair_candidate,
+        repair_raw_response=repair_raw_response,
+    )
 
     repaired_gate = run_candidate_post_deterministic_gate(
         repaired_candidate_output,
@@ -306,6 +319,7 @@ def execute_final_post_controlled_repair_attempt(
             repair_prompt_render=repair_prompt_render,
             repair_writer_raw_response=repair_raw_response,
             parsed_repair_candidate=parsed_repair_candidate,
+            repair_writer_structural_diagnostics=repair_writer_structural_diagnostics,
             repaired_candidate_output=repaired_candidate_output,
             repaired_deterministic_gate_output=repaired_gate,
             repair_invocation_count=1,
@@ -331,6 +345,7 @@ def execute_final_post_controlled_repair_attempt(
             repair_prompt_render=repair_prompt_render,
             repair_writer_raw_response=repair_raw_response,
             parsed_repair_candidate=parsed_repair_candidate,
+            repair_writer_structural_diagnostics=repair_writer_structural_diagnostics,
             repaired_candidate_output=repaired_candidate_output,
             repaired_deterministic_gate_output=repaired_gate,
             repaired_semantic_grounding_prompt_render=grounding_result["prompt_render"],
@@ -366,6 +381,7 @@ def execute_final_post_controlled_repair_attempt(
             repair_prompt_render=repair_prompt_render,
             repair_writer_raw_response=repair_raw_response,
             parsed_repair_candidate=parsed_repair_candidate,
+            repair_writer_structural_diagnostics=repair_writer_structural_diagnostics,
             repaired_candidate_output=repaired_candidate_output,
             repaired_deterministic_gate_output=repaired_gate,
             repaired_post_editorial_input=quality_result["post_editorial_input"],
@@ -412,6 +428,7 @@ def execute_final_post_controlled_repair_attempt(
         repair_prompt_render=repair_prompt_render,
         repair_writer_raw_response=repair_raw_response,
         parsed_repair_candidate=copy.deepcopy(parsed_repair_candidate),
+        repair_writer_structural_diagnostics=repair_writer_structural_diagnostics,
         repaired_candidate_output=repaired_candidate_output,
         repaired_deterministic_gate_output=repaired_gate,
         repaired_semantic_grounding_prompt_render=grounding_result["prompt_render"],
@@ -550,6 +567,7 @@ def _repair_failure_result(
     repair_writer_raw_response: Any | None = None,
     parsed_repair_candidate: dict[str, Any] | None = None,
     repaired_candidate_output: Any | None = None,
+    repair_writer_structural_diagnostics: Any | None = None,
     repaired_deterministic_gate_output: Any | None = None,
     repaired_semantic_grounding_prompt_render: Any | None = None,
     repaired_semantic_grounding_raw_response: Any | None = None,
@@ -570,6 +588,7 @@ def _repair_failure_result(
         repair_prompt_render=repair_prompt_render,
         repair_writer_raw_response=repair_writer_raw_response,
         parsed_repair_candidate=copy.deepcopy(parsed_repair_candidate),
+        repair_writer_structural_diagnostics=repair_writer_structural_diagnostics,
         repaired_candidate_output=repaired_candidate_output,
         repaired_deterministic_gate_output=repaired_deterministic_gate_output,
         repaired_semantic_grounding_prompt_render=repaired_semantic_grounding_prompt_render,
