@@ -25,6 +25,16 @@ SUPPORTED_AI_THINKING_MODES = (
     AI_THINKING_MODE_PROVIDER_DEFAULT,
     AI_THINKING_MODE_DISABLED,
 )
+AI_REASONING_EFFORT_MINIMAL = "minimal"
+AI_REASONING_EFFORT_LOW = "low"
+AI_REASONING_EFFORT_MEDIUM = "medium"
+AI_REASONING_EFFORT_HIGH = "high"
+GEMINI_SUPPORTED_REASONING_EFFORTS = (
+    AI_REASONING_EFFORT_MINIMAL,
+    AI_REASONING_EFFORT_LOW,
+    AI_REASONING_EFFORT_MEDIUM,
+    AI_REASONING_EFFORT_HIGH,
+)
 GEMINI_OPENAI_COMPATIBLE_BASE_URL = (
     "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
@@ -103,6 +113,7 @@ class OpenAICompatibleClient:
         json_mode: bool = False,
         allow_json_mode_fallback: bool = True,
         thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
+        reasoning_effort: str | None = None,
     ) -> AIResponse:
         thinking_mode_error = get_ai_provider_thinking_mode_error(
             provider=self.provider,
@@ -110,11 +121,18 @@ class OpenAICompatibleClient:
         )
         if thinking_mode_error is not None:
             raise ValueError(thinking_mode_error)
+        reasoning_effort_error = get_ai_provider_reasoning_effort_error(
+            provider=self.provider,
+            reasoning_effort=reasoning_effort,
+        )
+        if reasoning_effort_error is not None:
+            raise ValueError(reasoning_effort_error)
         if self.provider == AI_PROVIDER_GEMINI:
             return self._generate_chat_completion(
                 prompt=prompt,
                 max_output_tokens=max_output_tokens,
                 json_mode=json_mode,
+                reasoning_effort=reasoning_effort,
             )
 
         request_kwargs: dict[str, Any] = {
@@ -156,6 +174,7 @@ class OpenAICompatibleClient:
         prompt: str,
         max_output_tokens: int,
         json_mode: bool,
+        reasoning_effort: str | None = None,
     ) -> AIResponse:
         request_kwargs: dict[str, Any] = {
             "model": self.model,
@@ -164,6 +183,11 @@ class OpenAICompatibleClient:
         }
         if json_mode:
             request_kwargs["response_format"] = {"type": "json_object"}
+        normalized_reasoning_effort = _normalize_optional_reasoning_effort(
+            reasoning_effort
+        )
+        if normalized_reasoning_effort is not None:
+            request_kwargs["reasoning_effort"] = normalized_reasoning_effort
 
         response = self.client.chat.completions.create(**request_kwargs)
         raw = response.model_dump()
@@ -228,6 +252,7 @@ class AnthropicMessagesClient:
         json_mode: bool = False,
         allow_json_mode_fallback: bool = True,
         thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
+        reasoning_effort: str | None = None,
     ) -> AIResponse:
         normalized_thinking_mode = _normalize_thinking_mode(thinking_mode)
         thinking_mode_error = get_ai_provider_thinking_mode_error(
@@ -236,6 +261,12 @@ class AnthropicMessagesClient:
         )
         if thinking_mode_error is not None:
             raise ValueError(thinking_mode_error)
+        reasoning_effort_error = get_ai_provider_reasoning_effort_error(
+            provider=self.provider,
+            reasoning_effort=reasoning_effort,
+        )
+        if reasoning_effort_error is not None:
+            raise ValueError(reasoning_effort_error)
 
         request_body: dict[str, Any] = {
             "model": self.model,
@@ -427,6 +458,28 @@ def get_ai_provider_thinking_mode_error(
     return None
 
 
+def get_ai_provider_reasoning_effort_error(
+    *,
+    provider: str,
+    reasoning_effort: str | None,
+    stage_name: str = "AI",
+) -> str | None:
+    normalized_reasoning_effort = _normalize_optional_reasoning_effort(
+        reasoning_effort
+    )
+    if normalized_reasoning_effort is None:
+        return None
+    normalized_provider = normalize_ai_provider(provider)
+    if normalized_provider != AI_PROVIDER_GEMINI:
+        return (
+            f"unsupported {stage_name} reasoning_effort for provider "
+            f"{normalized_provider}: {normalized_reasoning_effort}"
+        )
+    if normalized_reasoning_effort not in GEMINI_SUPPORTED_REASONING_EFFORTS:
+        return f"unsupported {stage_name} reasoning_effort: {normalized_reasoning_effort}"
+    return None
+
+
 def build_ai_client(provider: str, model: str) -> OpenAICompatibleClient | AnthropicMessagesClient:
     normalized_model = str(model or "").strip()
     configuration_error = get_ai_client_configuration_error(provider, normalized_model)
@@ -472,6 +525,13 @@ def _provider_api_key_env_name(provider: str) -> str:
 
 def _normalize_thinking_mode(thinking_mode: str | None) -> str:
     return str(thinking_mode or AI_THINKING_MODE_PROVIDER_DEFAULT).strip().lower()
+
+
+def _normalize_optional_reasoning_effort(reasoning_effort: str | None) -> str | None:
+    if reasoning_effort is None:
+        return None
+    normalized = str(reasoning_effort).strip().lower()
+    return normalized or None
 
 
 def _is_valid_anthropic_response_shape(raw: Any) -> bool:

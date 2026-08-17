@@ -8,6 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from services.packaging.linkedin_post_repair_writer_benchmark import (
     DEFAULT_EXPERIMENT_ID,
+    REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
     REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     RepairWriterBenchmarkPlan,
     RepairWriterBenchmarkRequest,
@@ -99,20 +100,28 @@ class Command(BaseCommand):
 
 def _parse_plan(value: str) -> RepairWriterBenchmarkPlan:
     if "=" not in value:
-        raise CommandError("--plan must use plan_id=provider,model[,max_output_tokens]")
+        raise CommandError(
+            "--plan must use plan_id=provider,model[,max_output_tokens[,execution_profile]]"
+        )
     plan_id, raw_fields = value.split("=", 1)
     fields = [field.strip() for field in raw_fields.split(",")]
-    if len(fields) not in {2, 3}:
-        raise CommandError("--plan must include provider,model[,max_output_tokens]")
+    if len(fields) not in {2, 3, 4}:
+        raise CommandError(
+            "--plan must include provider,model[,max_output_tokens[,execution_profile]]"
+        )
     max_output_tokens = REPAIR_WRITER_MAX_OUTPUT_TOKENS
-    if len(fields) == 3:
+    if len(fields) >= 3:
         try:
             max_output_tokens = int(fields[2])
         except ValueError as exc:
             raise CommandError("--plan max_output_tokens must be an integer") from exc
+    execution_profile = REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT
+    if len(fields) == 4:
+        execution_profile = fields[3]
     return RepairWriterBenchmarkPlan(
         plan_id=plan_id.strip(),
         provider=fields[0],
         model=fields[1],
         max_output_tokens=max_output_tokens,
+        execution_profile=execution_profile,
     )

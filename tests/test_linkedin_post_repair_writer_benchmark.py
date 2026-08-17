@@ -21,6 +21,9 @@ from services.packaging.linkedin_post_repair_writer_benchmark import (
     PLAN_CLAUDE_REPAIR,
     PLAN_GEMINI_REPAIR,
     PLAN_GPT_REPAIR,
+    REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+    REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_MINIMAL_REASONING,
+    REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
     REPAIR_WRITER_JSON_MODE,
     REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     RepairWriterBenchmarkRequest,
@@ -86,6 +89,27 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             (1800, 1800, 1800),
         )
         self.assertEqual(tuple(plan.json_mode for plan in plans), (False, False, False))
+        self.assertEqual(
+            tuple(plan.execution_profile for plan in plans),
+            (
+                REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+                REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+                REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+            ),
+        )
+
+    def test_plan_to_dict_includes_execution_profile(self) -> None:
+        plan = default_repair_writer_benchmark_plans()[2].__class__(
+            "gemini_low",
+            "gemini",
+            "gemini-3.6-flash",
+            execution_profile=REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+        )
+
+        self.assertEqual(
+            plan.to_dict()["execution_profile"],
+            REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+        )
 
     def test_default_case_excludes_gpt_v5_diagnostic_case(self) -> None:
         self.assertNotIn(
@@ -612,6 +636,135 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(result.run_count, 1)
         self.assertEqual(result.run_records[0]["provider"], "gemini")
         self.assertEqual(result.run_records[0]["model"], "gemini-3.6-flash")
+
+    def test_gemini_low_reasoning_profile_flows_to_repair_execution_request(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[2].__class__(
+            "gemini_low",
+            "gemini",
+            "gemini-3.6-flash",
+            execution_profile=REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+        )
+        calls = []
+
+        def repair_executor(request):
+            calls.append(request)
+            return RepairWriterRawResponse(
+                raw_text="",
+                provider=request.provider,
+                model=request.model,
+                execution_error="empty provider response",
+            )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].reasoning_effort, "low")
+        self.assertEqual(
+            calls[0].execution_metadata["repair_writer_execution_profile"],
+            REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+        )
+        self.assertEqual(calls[0].execution_metadata["repair_writer_reasoning_effort"], "low")
+        config = result.run_records[0]["repair_writer_config"]
+        self.assertEqual(config["execution_profile"], REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING)
+        self.assertEqual(config["reasoning_effort"], "low")
+
+    def test_gemini_reasoning_calibration_dry_run_uses_three_profiles_without_provider_calls(self) -> None:
+        plan_class = default_repair_writer_benchmark_plans()[2].__class__
+        plans = (
+            plan_class(
+                "gemini_repair_default",
+                "gemini",
+                "gemini-3.6-flash",
+                execution_profile=REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+            ),
+            plan_class(
+                "gemini_repair_minimal_reasoning",
+                "gemini",
+                "gemini-3.6-flash",
+                execution_profile=REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_MINIMAL_REASONING,
+            ),
+            plan_class(
+                "gemini_repair_low_reasoning",
+                "gemini",
+                "gemini-3.6-flash",
+                execution_profile=REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+            ),
+        )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    experiment_id="repair-writer-gemini-reasoning-calibration-dry-v1",
+                    cases=default_repair_writer_benchmark_cases(),
+                    plans=plans,
+                    allow_api=False,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.status, BENCHMARK_STATUS_DRY_RUN)
+        self.assertEqual(result.run_count, 9)
+        self.assertEqual(result.provider_call_count, 0)
+        self.assertEqual(
+            {record["repair_writer_config"]["reasoning_effort"] for record in result.run_records},
+            {None, "minimal", "low"},
+        )
+
+    def test_gemini_no_reasoning_profile_is_not_supported(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[2].__class__(
+            "gemini_no_reasoning",
+            "gemini",
+            "gemini-3.6-flash",
+            execution_profile="gemini_repair_no_reasoning",
+        )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=False,
+                    output_root=Path(tempdir),
+                ),
+            )
+
+        self.assertEqual(result.status, "config_error")
+        self.assertIn("unsupported repair writer execution_profile", result.safe_failure_message)
+
+    def test_reasoning_profiles_are_gemini_only(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[0].__class__(
+            "gpt_low",
+            "openai",
+            "gpt-4.1-2025-04-14",
+            execution_profile=REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING,
+        )
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=False,
+                    output_root=Path(tempdir),
+                ),
+            )
+
+        self.assertEqual(result.status, "config_error")
+        self.assertIn("supported only for gemini", result.safe_failure_message)
 
     def test_artifacts_do_not_include_raw_prompts_or_provider_payloads(self) -> None:
         with TemporaryDirectory() as tempdir:

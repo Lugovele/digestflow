@@ -18,7 +18,13 @@ from typing import Any, Callable
 
 from django.conf import settings
 
-from apps.ai.client import AI_PROVIDER_ANTHROPIC, AI_PROVIDER_GEMINI, AI_PROVIDER_OPENAI
+from apps.ai.client import (
+    AI_PROVIDER_ANTHROPIC,
+    AI_PROVIDER_GEMINI,
+    AI_PROVIDER_OPENAI,
+    AI_REASONING_EFFORT_LOW,
+    AI_REASONING_EFFORT_MINIMAL,
+)
 from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_READY,
     FinalPostQualityEvaluationState,
@@ -117,6 +123,13 @@ BENCHMARK_STATUS_CONFIG_ERROR = "config_error"
 PLAN_GPT_REPAIR = "gpt_repair"
 PLAN_CLAUDE_REPAIR = "claude_repair"
 PLAN_GEMINI_REPAIR = "gemini_repair"
+REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT = "provider_default"
+REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_MINIMAL_REASONING = "gemini_repair_minimal_reasoning"
+REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING = "gemini_repair_low_reasoning"
+REPAIR_WRITER_EXECUTION_PROFILE_REASONING_EFFORTS = {
+    REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_MINIMAL_REASONING: AI_REASONING_EFFORT_MINIMAL,
+    REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING: AI_REASONING_EFFORT_LOW,
+}
 RECONSTRUCTION_DIRECT = "DIRECT"
 RECONSTRUCTION_DETERMINISTIC = "DETERMINISTIC_RECONSTRUCTION"
 REPAIR_WRITER_JSON_MODE = False
@@ -250,6 +263,7 @@ class RepairWriterBenchmarkPlan:
     model: str
     max_output_tokens: int = REPAIR_WRITER_MAX_OUTPUT_TOKENS
     json_mode: bool = REPAIR_WRITER_JSON_MODE
+    execution_profile: str = REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -258,6 +272,7 @@ class RepairWriterBenchmarkPlan:
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
             "json_mode": self.json_mode,
+            "execution_profile": self.execution_profile,
         }
 
 
@@ -966,6 +981,8 @@ def _record(
         "repair_writer_config": {
             "json_mode": plan.json_mode,
             "max_output_tokens": plan.max_output_tokens,
+            "execution_profile": plan.execution_profile,
+            "reasoning_effort": _repair_writer_reasoning_effort(plan),
         },
         "fixed_downstream_roles": {
             "semantic_grounding": {
@@ -1138,6 +1155,16 @@ def _validate_plan(plan: RepairWriterBenchmarkPlan) -> None:
         )
     if plan.json_mode is not REPAIR_WRITER_JSON_MODE:
         raise RepairWriterBenchmarkConfigurationError("repair writer json_mode must be False")
+    if plan.execution_profile == REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT:
+        return
+    if plan.execution_profile not in REPAIR_WRITER_EXECUTION_PROFILE_REASONING_EFFORTS:
+        raise RepairWriterBenchmarkConfigurationError(
+            f"unsupported repair writer execution_profile: {plan.execution_profile}"
+        )
+    if plan.provider != AI_PROVIDER_GEMINI:
+        raise RepairWriterBenchmarkConfigurationError(
+            "repair writer reasoning execution profiles are supported only for gemini"
+        )
 
 
 def _validate_live_prompt_paths() -> None:
@@ -1159,7 +1186,14 @@ def _repair_execution_request(
         provider=plan.provider,
         model=plan.model,
         max_output_tokens=plan.max_output_tokens,
-        execution_metadata=_execution_metadata(request, case, "repair_writer", run_index),
+        reasoning_effort=_repair_writer_reasoning_effort(plan),
+        execution_metadata=_execution_metadata(
+            request,
+            case,
+            "repair_writer",
+            run_index,
+            plan=plan,
+        ),
     )
 
 
@@ -1168,13 +1202,25 @@ def _execution_metadata(
     case: RepairWriterBenchmarkCase,
     stage: str,
     run_index: int,
+    *,
+    plan: RepairWriterBenchmarkPlan | None = None,
 ) -> dict[str, Any]:
-    return {
+    metadata: dict[str, Any] = {
         "experiment_id": request.experiment_id,
         "case_id": case.case_id,
         "stage": stage,
         "run_index": run_index,
     }
+    if stage == "repair_writer" and plan is not None:
+        metadata["repair_writer_execution_profile"] = plan.execution_profile
+        metadata["repair_writer_reasoning_effort"] = _repair_writer_reasoning_effort(plan)
+    return metadata
+
+
+def _repair_writer_reasoning_effort(plan: RepairWriterBenchmarkPlan) -> str | None:
+    return REPAIR_WRITER_EXECUTION_PROFILE_REASONING_EFFORTS.get(
+        plan.execution_profile
+    )
 
 
 def _prompt_text(prompt_path: str | None, label: str) -> str:

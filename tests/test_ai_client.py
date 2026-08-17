@@ -10,6 +10,8 @@ from django.test import override_settings
 from apps.ai.client import (
     AI_PROVIDER_ANTHROPIC,
     AI_PROVIDER_GEMINI,
+    AI_REASONING_EFFORT_LOW,
+    AI_REASONING_EFFORT_MINIMAL,
     AI_THINKING_MODE_DISABLED,
     AI_THINKING_MODE_PROVIDER_DEFAULT,
     ANTHROPIC_API_VERSION,
@@ -20,6 +22,7 @@ from apps.ai.client import (
     get_ai_client_configuration_error,
     get_ai_provider_config,
     get_ai_provider_model_error,
+    get_ai_provider_reasoning_effort_error,
     get_ai_provider_thinking_mode_error,
     _extract_usage,
     estimate_cost_usd,
@@ -280,6 +283,35 @@ class AIProviderConfigTests(SimpleTestCase):
         mock_openai.return_value.responses.create.assert_not_called()
         self.assertEqual(result.text, "Gemini text")
         self.assertEqual(result.raw, {"id": "gemini-chat"})
+
+    @override_settings(
+        GEMINI_API_KEY="gemini-test-key",
+        OPENAI_TIMEOUT_SECONDS=30,
+    )
+    @patch("apps.ai.client.OpenAI")
+    def test_gemini_generation_passes_reasoning_effort_when_requested(self, mock_openai):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Gemini text"))],
+            model_dump=lambda: {"id": "gemini-chat"},
+            usage=SimpleNamespace(prompt_tokens=2, completion_tokens=3, total_tokens=5),
+        )
+        mock_openai.return_value.chat.completions.create.return_value = response
+        client = build_ai_client("gemini", "gemini-3.6-flash")
+
+        result = client.generate_text(
+            "Prompt",
+            max_output_tokens=300,
+            json_mode=False,
+            reasoning_effort=AI_REASONING_EFFORT_LOW,
+        )
+
+        mock_openai.return_value.chat.completions.create.assert_called_once_with(
+            model="gemini-3.6-flash",
+            messages=[{"role": "user", "content": "Prompt"}],
+            max_tokens=300,
+            reasoning_effort="low",
+        )
+        self.assertEqual(result.text, "Gemini text")
 
     @override_settings(
         GEMINI_API_KEY="gemini-test-key",
@@ -612,6 +644,46 @@ class AIProviderConfigTests(SimpleTestCase):
             ),
             "unsupported AI thinking_mode: turbo-think",
         )
+
+    def test_gemini_reasoning_effort_validation_allows_minimal_and_low(self):
+        for reasoning_effort in (AI_REASONING_EFFORT_MINIMAL, AI_REASONING_EFFORT_LOW):
+            with self.subTest(reasoning_effort=reasoning_effort):
+                self.assertIsNone(
+                    get_ai_provider_reasoning_effort_error(
+                        provider="gemini",
+                        reasoning_effort=reasoning_effort,
+                    )
+                )
+
+    def test_gemini_rejects_unsupported_reasoning_effort(self):
+        self.assertEqual(
+            get_ai_provider_reasoning_effort_error(
+                provider="gemini",
+                reasoning_effort="none",
+            ),
+            "unsupported AI reasoning_effort: none",
+        )
+
+    @override_settings(OPENAI_API_KEY="openai-test-key", OPENAI_TIMEOUT_SECONDS=30)
+    @patch("apps.ai.client.OpenAI")
+    def test_openai_rejects_reasoning_effort_before_invocation(self, mock_openai):
+        client = build_ai_client("openai", "gpt-4.1-2025-04-14")
+
+        with self.assertRaisesRegex(ValueError, "unsupported AI reasoning_effort"):
+            client.generate_text("Prompt", reasoning_effort=AI_REASONING_EFFORT_LOW)
+
+        mock_openai.return_value.responses.create.assert_not_called()
+        mock_openai.return_value.chat.completions.create.assert_not_called()
+
+    @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
+    @patch("apps.ai.client.urlopen")
+    def test_anthropic_rejects_reasoning_effort_before_invocation(self, mock_urlopen):
+        client = build_ai_client("anthropic", "claude-sonnet-5")
+
+        with self.assertRaisesRegex(ValueError, "unsupported AI reasoning_effort"):
+            client.generate_text("Prompt", reasoning_effort=AI_REASONING_EFFORT_LOW)
+
+        mock_urlopen.assert_not_called()
 
     @override_settings(ANTHROPIC_API_KEY="anthropic-test-key")
     @patch("apps.ai.client.urlopen")

@@ -13,7 +13,7 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import build_ai_client
+from apps.ai.client import build_ai_client, get_ai_provider_reasoning_effort_error
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_REPAIR_WRITER,
@@ -53,6 +53,7 @@ class RepairWriterExecutionRequest:
     provider: str
     model: str
     max_output_tokens: int = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS
+    reasoning_effort: str | None = None
     execution_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +63,7 @@ class RepairWriterExecutionRequest:
             "provider": self.provider,
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
+            "reasoning_effort": self.reasoning_effort,
             "execution_metadata": copy.deepcopy(self.execution_metadata),
         }
 
@@ -111,6 +113,7 @@ def build_repair_writer_execution_request(
     provider: str | None = None,
     model: str | None = None,
     max_output_tokens: int = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+    reasoning_effort: str | None = None,
     execution_metadata: dict[str, Any] | None = None,
 ) -> RepairWriterExecutionRequest:
     return RepairWriterExecutionRequest(
@@ -119,6 +122,7 @@ def build_repair_writer_execution_request(
         provider=_resolve_provider(provider),
         model=_resolve_model(model),
         max_output_tokens=max_output_tokens,
+        reasoning_effort=reasoning_effort,
         execution_metadata=copy.deepcopy(execution_metadata),
     )
 
@@ -160,12 +164,16 @@ def execute_repair_writer_prompt(
                 execution_metadata=execution_metadata,
             )
 
+    provider_kwargs: dict[str, Any] = {
+        "prompt": prompt,
+        "max_output_tokens": request.max_output_tokens,
+        "json_mode": False,
+    }
+    if request.reasoning_effort is not None:
+        provider_kwargs["reasoning_effort"] = request.reasoning_effort
+
     try:
-        response = text_client.generate_text(
-            prompt=prompt,
-            max_output_tokens=request.max_output_tokens,
-            json_mode=False,
-        )
+        response = text_client.generate_text(**provider_kwargs)
     except Exception as exc:  # pragma: no cover - covered with fake failure.
         return RepairWriterRawResponse(
             raw_text="",
@@ -246,6 +254,13 @@ def _execution_request_error(request: RepairWriterExecutionRequest) -> str | Non
         return "invalid repair writer max_output_tokens: must be a positive integer"
     if request.max_output_tokens <= 0:
         return "invalid repair writer max_output_tokens: must be a positive integer"
+    reasoning_effort_error = get_ai_provider_reasoning_effort_error(
+        provider=request.provider,
+        reasoning_effort=request.reasoning_effort,
+        stage_name=STAGE_NAME,
+    )
+    if reasoning_effort_error is not None:
+        return reasoning_effort_error
     if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
         return "missing repair writer prompt text"
     rendered_input_text = request.rendered_prompt_input.input_text

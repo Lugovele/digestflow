@@ -14,6 +14,7 @@ from django.test import override_settings
 from services.packaging import linkedin_post_repair_writer_execution
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
+from apps.ai.client import AI_REASONING_EFFORT_LOW
 from services.packaging.linkedin_post_repair_writer_execution import (
     DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     RepairWriterExecutionRequest,
@@ -42,6 +43,7 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertIsInstance(request, RepairWriterExecutionRequest)
         self.assertEqual(request.provider, "openai")
         self.assertEqual(request.model, "gpt-4.1-2025-04-14")
+        self.assertIsNone(request.reasoning_effort)
         self.assertEqual(request.execution_metadata, {"attempt": 1})
 
     def test_raw_response_to_dict_preserves_raw_text_and_metadata(self) -> None:
@@ -327,6 +329,44 @@ class RepairWriterExecutionTests(SimpleTestCase):
         )
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_gemini_repair_writer_passes_reasoning_effort_when_requested(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = _request(
+            provider="gemini",
+            model="gemini-3.6-flash",
+            reasoning_effort=AI_REASONING_EFFORT_LOW,
+        )
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text": "Repaired by Gemini."}',
+            raw={"id": "gemini_repair"},
+            usage={"total_tokens": 19},
+        )
+
+        raw_response = execute_repair_writer_prompt(request)
+
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=False,
+            reasoning_effort="low",
+        )
+        self.assertIsNone(raw_response.execution_error)
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_non_gemini_repair_writer_rejects_reasoning_effort_without_provider_call(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        raw_response = execute_repair_writer_prompt(
+            _request(reasoning_effort=AI_REASONING_EFFORT_LOW)
+        )
+
+        self.assertIn("unsupported repair writer reasoning_effort", raw_response.execution_error)
+        mock_build_ai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_anthropic_repair_writer_config_is_allowed_and_calls_provider(
         self,
         mock_build_ai_client,
@@ -413,6 +453,7 @@ def _request(
     provider: str = "openai",
     model: str = "gpt-4.1-2025-04-14",
     max_output_tokens: object = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+    reasoning_effort: str | None = None,
     execution_metadata: dict | None = None,
 ) -> RepairWriterExecutionRequest:
     return RepairWriterExecutionRequest(
@@ -421,6 +462,7 @@ def _request(
         provider=provider,
         model=model,
         max_output_tokens=max_output_tokens,
+        reasoning_effort=reasoning_effort,
         execution_metadata=execution_metadata,
     )
 

@@ -65,6 +65,32 @@ class BenchmarkLinkedInRepairWriterCommandTests(SimpleTestCase):
         self.assertIn("run_count: 1", output)
         self.assertIn("claude_repair", output)
 
+    def test_command_accepts_plan_execution_profile_without_provider_calls(self) -> None:
+        fixture = (
+            "tests/fixtures/linkedin_post_repair_writer_benchmark/"
+            "topic_214_digest_128__claude_v3.json"
+        )
+        with TemporaryDirectory() as tempdir:
+            stdout = io.StringIO()
+
+            call_command(
+                "benchmark_linkedin_repair_writer",
+                "--dry-run",
+                "--case",
+                fixture,
+                "--plan",
+                "gemini_low=gemini,gemini-3.6-flash,1800,gemini_repair_low_reasoning",
+                "--output-root",
+                tempdir,
+                stdout=stdout,
+            )
+
+        output = stdout.getvalue()
+        self.assertIn("run_count: 1", output)
+        self.assertIn('"execution_profile": "gemini_repair_low_reasoning"', output)
+        self.assertIn('"reasoning_effort": "low"', output)
+        self.assertIn("provider_calls: 0", output)
+
     def test_command_dry_run_does_not_call_repair_writer_execution(self) -> None:
         with TemporaryDirectory() as tempdir:
             with patch(
