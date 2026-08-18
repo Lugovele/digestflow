@@ -33,6 +33,7 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
         self.assertEqual(request.model, "gpt-4.1-2025-04-14")
         self.assertEqual(request.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS)
         self.assertTrue(request.json_mode)
+        self.assertIsNone(request.reasoning_effort)
 
     def test_request_failure_does_not_call_provider(self) -> None:
         client = FakeClient("unused")
@@ -69,6 +70,40 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
         self.assertEqual(response.raw_text, '{"pass": true, "claims": [], "failed_claim_ids": []}')
         self.assertEqual(response.provider_response_metadata["finish_reasons"], ["stop"])
 
+
+
+    def test_gemini_reasoning_effort_is_passed_to_generic_client(self) -> None:
+        client = FakeClient('{"pass": true}')
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="gemini",
+            model="gemini-3.6-flash",
+            reasoning_effort="minimal",
+        )
+
+        response = execute_semantic_grounding_prompt(request, client=client)
+
+        self.assertIsNone(response.execution_error)
+        self.assertEqual(client.reasoning_effort, "minimal")
+
+    def test_non_gemini_reasoning_effort_is_rejected_without_provider_call(self) -> None:
+        client = FakeClient("unused")
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="openai",
+            model="gpt-4.1-2025-04-14",
+            reasoning_effort="low",
+        )
+
+        response = execute_semantic_grounding_prompt(request, client=client)
+
+        self.assertEqual(client.call_count, 0)
+        self.assertEqual(
+            response.execution_error,
+            "unsupported semantic grounding reasoning_effort for provider openai: low",
+        )
 
     @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
     def test_openai_execution_delegates_to_generic_client_once(
@@ -258,12 +293,14 @@ class FakeClient:
         max_output_tokens: int,
         json_mode: bool,
         allow_json_mode_fallback: bool = True,
+        reasoning_effort: str | None = None,
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
         self.allow_json_mode_fallback = allow_json_mode_fallback
+        self.reasoning_effort = reasoning_effort
         return SimpleNamespace(
             text=self.raw_text,
             raw={"id": "resp-1"},

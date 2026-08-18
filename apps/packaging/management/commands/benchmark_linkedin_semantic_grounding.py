@@ -9,6 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 from services.packaging.linkedin_post_semantic_grounding_benchmark import (
     DEFAULT_EXPERIMENT_ID,
     SemanticGroundingBenchmarkPlan,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
     SemanticGroundingBenchmarkRequest,
     default_semantic_grounding_benchmark_cases,
     default_semantic_grounding_benchmark_plans,
@@ -86,8 +87,8 @@ def _parse_plan(value: str) -> SemanticGroundingBenchmarkPlan:
         raise CommandError("--plan must use plan_id=provider,model")
     plan_id, raw_fields = value.split("=", 1)
     fields = [field.strip() for field in raw_fields.split(",")]
-    if len(fields) != 2:
-        raise CommandError("--plan must include provider,model")
+    if len(fields) not in (2, 3):
+        raise CommandError("--plan must include provider,model[,execution_profile]")
     provider = fields[0]
     return SemanticGroundingBenchmarkPlan(
         plan_id=plan_id.strip(),
@@ -95,5 +96,10 @@ def _parse_plan(value: str) -> SemanticGroundingBenchmarkPlan:
         model=fields[1],
         max_output_tokens=semantic_grounding_benchmark_max_output_tokens_for_provider(
             provider
+        ),
+        execution_profile=(
+            fields[2]
+            if len(fields) == 3
+            else SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT
         ),
     )

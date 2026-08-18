@@ -14,7 +14,14 @@ from typing import Any, Callable
 
 from django.conf import settings
 
-from apps.ai.client import AI_PROVIDER_GEMINI, AI_PROVIDER_OPENAI, GEMINI_SUPPORTED_MODELS
+from apps.ai.client import (
+    AI_PROVIDER_GEMINI,
+    AI_PROVIDER_OPENAI,
+    AI_REASONING_EFFORT_LOW,
+    AI_REASONING_EFFORT_MINIMAL,
+    GEMINI_SUPPORTED_MODELS,
+    get_ai_provider_reasoning_effort_error,
+)
 from services.packaging.linkedin_post_deterministic_gate import run_candidate_post_deterministic_gate
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
@@ -50,6 +57,27 @@ GROUNDING_COMPLETED_BLOCK = "grounding_completed_block"
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 PLAN_GPT_4_1_SEMANTIC_GROUNDING = "gpt_4_1_semantic_grounding"
 PLAN_GEMINI_3_6_FLASH_SEMANTIC_GROUNDING = "gemini_3_6_flash_semantic_grounding"
+PLAN_GROUNDING_DEFAULT = "grounding_default"
+PLAN_GROUNDING_MINIMAL = "grounding_minimal"
+PLAN_GROUNDING_LOW = "grounding_low"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT = "grounding_provider_default"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING = "grounding_minimal_reasoning"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING = "grounding_low_reasoning"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_REASONING_EFFORTS = {
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT: None,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING: AI_REASONING_EFFORT_MINIMAL,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING: AI_REASONING_EFFORT_LOW,
+}
+REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION = "GENERICIZATION_IS_A_SELECTION_BLOCKER"
+REPAIR_WRITER_ANTI_GENERIC_SELECTION_CRITERIA = (
+    "structural_reliability",
+    "grounding_fidelity",
+    "target_repair_success",
+    "quality_evaluator_result",
+    "human_voice",
+    "distinctive_voice_preservation",
+    "anti_genericness",
+)
 CANONICAL_BENCHMARK_CASE_IDS = ("topic_200_digest_134", "topic_140_digest_126")
 DIAGNOSTIC_EXCLUDED_CASE_IDS = ("topic_214_digest_128",)
 SEMANTIC_GROUNDING_PARSER_PATH = "services.packaging.linkedin_post_semantic_grounding_parser.parse_and_normalize_semantic_grounding_response"
@@ -108,6 +136,13 @@ class SemanticGroundingBenchmarkPlan:
     model: str
     max_output_tokens: int = DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
     json_mode: bool = True
+    execution_profile: str = SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        return semantic_grounding_reasoning_effort_for_execution_profile(
+            self.execution_profile
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +151,8 @@ class SemanticGroundingBenchmarkPlan:
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
             "json_mode": self.json_mode,
+            "execution_profile": self.execution_profile,
+            "reasoning_effort": self.reasoning_effort,
         }
 
 
@@ -233,6 +270,43 @@ def default_semantic_grounding_benchmark_plans() -> tuple[SemanticGroundingBench
             ),
         ),
     )
+
+
+def default_semantic_grounding_reasoning_calibration_plans() -> tuple[SemanticGroundingBenchmarkPlan, ...]:
+    return (
+        SemanticGroundingBenchmarkPlan(
+            PLAN_GROUNDING_DEFAULT,
+            AI_PROVIDER_GEMINI,
+            GEMINI_SUPPORTED_MODELS[0],
+            max_output_tokens=GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            execution_profile=SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+        ),
+        SemanticGroundingBenchmarkPlan(
+            PLAN_GROUNDING_MINIMAL,
+            AI_PROVIDER_GEMINI,
+            GEMINI_SUPPORTED_MODELS[0],
+            max_output_tokens=GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            execution_profile=SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+        ),
+        SemanticGroundingBenchmarkPlan(
+            PLAN_GROUNDING_LOW,
+            AI_PROVIDER_GEMINI,
+            GEMINI_SUPPORTED_MODELS[0],
+            max_output_tokens=GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+            execution_profile=SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+        ),
+    )
+
+
+def semantic_grounding_reasoning_effort_for_execution_profile(
+    execution_profile: str,
+) -> str | None:
+    normalized = str(execution_profile or "").strip().lower()
+    if normalized not in SEMANTIC_GROUNDING_EXECUTION_PROFILE_REASONING_EFFORTS:
+        raise SemanticGroundingBenchmarkConfigurationError(
+            f"unsupported semantic grounding execution_profile: {execution_profile}"
+        )
+    return SEMANTIC_GROUNDING_EXECUTION_PROFILE_REASONING_EFFORTS[normalized]
 
 
 def semantic_grounding_benchmark_max_output_tokens_for_provider(provider: str) -> int:
@@ -416,6 +490,17 @@ def _validate_plan(plan: SemanticGroundingBenchmarkPlan) -> None:
         raise SemanticGroundingBenchmarkConfigurationError("max_output_tokens must be a positive integer")
     if not isinstance(plan.json_mode, bool):
         raise SemanticGroundingBenchmarkConfigurationError("json_mode must be a boolean")
+    try:
+        reasoning_effort = plan.reasoning_effort
+    except SemanticGroundingBenchmarkConfigurationError:
+        raise
+    reasoning_effort_error = get_ai_provider_reasoning_effort_error(
+        provider=plan.provider,
+        reasoning_effort=reasoning_effort,
+        stage_name="semantic grounding",
+    )
+    if reasoning_effort_error is not None:
+        raise SemanticGroundingBenchmarkConfigurationError(reasoning_effort_error)
 
 
 def _live_run_record(
@@ -452,11 +537,14 @@ def _live_run_record(
         model=plan.model,
         max_output_tokens=plan.max_output_tokens,
         json_mode=plan.json_mode,
+        reasoning_effort=plan.reasoning_effort,
         execution_metadata={
             "experiment_id": request.experiment_id,
             "case_id": case.case_id,
             "plan_id": plan.plan_id,
             "run_index": run_index,
+            "execution_profile": plan.execution_profile,
+            "reasoning_effort": plan.reasoning_effort,
         },
     )
     request_error = get_semantic_grounding_execution_request_error(execution_request)
@@ -612,6 +700,8 @@ def _benchmark_record(
         "model": plan.model,
         "max_output_tokens": plan.max_output_tokens,
         "json_mode": plan.json_mode,
+        "execution_profile": plan.execution_profile,
+        "reasoning_effort": plan.reasoning_effort,
         "source_experiment_id": case.source_experiment_id,
         "source_git_commit": case.source_git_commit,
         "writer_provider": case.writer_provider,
@@ -755,6 +845,35 @@ def _manifest(request: SemanticGroundingBenchmarkRequest, output_dir: Path, star
             for case in request.cases
         ],
         "plans": [plan.to_dict() for plan in request.plans],
+        "grounding_calibration_selection": {
+            "technical_viability": [
+                "provider executions complete",
+                "responses parse",
+                "no output-limit truncations",
+                "strict JSON contract preserved",
+                "hidden output consumption materially lower than provider default",
+                "no provider execution regressions",
+            ],
+            "semantic_quality": [
+                "no new false positives",
+                "no new false negatives",
+                "causal-overreach detection preserved",
+                "forecast qualification detection preserved",
+                "unsupported fact detection preserved",
+                "source-bounded author synthesis preserved",
+                "rhetorical non-claim handling preserved",
+            ],
+            "preferred_order_when_semantically_equal": [
+                "minimal",
+                "low",
+                "provider_default",
+            ],
+        },
+        "repair_writer_selection_rule": {
+            "genericization": REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION,
+            "criteria": list(REPAIR_WRITER_ANTI_GENERIC_SELECTION_CRITERIA),
+            "production_selection_changed": False,
+        },
         "roles_not_invoked": ["Candidate Writer", "Quality Evaluator", "Repair Writer", "publication packaging"],
     })
 
@@ -762,8 +881,8 @@ def _manifest(request: SemanticGroundingBenchmarkRequest, output_dir: Path, star
 def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=(
-            "case_id", "plan_id", "provider", "model", "run_index",
-            "execution_status", "parse_success", "normalization_success",
+            "case_id", "plan_id", "provider", "model", "execution_profile",
+            "reasoning_effort", "run_index", "execution_status", "parse_success", "normalization_success",
             "grounding_pass", "blocking_claim_count", "human_review_required", "provider_calls",
         ))
         writer.writeheader()
@@ -774,6 +893,8 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                 "plan_id": record.get("plan_id"),
                 "provider": record.get("provider"),
                 "model": record.get("model"),
+                "execution_profile": record.get("execution_profile"),
+                "reasoning_effort": record.get("reasoning_effort"),
                 "run_index": record.get("run_index"),
                 "execution_status": record.get("execution_status"),
                 "parse_success": record.get("parse_success"),
@@ -791,20 +912,20 @@ def _report_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ..
         f"Experiment: `{manifest['experiment_id']}`", f"Runs: {len(run_records)}", f"Provider calls: {_provider_calls(run_records)}", "",
         _report_scope_sentence(manifest), "",
         "## Runs", "",
-        "| Case | Plan | Provider | Model | Status | Grounding pass | Blocking claims | Human review |",
-        "| --- | --- | --- | --- | --- | --- | ---: | --- |",
+        "| Case | Plan | Profile | Reasoning | Provider | Model | Status | Grounding pass | Blocking claims | Human review |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |",
     ]
     for record in run_records:
         lines.append(
-            f"| {record.get('case_id')} | {record.get('plan_id')} | {record.get('provider')} | {record.get('model')} | {record.get('execution_status')} | {record.get('grounding_pass')} | {record.get('blocking_claim_count')} | {record.get('human_review_required')} |"
+            f"| {record.get('case_id')} | {record.get('plan_id')} | {record.get('execution_profile')} | {record.get('reasoning_effort')} | {record.get('provider')} | {record.get('model')} | {record.get('execution_status')} | {record.get('grounding_pass')} | {record.get('blocking_claim_count')} | {record.get('human_review_required')} |"
         )
     return "\n".join(lines) + "\n"
 
 
 def _report_scope_sentence(manifest: dict[str, Any]) -> str:
     if manifest.get("dry_run"):
-        return "This dry-run artifact fixes CandidatePost text and varies only future Semantic Grounding provider/model plans."
-    return "This live benchmark artifact fixes CandidatePost text and varies only Semantic Grounding provider/model plans."
+        return "This dry-run artifact fixes CandidatePost text and varies only future Semantic Grounding provider/model/execution-profile plans."
+    return "This live benchmark artifact fixes CandidatePost text and varies only Semantic Grounding provider/model/execution-profile plans."
 
 
 def _comparison_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any], ...]) -> str:
@@ -820,6 +941,8 @@ def _comparison_text(manifest: dict[str, Any], run_records: tuple[dict[str, Any]
             model_mapping.append((case_id, label, str(record.get("provider")), str(record.get("model"))))
             lines.extend([
                 f"### {label}", "",
+                f"execution_profile: {record.get('execution_profile')}",
+                f"reasoning_effort: {record.get('reasoning_effort')}",
                 f"execution_status: {record.get('execution_status')}",
                 f"parse_success: {record.get('parse_success')}",
                 f"normalization_success: {record.get('normalization_success')}",

@@ -13,7 +13,7 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import build_ai_client
+from apps.ai.client import build_ai_client, get_ai_provider_reasoning_effort_error
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_SEMANTIC_GROUNDING,
@@ -47,6 +47,7 @@ class SemanticGroundingExecutionRequest:
     model: str
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     json_mode: bool = DEFAULT_JSON_MODE
+    reasoning_effort: str | None = None
     execution_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +58,7 @@ class SemanticGroundingExecutionRequest:
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
             "json_mode": self.json_mode,
+            "reasoning_effort": self.reasoning_effort,
             "execution_metadata": copy.deepcopy(self.execution_metadata),
         }
 
@@ -104,6 +106,7 @@ def build_semantic_grounding_execution_request(
     model: str | None = None,
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     json_mode: bool = DEFAULT_JSON_MODE,
+    reasoning_effort: str | None = None,
     execution_metadata: dict[str, Any] | None = None,
 ) -> SemanticGroundingExecutionRequest:
     return SemanticGroundingExecutionRequest(
@@ -113,6 +116,7 @@ def build_semantic_grounding_execution_request(
         model=_resolve_model(model),
         max_output_tokens=max_output_tokens,
         json_mode=json_mode,
+        reasoning_effort=reasoning_effort,
         execution_metadata=copy.deepcopy(execution_metadata),
     )
 
@@ -151,13 +155,17 @@ def execute_semantic_grounding_prompt(
                 execution_error=str(exc),
             )
 
+    provider_kwargs: dict[str, Any] = {
+        "prompt": prompt,
+        "max_output_tokens": request.max_output_tokens,
+        "json_mode": request.json_mode,
+        "allow_json_mode_fallback": False,
+    }
+    if request.reasoning_effort is not None:
+        provider_kwargs["reasoning_effort"] = request.reasoning_effort
+
     try:
-        response = text_client.generate_text(
-            prompt=prompt,
-            max_output_tokens=request.max_output_tokens,
-            json_mode=request.json_mode,
-            allow_json_mode_fallback=False,
-        )
+        response = text_client.generate_text(**provider_kwargs)
     except Exception as exc:  # pragma: no cover - covered with fake failure.
         return SemanticGroundingRawResponse(
             raw_text="",
@@ -255,6 +263,13 @@ def get_semantic_grounding_execution_request_error(
         )
     if not isinstance(request.json_mode, bool):
         return "invalid semantic grounding json_mode: must be a boolean"
+    reasoning_effort_error = get_ai_provider_reasoning_effort_error(
+        provider=request.provider,
+        reasoning_effort=request.reasoning_effort,
+        stage_name=STAGE_NAME,
+    )
+    if reasoning_effort_error is not None:
+        return reasoning_effort_error
     if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
         return "missing semantic grounding prompt text"
     rendered_input_text = getattr(request.rendered_prompt_input, "input_text", None)

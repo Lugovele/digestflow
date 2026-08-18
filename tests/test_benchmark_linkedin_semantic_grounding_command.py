@@ -16,6 +16,7 @@ from services.packaging.linkedin_post_semantic_grounding_benchmark import (
     BENCHMARK_STATUS_DRY_RUN,
     DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
     GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
     SemanticGroundingBenchmarkArtifacts,
     SemanticGroundingBenchmarkResult,
 )
@@ -80,6 +81,23 @@ class BenchmarkLinkedInSemanticGroundingCommandTests(SimpleTestCase):
         plan = fake_runner.call_args.args[0].plans[0]
 
         self.assertEqual(plan.provider, "gemini")
+        self.assertEqual(plan.max_output_tokens, GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS)
+
+
+    def test_command_plan_argument_accepts_grounding_execution_profile(self) -> None:
+        fake_runner = Mock(return_value=_result(run_count=3))
+        with patch(f"{COMMAND_MODULE}.run_semantic_grounding_benchmark", fake_runner):
+            call_command(
+                "benchmark_linkedin_semantic_grounding",
+                "--experiment-id", "semantic_grounding_profile_plan",
+                "--plan", "grounding_low=gemini,gemini-3.6-flash,grounding_low_reasoning",
+                "--output-root", str(self.root / "outputs"),
+                stdout=io.StringIO(),
+            )
+
+        plan = fake_runner.call_args.args[0].plans[0]
+        self.assertEqual(plan.execution_profile, SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING)
+        self.assertEqual(plan.reasoning_effort, "low")
         self.assertEqual(plan.max_output_tokens, GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS)
 
     def test_malformed_plan_argument_is_rejected(self) -> None:

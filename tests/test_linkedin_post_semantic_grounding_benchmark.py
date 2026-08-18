@@ -70,6 +70,33 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
             plans[0].max_output_tokens,
         )
 
+
+    def test_grounding_reasoning_calibration_plans_vary_only_execution_profile(self) -> None:
+        plans = benchmark.default_semantic_grounding_reasoning_calibration_plans()
+
+        self.assertEqual(
+            [plan.plan_id for plan in plans],
+            [
+                benchmark.PLAN_GROUNDING_DEFAULT,
+                benchmark.PLAN_GROUNDING_MINIMAL,
+                benchmark.PLAN_GROUNDING_LOW,
+            ],
+        )
+        self.assertEqual({plan.provider for plan in plans}, {"gemini"})
+        self.assertEqual({plan.model for plan in plans}, {GEMINI_SUPPORTED_MODELS[0]})
+        self.assertEqual(
+            {plan.max_output_tokens for plan in plans},
+            {benchmark.GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS},
+        )
+        self.assertEqual([plan.reasoning_effort for plan in plans], [None, "minimal", "low"])
+
+    def test_unsupported_grounding_execution_profile_fails_safely(self) -> None:
+        with self.assertRaisesRegex(
+            benchmark.SemanticGroundingBenchmarkConfigurationError,
+            "unsupported semantic grounding execution_profile",
+        ):
+            benchmark.semantic_grounding_reasoning_effort_for_execution_profile("gemini_repair_low_reasoning")
+
     def test_prompt_render_is_deterministic_for_fixed_case(self) -> None:
         case = benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json")
         first = benchmark.build_semantic_grounding_benchmark_prompt_render(case)
@@ -120,6 +147,30 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
             records = [json.loads(line) for line in Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(len(records), 4)
             self.assertTrue(all(sum(record["provider_invocation_counts"].values()) == 0 for record in records))
+
+
+    def test_dry_run_grounding_calibration_expands_three_profiles_without_provider_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_calibration_dry",
+                    cases=benchmark.default_semantic_grounding_benchmark_cases(FIXTURE_ROOT),
+                    plans=benchmark.default_semantic_grounding_reasoning_calibration_plans(),
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.status, benchmark.BENCHMARK_STATUS_DRY_RUN)
+        self.assertEqual(result.run_count, 6)
+        self.assertEqual(result.provider_call_count, 0)
+        self.assertEqual(
+            [record["reasoning_effort"] for record in result.run_records[:3]],
+            [None, "minimal", "low"],
+        )
+        self.assertTrue(
+            all(record["max_output_tokens"] == benchmark.GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS for record in result.run_records)
+        )
 
     def test_dry_run_records_provider_specific_plan_budgets(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -532,6 +583,42 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
             },
         )
         self.assertEqual(record_budgets, request_budgets)
+
+
+    def test_live_path_passes_grounding_reasoning_profile_to_execution_request(self) -> None:
+        captured_requests = []
+
+        def fake_executor(request):
+            captured_requests.append(request)
+            return _raw(json.dumps(_review_payload()))
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = benchmark.run_semantic_grounding_benchmark(
+                benchmark.SemanticGroundingBenchmarkRequest(
+                    experiment_id="semantic_grounding_live_profile",
+                    cases=(benchmark.load_semantic_grounding_benchmark_case(FIXTURE_ROOT / "topic_200_digest_134.json"),),
+                    plans=benchmark.default_semantic_grounding_reasoning_calibration_plans(),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        self.assertEqual(result.provider_call_count, 3)
+        self.assertEqual([request.reasoning_effort for request in captured_requests], [None, "minimal", "low"])
+        self.assertEqual(
+            [record["execution_profile"] for record in result.run_records],
+            [
+                benchmark.SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+                benchmark.SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+                benchmark.SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+            ],
+        )
+        self.assertEqual(
+            {request.max_output_tokens for request in captured_requests},
+            {benchmark.GEMINI_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS},
+        )
 
     def test_module_imports_no_provider_runtime_writer_quality_repair_or_packaging_boundaries(self) -> None:
         source = Path(benchmark.__file__).read_text(encoding="utf-8")

@@ -133,6 +133,26 @@ REPAIR_WRITER_EXECUTION_PROFILE_REASONING_EFFORTS = {
     REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_MINIMAL_REASONING: AI_REASONING_EFFORT_MINIMAL,
     REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_LOW_REASONING: AI_REASONING_EFFORT_LOW,
 }
+
+
+REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION = "GENERICIZATION_IS_A_SELECTION_BLOCKER"
+REPAIR_WRITER_ANTI_GENERIC_SELECTION_CRITERIA = (
+    "structural_reliability",
+    "grounding_fidelity",
+    "target_repair_success",
+    "quality_evaluator_result",
+    "human_voice",
+    "distinctive_voice_preservation",
+    "anti_genericness",
+)
+REPAIR_WRITER_VOICE_PRESERVATION_DIAGNOSTICS = (
+    "original_character_count",
+    "repaired_character_count",
+    "character_delta_percent",
+    "quality_author_point_of_view",
+    "quality_human_voice",
+    "only_post_text_changed",
+)
 RECONSTRUCTION_DIRECT = "DIRECT"
 RECONSTRUCTION_DETERMINISTIC = "DETERMINISTIC_RECONSTRUCTION"
 REPAIR_WRITER_JSON_MODE = False
@@ -1502,6 +1522,14 @@ def _manifest(
                     "model": FIXED_QUALITY_EVALUATOR_MODEL,
                 },
             },
+            "repair_writer_selection_rule": {
+                "genericization": REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION,
+                "criteria": list(REPAIR_WRITER_ANTI_GENERIC_SELECTION_CRITERIA),
+                "voice_preservation_diagnostics": list(
+                    REPAIR_WRITER_VOICE_PRESERVATION_DIAGNOSTICS
+                ),
+                "production_selection_changed": False,
+            },
             "planned_live_accounting": {
                 "logical_repair_runs": logical_calls,
                 "planned_repair_writer_calls": logical_calls,
@@ -1595,6 +1623,9 @@ def _report_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ...]) 
         "",
         "This artifact fixes initial candidates and varies only Repair Writer provider/model plans.",
         "",
+        f"Genericization rule: {REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION}.",
+        "A Repair Writer model cannot win solely through accept count, QE total, cost, or structural reliability if it consistently genericizes strong source prose.",
+        "",
         "| Case | Plan | Provider | Model | Status | Failure | Outcome |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
@@ -1616,6 +1647,9 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
         f"Experiment: `{manifest['experiment_id']}`",
         "",
         "Downstream Semantic Grounding and Quality Evaluator roles are fixed for parity.",
+        "",
+        f"Genericization rule: {REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION}.",
+        "Voice preservation and anti-genericness are first-class selection axes for future final comparison.",
         "",
     ]
     for case_id in sorted({str(record.get("case_id")) for record in records}):
@@ -1654,6 +1688,8 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
                     f"original_character_count: {preservation.get('original_character_count')}",
                     f"repaired_character_count: {preservation.get('repaired_character_count')}",
                     f"character_delta: {preservation.get('character_delta')}",
+                    f"character_delta_percent: {preservation.get('character_delta_percent')}",
+                    "voice_preservation_note: compare distinctive phrasing, sentence rhythm, authorial specificity, rhetorical structure, and generic transition drift; this is reporting-only and not a deterministic AI detector.",
                     f"repair_target: {record.get('repair_instruction', {}).get('failed_criterion')}",
                     "",
                 ]

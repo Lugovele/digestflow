@@ -25,6 +25,7 @@ from services.packaging.linkedin_post_repair_writer_benchmark import (
     REPAIR_WRITER_EXECUTION_PROFILE_GEMINI_MINIMAL_REASONING,
     REPAIR_WRITER_EXECUTION_PROFILE_PROVIDER_DEFAULT,
     REPAIR_WRITER_JSON_MODE,
+    REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION,
     REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     RepairWriterBenchmarkRequest,
     build_repair_writer_benchmark_prompt_render,
@@ -189,6 +190,29 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(manifest["planned_live_accounting"]["planned_semantic_grounding_calls"], 9)
         self.assertEqual(manifest["planned_live_accounting"]["planned_quality_evaluator_calls"], 9)
         self.assertEqual(manifest["planned_live_accounting"]["planned_max_provider_calls"], 27)
+
+
+    def test_manifest_records_genericization_as_selection_blocker_without_selection_change(self) -> None:
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=default_repair_writer_benchmark_cases(),
+                    plans=default_repair_writer_benchmark_plans(),
+                    allow_api=False,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+            )
+            manifest = json.loads(Path(result.artifacts.manifest_json).read_text(encoding="utf-8"))
+
+        selection_rule = manifest["repair_writer_selection_rule"]
+        self.assertEqual(
+            selection_rule["genericization"],
+            REPAIR_WRITER_SELECTION_BLOCKER_GENERICIZATION,
+        )
+        self.assertIn("anti_genericness", selection_rule["criteria"])
+        self.assertIn("distinctive_voice_preservation", selection_rule["criteria"])
+        self.assertFalse(selection_rule["production_selection_changed"])
 
     def test_default_plans_have_identical_prompt_input_hash_for_each_case(self) -> None:
         with TemporaryDirectory() as tempdir:
