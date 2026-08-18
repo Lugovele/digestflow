@@ -81,6 +81,49 @@ class LinkedInPostSemanticGroundingBoundaryBenchmarkTests(SimpleTestCase):
         self.assertEqual(plans[1].model, "gemini-3.6-flash")
         self.assertEqual(plans[1].max_output_tokens, 4800)
 
+
+    def test_boundary_reasoning_calibration_plans_cover_full_suite_with_gemini_profiles(self) -> None:
+        cases = boundary.load_semantic_grounding_boundary_cases()
+        plans = boundary.default_semantic_grounding_boundary_reasoning_calibration_plans()
+
+        self.assertEqual(len(cases), 16)
+        self.assertEqual([plan.plan_id for plan in plans], [
+            boundary.PLAN_GROUNDING_PROVIDER_DEFAULT,
+            boundary.PLAN_GROUNDING_MINIMAL,
+            boundary.PLAN_GROUNDING_LOW,
+        ])
+        self.assertEqual({plan.provider for plan in plans}, {boundary.PROVIDER_GEMINI})
+        self.assertEqual({plan.model for plan in plans}, {boundary.GEMINI_MODEL})
+        self.assertEqual(
+            [plan.execution_profile for plan in plans],
+            [
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+            ],
+        )
+        self.assertEqual([plan.reasoning_effort for plan in plans], [None, "minimal", "low"])
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    experiment_id="semantic-grounding-reasoning-calibration-full-dry-v1",
+                    cases=cases,
+                    plans=plans,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(result.status, boundary.STATUS_DRY_RUN)
+        self.assertEqual(result.provider_call_count, 0)
+        self.assertEqual(result.planned_provider_call_count, 48)
+        self.assertEqual(result.run_count, 48)
+        self.assertEqual(
+            {record["execution_profile"] for record in result.run_records},
+            {plan.execution_profile for plan in plans},
+        )
+
     def test_prompt_render_uses_candidate_post_as_post_text_only(self) -> None:
         case = boundary.load_semantic_grounding_boundary_cases()[0]
 
@@ -282,6 +325,81 @@ class LinkedInPostSemanticGroundingBoundaryBenchmarkTests(SimpleTestCase):
         self.assertEqual(
             outcomes_by_case_id["authorial_synthesis_invalid"],
             boundary.OUTCOME_INVALID_BLOCKED,
+        )
+
+
+    def test_live_successful_pass_and_block_have_null_failure_fields(self) -> None:
+        cases = boundary.load_semantic_grounding_boundary_cases()
+        expected_by_case_id = {case.case_id: case.expected_label for case in cases}
+
+        def fake_executor(request):
+            blocking = (
+                expected_by_case_id[request.execution_metadata["case_id"]]
+                == boundary.EXPECTED_INVALID
+            )
+            return _raw(_review_payload(passed=not blocking, blocking=blocking))
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=cases,
+                    plans=(boundary.default_semantic_grounding_boundary_plans()[0],),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        statuses = {record["execution_status"] for record in result.run_records}
+        self.assertEqual(statuses, {boundary.RUN_STATUS_PASS, boundary.RUN_STATUS_BLOCK})
+        for record in result.run_records:
+            self.assertTrue(record["execution_success"])
+            self.assertTrue(record["parse_success"])
+            self.assertTrue(record["normalization_success"])
+            self.assertIsNone(record["failure_stage"])
+            self.assertIsNone(record["failure_code"])
+
+    def test_live_path_passes_boundary_reasoning_profile_to_execution_request(self) -> None:
+        captured_requests = []
+        cases = boundary.load_semantic_grounding_boundary_cases()
+
+        def fake_executor(request):
+            captured_requests.append(request)
+            return _raw(_review_payload())
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = boundary.run_semantic_grounding_boundary_benchmark(
+                boundary.SemanticGroundingBoundaryRequest(
+                    cases=cases,
+                    plans=boundary.default_semantic_grounding_boundary_reasoning_calibration_plans(),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                semantic_grounding_executor=fake_executor,
+            )
+
+        self.assertEqual(result.provider_call_count, 48)
+        self.assertEqual(
+            [request.reasoning_effort for request in captured_requests[:3]],
+            [None, "minimal", "low"],
+        )
+        self.assertEqual(
+            [record["execution_profile"] for record in result.run_records[:3]],
+            [
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+            ],
+        )
+        self.assertEqual(
+            [request.execution_metadata["semantic_grounding_execution_profile"] for request in captured_requests[:3]],
+            [
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+                boundary.SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+            ],
         )
 
     def test_module_imports_no_runtime_writer_quality_repair_provider_boundaries(self) -> None:

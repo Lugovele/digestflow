@@ -11,6 +11,7 @@ from services.packaging.linkedin_post_semantic_grounding_boundary_benchmark impo
     SemanticGroundingBoundaryExecutionPolicy,
     SemanticGroundingBoundaryPlan,
     SemanticGroundingBoundaryRequest,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
     default_semantic_grounding_boundary_plans,
     load_semantic_grounding_boundary_cases,
     run_semantic_grounding_boundary_benchmark,
@@ -123,15 +124,15 @@ class Command(BaseCommand):
 
 def _parse_plan(value: str) -> SemanticGroundingBoundaryPlan:
     if "=" not in value:
-        raise CommandError("--plan must use plan_id=provider,model,max_output_tokens")
+        raise CommandError("--plan must use plan_id=provider,model[,max_output_tokens[,execution_profile]]")
     plan_id, raw_fields = value.split("=", 1)
     fields = [field.strip() for field in raw_fields.split(",")]
-    if len(fields) not in {2, 3}:
-        raise CommandError("--plan must include provider,model[,max_output_tokens]")
+    if len(fields) not in {2, 3, 4}:
+        raise CommandError("--plan must include provider,model[,max_output_tokens[,execution_profile]]")
     try:
         max_output_tokens = (
             int(fields[2])
-            if len(fields) == 3
+            if len(fields) >= 3
             else _default_budget_for_provider(fields[0])
         )
     except ValueError as exc:
@@ -141,6 +142,11 @@ def _parse_plan(value: str) -> SemanticGroundingBoundaryPlan:
         provider=fields[0],
         model=fields[1],
         max_output_tokens=max_output_tokens,
+        execution_profile=(
+            fields[3]
+            if len(fields) == 4
+            else SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT
+        ),
     )
 
 

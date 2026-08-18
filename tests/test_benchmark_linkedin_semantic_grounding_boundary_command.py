@@ -76,12 +76,45 @@ class BenchmarkLinkedInSemanticGroundingBoundaryCommandTests(SimpleTestCase):
         self.assertEqual(plan.model, "gemini-3.6-flash")
         self.assertEqual(plan.max_output_tokens, 4800)
 
+
+    def test_command_plan_argument_accepts_execution_profile(self) -> None:
+        fake_runner = Mock(return_value=_result())
+        with patch(f"{COMMAND_MODULE}.run_semantic_grounding_boundary_benchmark", fake_runner):
+            call_command(
+                "benchmark_linkedin_semantic_grounding_boundary",
+                "--plan",
+                "grounding_low=gemini,gemini-3.6-flash,4096,grounding_low_reasoning",
+                "--output-root",
+                str(self.root / "outputs"),
+                stdout=io.StringIO(),
+            )
+
+        plan = fake_runner.call_args.args[0].plans[0]
+        self.assertEqual(plan.plan_id, "grounding_low")
+        self.assertEqual(plan.provider, "gemini")
+        self.assertEqual(plan.model, "gemini-3.6-flash")
+        self.assertEqual(plan.max_output_tokens, 4096)
+        self.assertEqual(plan.execution_profile, "grounding_low_reasoning")
+        self.assertEqual(plan.reasoning_effort, "low")
+
     def test_command_rejects_non_integer_plan_budget(self) -> None:
         with self.assertRaises(CommandError):
             call_command(
                 "benchmark_linkedin_semantic_grounding_boundary",
                 "--plan",
                 "gemini_grounding=gemini,gemini-3.6-flash,not-an-int",
+                "--output-root",
+                str(self.root / "outputs"),
+                stdout=io.StringIO(),
+            )
+
+
+    def test_command_rejects_non_integer_four_field_plan_budget(self) -> None:
+        with self.assertRaises(CommandError):
+            call_command(
+                "benchmark_linkedin_semantic_grounding_boundary",
+                "--plan",
+                "grounding_low=gemini,gemini-3.6-flash,not-an-int,grounding_low_reasoning",
                 "--output-root",
                 str(self.root / "outputs"),
                 stdout=io.StringIO(),

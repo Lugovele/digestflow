@@ -288,6 +288,8 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         self.assertTrue(record["parse_success"])
         self.assertTrue(record["normalization_success"])
         self.assertTrue(record["grounding_pass"])
+        self.assertIsNone(record["failure_stage"])
+        self.assertIsNone(record["failure_code"])
         self.assertEqual(record["blocking_claim_count"], 0)
         self.assertEqual(record["provider_invocation_counts"]["semantic_grounding"], 1)
         self.assertEqual(record["provider_invocation_counts"]["candidate_writer"], 0)
@@ -316,6 +318,8 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
             )
         record = result.run_records[0]
         self.assertEqual(record["execution_status"], benchmark.GROUNDING_COMPLETED_BLOCK)
+        self.assertIsNone(record["failure_stage"])
+        self.assertIsNone(record["failure_code"])
         self.assertFalse(record["grounding_pass"])
         self.assertEqual(record["blocking_claim_count"], 1)
         self.assertEqual(record["blocking_claim_ids"], ["c1"])

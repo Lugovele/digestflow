@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from django.conf import settings
 
+from apps.ai.client import get_ai_provider_reasoning_effort_error
 from services.packaging.linkedin_final_post_diagnostics import FinalPostDiagnostics
 from services.packaging.linkedin_post_editorial_boundary import (
     PostGenerationMetadata,
@@ -30,6 +31,12 @@ from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_SEMANTIC_GROUNDING,
     OPENAI_FINAL_POST_MODEL,
     get_final_post_role_provider_model_policy_failure,
+)
+from services.packaging.linkedin_post_semantic_grounding_benchmark import (
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+    semantic_grounding_reasoning_effort_for_execution_profile,
 )
 from services.packaging.linkedin_post_prompt_renderers import (
     render_semantic_grounding_prompt_input,
@@ -52,6 +59,9 @@ EXPECTED_LABELS = (EXPECTED_VALID, EXPECTED_INVALID)
 
 PLAN_GPT_GROUNDING = "gpt_grounding"
 PLAN_GEMINI_GROUNDING = "gemini_grounding"
+PLAN_GROUNDING_PROVIDER_DEFAULT = "grounding_default"
+PLAN_GROUNDING_MINIMAL = "grounding_minimal"
+PLAN_GROUNDING_LOW = "grounding_low"
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 GEMINI_MODEL = "gemini-3.6-flash"
@@ -191,6 +201,13 @@ class SemanticGroundingBoundaryPlan:
     model: str
     max_output_tokens: int
     json_mode: bool = True
+    execution_profile: str = SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        return semantic_grounding_reasoning_effort_for_execution_profile(
+            self.execution_profile
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,6 +216,8 @@ class SemanticGroundingBoundaryPlan:
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
             "json_mode": self.json_mode,
+            "execution_profile": self.execution_profile,
+            "reasoning_effort": self.reasoning_effort,
         }
 
 
@@ -337,6 +356,32 @@ def default_semantic_grounding_boundary_plans() -> tuple[SemanticGroundingBounda
             provider=PROVIDER_GEMINI,
             model=GEMINI_MODEL,
             max_output_tokens=GEMINI_GROUNDING_MAX_OUTPUT_TOKENS,
+        ),
+    )
+
+
+def default_semantic_grounding_boundary_reasoning_calibration_plans() -> tuple[SemanticGroundingBoundaryPlan, ...]:
+    return (
+        SemanticGroundingBoundaryPlan(
+            plan_id=PLAN_GROUNDING_PROVIDER_DEFAULT,
+            provider=PROVIDER_GEMINI,
+            model=GEMINI_MODEL,
+            max_output_tokens=GEMINI_GROUNDING_MAX_OUTPUT_TOKENS,
+            execution_profile=SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
+        ),
+        SemanticGroundingBoundaryPlan(
+            plan_id=PLAN_GROUNDING_MINIMAL,
+            provider=PROVIDER_GEMINI,
+            model=GEMINI_MODEL,
+            max_output_tokens=GEMINI_GROUNDING_MAX_OUTPUT_TOKENS,
+            execution_profile=SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+        ),
+        SemanticGroundingBoundaryPlan(
+            plan_id=PLAN_GROUNDING_LOW,
+            provider=PROVIDER_GEMINI,
+            model=GEMINI_MODEL,
+            max_output_tokens=GEMINI_GROUNDING_MAX_OUTPUT_TOKENS,
+            execution_profile=SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
         ),
     )
 
@@ -800,6 +845,16 @@ def _validate_plan(plan: SemanticGroundingBoundaryPlan) -> None:
         raise SemanticGroundingBoundaryBenchmarkConfigurationError(
             "json_mode must be a boolean"
         )
+    try:
+        reasoning_effort = plan.reasoning_effort
+    except ValueError as exc:
+        raise SemanticGroundingBoundaryBenchmarkConfigurationError(str(exc)) from exc
+    reasoning_effort_error = get_ai_provider_reasoning_effort_error(
+        provider=plan.provider,
+        reasoning_effort=reasoning_effort,
+    )
+    if reasoning_effort_error is not None:
+        raise SemanticGroundingBoundaryBenchmarkConfigurationError(reasoning_effort_error)
 
 
 def _validate_execution_policy(
@@ -847,6 +902,7 @@ def _live_run_record(
         model=plan.model,
         max_output_tokens=plan.max_output_tokens,
         json_mode=plan.json_mode,
+        reasoning_effort=plan.reasoning_effort,
         execution_metadata={
             "experiment_id": request.experiment_id,
             "benchmark_type": BOUNDARY_BENCHMARK_TYPE,
@@ -854,6 +910,8 @@ def _live_run_record(
             "plan_id": plan.plan_id,
             "run_index": run_index,
             "run_id": _run_id(case, plan, run_index),
+            "semantic_grounding_execution_profile": plan.execution_profile,
+            "semantic_grounding_reasoning_effort": plan.reasoning_effort,
         },
     )
     request_error = get_semantic_grounding_execution_request_error(execution_request)
@@ -977,7 +1035,7 @@ def _live_run_record(
         render,
         execution_status=RUN_STATUS_PASS if passed else RUN_STATUS_BLOCK,
         failure_stage=None,
-        failure_code=RUN_STATUS_PASS if passed else RUN_STATUS_BLOCK,
+        failure_code=None,
         execution_success=True,
         parse_success=True,
         normalization_success=True,
@@ -1082,6 +1140,8 @@ def _boundary_record(
             "model": plan.model,
             "max_output_tokens": plan.max_output_tokens,
             "json_mode": plan.json_mode,
+            "execution_profile": plan.execution_profile,
+            "reasoning_effort": plan.reasoning_effort,
             "run_index": run_index,
             "run_id": f"{case.case_id}__{plan.plan_id}__{run_index}",
             "started_at": started_at,
@@ -1197,6 +1257,8 @@ def _compatible_historical_record(
         "model": plan.model,
         "max_output_tokens": plan.max_output_tokens,
         "json_mode": plan.json_mode,
+        "execution_profile": plan.execution_profile,
+        "reasoning_effort": plan.reasoning_effort,
         "expected_label": case.expected_label,
         "expected_blocking": case.expected_blocking,
     }
@@ -1249,6 +1311,8 @@ def _historical_reuse_record(
         "model",
         "max_output_tokens",
         "json_mode",
+        "execution_profile",
+        "reasoning_effort",
         "run_index",
         "run_id",
         "execution_status",
@@ -1655,6 +1719,8 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                 "plan_id",
                 "provider",
                 "model",
+                "execution_profile",
+                "reasoning_effort",
                 "execution_status",
                 "grounding_pass",
                 "blocking_claim_count",
@@ -1677,6 +1743,8 @@ def _write_summary_csv(path: Path, run_records: tuple[dict[str, Any], ...]) -> N
                     "plan_id": record.get("plan_id"),
                     "provider": record.get("provider"),
                     "model": record.get("model"),
+                    "execution_profile": record.get("execution_profile"),
+                    "reasoning_effort": record.get("reasoning_effort"),
                     "execution_status": record.get("execution_status"),
                     "grounding_pass": record.get("grounding_pass"),
                     "blocking_claim_count": record.get("blocking_claim_count"),
@@ -1716,6 +1784,8 @@ def _comparison_text(
                     f"### {record['case_id']} / {record['plan_id']}",
                     "",
                     f"expected_label: {record['expected_label']}",
+                    f"execution_profile: {record.get('execution_profile')}",
+                    f"reasoning_effort: {record.get('reasoning_effort')}",
                     f"execution_status: {record['execution_status']}",
                     f"boundary_outcome: {record['boundary_outcome']}",
                     f"grounding_pass: {record.get('grounding_pass')}",

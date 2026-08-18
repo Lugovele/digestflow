@@ -615,7 +615,7 @@ def _live_run_record(
         request, case, plan, run_index, started_at, completed_at, render,
         execution_status=GROUNDING_COMPLETED_PASS if passed else GROUNDING_COMPLETED_BLOCK,
         failure_stage=None,
-        failure_code=GROUNDING_COMPLETED_PASS if passed else GROUNDING_COMPLETED_BLOCK,
+        failure_code=None,
         execution_success=True,
         parse_success=True,
         normalization_success=True,
