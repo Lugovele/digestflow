@@ -327,7 +327,8 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
         )
         self.assertTrue(record["response_diagnostics"]["starts_with_json_object"])
         self.assertFalse(record["response_diagnostics"]["ends_with_json_object"])
-        self.assertEqual(record["response_diagnostics"]["brace_balance"], 1)
+        self.assertEqual(record["response_diagnostics"]["json_brace_balance"], 1)
+        self.assertEqual(record["response_diagnostics"]["response_structure_classification"], "UNKNOWN")
         self.assertEqual(record["parser_error_details"]["line"], 1)
         self.assertEqual(record["parser_error_details"]["column"], 2)
 
@@ -338,34 +339,32 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
                 provider="gemini",
                 model="gemini-3.6-flash",
                 provider_response_metadata={
-                    "provider": "gemini",
-                    "model": "gemini-3.6-flash",
-                    "choices_count": 1,
-                    "finish_reasons": ["stop"],
-                    "message_content_types": ["str"],
-                    "prompt_tokens": 100,
-                    "completion_tokens": 50,
-                    "total_tokens": 150,
+                    "provider_finish_reason": "stop",
+                    "provider_stop_reason": None,
+                    "provider_max_output_tokens": 4800,
+                    "provider_output_limit_reached": False,
+                    "provider_prompt_tokens": 100,
+                    "provider_visible_output_tokens": 50,
+                    "provider_hidden_output_tokens": 0,
+                    "provider_combined_output_tokens": 50,
+                    "provider_output_budget_utilization_percent": 1.04,
                 },
             )
         )
         diagnostics = result.run_records[0]["response_diagnostics"]
 
-        self.assertTrue(diagnostics["leading_non_json_detected"])
-        self.assertTrue(diagnostics["trailing_non_json_detected"])
         self.assertEqual(
-            diagnostics["provider_response_metadata"],
-            {
-                "provider": "gemini",
-                "model": "gemini-3.6-flash",
-                "choices_count": 1,
-                "finish_reasons": ["stop"],
-                "message_content_types": ["str"],
-                "prompt_tokens": 100,
-                "completion_tokens": 50,
-                "total_tokens": 150,
-            },
+            diagnostics["response_structure_classification"],
+            "EXTRA_PROSE_AROUND_JSON",
         )
+        self.assertEqual(diagnostics["provider_finish_reason"], "stop")
+        self.assertEqual(diagnostics["provider_max_output_tokens"], 4800)
+        self.assertFalse(diagnostics["provider_output_limit_reached"])
+        self.assertEqual(diagnostics["provider_prompt_tokens"], 100)
+        self.assertEqual(diagnostics["provider_visible_output_tokens"], 50)
+        self.assertEqual(diagnostics["provider_hidden_output_tokens"], 0)
+        self.assertEqual(diagnostics["provider_combined_output_tokens"], 50)
+        self.assertEqual(diagnostics["provider_output_budget_utilization_percent"], 1.04)
 
     def test_live_path_allowlists_provider_metadata_for_artifacts(self) -> None:
         result = _single_live_result(
@@ -374,14 +373,15 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
                 provider="gemini",
                 model="gemini-3.6-flash",
                 provider_response_metadata={
-                    "provider": "gemini",
-                    "model": "gemini-3.6-flash",
-                    "choices_count": 1,
-                    "finish_reasons": ["stop"],
-                    "message_content_types": ["str"],
-                    "prompt_tokens": 100,
-                    "completion_tokens": 50,
-                    "total_tokens": 150,
+                    "provider_finish_reason": "stop",
+                    "provider_stop_reason": None,
+                    "provider_max_output_tokens": 4800,
+                    "provider_output_limit_reached": False,
+                    "provider_prompt_tokens": 100,
+                    "provider_visible_output_tokens": 50,
+                    "provider_hidden_output_tokens": 0,
+                    "provider_combined_output_tokens": 50,
+                    "provider_output_budget_utilization_percent": 1.04,
                     "transport_details": {"authorization": "redacted"},
                     "provider_body": {"raw": "body"},
                     "raw_text_copy": "not allowed",
@@ -389,20 +389,18 @@ class LinkedInPostSemanticGroundingBenchmarkTests(SimpleTestCase):
             )
         )
 
-        metadata = result.run_records[0]["response_diagnostics"]["provider_response_metadata"]
-        self.assertEqual(
-            metadata,
-            {
-                "provider": "gemini",
-                "model": "gemini-3.6-flash",
-                "choices_count": 1,
-                "finish_reasons": ["stop"],
-                "message_content_types": ["str"],
-                "prompt_tokens": 100,
-                "completion_tokens": 50,
-                "total_tokens": 150,
-            },
-        )
+        diagnostics = result.run_records[0]["response_diagnostics"]
+        self.assertEqual(diagnostics["provider_finish_reason"], "stop")
+        self.assertEqual(diagnostics["provider_max_output_tokens"], 4800)
+        self.assertFalse(diagnostics["provider_output_limit_reached"])
+        self.assertEqual(diagnostics["provider_prompt_tokens"], 100)
+        self.assertEqual(diagnostics["provider_visible_output_tokens"], 50)
+        self.assertEqual(diagnostics["provider_hidden_output_tokens"], 0)
+        self.assertEqual(diagnostics["provider_combined_output_tokens"], 50)
+        self.assertEqual(diagnostics["provider_output_budget_utilization_percent"], 1.04)
+        self.assertNotIn("transport_details", diagnostics)
+        self.assertNotIn("provider_body", diagnostics)
+        self.assertNotIn("raw_text_copy", diagnostics)
 
     def test_live_path_allowlists_usage_for_artifacts(self) -> None:
         result = _single_live_result(

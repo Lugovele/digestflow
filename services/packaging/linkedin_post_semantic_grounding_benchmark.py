@@ -25,6 +25,9 @@ from services.packaging.linkedin_post_model_role_policy import (
     get_final_post_role_provider_model_policy_failure,
 )
 from services.packaging.linkedin_post_prompt_renderers import render_semantic_grounding_prompt_input
+from services.packaging.linkedin_post_semantic_grounding_structural_diagnostics import (
+    build_semantic_grounding_raw_response_diagnostics,
+)
 
 BENCHMARK_SCHEMA_VERSION = "2026-08-12"
 SOURCE_EXPERIMENT_ID = "writer-claude-vs-gpt-candidatepost-v5"
@@ -664,31 +667,7 @@ def _normalization_error_details(error: Exception) -> dict[str, Any]:
 
 
 def _raw_response_diagnostics(raw_response: Any) -> dict[str, Any]:
-    raw_text = str(getattr(raw_response, "raw_text", "") or "")
-    stripped = raw_text.strip()
-    diagnostics = {
-        "raw_response_character_count": len(raw_text),
-        "stripped_response_character_count": len(stripped),
-        "starts_with_json_object": stripped.startswith("{"),
-        "starts_with_json_array": stripped.startswith("["),
-        "starts_with_code_fence": stripped.startswith("```"),
-        "ends_with_json_object": stripped.endswith("}"),
-        "ends_with_json_array": stripped.endswith("]"),
-        "ends_with_code_fence": stripped.endswith("```"),
-        "brace_balance": raw_text.count("{") - raw_text.count("}"),
-        "bracket_balance": raw_text.count("[") - raw_text.count("]"),
-        "leading_non_json_detected": bool(stripped)
-        and not stripped.startswith(("{", "[", "```")),
-        "trailing_non_json_detected": bool(stripped)
-        and not stripped.endswith(("}", "]", "```")),
-    }
-    metadata = getattr(raw_response, "provider_response_metadata", None)
-    if isinstance(metadata, dict):
-        diagnostics["provider_response_metadata"] = _safe_provider_response_metadata(metadata)
-    usage = getattr(raw_response, "usage", None)
-    if isinstance(usage, dict):
-        diagnostics["usage"] = _safe_token_usage(usage)
-    return diagnostics
+    return build_semantic_grounding_raw_response_diagnostics(raw_response)
 
 
 def _safe_provider_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:

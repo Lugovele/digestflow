@@ -54,6 +54,9 @@ from services.packaging.linkedin_post_repair_writer_structural_diagnostics impor
 from services.packaging.linkedin_post_semantic_grounding_execution import (
     SemanticGroundingRawResponse,
 )
+from services.packaging.linkedin_post_semantic_grounding_structural_diagnostics import (
+    TRUNCATED_INSIDE_JSON as SEMANTIC_TRUNCATED_INSIDE_JSON,
+)
 
 
 class RepairWriterBenchmarkTests(SimpleTestCase):
@@ -383,6 +386,90 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertNotIn("raw_prompt", provider_error)
         self.assertNotIn("raw_provider_message", provider_error)
         self.assertEqual(calls, {"grounding": 0, "quality": 0})
+
+    def test_downstream_semantic_grounding_parse_failure_records_response_diagnostics(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[2]
+        quality_calls = 0
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": "Repaired post with a clearer reflective ending."}),
+                provider=request.provider,
+                model=request.model,
+                prompt_metadata=PromptMetadata(
+                    prompt_name=request.rendered_prompt_input.prompt_name,
+                    prompt_version=request.rendered_prompt_input.prompt_version,
+                    prompt_path=request.rendered_prompt_input.prompt_path,
+                ),
+                usage={"total_tokens": 10},
+                raw_provider_response={"id": "repair"},
+            )
+
+        def grounding_executor(request):
+            return SemanticGroundingRawResponse(
+                raw_text='```json\n{"pass": tru',
+                provider=request.provider,
+                model=request.model,
+                usage={
+                    "prompt_tokens": 2067,
+                    "completion_tokens": 70,
+                    "total_tokens": 3863,
+                },
+                raw_provider_response={"id": "grounding"},
+                provider_response_metadata={
+                    "provider_finish_reason": "length",
+                    "provider_stop_reason": None,
+                    "provider_max_output_tokens": 4800,
+                    "provider_output_limit_reached": True,
+                    "provider_prompt_tokens": 2067,
+                    "provider_visible_output_tokens": 70,
+                    "provider_hidden_output_tokens": 1726,
+                    "provider_combined_output_tokens": 1796,
+                    "provider_output_budget_utilization_percent": 37.42,
+                },
+            )
+
+        def quality_executor(request):
+            nonlocal quality_calls
+            quality_calls += 1
+            raise AssertionError("quality evaluator should not run after grounding parse failure")
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+                semantic_grounding_executor=grounding_executor,
+                quality_evaluator_executor=quality_executor,
+            )
+            runs_text = Path(result.artifacts.runs_jsonl).read_text(encoding="utf-8")
+
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "semantic_grounding_parse")
+        self.assertEqual(record["failure_code"], "semantic_grounding_parse_failure")
+        self.assertEqual(record["provider_invocation_counts"]["semantic_grounding_provider_api_calls"], 1)
+        self.assertEqual(record["provider_invocation_counts"]["quality_evaluator_provider_api_calls"], 0)
+        self.assertEqual(quality_calls, 0)
+        metadata = record["semantic_grounding"]["metadata"]
+        diagnostics = metadata["response_diagnostics"]
+        self.assertEqual(
+            diagnostics["response_structure_classification"],
+            SEMANTIC_TRUNCATED_INSIDE_JSON,
+        )
+        self.assertEqual(diagnostics["provider_finish_reason"], "length")
+        self.assertTrue(diagnostics["provider_output_limit_reached"])
+        self.assertEqual(diagnostics["provider_visible_output_tokens"], 70)
+        self.assertEqual(diagnostics["provider_hidden_output_tokens"], 1726)
+        self.assertEqual(diagnostics["provider_combined_output_tokens"], 1796)
+        self.assertEqual(diagnostics["provider_output_budget_utilization_percent"], 37.42)
+        self.assertEqual(metadata["parser_error_details"]["code"], "malformed_fence")
+        self.assertNotIn('{"pass": tru', runs_text)
 
     def test_downstream_quality_execution_failure_records_provider_diagnostics(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]

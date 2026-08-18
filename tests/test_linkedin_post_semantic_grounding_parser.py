@@ -10,6 +10,7 @@ from services.packaging.linkedin_post_semantic_grounding_execution import (
 )
 from services.packaging.linkedin_post_semantic_grounding_parser import (
     ERROR_EMPTY_RAW_RESPONSE,
+    ERROR_MALFORMED_FENCE,
     ERROR_MALFORMED_JSON,
     ERROR_NORMALIZATION_FAILED,
     SemanticGroundingResponseParseError,
@@ -36,6 +37,55 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
         )
 
         self.assertTrue(result.passed)
+
+    def test_parses_generic_fenced_json_object(self) -> None:
+        payload = _review_payload()
+        raw = _raw("```\n" + json.dumps(payload) + "\n```")
+
+        result = parse_and_normalize_semantic_grounding_response(
+            raw,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+
+    def test_surrounding_whitespace_is_allowed(self) -> None:
+        payload = {"pass": True, "claims": [], "failed_claim_ids": []}
+
+        parsed = parse_semantic_grounding_raw_response(
+            _raw("  \n" + json.dumps(payload) + "\n  ")
+        )
+
+        self.assertEqual(parsed, payload)
+
+    def test_prose_before_or_after_json_is_rejected(self) -> None:
+        for raw_text in (
+            "Here is JSON " + json.dumps(_review_payload()),
+            json.dumps(_review_payload()) + " trailing prose",
+        ):
+            with self.subTest(raw_text=raw_text):
+                with self.assertRaises(SemanticGroundingResponseParseError) as error:
+                    parse_semantic_grounding_raw_response(_raw(raw_text))
+
+                self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_multiple_json_objects_are_rejected(self) -> None:
+        with self.assertRaises(SemanticGroundingResponseParseError) as error:
+            parse_semantic_grounding_raw_response(_raw('{"pass":true}{"pass":false}'))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_incomplete_json_is_rejected(self) -> None:
+        with self.assertRaises(SemanticGroundingResponseParseError) as error:
+            parse_semantic_grounding_raw_response(_raw('{"pass":'))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_JSON)
+
+    def test_unclosed_fence_is_rejected_as_malformed_fence(self) -> None:
+        with self.assertRaises(SemanticGroundingResponseParseError) as error:
+            parse_semantic_grounding_raw_response(_raw('```json\n{"pass":true}'))
+
+        self.assertEqual(error.exception.code, ERROR_MALFORMED_FENCE)
 
     def test_empty_response_is_distinct(self) -> None:
         with self.assertRaises(SemanticGroundingResponseParseError) as error:

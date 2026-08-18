@@ -41,6 +41,10 @@ support_status, severity, blocking/advisory decisions, pass/fail consistency,
 repairability, human review, automatic fail, qualification, and causal-fidelity
 rules. Do not override or reinterpret those rules from prose.
 
+Return exactly one plain JSON object. Do not wrap the JSON in markdown or code
+fences. Do not include prose or explanations before or after the JSON. The
+complete response must end immediately after the closing JSON brace.
+
 Return only JSON compatible with this shape:
 
 {

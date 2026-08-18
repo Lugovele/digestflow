@@ -99,6 +99,9 @@ from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_PASS,
     FinalPostSemanticGroundingState,
 )
+from services.packaging.linkedin_post_semantic_grounding_structural_diagnostics import (
+    build_semantic_grounding_raw_response_diagnostics,
+)
 from services.packaging.linkedin_post_semantic_grounding_execution import (
     SemanticGroundingExecutionRequest,
     SemanticGroundingRawResponse,
@@ -741,6 +744,7 @@ def _run_semantic_grounding(
                 grounding_review=None,
                 error_code=_semantic_execution_failure_code(raw),
                 error_message=raw.execution_error,
+                metadata=_semantic_grounding_failure_metadata(raw),
             ),
             _confirmed_provider_api_call(raw),
             {
@@ -765,6 +769,7 @@ def _run_semantic_grounding(
                 grounding_review=None,
                 error_code=failure_code,
                 error_message=_safe_text(str(exc)),
+                metadata=_semantic_grounding_failure_metadata(raw, exc),
             ),
             _confirmed_provider_api_call(raw),
             {
@@ -1322,6 +1327,29 @@ def _semantic_execution_failure_code(raw_response: SemanticGroundingRawResponse)
     if raw_response.execution_error == "empty provider response":
         return FAILURE_GROUNDING_EMPTY_RESPONSE
     return FAILURE_GROUNDING_EXECUTION
+
+
+def _semantic_grounding_failure_metadata(
+    raw_response: SemanticGroundingRawResponse,
+    error: SemanticGroundingResponseParseError | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "response_diagnostics": build_semantic_grounding_raw_response_diagnostics(
+            raw_response
+        )
+    }
+    if error is not None:
+        metadata["parser_error_details"] = {
+            "code": error.code,
+            "line": error.line,
+            "column": error.column,
+            "position": error.position,
+        }
+        if error.normalization_error:
+            metadata["normalization_error_details"] = {
+                "message": _safe_text(error.normalization_error)
+            }
+    return metadata
 
 
 def _quality_execution_failure_code(raw_response: QualityEvaluatorRawResponse) -> str:
