@@ -412,9 +412,11 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertNotIn(case.candidate_payload["post_text"] + " Act?", comparison_text)
         target = record["target_repair_diagnostics"]
         self.assertEqual(target["failed_criterion"], "cta")
+        self.assertEqual(target["final_adjudication_outcome"], "not_ready")
+        self.assertIn("final_action: not_ready", comparison_text)
         self.assertTrue(target["target_repair_attempted"])
         self.assertIsNone(target["target_repair_success"])
-        self.assertIn("quality score for cta unavailable", target["target_repair_success_reason"])
+        self.assertIn("quality evaluator did not produce normalized review", target["target_repair_success_reason"])
         self.assertEqual(
             record["downstream_failure_classification"],
             "quality_evaluator_provider_or_parser_infrastructure_failure",
@@ -858,6 +860,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             failure_stage=None,
             failure_code=None,
             quality_evaluation={"quality_review": _quality_review_payload(passed=True)},
+            adjudication_projection=_adjudication_projection("accept"),
         )
 
         self.assertEqual(diagnostics["failed_criterion"], "cta")
@@ -865,6 +868,161 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertTrue(diagnostics["target_repair_success"])
         self.assertEqual(diagnostics["target_quality_score"], 4)
         self.assertEqual(diagnostics["target_required_minimum"], 4)
+        self.assertTrue(diagnostics["target_fixed"])
+        self.assertEqual(diagnostics["overall_quality_pass"], True)
+        self.assertEqual(diagnostics["final_adjudication_outcome"], "accept")
+        self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_FIXED_CLEAN")
+
+    def test_target_repair_diagnostics_reject_author_pov_score_four_when_explicit_statement_required(self) -> None:
+        case = default_repair_writer_benchmark_cases()[2]
+        quality_review = _quality_review_payload(
+            passed=False,
+            scores={"author_point_of_view": 4},
+            failed_criteria=["author_point_of_view"],
+        )
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage=None,
+            failure_code=None,
+            quality_evaluation={"quality_review": quality_review},
+            adjudication_projection=_adjudication_projection("repair_editorial"),
+        )
+
+        self.assertEqual(diagnostics["failed_criterion"], "author_point_of_view")
+        self.assertEqual(diagnostics["target_quality_score"], 4)
+        self.assertEqual(diagnostics["target_required_minimum"], 5)
+        self.assertFalse(diagnostics["target_repair_success"])
+        self.assertFalse(diagnostics["target_fixed"])
+        self.assertEqual(diagnostics["post_repair_failed_criteria"], ["author_point_of_view"])
+        self.assertEqual(diagnostics["new_failed_criteria"], [])
+        self.assertEqual(diagnostics["unrelated_regression_count"], 0)
+        self.assertEqual(diagnostics["overall_quality_pass"], False)
+        self.assertEqual(diagnostics["final_adjudication_outcome"], "repair_editorial")
+        self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_NOT_FIXED")
+        self.assertIn("remains in post-repair failed_criteria", diagnostics["target_repair_success_reason"])
+
+    def test_target_repair_diagnostics_accept_author_pov_score_five_when_explicit_statement_required(self) -> None:
+        case = default_repair_writer_benchmark_cases()[2]
+        quality_review = _quality_review_payload(
+            passed=True,
+            scores={"author_point_of_view": 5},
+        )
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage=None,
+            failure_code=None,
+            quality_evaluation={"quality_review": quality_review},
+            adjudication_projection=_adjudication_projection("accept"),
+        )
+
+        self.assertEqual(diagnostics["target_quality_score"], 5)
+        self.assertEqual(diagnostics["target_required_minimum"], 5)
+        self.assertTrue(diagnostics["target_repair_success"])
+        self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_FIXED_CLEAN")
+
+    def test_target_repair_diagnostics_reject_cta_below_canonical_threshold(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        quality_review = _quality_review_payload(
+            passed=False,
+            scores={"cta": 3},
+            failed_criteria=["cta"],
+        )
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage=None,
+            failure_code=None,
+            quality_evaluation={"quality_review": quality_review},
+            adjudication_projection=_adjudication_projection("repair_editorial"),
+        )
+
+        self.assertEqual(diagnostics["target_quality_score"], 3)
+        self.assertEqual(diagnostics["target_required_minimum"], 4)
+        self.assertFalse(diagnostics["target_repair_success"])
+        self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_NOT_FIXED")
+
+    def test_target_repair_diagnostics_accept_cta_at_canonical_threshold(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        quality_review = _quality_review_payload(
+            passed=True,
+            scores={"cta": 4},
+        )
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage=None,
+            failure_code=None,
+            quality_evaluation={"quality_review": quality_review},
+            adjudication_projection=_adjudication_projection("accept"),
+        )
+
+        self.assertEqual(diagnostics["target_quality_score"], 4)
+        self.assertEqual(diagnostics["target_required_minimum"], 4)
+        self.assertTrue(diagnostics["target_repair_success"])
+        self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_FIXED_CLEAN")
+
+    def test_target_repair_diagnostics_separate_target_fixed_from_unrelated_regression(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        quality_review = _quality_review_payload(
+            passed=False,
+            scores={"cta": 5, "human_voice": 3},
+            failed_criteria=["human_voice"],
+        )
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage=None,
+            failure_code=None,
+            quality_evaluation={"quality_review": quality_review},
+            adjudication_projection=_adjudication_projection("repair_editorial"),
+        )
+
+        self.assertTrue(diagnostics["target_repair_success"])
+        self.assertTrue(diagnostics["target_fixed"])
+        self.assertEqual(diagnostics["new_failed_criteria"], ["human_voice"])
+        self.assertEqual(diagnostics["unrelated_regression_count"], 1)
+        self.assertEqual(diagnostics["overall_quality_pass"], False)
+        self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_FIXED_WITH_REGRESSION")
+
+    def test_target_repair_diagnostics_report_qe_unavailable_for_adaptation_failure(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage="repair_writer_adaptation",
+            failure_code="repair_writer_adaptation_failure",
+            quality_evaluation=None,
+            adjudication_projection=None,
+        )
+
+        self.assertIsNone(diagnostics["target_repair_success"])
+        self.assertIsNone(diagnostics["target_quality_score"])
+        self.assertEqual(diagnostics["target_accuracy_classification"], "QE_UNAVAILABLE")
+        self.assertIn("quality evaluator unavailable after repair_writer_adaptation", diagnostics["target_repair_success_reason"])
+
+    def test_target_repair_diagnostics_report_qe_unavailable_for_grounding_failure(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage="semantic_grounding_execution",
+            failure_code="semantic_grounding_execution_failure",
+            quality_evaluation=None,
+            adjudication_projection=None,
+        )
+
+        self.assertIsNone(diagnostics["target_repair_success"])
+        self.assertEqual(diagnostics["target_accuracy_classification"], "QE_UNAVAILABLE")
+        self.assertIn("semantic grounding did not produce quality-evaluator input", diagnostics["target_repair_success_reason"])
 
     def test_excessive_rewrite_blocks_before_downstream_benchmark_evaluators(self) -> None:
         case = default_repair_writer_benchmark_cases()[2]
@@ -1263,13 +1421,18 @@ def _passing_grounding_payload() -> dict:
     }
 
 
-def _quality_review_payload(*, passed: bool) -> dict:
-    scores = _scores(passed=passed)
+def _quality_review_payload(
+    *,
+    passed: bool,
+    scores: dict[str, int] | None = None,
+    failed_criteria: list[str] | None = None,
+) -> dict:
+    scores = {**_scores(passed=passed), **(scores or {})}
     return {
         "scores": scores,
         "total_score": sum(scores.values()),
         "pass": passed,
-        "failed_criteria": [] if passed else ["cta"],
+        "failed_criteria": failed_criteria if failed_criteria is not None else ([] if passed else ["cta"]),
         "automatic_fail_reason": "",
         "notes": ["benchmark fake"],
         "criterion_rationales": {
@@ -1338,4 +1501,10 @@ def _imported_symbols(tree: ast.AST) -> set[str]:
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom)
         for alias in node.names
+    }
+
+
+def _adjudication_projection(action: str) -> dict:
+    return {
+        "decision": {"action": action},
     }

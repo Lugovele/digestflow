@@ -182,6 +182,10 @@ REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_CHARS = 36
 REPAIR_WRITER_TARGETED_REPAIR_MIN_DISTINCTIVE_FRAGMENTS = 3
 REPAIR_WRITER_TARGETED_REPAIR_MIN_PRESERVATION_RATE = 0.50
 REPAIR_WRITER_LOCAL_REPAIR_CRITERIA = ("cta", "author_point_of_view")
+TARGET_ACCURACY_FIXED_CLEAN = "TARGET_FIXED_CLEAN"
+TARGET_ACCURACY_FIXED_WITH_REGRESSION = "TARGET_FIXED_WITH_REGRESSION"
+TARGET_ACCURACY_NOT_FIXED = "TARGET_NOT_FIXED"
+TARGET_ACCURACY_QE_UNAVAILABLE = "QE_UNAVAILABLE"
 FIXED_SEMANTIC_GROUNDING_PROVIDER = AI_PROVIDER_GEMINI
 FIXED_SEMANTIC_GROUNDING_MODEL = "gemini-3.6-flash"
 FIXED_QUALITY_EVALUATOR_PROVIDER = AI_PROVIDER_OPENAI
@@ -1094,6 +1098,7 @@ def _record(
             failure_stage=failure_stage,
             failure_code=failure_code,
             quality_evaluation=quality_evaluation,
+            adjudication_projection=adjudication_projection,
         ),
         "downstream_failure_classification": _downstream_failure_classification(
             failure_stage,
@@ -1428,14 +1433,25 @@ def _target_repair_diagnostics(
     failure_stage: str | None,
     failure_code: str | None,
     quality_evaluation: dict[str, Any] | None,
+    adjudication_projection: dict[str, Any] | None,
 ) -> dict[str, Any]:
     failed_criterion = str(case.repair_instruction.get("failed_criterion") or "")
     attempted = repair_writer_attempts > 0
     result: dict[str, Any] = {
         "failed_criterion": failed_criterion,
+        "pre_repair_failed_criterion": failed_criterion,
         "target_repair_attempted": attempted,
+        "target_quality_score": None,
+        "target_required_minimum": _target_required_minimum(case, failed_criterion),
         "target_repair_success": None,
         "target_repair_success_reason": "downstream quality evaluator did not run",
+        "overall_quality_pass": None,
+        "final_adjudication_outcome": _final_adjudication_outcome(adjudication_projection),
+        "post_repair_failed_criteria": None,
+        "target_fixed": None,
+        "new_failed_criteria": None,
+        "unrelated_regression_count": None,
+        "target_accuracy_classification": TARGET_ACCURACY_QE_UNAVAILABLE,
     }
     if not attempted:
         result["target_repair_success_reason"] = "repair writer not invoked"
@@ -1449,22 +1465,127 @@ def _target_repair_diagnostics(
         elif failure_stage:
             result["target_repair_success_reason"] = f"quality evaluator unavailable after {failure_stage}"
         return result
-    review_payload = quality_evaluation.get("quality_review") or quality_evaluation
+    review_payload = _quality_review_payload_from_state(quality_evaluation)
+    if not isinstance(review_payload, dict):
+        result["target_repair_success_reason"] = "quality evaluator did not produce normalized review"
+        return result
+
     scores = review_payload.get("scores") or {}
-    score = scores.get(failed_criterion)
+    score = scores.get(failed_criterion) if isinstance(scores, dict) else None
     if not isinstance(score, int) or isinstance(score, bool):
         result["target_repair_success_reason"] = f"quality score for {failed_criterion} unavailable"
         return result
-    required_minimum = 4
-    result["target_quality_score"] = score
-    result["target_required_minimum"] = required_minimum
-    result["target_repair_success"] = score >= required_minimum
-    result["target_repair_success_reason"] = (
-        f"{failed_criterion} score {score} >= {required_minimum}"
-        if score >= required_minimum
-        else f"{failed_criterion} score {score} < {required_minimum}"
+
+    required_minimum = result["target_required_minimum"]
+    post_failed_criteria = _quality_failed_criteria(review_payload)
+    target_fixed = score >= required_minimum and failed_criterion not in post_failed_criteria
+    new_failed_criteria = [
+        criterion for criterion in post_failed_criteria if criterion != failed_criterion
+    ]
+    overall_quality_pass = review_payload.get("pass")
+    if not isinstance(overall_quality_pass, bool):
+        overall_quality_pass = None
+
+    result.update(
+        {
+            "target_quality_score": score,
+            "overall_quality_pass": overall_quality_pass,
+            "post_repair_failed_criteria": post_failed_criteria,
+            "target_fixed": target_fixed,
+            "new_failed_criteria": new_failed_criteria,
+            "unrelated_regression_count": len(new_failed_criteria),
+            "target_repair_success": target_fixed,
+            "target_accuracy_classification": _target_accuracy_classification(
+                target_fixed=target_fixed,
+                new_failed_criteria=new_failed_criteria,
+                overall_quality_pass=overall_quality_pass,
+            ),
+        }
     )
+    if target_fixed:
+        result["target_repair_success_reason"] = (
+            f"{failed_criterion} score {score} >= {required_minimum} and criterion no longer failed"
+        )
+    elif failed_criterion in post_failed_criteria:
+        result["target_repair_success_reason"] = (
+            f"{failed_criterion} remains in post-repair failed_criteria"
+        )
+    else:
+        result["target_repair_success_reason"] = f"{failed_criterion} score {score} < {required_minimum}"
     return result
+
+
+def _quality_review_payload_from_state(
+    quality_evaluation: dict[str, Any],
+) -> dict[str, Any] | None:
+    review_payload = quality_evaluation.get("quality_review")
+    if isinstance(review_payload, dict):
+        return review_payload
+    if "scores" in quality_evaluation:
+        return quality_evaluation
+    return None
+
+
+def _quality_failed_criteria(review_payload: dict[str, Any]) -> list[str]:
+    failed_criteria = review_payload.get("failed_criteria")
+    if not isinstance(failed_criteria, list):
+        return []
+    return [criterion for criterion in failed_criteria if isinstance(criterion, str)]
+
+
+def _target_required_minimum(
+    case: RepairWriterBenchmarkCase,
+    failed_criterion: str,
+) -> int:
+    rubric = get_quality_evaluator_rubric_payload()
+    required_minimum = rubric.required_minimums.get(
+        failed_criterion,
+        rubric.score_max - 1,
+    )
+    if (
+        failed_criterion == "author_point_of_view"
+        and _explicit_author_owned_statement_required(case)
+    ):
+        required_minimum = max(required_minimum, rubric.score_max)
+    return required_minimum
+
+
+def _explicit_author_owned_statement_required(case: RepairWriterBenchmarkCase) -> bool:
+    directive = case.angle_decision.get("authorial_voice_directive")
+    if not isinstance(directive, dict):
+        return False
+    return (
+        directive.get("personal_presence_requirement")
+        == "explicit_author_owned_statement_required"
+    )
+
+
+def _final_adjudication_outcome(
+    adjudication_projection: dict[str, Any] | None,
+) -> str | None:
+    if not isinstance(adjudication_projection, dict):
+        return None
+    decision = adjudication_projection.get("decision")
+    if not isinstance(decision, dict):
+        decision = (
+            (adjudication_projection.get("decision_ready_result") or {}).get("decision")
+            or {}
+        )
+    action = decision.get("action")
+    return action if isinstance(action, str) else None
+
+
+def _target_accuracy_classification(
+    *,
+    target_fixed: bool,
+    new_failed_criteria: list[str],
+    overall_quality_pass: bool | None,
+) -> str:
+    if not target_fixed:
+        return TARGET_ACCURACY_NOT_FIXED
+    if new_failed_criteria or overall_quality_pass is not True:
+        return TARGET_ACCURACY_FIXED_WITH_REGRESSION
+    return TARGET_ACCURACY_FIXED_CLEAN
 
 
 def _downstream_failure_classification(
@@ -1930,11 +2051,11 @@ def _report_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ...]) 
     ]
     for record in records:
         projection = record.get("adjudication_projection") or {}
-        decision = ((projection.get("decision_ready_result") or {}).get("decision") or {})
+        final_action = _final_adjudication_outcome(projection)
         lines.append(
             f"| {record.get('case_id')} | {record.get('plan_id')} | {record.get('provider')} | "
             f"{record.get('model')} | {record.get('execution_status')} | "
-            f"{record.get('failure_code') or ''} | {decision.get('action') or ''} |"
+            f"{record.get('failure_code') or ''} | {final_action or ''} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -1961,7 +2082,7 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
             quality = record.get("quality_evaluation") or {}
             quality_scores = quality.get("scores") or {}
             projection = record.get("adjudication_projection") or {}
-            decision = ((projection.get("decision_ready_result") or {}).get("decision") or {})
+            final_action = _final_adjudication_outcome(projection)
             lines.extend(
                 [
                     f"### {record.get('plan_id')}",
@@ -1983,7 +2104,7 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
                     f"quality_human_voice: {quality_scores.get('human_voice')}",
                     f"quality_practical_value: {quality_scores.get('practical_value')}",
                     f"quality_cta: {quality_scores.get('cta')}",
-                    f"final_action: {decision.get('action')}",
+                    f"final_action: {final_action}",
                     f"only_post_text_changed: {preservation.get('only_post_text_changed')}",
                     f"original_character_count: {preservation.get('original_character_count')}",
                     f"repaired_character_count: {preservation.get('repaired_character_count')}",
@@ -2000,9 +2121,18 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
                     f"excessive_rewrite_reason: {preservation.get('excessive_rewrite_reason')}",
                     "voice_preservation_note: compare distinctive phrasing, sentence rhythm, authorial specificity, rhetorical structure, and generic transition drift; this is reporting-only and not a deterministic AI detector.",
                     f"repair_target: {record.get('repair_instruction', {}).get('failed_criterion')}",
+                    f"pre_repair_failed_criterion: {target_diagnostics.get('pre_repair_failed_criterion')}",
+                    f"post_repair_failed_criteria: {target_diagnostics.get('post_repair_failed_criteria')}",
+                    f"target_quality_score: {target_diagnostics.get('target_quality_score')}",
+                    f"target_required_minimum: {target_diagnostics.get('target_required_minimum')}",
                     f"target_repair_attempted: {target_diagnostics.get('target_repair_attempted')}",
                     f"target_repair_success: {target_diagnostics.get('target_repair_success')}",
                     f"target_repair_success_reason: {target_diagnostics.get('target_repair_success_reason')}",
+                    f"overall_quality_pass: {target_diagnostics.get('overall_quality_pass')}",
+                    f"final_adjudication_outcome: {target_diagnostics.get('final_adjudication_outcome')}",
+                    f"new_failed_criteria: {target_diagnostics.get('new_failed_criteria')}",
+                    f"unrelated_regression_count: {target_diagnostics.get('unrelated_regression_count')}",
+                    f"target_accuracy_classification: {target_diagnostics.get('target_accuracy_classification')}",
                     f"downstream_failure_classification: {record.get('downstream_failure_classification')}",
                     "",
                 ]

@@ -1281,8 +1281,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         ).variables["repair_writer_target_guidance"]
 
         self.assertIn("TARGETED AUTHOR POINT OF VIEW REPAIR:", guidance)
-        self.assertIn("one local interpretive sentence", guidance)
-        self.assertIn("exactly one evidence-bounded", guidance)
+        self.assertIn("one existing local interpretive sentence", guidance)
+        self.assertIn("exactly one explicit author-owned", guidance)
         self.assertIn("Do not add multiple first-person markers", guidance)
         self.assertIn("Do not paraphrase distinctive sentences", guidance)
 
@@ -1368,6 +1368,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("Do not add a second CTA", target_guidance)
         self.assertIn("exactly one clear reader-facing action", target_guidance)
         self.assertIn("open reflective question", target_guidance)
+        self.assertIn("Do not modify unrelated sections", target_guidance)
         self.assertIn("Replace, do not append", target_guidance)
         self.assertIn("should be <= 1200 characters", length_guidance)
 
@@ -1382,11 +1383,19 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         ).variables["repair_writer_target_guidance"]
 
         self.assertIn("TARGETED AUTHOR POINT OF VIEW REPAIR:", target_guidance)
-        self.assertIn("one local interpretive sentence or clause", target_guidance)
+        self.assertIn("one existing local interpretive sentence", target_guidance)
         self.assertIn("Preserve the hook", target_guidance)
         self.assertIn("evidence body", target_guidance)
         self.assertIn("Preserve the hook, evidence body, CTA", target_guidance)
-        self.assertIn("exactly one evidence-bounded interpretive judgment", target_guidance)
+        self.assertIn("surrounding post", target_guidance)
+        self.assertIn("Replace or sharpen the existing sentence", target_guidance)
+        self.assertIn("exactly one explicit author-owned", target_guidance)
+        self.assertIn("evidence-bounded, isolated interpretation", target_guidance)
+        self.assertIn("Do not append another interpretation", target_guidance)
+        self.assertIn("substantive choice between competing readings", target_guidance)
+        self.assertIn("tie the judgment directly to selected evidence", target_guidance)
+        self.assertIn("avoid fabricated experience or authority", target_guidance)
+        self.assertIn("Do not merely add more first person", target_guidance)
         self.assertIn("Do not broadly rewrite the post", target_guidance)
         self.assertIn("Do not add multiple first-person markers", target_guidance)
         self.assertIn("Do not paraphrase distinctive sentences", target_guidance)
