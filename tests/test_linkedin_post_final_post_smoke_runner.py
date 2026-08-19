@@ -81,6 +81,22 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             result.sanitized_result,
         )
 
+    def test_dry_run_reports_locked_semantic_grounding_defaults(self) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=self.fixture_path)
+            )
+
+        standalone.assert_not_called()
+        diagnostics = result.sanitized_result["role_diagnostics"]
+        self.assertEqual(result.status, SMOKE_STATUS_DRY_RUN)
+        self.assertEqual(diagnostics[1]["role"], "semantic_grounding")
+        self.assertEqual(diagnostics[1]["provider"], "gemini")
+        self.assertEqual(diagnostics[1]["model"], "gemini-3.6-flash")
+
     def test_dry_run_reports_role_diagnostics_for_mixed_candidate_roles(self) -> None:
         with patch.object(
             linkedin_post_final_post_smoke_runner,
@@ -157,7 +173,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.exit_code, EXIT_CONFIG_ERROR)
         self.assertIn("GEMINI_API_KEY", result.safe_failure_message)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_standalone_mode_delegates_once_to_public_api(self) -> None:
         fake_result = _standalone_result()
 
@@ -171,7 +187,11 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             )
 
         standalone.assert_called_once()
-        _, kwargs = standalone.call_args
+        args, kwargs = standalone.call_args
+        attempt_request = args[0]
+        self.assertIsNone(attempt_request.semantic_grounding_provider)
+        self.assertIsNone(attempt_request.semantic_grounding_model)
+        self.assertEqual(attempt_request.semantic_grounding_max_output_tokens, 4800)
         self.assertEqual(
             kwargs["selected_evidence_ids"],
             ("ev-remote-policy", "ev-inclusion", "ev-isolation"),
@@ -209,7 +229,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             },
         )
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_semantic_grounding_summary_uses_blocking_claim_ids_only(self) -> None:
         fake_result = _standalone_result()
         fake_result.semantic_grounding_state.grounding_review.blocking_claim_ids = (
@@ -231,7 +251,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(semantic_summary["blocking_claim_ids"], ["c1", "c2"])
         self.assertNotIn("failed_claim_ids", semantic_summary)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_controlled_repair_mode_delegates_once_to_public_api(self) -> None:
         fake_result = _controlled_result(repair_executed=True)
 
@@ -249,7 +269,12 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             )
 
         controlled.assert_called_once()
-        _, kwargs = controlled.call_args
+        args, kwargs = controlled.call_args
+        repair_request = args[0]
+        initial_request = repair_request.initial_attempt_request
+        self.assertIsNone(initial_request.semantic_grounding_provider)
+        self.assertIsNone(initial_request.semantic_grounding_model)
+        self.assertEqual(initial_request.semantic_grounding_max_output_tokens, 4800)
         self.assertEqual(
             kwargs["selected_evidence_ids"],
             ("ev-remote-policy", "ev-inclusion", "ev-isolation"),
@@ -275,7 +300,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             [],
         )
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_repair_expected_but_not_executed_is_scenario_mismatch(self) -> None:
         fake_result = _controlled_result(repair_executed=False)
 
@@ -387,7 +412,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.exit_code, EXIT_CONFIG_ERROR)
         self.assertIn("evidence_text", result.safe_failure_message)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_raw_responses_are_hidden_by_default_and_provider_raw_is_never_saved(
         self,
     ) -> None:
@@ -416,7 +441,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertNotIn("raw_provider_response", debug_serialized)
         self.assertNotIn("secret-provider-metadata", debug_serialized)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_unaccepted_candidate_text_is_hidden_from_default_sanitized_outputs(
         self,
     ) -> None:
@@ -467,7 +492,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(exc.exception.code, EXIT_EXECUTION_FAILURE)
         self.assertNotIn("Rejected candidate smoke post.", command_output.getvalue())
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_candidate_post_text_is_hidden_by_default_and_exposed_by_flag(
         self,
     ) -> None:
@@ -515,7 +540,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             },
         )
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_parsed_candidate_post_text_is_hidden_by_default_and_exposed_by_flag(
         self,
     ) -> None:
@@ -561,7 +586,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             {"post_text": parsed_text, "post_text_length": len(parsed_text)},
         )
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_non_string_parsed_candidate_post_text_is_not_projected(self) -> None:
         fake_result = _standalone_result(
             failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
@@ -585,7 +610,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             )
 
         self.assertIsNone(result.sanitized_result["parsed_candidate_payload"])
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_provider_failure_uses_stable_safe_output(self) -> None:
         fake_result = _standalone_result(
             failure_code="candidate_writer_provider_failure",
@@ -606,7 +631,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(result.exit_code, EXIT_EXECUTION_FAILURE)
         self.assertEqual(result.safe_failure_message, "redacted provider/configuration message")
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_empty_candidate_response_exposes_only_safe_provider_diagnostics(
         self,
     ) -> None:
@@ -674,7 +699,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertNotIn("sk-secret", serialized)
         self.assertNotIn("secret prompt text", serialized)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_unexpected_orchestration_exception_uses_safe_technical_failure(
         self,
     ) -> None:
@@ -696,7 +721,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             json.dumps(result.to_dict(), sort_keys=True),
         )
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_smoke_output_exposes_only_safe_adaptation_details(self) -> None:
         fake_result = _standalone_result(
             failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
@@ -771,7 +796,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertNotIn("secret rejected candidate content", serialized)
         self.assertNotIn("secret raw provider response", serialized)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_smoke_output_resanitizes_structural_diagnostics_metadata(self) -> None:
         fake_result = _standalone_result(
             failure_code=FAILURE_CANDIDATE_WRITER_ADAPTATION,
@@ -829,7 +854,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertNotIn("secret raw response text", serialized)
         self.assertNotIn("provider_payload", serialized)
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_save_output_writes_sanitized_json_under_requested_debug_directory(
         self,
     ) -> None:
@@ -860,7 +885,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             json.dumps(saved, sort_keys=True),
         )
 
-    @override_settings(OPENAI_API_KEY="sk-test")
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="gem-test")
     def test_input_fixture_is_not_mutated_and_output_is_json_safe(self) -> None:
         before = self.fixture_path.read_text(encoding="utf-8")
 
@@ -950,7 +975,7 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
 
         smoke.assert_called_once()
         request = smoke.call_args.args[0]
-        self.assertEqual(request.semantic_grounding_max_output_tokens, 2400)
+        self.assertEqual(request.semantic_grounding_max_output_tokens, 4800)
         self.assertEqual(request.quality_evaluator_max_output_tokens, 2400)
 
     def test_command_accepts_grounding_provider_model_and_token_options(

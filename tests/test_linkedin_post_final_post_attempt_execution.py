@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from apps.ai.client import AI_REASONING_EFFORT_MINIMAL
 from apps.ai.client import AI_THINKING_MODE_DISABLED
 from apps.ai.client import AI_THINKING_MODE_PROVIDER_DEFAULT
 from services.packaging import linkedin_post_final_post_attempt_execution
@@ -572,17 +573,24 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         evaluator_client = FakeCandidateWriterClient(
             _provider_response(json.dumps(_quality_review_payload(passed=True)))
         )
+        grounding_client = _passing_semantic_client()
 
         result = execute_final_post_standalone_attempt(
             _request(execution_metadata={"runtime_sentinel": "audit-only"}),
             candidate_writer_client=candidate_client,
-            semantic_grounding_client=_passing_semantic_client(),
+            semantic_grounding_client=grounding_client,
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
 
         self.assertEqual(candidate_client.call_count, 1)
+        self.assertEqual(grounding_client.call_count, 1)
         self.assertEqual(evaluator_client.call_count, 1)
+        self.assertTrue(grounding_client.json_mode)
+        self.assertEqual(grounding_client.max_output_tokens, 4800)
+        self.assertEqual(grounding_client.reasoning_effort, AI_REASONING_EFFORT_MINIMAL)
+        self.assertIsNone(candidate_client.reasoning_effort)
+        self.assertIsNone(evaluator_client.reasoning_effort)
         self.assertTrue(evaluator_client.json_mode)
         self.assertEqual(evaluator_client.max_output_tokens, 2400)
         self.assertEqual(result.completed_stage, "attempt_outcome")
@@ -738,6 +746,21 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
         self.assertIsNone(result.final_attempt_outcome)
 
+    def test_full_attempt_preflight_uses_locked_semantic_grounding_defaults(
+        self,
+    ) -> None:
+        selections = linkedin_post_final_post_attempt_execution._standalone_role_selections(
+            _request(),
+            candidate_writer_client=None,
+            semantic_grounding_client=None,
+            quality_evaluator_client=None,
+        )
+        semantic_selection = selections[1]
+
+        self.assertEqual(semantic_selection.role, "semantic_grounding")
+        self.assertEqual(semantic_selection.provider, "gemini")
+        self.assertEqual(semantic_selection.model, "gemini-3.6-flash")
+
     def test_full_attempt_allows_role_policy_mixed_providers(self) -> None:
         candidate_client = FakeCandidateWriterClient(
             _provider_response(_candidate_json())
@@ -766,6 +789,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(evaluator_client.call_count, 1)
         self.assertEqual(candidate_client.thinking_mode, AI_THINKING_MODE_PROVIDER_DEFAULT)
         self.assertEqual(grounding_client.thinking_mode, AI_THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertIsNone(grounding_client.reasoning_effort)
         self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_ACCEPTED)
 
     def test_attempt_request_has_no_candidate_writer_thinking_mode_field(self) -> None:
@@ -1420,6 +1444,7 @@ class FakeCandidateWriterClient:
         json_mode: bool,
         allow_json_mode_fallback: bool = True,
         thinking_mode: str = "provider_default",
+        reasoning_effort: str | None = None,
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
@@ -1427,6 +1452,7 @@ class FakeCandidateWriterClient:
         self.json_mode = json_mode
         self.allow_json_mode_fallback = allow_json_mode_fallback
         self.thinking_mode = thinking_mode
+        self.reasoning_effort = reasoning_effort
         return self.response
 
 
@@ -1446,8 +1472,8 @@ def _request(
     candidate_writer_provider: str | None = "openai",
     candidate_writer_model: str | None = "gpt-4.1-2025-04-14",
     candidate_writer_max_output_tokens: object = 1200,
-    semantic_grounding_provider: str | None = "openai",
-    semantic_grounding_model: str | None = "gpt-4.1-2025-04-14",
+    semantic_grounding_provider: str | None = None,
+    semantic_grounding_model: str | None = None,
     semantic_grounding_max_output_tokens: object = None,
     quality_evaluator_provider: str | None = "openai",
     quality_evaluator_model: str | None = "gpt-4.1-2025-04-14",

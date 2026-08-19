@@ -13,7 +13,13 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import build_ai_client, get_ai_provider_reasoning_effort_error
+from apps.ai.client import (
+    AI_PROVIDER_GEMINI,
+    AI_REASONING_EFFORT_LOW,
+    AI_REASONING_EFFORT_MINIMAL,
+    build_ai_client,
+    get_ai_provider_reasoning_effort_error,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_SEMANTIC_GROUNDING,
@@ -22,6 +28,20 @@ from services.packaging.linkedin_post_model_role_policy import (
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 2400
+PRODUCTION_SEMANTIC_GROUNDING_PROVIDER = AI_PROVIDER_GEMINI
+PRODUCTION_SEMANTIC_GROUNDING_MODEL = "gemini-3.6-flash"
+PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 4800
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT = "grounding_provider_default"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING = "grounding_minimal_reasoning"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING = "grounding_low_reasoning"
+SEMANTIC_GROUNDING_EXECUTION_PROFILE_REASONING_EFFORTS = {
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT: None,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING: AI_REASONING_EFFORT_MINIMAL,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING: AI_REASONING_EFFORT_LOW,
+}
+PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE = (
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING
+)
 MIN_MAX_OUTPUT_TOKENS = 2000
 DEFAULT_JSON_MODE = True
 STAGE_NAME = "semantic grounding"
@@ -96,6 +116,51 @@ class SemanticGroundingRawResponse:
         if self.execution_error is not None:
             result["execution_error"] = self.execution_error
         return result
+
+
+def semantic_grounding_reasoning_effort_for_execution_profile(
+    execution_profile: str,
+) -> str | None:
+    normalized = str(execution_profile or "").strip().lower()
+    if normalized not in SEMANTIC_GROUNDING_EXECUTION_PROFILE_REASONING_EFFORTS:
+        raise ValueError(
+            f"unsupported semantic grounding execution_profile: {execution_profile}"
+        )
+    return SEMANTIC_GROUNDING_EXECUTION_PROFILE_REASONING_EFFORTS[normalized]
+
+
+def production_semantic_grounding_reasoning_effort() -> str | None:
+    return semantic_grounding_reasoning_effort_for_execution_profile(
+        PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE
+    )
+
+
+def production_semantic_grounding_execution_metadata() -> dict[str, str | None]:
+    return {
+        "semantic_grounding_execution_profile": (
+            PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE
+        ),
+        "semantic_grounding_reasoning_effort": (
+            production_semantic_grounding_reasoning_effort()
+        ),
+    }
+
+
+def resolve_semantic_grounding_execution_provider(provider: str | None) -> str | None:
+    return PRODUCTION_SEMANTIC_GROUNDING_PROVIDER if provider is None else provider
+
+
+def resolve_semantic_grounding_execution_model(
+    provider: str | None,
+    model: str | None,
+) -> str | None:
+    if provider is None and model is None:
+        return PRODUCTION_SEMANTIC_GROUNDING_MODEL
+    return model
+
+
+def semantic_grounding_uses_production_execution_profile(provider: str | None) -> bool:
+    return provider is None
 
 
 def build_semantic_grounding_execution_request(

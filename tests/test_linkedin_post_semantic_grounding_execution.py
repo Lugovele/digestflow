@@ -12,10 +12,19 @@ from services.packaging import linkedin_post_semantic_grounding_execution
 from services.packaging.linkedin_post_prompt_renderers import SemanticGroundingPromptRender
 from services.packaging.linkedin_post_semantic_grounding_execution import (
     DEFAULT_MAX_OUTPUT_TOKENS,
+    PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+    PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    PRODUCTION_SEMANTIC_GROUNDING_MODEL,
+    PRODUCTION_SEMANTIC_GROUNDING_PROVIDER,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+    SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT,
     SemanticGroundingRawResponse,
     build_semantic_grounding_execution_request,
     build_safe_execution_diagnostics,
     execute_semantic_grounding_prompt,
+    production_semantic_grounding_reasoning_effort,
+    semantic_grounding_reasoning_effort_for_execution_profile,
 )
 
 
@@ -34,6 +43,29 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
         self.assertEqual(request.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS)
         self.assertTrue(request.json_mode)
         self.assertIsNone(request.reasoning_effort)
+
+    def test_production_semantic_grounding_profile_locks_gemini_minimal_reasoning(
+        self,
+    ) -> None:
+        self.assertEqual(PRODUCTION_SEMANTIC_GROUNDING_PROVIDER, "gemini")
+        self.assertEqual(PRODUCTION_SEMANTIC_GROUNDING_MODEL, "gemini-3.6-flash")
+        self.assertEqual(PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS, 4800)
+        self.assertEqual(
+            PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+            SEMANTIC_GROUNDING_EXECUTION_PROFILE_MINIMAL_REASONING,
+        )
+        self.assertEqual(production_semantic_grounding_reasoning_effort(), "minimal")
+        self.assertIsNone(
+            semantic_grounding_reasoning_effort_for_execution_profile(
+                SEMANTIC_GROUNDING_EXECUTION_PROFILE_PROVIDER_DEFAULT
+            )
+        )
+        self.assertEqual(
+            semantic_grounding_reasoning_effort_for_execution_profile(
+                SEMANTIC_GROUNDING_EXECUTION_PROFILE_LOW_REASONING
+            ),
+            "low",
+        )
 
     def test_request_failure_does_not_call_provider(self) -> None:
         client = FakeClient("unused")
@@ -159,6 +191,8 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
             provider="gemini",
             model="gemini-3.6-flash",
         )
+        _, call_kwargs = mock_build_ai_client.return_value.generate_text.call_args
+        self.assertNotIn("reasoning_effort", call_kwargs)
         self.assertIsNone(response.execution_error)
 
     @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")

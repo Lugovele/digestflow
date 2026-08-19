@@ -127,10 +127,15 @@ from services.packaging.linkedin_post_semantic_grounding_contract import (
     FinalPostSemanticGroundingState,
 )
 from services.packaging.linkedin_post_semantic_grounding_execution import (
-    DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
     build_semantic_grounding_execution_request,
     execute_semantic_grounding_prompt,
     get_semantic_grounding_execution_request_error,
+    production_semantic_grounding_execution_metadata,
+    production_semantic_grounding_reasoning_effort,
+    resolve_semantic_grounding_execution_model,
+    resolve_semantic_grounding_execution_provider,
+    semantic_grounding_uses_production_execution_profile,
 )
 from services.packaging.linkedin_post_semantic_grounding_parser import (
     ERROR_NORMALIZATION_FAILED as SEMANTIC_GROUNDING_ERROR_NORMALIZATION_FAILED,
@@ -783,15 +788,36 @@ def _run_repaired_semantic_grounding(
         semantic_request = build_semantic_grounding_execution_request(
             prompt_render,
             prompt_text=request.initial_attempt_request.semantic_grounding_prompt_text,
-            provider=request.initial_attempt_request.semantic_grounding_provider,
-            model=request.initial_attempt_request.semantic_grounding_model,
+            provider=resolve_semantic_grounding_execution_provider(
+                request.initial_attempt_request.semantic_grounding_provider
+            ),
+            model=resolve_semantic_grounding_execution_model(
+                request.initial_attempt_request.semantic_grounding_provider,
+                request.initial_attempt_request.semantic_grounding_model,
+            ),
             max_output_tokens=(
-                DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
+                PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
                 if request.initial_attempt_request.semantic_grounding_max_output_tokens
                 is None
                 else request.initial_attempt_request.semantic_grounding_max_output_tokens
             ),
-            execution_metadata=request.initial_attempt_request.execution_metadata,
+            reasoning_effort=(
+                production_semantic_grounding_reasoning_effort()
+                if semantic_grounding_uses_production_execution_profile(
+                    request.initial_attempt_request.semantic_grounding_provider
+                )
+                else None
+            ),
+            execution_metadata={
+                **copy.deepcopy(request.initial_attempt_request.execution_metadata or {}),
+                **(
+                    production_semantic_grounding_execution_metadata()
+                    if semantic_grounding_uses_production_execution_profile(
+                        request.initial_attempt_request.semantic_grounding_provider
+                    )
+                    else {}
+                ),
+            },
         )
     except (TypeError, ValueError) as exc:
         grounding_state = FinalPostSemanticGroundingState(
@@ -1178,8 +1204,13 @@ def _controlled_repair_role_selections(
         ),
         FinalPostExecutionRoleSelection(
             role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
-            provider=initial.semantic_grounding_provider,
-            model=initial.semantic_grounding_model,
+            provider=resolve_semantic_grounding_execution_provider(
+                initial.semantic_grounding_provider
+            ),
+            model=resolve_semantic_grounding_execution_model(
+                initial.semantic_grounding_provider,
+                initial.semantic_grounding_model,
+            ),
             stage=STAGE_SEMANTIC_GROUNDING_REQUEST,
             failure_code=FAILURE_SEMANTIC_GROUNDING_REQUEST,
             stage_label="semantic grounding",

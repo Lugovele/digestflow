@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from apps.ai.client import AI_REASONING_EFFORT_MINIMAL
 from services.packaging import linkedin_post_controlled_repair_execution
 from services.packaging.linkedin_post_attempt_outcome import (
     OUTCOME_ACCEPTED,
@@ -132,6 +133,22 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(result.initial_attempt_result.candidate_writer_invocation_count, 0)
         self.assertEqual(result.repair_invocation_count, 0)
 
+    def test_controlled_repair_preflight_uses_locked_semantic_grounding_defaults(
+        self,
+    ) -> None:
+        selections = linkedin_post_controlled_repair_execution._controlled_repair_role_selections(
+            _controlled_request(),
+            candidate_writer_client=None,
+            semantic_grounding_client=None,
+            quality_evaluator_client=None,
+            repair_writer_client=None,
+        )
+        semantic_selection = selections[1]
+
+        self.assertEqual(semantic_selection.role, "semantic_grounding")
+        self.assertEqual(semantic_selection.provider, "gemini")
+        self.assertEqual(semantic_selection.model, "gemini-3.6-flash")
+
     def test_initial_deterministic_gate_failure_skips_repair(self) -> None:
         repair_client = QueuedFakeClient(_provider_response(_candidate_json()))
 
@@ -237,6 +254,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         repair_client = QueuedFakeClient(
             _provider_response(_candidate_json(post_text="Repaired human post."))
         )
+        semantic_client = _passing_semantic_client()
         post_brief = _post_brief()
         angle_decision = _angle_decision()
         request = _controlled_request(execution_metadata={"audit": "debug-only"})
@@ -250,7 +268,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             angle_decision=angle_decision,
             selected_evidence_ids=("ev-1", "ev-2"),
             candidate_writer_client=candidate_client,
-            semantic_grounding_client=_passing_semantic_client(),
+            semantic_grounding_client=semantic_client,
             quality_evaluator_client=evaluator_client,
             repair_writer_client=repair_client,
         )
@@ -260,6 +278,13 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertTrue(result.repair_executed)
         self.assertEqual(candidate_client.call_count, 1)
         self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(semantic_client.call_count, 2)
+        self.assertEqual(semantic_client.max_output_tokens, 4800)
+        self.assertTrue(semantic_client.json_mode)
+        self.assertEqual(
+            semantic_client.extra_kwargs.get("reasoning_effort"),
+            AI_REASONING_EFFORT_MINIMAL,
+        )
         self.assertEqual(evaluator_client.call_count, 2)
         self.assertEqual(evaluator_client.max_output_tokens, 2400)
         self.assertTrue(evaluator_client.json_mode)
@@ -938,8 +963,8 @@ def _attempt_request(
         candidate_writer_model=OPENAI_FINAL_POST_MODEL,
         candidate_writer_max_output_tokens=1200,
         semantic_grounding_prompt_text="Semantic grounding prompt text.",
-        semantic_grounding_provider="openai",
-        semantic_grounding_model=OPENAI_FINAL_POST_MODEL,
+        semantic_grounding_provider=None,
+        semantic_grounding_model=None,
         semantic_grounding_max_output_tokens=None,
         quality_evaluator_provider="openai",
         quality_evaluator_model=OPENAI_FINAL_POST_MODEL,

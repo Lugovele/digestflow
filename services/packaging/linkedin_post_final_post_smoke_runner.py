@@ -73,6 +73,11 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 from services.packaging.linkedin_post_quality_evaluator_execution import (
     DEFAULT_MAX_OUTPUT_TOKENS as DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS,
 )
+from services.packaging.linkedin_post_semantic_grounding_execution import (
+    PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    resolve_semantic_grounding_execution_model,
+    resolve_semantic_grounding_execution_provider,
+)
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_CANDIDATE_WRITER,
     FINAL_POST_ROLE_QUALITY_EVALUATOR,
@@ -102,7 +107,7 @@ MAX_QUALITY_EVALUATOR_CALLS_CONTROLLED_REPAIR = 2
 MAX_REPAIR_WRITER_CALLS = 1
 
 DEFAULT_CANDIDATE_MAX_OUTPUT_TOKENS = 1200
-DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 2400
+DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
 DEFAULT_QUALITY_MAX_OUTPUT_TOKENS = DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS
 DEFAULT_REPAIR_MAX_OUTPUT_TOKENS = 1200
 
@@ -284,8 +289,13 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
             "model": _resolve_model(request.candidate_model),
         },
         "semantic_grounding": {
-            "provider": _resolve_provider(request.semantic_grounding_provider),
-            "model": _resolve_model(request.semantic_grounding_model),
+            "provider": _resolve_semantic_grounding_provider(
+                request.semantic_grounding_provider
+            ),
+            "model": _resolve_semantic_grounding_model(
+                request.semantic_grounding_model,
+                request.semantic_grounding_provider,
+            ),
         },
         "quality_evaluator": {
             "provider": _resolve_provider(request.quality_evaluator_provider),
@@ -315,8 +325,8 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
         candidate_writer_model=provider_models["candidate_writer"]["model"],
         candidate_writer_max_output_tokens=request.candidate_max_output_tokens,
         semantic_grounding_prompt_text=semantic_grounding_prompt_text,
-        semantic_grounding_provider=provider_models["semantic_grounding"]["provider"],
-        semantic_grounding_model=provider_models["semantic_grounding"]["model"],
+        semantic_grounding_provider=request.semantic_grounding_provider,
+        semantic_grounding_model=request.semantic_grounding_model,
         semantic_grounding_max_output_tokens=request.semantic_grounding_max_output_tokens,
         quality_evaluator_provider=provider_models["quality_evaluator"]["provider"],
         quality_evaluator_model=provider_models["quality_evaluator"]["model"],
@@ -725,6 +735,17 @@ def _resolve_provider(provider: str | None) -> str:
 
 def _resolve_model(model: str | None) -> str:
     return str(model if model is not None else settings.POSTFLOW_POST_MODEL).strip()
+
+
+def _resolve_semantic_grounding_provider(provider: str | None) -> str:
+    return str(resolve_semantic_grounding_execution_provider(provider)).strip().lower()
+
+
+def _resolve_semantic_grounding_model(
+    model: str | None,
+    provider: str | None = None,
+) -> str:
+    return str(resolve_semantic_grounding_execution_model(provider, model)).strip()
 
 
 def _preflight_provider_models(
