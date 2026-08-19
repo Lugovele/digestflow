@@ -1087,9 +1087,12 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
                 "selected evidence only",
                 "AngleDecision.controlling_angle",
                 "source qualifications such as likely, may, projected, and risk remains",
+                "distinctive original phrasing unless it is the grounding defect",
                 "valid CandidatePost JSON",
             ],
             "avoid": [
+                "full-post rewrite when a local repair is enough",
+                "generic author markers or template transitions",
                 "new facts",
                 "stronger certainty than selected evidence",
                 "unsupported causal language",
@@ -1104,9 +1107,12 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
         "preserve": [
             "selected evidence only",
             "AngleDecision.controlling_angle",
+            "distinctive original phrasing unless it is the failed criterion",
             "valid CandidatePost JSON",
         ],
         "avoid": [
+            "full-post rewrite when a local repair is enough",
+            "generic author markers or template transitions",
             "new facts",
             "new metrics",
             "evidence IDs in human-facing text",

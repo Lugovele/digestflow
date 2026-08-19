@@ -45,6 +45,10 @@ from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_flow_contracts import FinalPostAttemptHistory
 from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
 from services.packaging.linkedin_post_flow_input_builders import build_post_editorial_input
+from services.packaging.linkedin_post_final_post_payload_contract import (
+    FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+    FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS,
+)
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_QUALITY_EVALUATOR,
     FINAL_POST_ROLE_REPAIR_WRITER,
@@ -157,6 +161,19 @@ RECONSTRUCTION_DIRECT = "DIRECT"
 RECONSTRUCTION_DETERMINISTIC = "DETERMINISTIC_RECONSTRUCTION"
 REPAIR_WRITER_JSON_MODE = False
 REPAIR_WRITER_MAX_OUTPUT_TOKENS = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS
+REPAIR_WRITER_SAFE_TARGET_MAX_CHARS = FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_MAX_CHARS
+REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS = 1200
+REPAIR_WRITER_GENERIC_MARKERS = (
+    "it's easy to",
+    "in my view",
+    "i believe",
+    "here's the",
+    "the real tension",
+    "both x and y matter",
+)
+REPAIR_WRITER_DISTINCTIVE_FRAGMENT_LIMIT = 8
+REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_WORDS = 5
+REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_CHARS = 36
 FIXED_SEMANTIC_GROUNDING_PROVIDER = AI_PROVIDER_GEMINI
 FIXED_SEMANTIC_GROUNDING_MODEL = "gemini-3.6-flash"
 FIXED_QUALITY_EVALUATOR_PROVIDER = AI_PROVIDER_OPENAI
@@ -1305,6 +1322,8 @@ def _payload_preservation(
     original_length = len(original_post_text)
     repaired_length = len(repaired_post_text)
     character_delta = repaired_length - original_length
+    distinctive = _distinctive_phrase_preservation(original_post_text, repaired_post_text)
+    added_generic_markers = _added_generic_markers(original_post_text, repaired_post_text)
     return {
         "only_post_text_changed": (
             original_keys == repaired_keys == {"post_text"}
@@ -1321,7 +1340,110 @@ def _payload_preservation(
             if original_length
             else None
         ),
+        "within_1300": repaired_length <= FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+        "within_safe_target": repaired_length <= REPAIR_WRITER_SAFE_TARGET_MAX_CHARS,
+        "near_limit_original": original_length >= REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS,
+        "net_shortened": character_delta < 0,
+        "repair_scope_locality": _repair_scope_locality(original_post_text, repaired_post_text),
+        "added_generic_marker_count": len(added_generic_markers),
+        "added_generic_markers": added_generic_markers,
+        **distinctive,
     }
+
+
+def _repair_scope_locality(original_text: str, repaired_text: str) -> str:
+    if original_text == repaired_text:
+        return "unchanged"
+    original_paragraphs = _paragraphs(original_text)
+    repaired_paragraphs = _paragraphs(repaired_text)
+    if len(original_paragraphs) == len(repaired_paragraphs):
+        changed = sum(
+            1
+            for original, repaired in zip(original_paragraphs, repaired_paragraphs)
+            if original != repaired
+        )
+        if changed <= 1:
+            return "paragraph_local"
+    original_sentences = _sentence_like_fragments(original_text)
+    repaired_sentences = _sentence_like_fragments(repaired_text)
+    if len(original_sentences) == len(repaired_sentences):
+        changed = sum(
+            1
+            for original, repaired in zip(original_sentences, repaired_sentences)
+            if original != repaired
+        )
+        if changed <= 2:
+            return "sentence_local"
+    return "broad_rewrite"
+
+
+def _distinctive_phrase_preservation(
+    original_text: str,
+    repaired_text: str,
+) -> dict[str, Any]:
+    fragments = _distinctive_fragments(original_text)
+    repaired_normalized = _normalize_text_for_comparison(repaired_text)
+    preserved = [
+        fragment
+        for fragment in fragments
+        if _normalize_text_for_comparison(fragment) in repaired_normalized
+    ]
+    lost = [fragment for fragment in fragments if fragment not in preserved]
+    return {
+        "distinctive_fragment_count": len(fragments),
+        "distinctive_fragments_preserved": len(preserved),
+        "distinctive_preservation_rate": (
+            round(len(preserved) / len(fragments), 2) if fragments else None
+        ),
+        "lost_distinctive_fragments": lost,
+    }
+
+
+def _distinctive_fragments(text: str) -> list[str]:
+    fragments: list[str] = []
+    for fragment in _sentence_like_fragments(text):
+        cleaned = " ".join(fragment.split())
+        if len(cleaned) < REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_CHARS:
+            continue
+        if len(cleaned.split()) < REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_WORDS:
+            continue
+        if _contains_generic_marker(cleaned):
+            continue
+        fragments.append(cleaned)
+        if len(fragments) >= REPAIR_WRITER_DISTINCTIVE_FRAGMENT_LIMIT:
+            break
+    return fragments
+
+
+def _added_generic_markers(original_text: str, repaired_text: str) -> list[str]:
+    original_normalized = _normalize_text_for_comparison(original_text)
+    repaired_normalized = _normalize_text_for_comparison(repaired_text)
+    return [
+        marker
+        for marker in REPAIR_WRITER_GENERIC_MARKERS
+        if marker not in original_normalized and marker in repaired_normalized
+    ]
+
+
+def _contains_generic_marker(text: str) -> bool:
+    normalized = _normalize_text_for_comparison(text)
+    return any(marker in normalized for marker in REPAIR_WRITER_GENERIC_MARKERS)
+
+
+def _paragraphs(text: str) -> list[str]:
+    return [paragraph.strip() for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
+
+
+def _sentence_like_fragments(text: str) -> list[str]:
+    return [
+        fragment.strip()
+        for fragment in re.split(r"(?<=[.!?])\s+|\n+", text)
+        if fragment.strip()
+    ]
+
+
+def _normalize_text_for_comparison(text: str) -> str:
+    return re.sub(r"\s+", " ", text.casefold()).strip()
 
 
 def _gate_passed(gate_output: Any) -> bool:
@@ -1689,6 +1811,14 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
                     f"repaired_character_count: {preservation.get('repaired_character_count')}",
                     f"character_delta: {preservation.get('character_delta')}",
                     f"character_delta_percent: {preservation.get('character_delta_percent')}",
+                    f"within_1300: {preservation.get('within_1300')}",
+                    f"within_safe_target: {preservation.get('within_safe_target')}",
+                    f"near_limit_original: {preservation.get('near_limit_original')}",
+                    f"net_shortened: {preservation.get('net_shortened')}",
+                    f"repair_scope_locality: {preservation.get('repair_scope_locality')}",
+                    f"distinctive_preservation_rate: {preservation.get('distinctive_preservation_rate')}",
+                    f"added_generic_marker_count: {preservation.get('added_generic_marker_count')}",
+                    f"added_generic_markers: {preservation.get('added_generic_markers')}",
                     "voice_preservation_note: compare distinctive phrasing, sentence rhythm, authorial specificity, rhetorical structure, and generic transition drift; this is reporting-only and not a deterministic AI detector.",
                     f"repair_target: {record.get('repair_instruction', {}).get('failed_criterion')}",
                     "",

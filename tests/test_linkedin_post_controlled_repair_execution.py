@@ -468,9 +468,12 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                         "selected evidence only",
                         "AngleDecision.controlling_angle",
                         "source qualifications such as likely, may, projected, and risk remains",
+                        "distinctive original phrasing unless it is the grounding defect",
                         "valid CandidatePost JSON",
                     ],
                     "avoid": [
+                        "full-post rewrite when a local repair is enough",
+                        "generic author markers or template transitions",
                         "new facts",
                         "stronger certainty than selected evidence",
                         "unsupported causal language",

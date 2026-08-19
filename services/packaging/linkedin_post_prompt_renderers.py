@@ -39,6 +39,9 @@ SELECTED_EVIDENCE_PROMPT_FIELDS = (
     "role_in_post",
 )
 
+REPAIR_WRITER_SAFE_TARGET_MIN_CHARS = 1150
+REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS = 1200
+
 AUTHORIAL_VOICE_DIRECTIVE_PROMPT_FIELDS = (
     "authorial_observation",
     "rejected_reading",
@@ -218,7 +221,8 @@ def render_repair_writer_prompt_input(
     candidate_post_constraints = build_candidate_post_constraints()
     variables = {
         "repair_writer_length_guidance": _repair_writer_length_guidance(
-            candidate_post_constraints
+            candidate_post_constraints,
+            original_candidate_payload,
         ),
         "original_candidate_payload_json": _stable_json(
             _candidate_post_payload_for_prompt(original_candidate_payload)
@@ -457,28 +461,78 @@ def _candidate_post_length_instruction(
 
 def _repair_writer_length_guidance(
     candidate_post_constraints: dict[str, Any],
+    original_candidate_payload: Any,
 ) -> str:
     post_text_constraints = candidate_post_constraints.get("post_text")
     if not isinstance(post_text_constraints, dict):
         raise TypeError("candidate_post_constraints.post_text must be a dictionary.")
     hard_max_chars = post_text_constraints.get("max_chars")
+    target_max_chars = post_text_constraints.get("prompt_target_max_chars")
     if not isinstance(hard_max_chars, int):
         raise TypeError(
             "candidate_post_constraints.post_text.max_chars must be an integer."
         )
+    if not isinstance(target_max_chars, int):
+        raise TypeError(
+            "candidate_post_constraints.post_text.prompt_target_max_chars "
+            "must be an integer."
+        )
     if hard_max_chars <= 0:
         raise ValueError("candidate post max_chars must be positive.")
+    if target_max_chars <= 0 or target_max_chars > hard_max_chars:
+        raise ValueError(
+            "candidate post prompt_target_max_chars must be positive and stay "
+            "within max_chars."
+        )
+
+    original_post_text = _candidate_post_payload_for_prompt(original_candidate_payload)[
+        "post_text"
+    ]
+    original_length = len(original_post_text)
+    safe_target_min_chars = min(
+        REPAIR_WRITER_SAFE_TARGET_MIN_CHARS,
+        target_max_chars,
+    )
+    near_limit = original_length >= REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS
+    near_limit_guidance = (
+        "NEAR-LIMIT ORIGINAL:\n"
+        f"The original post_text is {original_length} characters, which is close "
+        f"to the {hard_max_chars}-character hard maximum. The repair should be "
+        "net-negative or the same length unless a tiny increase is unavoidable "
+        "for the named repair. Replace, compress, and tighten existing wording "
+        "before adding any new sentence.\n\n"
+        if near_limit
+        else ""
+    )
 
     return (
         "REPAIR LENGTH DISCIPLINE:\n"
-        "Keep the repaired post_text at or below the original post length when "
-        "practical.\n\n"
+        f"The original post_text is {original_length} characters. Keep the "
+        "repaired post_text at or below the original post length when practical.\n\n"
+        "SAFE TARGET:\n"
+        f"Aim for {safe_target_min_chars}-{target_max_chars} characters when the "
+        "repair can stay natural. Do not target the hard maximum directly and "
+        "never pad the post to reach the safe target.\n\n"
         "HARD MAXIMUM:\n"
         f"The final repaired post_text MUST be <= {hard_max_chars} characters. "
         f"More than {hard_max_chars} characters is a hard CandidatePost failure.\n\n"
+        f"{near_limit_guidance}"
+        "MINIMAL EDIT DISCIPLINE:\n"
+        "Repair only the named failed criterion. Preserve the current structure, "
+        "good prose, strong sentences, distinctive phrasing, controlling angle, "
+        "evidence relationships, and human cadence unless that exact wording is "
+        "the defect. Prefer paragraph-local or sentence-local edits over a full "
+        "rewrite. Keep semantics stable outside the target repair.\n\n"
         "REPAIR STRATEGY:\n"
-        "If the original candidate is close to the hard maximum, replace, "
-        "compress, or rewrite existing text rather than appending new material.\n\n"
+        "Prefer replacement over addition. If the original candidate is close "
+        "to the hard maximum, replace, compress, or tighten existing text rather "
+        "than appending new material.\n\n"
+        "ANTI-GENERICNESS:\n"
+        "Do not add generic author markers or template transitions merely to "
+        "sound more human. Avoid adding phrases such as It's easy to, In my "
+        "view, I believe, Here's the, The real tension, or Both X and Y matter "
+        "unless the original post already uses that exact framing or the selected "
+        "evidence requires it.\n\n"
         "CTA / ENDING REPAIRS:\n"
         "If the requested repair concerns CTA or ending quality, prefer replacing "
         "the existing final sentence or paragraph. Preserve the rest of the post "
@@ -486,9 +540,10 @@ def _repair_writer_length_guidance(
         "one clear reader-facing CTA when the repair instruction requires one.\n\n"
         "AUTHOR POINT OF VIEW REPAIRS:\n"
         "If the requested repair concerns author_point_of_view, strengthen the "
-        "author-owned interpretation by replacing or tightening existing "
-        "editorial language. Do not add multiple redundant stance statements or "
-        "append extra interpretive conclusions purely to satisfy POV."
+        "author-owned interpretation by inserting or sharpening one evidence-bounded "
+        "judgment through replacement or tightening. Do not convert the whole post "
+        "to first person, add multiple redundant stance statements, or append extra "
+        "interpretive conclusions purely to satisfy POV."
     )
 
 

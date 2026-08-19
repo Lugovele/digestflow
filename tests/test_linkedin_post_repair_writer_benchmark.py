@@ -192,6 +192,33 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(manifest["planned_live_accounting"]["planned_max_provider_calls"], 27)
 
 
+    def test_benchmark_prompt_render_uses_case_specific_length_guidance(self) -> None:
+        cases = default_repair_writer_benchmark_cases()
+        expected_lengths = {
+            "topic_140_digest_126": 1274,
+            "topic_214_digest_128__claude_v3": 1299,
+            "topic_200_digest_134__gpt_v2": 1043,
+        }
+
+        for case in cases:
+            with self.subTest(case=case.case_id):
+                guidance = build_repair_writer_benchmark_prompt_render(case).variables[
+                    "repair_writer_length_guidance"
+                ]
+
+                self.assertIn(
+                    f"The original post_text is {expected_lengths[case.case_id]} characters",
+                    guidance,
+                )
+                self.assertIn("Aim for 1150-1200 characters", guidance)
+                if case.candidate_post_character_length >= 1200:
+                    self.assertIn("NEAR-LIMIT ORIGINAL:", guidance)
+                    self.assertIn("net-negative or the same length", guidance)
+                else:
+                    self.assertNotIn("NEAR-LIMIT ORIGINAL:", guidance)
+                    self.assertIn("never pad the post to reach the safe target", guidance)
+
+
     def test_manifest_records_genericization_as_selection_blocker_without_selection_change(self) -> None:
         with TemporaryDirectory() as tempdir:
             result = run_repair_writer_benchmark(
@@ -346,6 +373,27 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             COMPLETE_PLAIN_JSON,
         )
         self.assertIn("raw_response_character_count", response_structure)
+        preservation = record["payload_preservation"]
+        self.assertEqual(preservation["original_character_count"], case.candidate_post_character_length)
+        self.assertEqual(
+            preservation["repaired_character_count"],
+            len("Repaired post with a clearer reflective ending."),
+        )
+        self.assertLess(preservation["character_delta"], 0)
+        self.assertTrue(preservation["within_1300"])
+        self.assertTrue(preservation["within_safe_target"])
+        self.assertTrue(preservation["near_limit_original"])
+        self.assertTrue(preservation["net_shortened"])
+        self.assertIn(
+            preservation["repair_scope_locality"],
+            {"paragraph_local", "sentence_local", "broad_rewrite"},
+        )
+        self.assertIn("distinctive_fragment_count", preservation)
+        self.assertIn("distinctive_fragments_preserved", preservation)
+        self.assertIn("distinctive_preservation_rate", preservation)
+        self.assertIn("lost_distinctive_fragments", preservation)
+        self.assertEqual(preservation["added_generic_marker_count"], 0)
+        self.assertEqual(preservation["added_generic_markers"], [])
         self.assertNotIn(case.candidate_payload["post_text"], comparison_text)
         self.assertNotIn("Repaired post with a clearer reflective ending.", comparison_text)
 
@@ -677,6 +725,60 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertIn("raw_text_sha256", runs_text)
         self.assertIn("raw_text_length", runs_text)
         self.assertNotIn("raw_text\":", runs_text)
+
+    def test_payload_preservation_reports_added_generic_markers(self) -> None:
+        original = {
+            "post_text": "Bitcoin market evidence leaves room for doubt. Adoption signals are mixed.",
+        }
+        repaired = {
+            "post_text": "It's easy to call this settled. In my view, Bitcoin market evidence leaves room for doubt.",
+        }
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertEqual(preservation["added_generic_marker_count"], 2)
+        self.assertEqual(
+            preservation["added_generic_markers"],
+            ["it's easy to", "in my view"],
+        )
+
+    def test_payload_preservation_reports_distinctive_fragment_preservation(self) -> None:
+        distinctive = "The market is learning to price political enthusiasm without mistaking it for adoption."
+        original = {"post_text": distinctive}
+        repaired = {"post_text": f"{distinctive} Extra local CTA."}
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertGreaterEqual(preservation["distinctive_fragment_count"], 1)
+        self.assertGreaterEqual(preservation["distinctive_fragments_preserved"], 1)
+        self.assertGreater(preservation["distinctive_preservation_rate"], 0)
+        self.assertEqual(preservation["lost_distinctive_fragments"], [])
+
+    def test_within_safe_target_is_reporting_only_not_a_gate(self) -> None:
+        original = {"post_text": "x" * 1043}
+        repaired = {"post_text": "x" * 1250}
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertTrue(preservation["within_1300"])
+        self.assertFalse(preservation["within_safe_target"])
+        self.assertNotIn(
+            "within_safe_target",
+            inspect.getsource(linkedin_post_repair_writer_benchmark._gate_passed),
+        )
+        self.assertNotIn(
+            "within_safe_target",
+            inspect.getsource(linkedin_post_repair_writer_benchmark._record_gate_passed),
+        )
 
     def test_parse_failure_does_not_persist_non_json_raw_response_excerpts(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]

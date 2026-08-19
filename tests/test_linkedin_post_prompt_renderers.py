@@ -1201,7 +1201,12 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         guidance = render.variables["repair_writer_length_guidance"]
 
         self.assertIn("REPAIR LENGTH DISCIPLINE:", guidance)
+        self.assertIn("The original post_text is", guidance)
         self.assertIn("at or below the original post length", guidance)
+        self.assertIn("SAFE TARGET:", guidance)
+        self.assertIn("Aim for 1150-1200 characters", guidance)
+        self.assertIn("Do not target the hard maximum directly", guidance)
+        self.assertIn("never pad the post to reach the safe target", guidance)
         self.assertIn("HARD MAXIMUM:", guidance)
         self.assertIn("post_text MUST be <= 1300 characters", guidance)
         self.assertIn("More than 1300 characters is a hard CandidatePost failure", guidance)
@@ -1246,7 +1251,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
     ) -> None:
         guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
 
-        self.assertIn("replace, compress, or rewrite existing text", guidance)
+        self.assertIn("replace, compress, or tighten existing text", guidance)
         self.assertIn("rather than appending new material", guidance)
 
     def test_repair_writer_length_guidance_calibrates_cta_repairs(self) -> None:
@@ -1261,9 +1266,67 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
 
         self.assertIn("AUTHOR POINT OF VIEW REPAIRS:", guidance)
-        self.assertIn("replacing or tightening existing editorial language", guidance)
-        self.assertIn("Do not add multiple redundant stance statements", guidance)
+        self.assertIn("inserting or sharpening one evidence-bounded", guidance)
+        self.assertIn("add multiple redundant stance statements", guidance)
         self.assertIn("append extra interpretive conclusions", guidance)
+
+    def test_repair_writer_length_guidance_for_1274_characters_prefers_net_shortening(
+        self,
+    ) -> None:
+        guidance = _repair_writer_render(
+            original_candidate_payload={"post_text": "x" * 1274}
+        ).variables["repair_writer_length_guidance"]
+
+        self.assertIn("The original post_text is 1274 characters", guidance)
+        self.assertIn("NEAR-LIMIT ORIGINAL:", guidance)
+        self.assertIn("net-negative or the same length", guidance)
+        self.assertIn("before adding any new sentence", guidance)
+
+    def test_repair_writer_length_guidance_for_1299_characters_prefers_net_shortening(
+        self,
+    ) -> None:
+        guidance = _repair_writer_render(
+            original_candidate_payload={"post_text": "x" * 1299}
+        ).variables["repair_writer_length_guidance"]
+
+        self.assertIn("The original post_text is 1299 characters", guidance)
+        self.assertIn("NEAR-LIMIT ORIGINAL:", guidance)
+        self.assertIn("Replace, compress, and tighten existing wording", guidance)
+
+    def test_repair_writer_length_guidance_for_shorter_original_keeps_safe_target_without_compression_mandate(
+        self,
+    ) -> None:
+        guidance = _repair_writer_render(
+            original_candidate_payload={"post_text": "x" * 1043}
+        ).variables["repair_writer_length_guidance"]
+
+        self.assertIn("The original post_text is 1043 characters", guidance)
+        self.assertIn("Aim for 1150-1200 characters", guidance)
+        self.assertNotIn("NEAR-LIMIT ORIGINAL:", guidance)
+        self.assertIn("never pad the post to reach the safe target", guidance)
+
+    def test_repair_writer_guidance_requires_minimal_edit_and_distinctive_preservation(
+        self,
+    ) -> None:
+        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+
+        self.assertIn("Repair only the named failed criterion", guidance)
+        self.assertIn("Preserve the current structure", guidance)
+        self.assertIn("distinctive phrasing", guidance)
+        self.assertIn("Prefer paragraph-local or sentence-local edits", guidance)
+        self.assertIn("over a full rewrite", guidance)
+        self.assertIn("Keep semantics stable outside the target repair", guidance)
+
+    def test_repair_writer_guidance_discourages_added_generic_author_markers(
+        self,
+    ) -> None:
+        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+
+        self.assertIn("ANTI-GENERICNESS:", guidance)
+        self.assertIn("Do not add generic author markers", guidance)
+        self.assertIn("It's easy to", guidance)
+        self.assertIn("In my view", guidance)
+        self.assertIn("The real tension", guidance)
 
     def test_repair_writer_render_preserves_selected_evidence_boundary(self) -> None:
         editorial_input = _post_editorial_input()
