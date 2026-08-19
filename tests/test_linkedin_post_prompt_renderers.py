@@ -63,6 +63,7 @@ SEMANTIC_GROUNDING_VARIABLES = (
 
 REPAIR_WRITER_VARIABLES = (
     "repair_writer_length_guidance",
+    "repair_writer_target_guidance",
     "original_candidate_payload_json",
     "post_brief_json",
     "angle_decision_json",
@@ -1178,6 +1179,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         render = _repair_writer_render()
         headers = [
             "## REPAIR_WRITER_LENGTH_GUIDANCE",
+            "## REPAIR_WRITER_TARGET_GUIDANCE",
             "## ORIGINAL_CANDIDATE_PAYLOAD_JSON",
             "## POST_BRIEF_JSON",
             "## ANGLE_DECISION_JSON",
@@ -1203,8 +1205,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("REPAIR LENGTH DISCIPLINE:", guidance)
         self.assertIn("The original post_text is", guidance)
         self.assertIn("at or below the original post length", guidance)
-        self.assertIn("SAFE TARGET:", guidance)
-        self.assertIn("Aim for 1150-1200 characters", guidance)
+        self.assertIn("SAFE OPERATING TARGET:", guidance)
+        self.assertIn("Use 1150-1200 characters", guidance)
         self.assertIn("Do not target the hard maximum directly", guidance)
         self.assertIn("never pad the post to reach the safe target", guidance)
         self.assertIn("HARD MAXIMUM:", guidance)
@@ -1254,21 +1256,35 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("replace, compress, or tighten existing text", guidance)
         self.assertIn("rather than appending new material", guidance)
 
-    def test_repair_writer_length_guidance_calibrates_cta_repairs(self) -> None:
-        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+    def test_repair_writer_target_guidance_calibrates_cta_repairs(self) -> None:
+        guidance = _repair_writer_render(
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "cta",
+                "repair_instruction": "Make the CTA explicit.",
+            }
+        ).variables["repair_writer_target_guidance"]
 
-        self.assertIn("CTA / ENDING REPAIRS:", guidance)
-        self.assertIn("prefer replacing the existing final sentence or paragraph", guidance)
-        self.assertIn("do not append redundant closing material", guidance)
-        self.assertIn("keep exactly one clear reader-facing CTA", guidance)
+        self.assertIn("TARGETED CTA REPAIR:", guidance)
+        self.assertIn("final reader-facing turn", guidance)
+        self.assertIn("Replace or sharpen the ending only", guidance)
+        self.assertIn("Do not add a second CTA", guidance)
+        self.assertIn("exactly one clear reader-facing action", guidance)
 
-    def test_repair_writer_length_guidance_calibrates_author_pov_repairs(self) -> None:
-        guidance = _repair_writer_render().variables["repair_writer_length_guidance"]
+    def test_repair_writer_target_guidance_calibrates_author_pov_repairs(self) -> None:
+        guidance = _repair_writer_render(
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen author POV.",
+            }
+        ).variables["repair_writer_target_guidance"]
 
-        self.assertIn("AUTHOR POINT OF VIEW REPAIRS:", guidance)
-        self.assertIn("inserting or sharpening one evidence-bounded", guidance)
-        self.assertIn("add multiple redundant stance statements", guidance)
-        self.assertIn("append extra interpretive conclusions", guidance)
+        self.assertIn("TARGETED AUTHOR POINT OF VIEW REPAIR:", guidance)
+        self.assertIn("one local interpretive sentence", guidance)
+        self.assertIn("exactly one evidence-bounded", guidance)
+        self.assertIn("Do not add multiple first-person markers", guidance)
+        self.assertIn("Do not paraphrase distinctive sentences", guidance)
 
     def test_repair_writer_length_guidance_for_1274_characters_prefers_net_shortening(
         self,
@@ -1279,7 +1295,9 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertIn("The original post_text is 1274 characters", guidance)
         self.assertIn("NEAR-LIMIT ORIGINAL:", guidance)
-        self.assertIn("net-negative or the same length", guidance)
+        self.assertIn("should be <= 1200 characters", guidance)
+        self.assertIn("do not use the 1201-1300 range", guidance)
+        self.assertIn("Prefer a net-negative character delta", guidance)
         self.assertIn("before adding any new sentence", guidance)
 
     def test_repair_writer_length_guidance_for_1299_characters_prefers_net_shortening(
@@ -1291,7 +1309,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertIn("The original post_text is 1299 characters", guidance)
         self.assertIn("NEAR-LIMIT ORIGINAL:", guidance)
-        self.assertIn("Replace, compress, and tighten existing wording", guidance)
+        self.assertIn("Remove or compress existing wording", guidance)
+        self.assertIn("do not use the 1201-1300 range", guidance)
 
     def test_repair_writer_length_guidance_for_shorter_original_keeps_safe_target_without_compression_mandate(
         self,
@@ -1301,7 +1320,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         ).variables["repair_writer_length_guidance"]
 
         self.assertIn("The original post_text is 1043 characters", guidance)
-        self.assertIn("Aim for 1150-1200 characters", guidance)
+        self.assertIn("Use 1150-1200 characters", guidance)
         self.assertNotIn("NEAR-LIMIT ORIGINAL:", guidance)
         self.assertIn("never pad the post to reach the safe target", guidance)
 
@@ -1313,8 +1332,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("Repair only the named failed criterion", guidance)
         self.assertIn("Preserve the current structure", guidance)
         self.assertIn("distinctive phrasing", guidance)
-        self.assertIn("Prefer paragraph-local or sentence-local edits", guidance)
-        self.assertIn("over a full rewrite", guidance)
+        self.assertIn("preserve its wording as closely as possible", guidance)
+        self.assertIn("Do not paraphrase good sentences merely for style", guidance)
         self.assertIn("Keep semantics stable outside the target repair", guidance)
 
     def test_repair_writer_guidance_discourages_added_generic_author_markers(
@@ -1327,6 +1346,50 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("It's easy to", guidance)
         self.assertIn("In my view", guidance)
         self.assertIn("The real tension", guidance)
+        self.assertIn("For me", guidance)
+        self.assertIn("My reading", guidance)
+
+    def test_cta_repair_target_guidance_is_ending_local_and_actionable(self) -> None:
+        render = _repair_writer_render(
+            original_candidate_payload={"post_text": "x" * 1274},
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "cta",
+                "repair_instruction": "Make the CTA explicit.",
+            },
+        )
+        target_guidance = render.variables["repair_writer_target_guidance"]
+        length_guidance = render.variables["repair_writer_length_guidance"]
+
+        self.assertIn("TARGETED CTA REPAIR:", target_guidance)
+        self.assertIn("final reader-facing turn", target_guidance)
+        self.assertIn("Replace or sharpen the ending only", target_guidance)
+        self.assertIn("Do not rewrite the full post", target_guidance)
+        self.assertIn("Do not add a second CTA", target_guidance)
+        self.assertIn("exactly one clear reader-facing action", target_guidance)
+        self.assertIn("open reflective question", target_guidance)
+        self.assertIn("Replace, do not append", target_guidance)
+        self.assertIn("should be <= 1200 characters", length_guidance)
+
+    def test_author_pov_repair_target_guidance_is_sentence_local(self) -> None:
+        target_guidance = _repair_writer_render(
+            original_candidate_payload={"post_text": "x" * 1043},
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        ).variables["repair_writer_target_guidance"]
+
+        self.assertIn("TARGETED AUTHOR POINT OF VIEW REPAIR:", target_guidance)
+        self.assertIn("one local interpretive sentence or clause", target_guidance)
+        self.assertIn("Preserve the hook", target_guidance)
+        self.assertIn("evidence body", target_guidance)
+        self.assertIn("Preserve the hook, evidence body, CTA", target_guidance)
+        self.assertIn("exactly one evidence-bounded interpretive judgment", target_guidance)
+        self.assertIn("Do not broadly rewrite the post", target_guidance)
+        self.assertIn("Do not add multiple first-person markers", target_guidance)
+        self.assertIn("Do not paraphrase distinctive sentences", target_guidance)
 
     def test_repair_writer_render_preserves_selected_evidence_boundary(self) -> None:
         editorial_input = _post_editorial_input()
@@ -1712,6 +1775,7 @@ def _repair_writer_render(
     angle_decision=None,
     selected_evidence=None,
     prompt_metadata=None,
+    repair_instruction=None,
 ) -> RepairWriterPromptRender:
     return render_repair_writer_prompt_input(
         original_candidate_payload=original_candidate_payload or _candidate_payload(),
@@ -1728,8 +1792,10 @@ def _repair_writer_render(
             },
             "failed_criteria": ["human_voice"],
         },
-        repair_instruction={
+        repair_instruction=repair_instruction
+        or {
             "repair_type": "editorial",
+            "failed_criterion": "human_voice",
             "repair_instruction": "Make the post sound less generic.",
         },
         attempt_index=1,

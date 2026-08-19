@@ -165,8 +165,13 @@ REPAIR_WRITER_SAFE_TARGET_MAX_CHARS = FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET
 REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS = 1200
 REPAIR_WRITER_GENERIC_MARKERS = (
     "it's easy to",
+    "it's tempting",
     "in my view",
+    "for me",
     "i believe",
+    "i think",
+    "i urge",
+    "my reading",
     "here's the",
     "the real tension",
     "both x and y matter",
@@ -174,6 +179,9 @@ REPAIR_WRITER_GENERIC_MARKERS = (
 REPAIR_WRITER_DISTINCTIVE_FRAGMENT_LIMIT = 8
 REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_WORDS = 5
 REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_CHARS = 36
+REPAIR_WRITER_TARGETED_REPAIR_MIN_DISTINCTIVE_FRAGMENTS = 3
+REPAIR_WRITER_TARGETED_REPAIR_MIN_PRESERVATION_RATE = 0.50
+REPAIR_WRITER_LOCAL_REPAIR_CRITERIA = ("cta", "author_point_of_view")
 FIXED_SEMANTIC_GROUNDING_PROVIDER = AI_PROVIDER_GEMINI
 FIXED_SEMANTIC_GROUNDING_MODEL = "gemini-3.6-flash"
 FIXED_QUALITY_EVALUATOR_PROVIDER = AI_PROVIDER_OPENAI
@@ -207,6 +215,7 @@ FAILURE_REPAIR_EMPTY_RESPONSE = "repair_writer_empty_response"
 FAILURE_REPAIR_PARSE = "repair_writer_parse_failure"
 FAILURE_REPAIR_ADAPTATION = "repair_writer_adaptation_failure"
 FAILURE_REPAIRED_DETERMINISTIC_GATE = "repaired_deterministic_gate_failure"
+FAILURE_REPAIR_EXCESSIVE_REWRITE = "repair_writer_excessive_rewrite"
 FAILURE_GROUNDING_EXECUTION = "semantic_grounding_execution_failure"
 FAILURE_GROUNDING_EMPTY_RESPONSE = "semantic_grounding_empty_response"
 FAILURE_GROUNDING_PARSE = "semantic_grounding_parse_failure"
@@ -453,7 +462,7 @@ def build_repair_writer_benchmark_prompt_render(
         selected_evidence=case.selected_evidence,
         deterministic_findings={"pass": True, "repair_reasons": []},
         quality_findings=case.known_quality_result,
-        repair_instruction=case.repair_instruction,
+        repair_instruction=_repair_instruction_with_target_metadata(case.repair_instruction),
         attempt_index=2,
         max_attempts=2,
         prompt_metadata=PromptMetadata(
@@ -620,6 +629,10 @@ def _live_record(
             quality_evaluator_provider_api_calls=0,
             parser_error_details={"code": exc.code, "message": _safe_text(str(exc))},
             adaptation_error_details={"code": exc.code, "message": _safe_text(str(exc))},
+            payload_preservation=_payload_preservation_for_parsed(
+                case.candidate_payload,
+                parsed,
+            ),
             repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
             response_diagnostics=_raw_response_diagnostics(raw_repair),
         )
@@ -632,6 +645,29 @@ def _live_record(
         selected_evidence_ids=_selected_evidence_ids(case),
     )
     preservation = _payload_preservation(case.candidate_payload, repaired_output.payload)
+    excessive_rewrite = _excessive_rewrite_blocker(case, preservation)
+    if excessive_rewrite is not None:
+        return _record(
+            request,
+            case,
+            plan,
+            run_index,
+            started_at,
+            completed_at,
+            render,
+            execution_status=BENCHMARK_STATUS_COMPLETED,
+            failure_stage="repair_writer_preservation_gate",
+            failure_code=FAILURE_REPAIR_EXCESSIVE_REWRITE,
+            repair_writer_attempts=1,
+            repair_writer_provider_api_calls=_confirmed_provider_api_call(raw_repair),
+            semantic_grounding_provider_api_calls=0,
+            quality_evaluator_provider_api_calls=0,
+            repaired_payload=repaired_output.payload,
+            repaired_gate=gate_output.to_dict(),
+            payload_preservation={**preservation, "excessive_rewrite_reason": excessive_rewrite},
+            repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
+            response_diagnostics=_raw_response_diagnostics(raw_repair),
+        )
     if not _gate_passed(gate_output):
         return _record(
             request,
@@ -1037,7 +1073,7 @@ def _record(
             },
         },
         "input_parity": _input_parity(case, render),
-        "repair_instruction": copy.deepcopy(case.repair_instruction),
+        "repair_instruction": _repair_instruction_with_target_metadata(case.repair_instruction),
         "render_diagnostics": _render_diagnostics(render),
         "provider_invocation_counts": provider_counts,
         "attempt_counts": {
@@ -1052,6 +1088,17 @@ def _record(
         "quality_evaluation": copy.deepcopy(quality_evaluation),
         "adjudication_projection": copy.deepcopy(adjudication_projection),
         "payload_preservation": copy.deepcopy(payload_preservation),
+        "target_repair_diagnostics": _target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=repair_writer_attempts,
+            failure_stage=failure_stage,
+            failure_code=failure_code,
+            quality_evaluation=quality_evaluation,
+        ),
+        "downstream_failure_classification": _downstream_failure_classification(
+            failure_stage,
+            failure_code,
+        ),
         "parser_error_details": copy.deepcopy(parser_error_details),
         "adaptation_error_details": copy.deepcopy(adaptation_error_details),
         "repair_adapter_diagnostics": copy.deepcopy(repair_adapter_diagnostics),
@@ -1294,6 +1341,38 @@ def _input_parity(
     }
 
 
+def _repair_instruction_with_target_metadata(
+    repair_instruction: dict[str, Any],
+) -> dict[str, Any]:
+    result = copy.deepcopy(repair_instruction)
+    failed_criterion = str(result.get("failed_criterion") or "").strip()
+    result.update(_repair_target_metadata(failed_criterion))
+    return result
+
+
+def _repair_target_metadata(failed_criterion: str) -> dict[str, Any]:
+    if failed_criterion == "cta":
+        return {
+            "target_locality": "ending_local",
+            "allowed_edit_region": "final reader-facing turn",
+            "replacement_preference": "replace_or_sharpen_existing_ending_do_not_append",
+            "target_success_contract": "one clear reader-facing action or open reflective question",
+        }
+    if failed_criterion == "author_point_of_view":
+        return {
+            "target_locality": "sentence_local",
+            "allowed_edit_region": "one local interpretive sentence or clause",
+            "replacement_preference": "replace_or_tighten_one_local_sentence",
+            "target_success_contract": "exactly one evidence-bounded interpretive judgment",
+        }
+    return {
+        "target_locality": "local_to_failed_criterion",
+        "allowed_edit_region": "minimal text needed for the failed criterion",
+        "replacement_preference": "replace_before_appending",
+        "target_success_contract": "fix the named failed criterion only",
+    }
+
+
 def _render_diagnostics(render: RepairWriterPromptRender) -> dict[str, Any]:
     return {
         "prompt_name": render.prompt_name,
@@ -1303,6 +1382,104 @@ def _render_diagnostics(render: RepairWriterPromptRender) -> dict[str, Any]:
         "input_text_sha256": _sha256(render.input_text),
         "input_text_length": len(render.input_text),
     }
+
+
+def _payload_preservation_for_parsed(
+    original_payload: dict[str, Any],
+    parsed_candidate: Any,
+) -> dict[str, Any] | None:
+    if not isinstance(parsed_candidate, dict):
+        return None
+    post_text = parsed_candidate.get("post_text")
+    if not isinstance(post_text, str):
+        return None
+    preservation = _payload_preservation(original_payload, {"post_text": post_text})
+    preservation["preservation_basis"] = "parsed_post_text_only"
+    preservation["parsed_top_level_keys"] = sorted(str(key) for key in parsed_candidate)
+    return preservation
+
+
+def _excessive_rewrite_blocker(
+    case: RepairWriterBenchmarkCase,
+    preservation: dict[str, Any],
+) -> str | None:
+    failed_criterion = str(case.repair_instruction.get("failed_criterion") or "")
+    if failed_criterion not in REPAIR_WRITER_LOCAL_REPAIR_CRITERIA:
+        return None
+    locality = preservation.get("repair_scope_locality")
+    if locality == "broad_rewrite":
+        return "targeted local repair produced broad_rewrite"
+    fragment_count = preservation.get("distinctive_fragment_count")
+    preservation_rate = preservation.get("distinctive_preservation_rate")
+    if (
+        isinstance(fragment_count, int)
+        and fragment_count >= REPAIR_WRITER_TARGETED_REPAIR_MIN_DISTINCTIVE_FRAGMENTS
+        and isinstance(preservation_rate, (int, float))
+        and preservation_rate < REPAIR_WRITER_TARGETED_REPAIR_MIN_PRESERVATION_RATE
+    ):
+        return "targeted local repair lost too much distinctive wording"
+    return None
+
+
+def _target_repair_diagnostics(
+    *,
+    case: RepairWriterBenchmarkCase,
+    repair_writer_attempts: int,
+    failure_stage: str | None,
+    failure_code: str | None,
+    quality_evaluation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    failed_criterion = str(case.repair_instruction.get("failed_criterion") or "")
+    attempted = repair_writer_attempts > 0
+    result: dict[str, Any] = {
+        "failed_criterion": failed_criterion,
+        "target_repair_attempted": attempted,
+        "target_repair_success": None,
+        "target_repair_success_reason": "downstream quality evaluator did not run",
+    }
+    if not attempted:
+        result["target_repair_success_reason"] = "repair writer not invoked"
+        return result
+    if failure_code == FAILURE_REPAIR_EXCESSIVE_REWRITE:
+        result["target_repair_success_reason"] = "blocked before downstream quality evaluator by excessive rewrite"
+        return result
+    if not isinstance(quality_evaluation, dict):
+        if failure_stage and str(failure_stage).startswith("semantic_grounding"):
+            result["target_repair_success_reason"] = "semantic grounding did not produce quality-evaluator input"
+        elif failure_stage:
+            result["target_repair_success_reason"] = f"quality evaluator unavailable after {failure_stage}"
+        return result
+    review_payload = quality_evaluation.get("quality_review") or quality_evaluation
+    scores = review_payload.get("scores") or {}
+    score = scores.get(failed_criterion)
+    if not isinstance(score, int) or isinstance(score, bool):
+        result["target_repair_success_reason"] = f"quality score for {failed_criterion} unavailable"
+        return result
+    required_minimum = 4
+    result["target_quality_score"] = score
+    result["target_required_minimum"] = required_minimum
+    result["target_repair_success"] = score >= required_minimum
+    result["target_repair_success_reason"] = (
+        f"{failed_criterion} score {score} >= {required_minimum}"
+        if score >= required_minimum
+        else f"{failed_criterion} score {score} < {required_minimum}"
+    )
+    return result
+
+
+def _downstream_failure_classification(
+    failure_stage: str | None,
+    failure_code: str | None,
+) -> str | None:
+    if failure_code is None:
+        return None
+    if failure_code == FAILURE_GROUNDING_DOMAIN:
+        return "semantic_grounding_domain_rejection"
+    if failure_stage and str(failure_stage).startswith("semantic_grounding"):
+        return "semantic_grounding_provider_or_parser_infrastructure_failure"
+    if failure_stage and str(failure_stage).startswith("quality_evaluator"):
+        return "quality_evaluator_provider_or_parser_infrastructure_failure"
+    return None
 
 
 def _payload_preservation(
@@ -1778,6 +1955,7 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
         lines.extend([f"## Case `{case_id}`", ""])
         for record in [item for item in records if item.get("case_id") == case_id]:
             preservation = record.get("payload_preservation") or {}
+            target_diagnostics = record.get("target_repair_diagnostics") or {}
             repair_diagnostics = record.get("repair_adapter_diagnostics") or {}
             grounding = record.get("semantic_grounding") or {}
             quality = record.get("quality_evaluation") or {}
@@ -1819,8 +1997,13 @@ def _comparison_text(manifest: dict[str, Any], records: tuple[dict[str, Any], ..
                     f"distinctive_preservation_rate: {preservation.get('distinctive_preservation_rate')}",
                     f"added_generic_marker_count: {preservation.get('added_generic_marker_count')}",
                     f"added_generic_markers: {preservation.get('added_generic_markers')}",
+                    f"excessive_rewrite_reason: {preservation.get('excessive_rewrite_reason')}",
                     "voice_preservation_note: compare distinctive phrasing, sentence rhythm, authorial specificity, rhetorical structure, and generic transition drift; this is reporting-only and not a deterministic AI detector.",
                     f"repair_target: {record.get('repair_instruction', {}).get('failed_criterion')}",
+                    f"target_repair_attempted: {target_diagnostics.get('target_repair_attempted')}",
+                    f"target_repair_success: {target_diagnostics.get('target_repair_success')}",
+                    f"target_repair_success_reason: {target_diagnostics.get('target_repair_success_reason')}",
+                    f"downstream_failure_classification: {record.get('downstream_failure_classification')}",
                     "",
                 ]
             )

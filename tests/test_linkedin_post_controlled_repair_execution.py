@@ -404,6 +404,20 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertNotIn("raw_provider_response", prompt_text)
         self.assertIn("human_voice", prompt_text)
         self.assertIn("selected evidence only", prompt_text)
+        repair_instruction = json.loads(
+            result.repair_prompt_render.variables["repair_instruction_json"]
+        )
+        self.assertEqual(repair_instruction["target_locality"], "local_to_failed_criterion")
+        self.assertEqual(
+            repair_instruction["allowed_edit_region"],
+            "minimal text needed for the failed criterion",
+        )
+        self.assertEqual(
+            repair_instruction["replacement_preference"],
+            "replace_before_appending",
+        )
+        self.assertIn("unrelated successful sentences as closely as possible", repair_instruction["preserve"])
+        self.assertIn("appending when replacement can fix the target", repair_instruction["avoid"])
         for forbidden in (
             "FinalPostPayload",
             "hook_variants",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 import inspect
 import json
 from pathlib import Path
@@ -210,14 +211,26 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
                     f"The original post_text is {expected_lengths[case.case_id]} characters",
                     guidance,
                 )
-                self.assertIn("Aim for 1150-1200 characters", guidance)
+                self.assertIn("Use 1150-1200 characters", guidance)
                 if case.candidate_post_character_length >= 1200:
                     self.assertIn("NEAR-LIMIT ORIGINAL:", guidance)
-                    self.assertIn("net-negative or the same length", guidance)
+                    self.assertIn("Prefer a net-negative character delta", guidance)
                 else:
                     self.assertNotIn("NEAR-LIMIT ORIGINAL:", guidance)
                     self.assertIn("never pad the post to reach the safe target", guidance)
 
+
+    def test_benchmark_cta_target_metadata_matches_controlled_repair_contract(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        render = build_repair_writer_benchmark_prompt_render(case)
+        repair_instruction = json.loads(render.variables["repair_instruction_json"])
+
+        self.assertEqual(repair_instruction["failed_criterion"], "cta")
+        self.assertEqual(repair_instruction["target_locality"], "ending_local")
+        self.assertEqual(
+            repair_instruction["replacement_preference"],
+            "replace_or_sharpen_existing_ending_do_not_append",
+        )
 
     def test_manifest_records_genericization_as_selection_blocker_without_selection_change(self) -> None:
         with TemporaryDirectory() as tempdir:
@@ -276,8 +289,9 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
 
         def repair_executor(request):
             calls["repair"].append(request)
+            local_repair = case.candidate_payload["post_text"] + " Act?"
             return RepairWriterRawResponse(
-                raw_text=json.dumps({"post_text": "Repaired post with a clearer reflective ending."}),
+                raw_text=json.dumps({"post_text": local_repair}),
                 provider=request.provider,
                 model=request.model,
                 prompt_metadata=PromptMetadata(
@@ -377,13 +391,13 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(preservation["original_character_count"], case.candidate_post_character_length)
         self.assertEqual(
             preservation["repaired_character_count"],
-            len("Repaired post with a clearer reflective ending."),
+            len(case.candidate_payload["post_text"] + " Act?"),
         )
-        self.assertLess(preservation["character_delta"], 0)
+        self.assertGreater(preservation["character_delta"], 0)
         self.assertTrue(preservation["within_1300"])
-        self.assertTrue(preservation["within_safe_target"])
+        self.assertFalse(preservation["within_safe_target"])
         self.assertTrue(preservation["near_limit_original"])
-        self.assertTrue(preservation["net_shortened"])
+        self.assertFalse(preservation["net_shortened"])
         self.assertIn(
             preservation["repair_scope_locality"],
             {"paragraph_local", "sentence_local", "broad_rewrite"},
@@ -395,7 +409,16 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(preservation["added_generic_marker_count"], 0)
         self.assertEqual(preservation["added_generic_markers"], [])
         self.assertNotIn(case.candidate_payload["post_text"], comparison_text)
-        self.assertNotIn("Repaired post with a clearer reflective ending.", comparison_text)
+        self.assertNotIn(case.candidate_payload["post_text"] + " Act?", comparison_text)
+        target = record["target_repair_diagnostics"]
+        self.assertEqual(target["failed_criterion"], "cta")
+        self.assertTrue(target["target_repair_attempted"])
+        self.assertIsNone(target["target_repair_success"])
+        self.assertIn("quality score for cta unavailable", target["target_repair_success_reason"])
+        self.assertEqual(
+            record["downstream_failure_classification"],
+            "quality_evaluator_provider_or_parser_infrastructure_failure",
+        )
 
     def test_repair_writer_failure_blocks_downstream_evaluators(self) -> None:
         case = default_repair_writer_benchmark_cases()[0]
@@ -466,7 +489,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
 
         def repair_executor(request):
             return RepairWriterRawResponse(
-                raw_text=json.dumps({"post_text": "Repaired post with a clearer reflective ending."}),
+                raw_text=json.dumps({"post_text": case.candidate_payload["post_text"] + " Act?"}),
                 provider=request.provider,
                 model=request.model,
                 prompt_metadata=PromptMetadata(
@@ -549,7 +572,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
 
         def repair_executor(request):
             return RepairWriterRawResponse(
-                raw_text=json.dumps({"post_text": "Repaired post with a clearer reflective ending."}),
+                raw_text=json.dumps({"post_text": case.candidate_payload["post_text"] + " Act?"}),
                 provider=request.provider,
                 model=request.model,
                 prompt_metadata=PromptMetadata(
@@ -720,11 +743,40 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
         )
         self.assertFalse(diagnostics["post_text_within_candidate_max_length"])
+        preservation = record["payload_preservation"]
+        self.assertIsNotNone(preservation)
+        self.assertEqual(
+            preservation["repaired_character_count"],
+            FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1,
+        )
+        self.assertFalse(preservation["within_1300"])
+        self.assertEqual(preservation["preservation_basis"], "parsed_post_text_only")
+        self.assertEqual(preservation["parsed_top_level_keys"], ["post_text"])
         self.assertEqual(calls, {"grounding": 0, "quality": 0})
         self.assertNotIn(overlength, runs_text)
         self.assertIn("raw_text_sha256", runs_text)
         self.assertIn("raw_text_length", runs_text)
         self.assertNotIn("raw_text\":", runs_text)
+
+    def test_payload_preservation_for_parsed_marks_post_text_only_diagnostic_basis(self) -> None:
+        original = {
+            "post_text": "Original post text.",
+            "hashtags": ["#markets"],
+        }
+        parsed = {
+            "post_text": "Repaired post text.",
+            "unexpected": "adapter diagnostics own this structural failure",
+        }
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation_for_parsed(
+            original,
+            parsed,
+        )
+
+        self.assertIsNotNone(preservation)
+        self.assertEqual(preservation["preservation_basis"], "parsed_post_text_only")
+        self.assertEqual(preservation["parsed_top_level_keys"], ["post_text", "unexpected"])
+        self.assertFalse(preservation["only_post_text_changed"])
 
     def test_payload_preservation_reports_added_generic_markers(self) -> None:
         original = {
@@ -745,6 +797,23 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             ["it's easy to", "in my view"],
         )
 
+    def test_payload_preservation_detects_expanded_generic_marker_set(self) -> None:
+        original = {
+            "post_text": "Bitcoin market evidence leaves room for doubt. Adoption signals are mixed.",
+        }
+        repaired = {
+            "post_text": "For me, I think this is settled. I urge leaders to act. My reading is that it's tempting to overstate momentum.",
+        }
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertEqual(
+            preservation["added_generic_markers"],
+            ["it's tempting", "for me", "i think", "i urge", "my reading"],
+        )
     def test_payload_preservation_reports_distinctive_fragment_preservation(self) -> None:
         distinctive = "The market is learning to price political enthusiasm without mistaking it for adoption."
         original = {"post_text": distinctive}
@@ -778,6 +847,172 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertNotIn(
             "within_safe_target",
             inspect.getsource(linkedin_post_repair_writer_benchmark._record_gate_passed),
+        )
+
+    def test_target_repair_success_derives_from_nested_quality_review_score(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+
+        diagnostics = linkedin_post_repair_writer_benchmark._target_repair_diagnostics(
+            case=case,
+            repair_writer_attempts=1,
+            failure_stage=None,
+            failure_code=None,
+            quality_evaluation={"quality_review": _quality_review_payload(passed=True)},
+        )
+
+        self.assertEqual(diagnostics["failed_criterion"], "cta")
+        self.assertTrue(diagnostics["target_repair_attempted"])
+        self.assertTrue(diagnostics["target_repair_success"])
+        self.assertEqual(diagnostics["target_quality_score"], 4)
+        self.assertEqual(diagnostics["target_required_minimum"], 4)
+
+    def test_excessive_rewrite_blocks_before_downstream_benchmark_evaluators(self) -> None:
+        case = default_repair_writer_benchmark_cases()[2]
+        plan = default_repair_writer_benchmark_plans()[2]
+        calls = {"grounding": 0, "quality": 0}
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text=json.dumps(
+                    {
+                        "post_text": (
+                            "Bitcoin has policy attention, but adoption remains uneven. "
+                            "Leaders should avoid treating the market narrative as proof. "
+                            "What signal would change your view?"
+                        )
+                    }
+                ),
+                provider=request.provider,
+                model=request.model,
+                usage={"total_tokens": 10},
+                raw_provider_response={"id": "repair"},
+            )
+
+        def grounding_executor(request):
+            calls["grounding"] += 1
+            raise AssertionError("semantic grounding should not run")
+
+        def quality_executor(request):
+            calls["quality"] += 1
+            raise AssertionError("quality evaluator should not run")
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+                semantic_grounding_executor=grounding_executor,
+                quality_evaluator_executor=quality_executor,
+            )
+
+        record = result.run_records[0]
+        self.assertEqual(record["failure_stage"], "repair_writer_preservation_gate")
+        self.assertEqual(record["failure_code"], "repair_writer_excessive_rewrite")
+        self.assertEqual(calls, {"grounding": 0, "quality": 0})
+        self.assertEqual(
+            record["payload_preservation"]["repair_scope_locality"],
+            "broad_rewrite",
+        )
+        self.assertIn(
+            "excessive_rewrite_reason",
+            record["payload_preservation"],
+        )
+        self.assertIsNone(record["target_repair_diagnostics"]["target_repair_success"])
+
+    def test_excessive_rewrite_blocks_low_distinctive_preservation_for_local_repairs(self) -> None:
+        case = default_repair_writer_benchmark_cases()[2]
+        preservation = {
+            "repair_scope_locality": "partial_rewrite",
+            "distinctive_fragment_count": 3,
+            "distinctive_preservation_rate": 0.49,
+        }
+
+        reason = linkedin_post_repair_writer_benchmark._excessive_rewrite_blocker(
+            case,
+            preservation,
+        )
+
+        self.assertEqual(reason, "targeted local repair lost too much distinctive wording")
+
+    def test_excessive_rewrite_gate_does_not_block_non_local_repair_criteria(self) -> None:
+        case = default_repair_writer_benchmark_cases()[2]
+        non_local_case = replace(
+            case,
+            repair_instruction={
+                **case.repair_instruction,
+                "failed_criterion": "human_voice",
+            },
+        )
+        preservation = {
+            "repair_scope_locality": "broad_rewrite",
+            "distinctive_fragment_count": 3,
+            "distinctive_preservation_rate": 0.0,
+        }
+
+        reason = linkedin_post_repair_writer_benchmark._excessive_rewrite_blocker(
+            non_local_case,
+            preservation,
+        )
+
+        self.assertIsNone(reason)
+    def test_semantic_grounding_execution_failure_is_infrastructure_not_domain_rejection(self) -> None:
+        case = default_repair_writer_benchmark_cases()[0]
+        plan = default_repair_writer_benchmark_plans()[2]
+
+        def repair_executor(request):
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": case.candidate_payload["post_text"] + " Act?"}),
+                provider=request.provider,
+                model=request.model,
+                usage={"total_tokens": 10},
+                raw_provider_response={"id": "repair"},
+                prompt_metadata=PromptMetadata(
+                    prompt_name=request.rendered_prompt_input.prompt_name,
+                    prompt_version=request.rendered_prompt_input.prompt_version,
+                    prompt_path=request.rendered_prompt_input.prompt_path,
+                ),
+            )
+
+        def grounding_executor(request):
+            return SemanticGroundingRawResponse(
+                raw_text="",
+                provider=request.provider,
+                model=request.model,
+                execution_error="provider invocation failed",
+            )
+
+        def quality_executor(request):
+            raise AssertionError("quality evaluator should not run")
+
+        with TemporaryDirectory() as tempdir:
+            result = run_repair_writer_benchmark(
+                RepairWriterBenchmarkRequest(
+                    cases=(case,),
+                    plans=(plan,),
+                    allow_api=True,
+                    output_root=Path(tempdir),
+                ),
+                now_factory=_fixed_now,
+                repair_writer_executor=repair_executor,
+                semantic_grounding_executor=grounding_executor,
+                quality_evaluator_executor=quality_executor,
+            )
+
+        record = result.run_records[0]
+        self.assertEqual(record["failure_code"], "semantic_grounding_execution_failure")
+        self.assertEqual(
+            record["downstream_failure_classification"],
+            "semantic_grounding_provider_or_parser_infrastructure_failure",
+        )
+        self.assertIsNone(record["target_repair_diagnostics"]["target_repair_success"])
+        self.assertIn(
+            "semantic grounding did not produce quality-evaluator input",
+            record["target_repair_diagnostics"]["target_repair_success_reason"],
         )
 
     def test_parse_failure_does_not_persist_non_json_raw_response_excerpts(self) -> None:

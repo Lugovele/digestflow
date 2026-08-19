@@ -1099,25 +1099,52 @@ def _repair_instruction(initial_result: Any) -> dict[str, Any]:
                 "recovery/stability/optimism drift",
             ],
         }
+    failed_criterion = _primary_failed_criterion(initial_result)
     return {
         "repair_type": "editorial",
-        "failed_criterion": _primary_failed_criterion(initial_result),
+        "failed_criterion": failed_criterion,
         "repair_scope": "CandidatePost.post_text",
+        **_repair_target_metadata(failed_criterion),
         "repair_instruction": initial_result.final_attempt_outcome.decision.reason,
         "preserve": [
             "selected evidence only",
             "AngleDecision.controlling_angle",
             "distinctive original phrasing unless it is the failed criterion",
+            "unrelated successful sentences as closely as possible",
             "valid CandidatePost JSON",
         ],
         "avoid": [
             "full-post rewrite when a local repair is enough",
             "generic author markers or template transitions",
+            "appending when replacement can fix the target",
             "new facts",
             "new metrics",
             "evidence IDs in human-facing text",
             "scaffold/source-summary phrasing",
         ],
+    }
+
+
+def _repair_target_metadata(failed_criterion: str) -> dict[str, Any]:
+    if failed_criterion == "cta":
+        return {
+            "target_locality": "ending_local",
+            "allowed_edit_region": "final reader-facing turn",
+            "replacement_preference": "replace_or_sharpen_existing_ending_do_not_append",
+            "target_success_contract": "one clear reader-facing action or open reflective question",
+        }
+    if failed_criterion == "author_point_of_view":
+        return {
+            "target_locality": "sentence_local",
+            "allowed_edit_region": "one local interpretive sentence or clause",
+            "replacement_preference": "replace_or_tighten_one_local_sentence",
+            "target_success_contract": "exactly one evidence-bounded interpretive judgment",
+        }
+    return {
+        "target_locality": "local_to_failed_criterion",
+        "allowed_edit_region": "minimal text needed for the failed criterion",
+        "replacement_preference": "replace_before_appending",
+        "target_success_contract": "fix the named failed criterion only",
     }
 
 

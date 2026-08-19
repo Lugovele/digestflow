@@ -41,6 +41,8 @@ SELECTED_EVIDENCE_PROMPT_FIELDS = (
 
 REPAIR_WRITER_SAFE_TARGET_MIN_CHARS = 1150
 REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS = 1200
+REPAIR_WRITER_CTA_CRITERION = "cta"
+REPAIR_WRITER_AUTHOR_POV_CRITERION = "author_point_of_view"
 
 AUTHORIAL_VOICE_DIRECTIVE_PROMPT_FIELDS = (
     "authorial_observation",
@@ -223,6 +225,9 @@ def render_repair_writer_prompt_input(
         "repair_writer_length_guidance": _repair_writer_length_guidance(
             candidate_post_constraints,
             original_candidate_payload,
+        ),
+        "repair_writer_target_guidance": _repair_writer_target_guidance(
+            repair_instruction,
         ),
         "original_candidate_payload_json": _stable_json(
             _candidate_post_payload_for_prompt(original_candidate_payload)
@@ -497,10 +502,15 @@ def _repair_writer_length_guidance(
     near_limit_guidance = (
         "NEAR-LIMIT ORIGINAL:\n"
         f"The original post_text is {original_length} characters, which is close "
-        f"to the {hard_max_chars}-character hard maximum. The repair should be "
-        "net-negative or the same length unless a tiny increase is unavoidable "
-        "for the named repair. Replace, compress, and tighten existing wording "
-        "before adding any new sentence.\n\n"
+        f"to the {hard_max_chars}-character hard maximum. Your repaired "
+        f"post_text should be <= {target_max_chars} characters. The hard schema "
+        f"maximum is {hard_max_chars}, but do not use the "
+        f"{target_max_chars + 1}-{hard_max_chars} range unless absolutely "
+        "unavoidable for the named repair. Prefer a net-negative character delta. "
+        "Remove or compress existing wording before adding any new sentence. "
+        "For CTA repairs, replace the existing ending rather than append. For "
+        "author_point_of_view repairs, replace or tighten one local sentence "
+        "rather than add a new paragraph.\n\n"
         if near_limit
         else ""
     )
@@ -509,41 +519,76 @@ def _repair_writer_length_guidance(
         "REPAIR LENGTH DISCIPLINE:\n"
         f"The original post_text is {original_length} characters. Keep the "
         "repaired post_text at or below the original post length when practical.\n\n"
-        "SAFE TARGET:\n"
-        f"Aim for {safe_target_min_chars}-{target_max_chars} characters when the "
-        "repair can stay natural. Do not target the hard maximum directly and "
-        "never pad the post to reach the safe target.\n\n"
+        "SAFE OPERATING TARGET:\n"
+        f"Use {safe_target_min_chars}-{target_max_chars} characters as the repair "
+        "operating range when the repair can stay natural. Do not target the hard "
+        "maximum directly and never pad the post to reach the safe target.\n\n"
         "HARD MAXIMUM:\n"
         f"The final repaired post_text MUST be <= {hard_max_chars} characters. "
         f"More than {hard_max_chars} characters is a hard CandidatePost failure.\n\n"
         f"{near_limit_guidance}"
         "MINIMAL EDIT DISCIPLINE:\n"
-        "Repair only the named failed criterion. Preserve the current structure, "
-        "good prose, strong sentences, distinctive phrasing, controlling angle, "
+        "Repair only the named failed criterion. If a sentence is not part of the "
+        "repair target and does not need compression for length, preserve its "
+        "wording as closely as possible. Preserve the current structure, good "
+        "prose, strong sentences, distinctive phrasing, controlling angle, "
         "evidence relationships, and human cadence unless that exact wording is "
-        "the defect. Prefer paragraph-local or sentence-local edits over a full "
-        "rewrite. Keep semantics stable outside the target repair.\n\n"
+        "the defect. Do not paraphrase good sentences merely for style. Do not "
+        "reorganize paragraphs unless required to repair the target. Keep semantics "
+        "stable outside the target repair.\n\n"
         "REPAIR STRATEGY:\n"
-        "Prefer replacement over addition. If the original candidate is close "
-        "to the hard maximum, replace, compress, or tighten existing text rather "
-        "than appending new material.\n\n"
+        "Replace, do not append, when the named defect can be fixed by replacing "
+        "one ending, sentence, or clause. Prefer replacement over addition. If the "
+        "original candidate is close to the hard maximum, replace, compress, or "
+        "tighten existing text rather than appending new material.\n\n"
         "ANTI-GENERICNESS:\n"
         "Do not add generic author markers or template transitions merely to "
         "sound more human. Avoid adding phrases such as It's easy to, In my "
-        "view, I believe, Here's the, The real tension, or Both X and Y matter "
-        "unless the original post already uses that exact framing or the selected "
-        "evidence requires it.\n\n"
-        "CTA / ENDING REPAIRS:\n"
-        "If the requested repair concerns CTA or ending quality, prefer replacing "
-        "the existing final sentence or paragraph. Preserve the rest of the post "
-        "when possible, do not append redundant closing material, and keep exactly "
-        "one clear reader-facing CTA when the repair instruction requires one.\n\n"
-        "AUTHOR POINT OF VIEW REPAIRS:\n"
-        "If the requested repair concerns author_point_of_view, strengthen the "
-        "author-owned interpretation by inserting or sharpening one evidence-bounded "
-        "judgment through replacement or tightening. Do not convert the whole post "
-        "to first person, add multiple redundant stance statements, or append extra "
-        "interpretive conclusions purely to satisfy POV."
+        "view, For me, I believe, I think, I urge, My reading, Here's the, The "
+        "real tension, It's tempting, or Both X and Y matter unless the original "
+        "post already uses that exact framing or the selected evidence requires it."
+    )
+
+
+def _repair_writer_target_guidance(repair_instruction: Any) -> str:
+    instruction = _repair_dict(repair_instruction, "repair_instruction")
+    failed_criterion = str(instruction.get("failed_criterion") or "").strip()
+    if failed_criterion == REPAIR_WRITER_CTA_CRITERION:
+        return (
+            "TARGETED CTA REPAIR:\n"
+            "The intended repair region is the final reader-facing turn. Preserve "
+            "the hook, body, evidence wording, author point of view, and controlling "
+            "angle. Replace or sharpen the ending only. Do not rewrite the full post. "
+            "Do not add a second CTA. Do not add extra author-presence markers.\n\n"
+            "CTA SUCCESS CONTRACT:\n"
+            "The repaired ending must contain exactly one clear reader-facing action "
+            "or open reflective question. Acceptable forms are one direct question, "
+            "one direct instruction, or one explicit reflective action. Avoid vague "
+            "summary endings, meta-commentary, generic motivational coaching, and "
+            "multiple CTAs. The repair must satisfy the CTA criterion itself; do not "
+            "just make the ending more polished.\n\n"
+            "CTA LENGTH DISCIPLINE:\n"
+            "Replace, do not append. If length must be reduced, compress only "
+            "redundant wording necessary to make the repaired ending fit."
+        )
+    if failed_criterion == REPAIR_WRITER_AUTHOR_POV_CRITERION:
+        return (
+            "TARGETED AUTHOR POINT OF VIEW REPAIR:\n"
+            "The intended repair region is one local interpretive sentence or clause. "
+            "Preserve the hook, evidence body, CTA, controlling angle, and existing "
+            "distinctive phrasing. Introduce or sharpen exactly one evidence-bounded "
+            "interpretive judgment. Do not broadly rewrite the post. Do not add "
+            "multiple first-person markers or stacked identity markers. Do not change "
+            "the CTA unless required by hard length.\n\n"
+            "AUTHOR POV SUCCESS CONTRACT:\n"
+            "Make one local author-owned interpretation clearer without replacing "
+            "distinctive language with smoother generic prose. Do not paraphrase "
+            "distinctive sentences merely for style."
+        )
+    return (
+        "TARGETED REPAIR:\n"
+        "Repair the named failed criterion only. Preserve unrelated successful "
+        "sections as closely as possible and avoid broad rewriting."
     )
 
 
@@ -718,6 +763,7 @@ def _build_input_text(variables: dict[str, str]) -> str:
 def _build_repair_writer_input_text(variables: dict[str, str]) -> str:
     sections = [
         ("REPAIR_WRITER_LENGTH_GUIDANCE", variables["repair_writer_length_guidance"]),
+        ("REPAIR_WRITER_TARGET_GUIDANCE", variables["repair_writer_target_guidance"]),
         ("ORIGINAL_CANDIDATE_PAYLOAD_JSON", variables["original_candidate_payload_json"]),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
