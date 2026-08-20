@@ -311,6 +311,17 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(post_brief, post_brief_before)
         self.assertEqual(angle_decision, angle_decision_before)
 
+    def test_author_pov_repair_metadata_requires_explicit_ownership_signal(self) -> None:
+        metadata = linkedin_post_controlled_repair_execution._repair_target_metadata(
+            "author_point_of_view"
+        )
+
+        self.assertEqual(metadata["target_locality"], "sentence_local")
+        self.assertEqual(
+            metadata["target_success_contract"],
+            "exactly one explicit ownership signal carrying an evidence-bounded interpretive judgment",
+        )
+
     def test_author_pov_repair_target_score_four_is_not_accepted_after_repair(self) -> None:
         repair_client = QueuedFakeClient(
             _provider_response(_candidate_json(post_text="Repaired author POV post."))

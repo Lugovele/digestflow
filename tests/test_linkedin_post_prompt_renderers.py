@@ -1395,20 +1395,42 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIn("Do not rewrite transitions", target_guidance)
         self.assertIn("evidence-bearing sentences", target_guidance)
         self.assertIn("converting the target locus into one explicit author-owned statement", target_guidance)
-        self.assertIn("substantive choice between competing readings", target_guidance)
-        self.assertIn("the reading to reject is", target_guidance)
-        self.assertIn("Strong author-owned rhetoric can include", target_guidance)
-        self.assertIn("selected evidence-bounded judgment", target_guidance)
-        self.assertIn("tie the judgment directly to selected evidence", target_guidance)
-        self.assertIn("avoid fabricated experience or authority", target_guidance)
-        self.assertIn("ownership marker must carry a specific evidence-bounded judgment", target_guidance)
+        self.assertIn("An impersonal judgment does NOT satisfy this repair", target_guidance)
+        self.assertIn("must contain exactly one explicit ownership signal", target_guidance)
+        self.assertIn("I would not treat X as Y", target_guidance)
+        self.assertIn("that signal must carry the evidence-bounded judgment", target_guidance)
+        self.assertIn("the mistake is", target_guidance)
+        self.assertIn("do not satisfy this repair target by themselves", target_guidance)
+        self.assertIn("ownership marker alone is also insufficient", target_guidance)
+        self.assertIn("Convert the target sentence itself", target_guidance)
+        self.assertIn("Do not invent personal experience", target_guidance)
         self.assertIn("Do not broadly rewrite the post", target_guidance)
         self.assertIn("Do not add multiple first-person markers", target_guidance)
         self.assertIn("Do not paraphrase distinctive sentences", target_guidance)
         self.assertIn("AUTHOR POV LOCALITY EXAMPLES:", target_guidance)
-        self.assertIn("GOOD: Sharpen the target sentence", target_guidance)
+        self.assertIn("GOOD: Original: Treating these signals", target_guidance)
+        self.assertIn("Repaired: I would not treat these signals", target_guidance)
+        self.assertIn("Repaired: I don't think the evidence", target_guidance)
         self.assertNotIn("identify all sentences", target_guidance)
         self.assertNotIn("Neutralize or subordinate", target_guidance)
+
+    def test_author_pov_repair_guidance_separates_ownership_from_impersonal_judgment(self) -> None:
+        target_guidance = _repair_writer_render(
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        ).variables["repair_writer_target_guidance"]
+
+        self.assertIn("An impersonal judgment does NOT satisfy this repair", target_guidance)
+        self.assertIn("The repaired target locus must visibly attribute", target_guidance)
+        self.assertIn("The mistake is treating", target_guidance)
+        self.assertIn("Reason: still impersonal", target_guidance)
+        self.assertIn("In my view, this is important", target_guidance)
+        self.assertIn("ownership without substantive interpretation", target_guidance)
+        self.assertIn("adds generic ownership instead of converting the target locus", target_guidance)
+        self.assertIn("unsupported personal experience", target_guidance)
 
     def test_author_pov_repair_render_declares_single_target_locus(self) -> None:
         post_text = (

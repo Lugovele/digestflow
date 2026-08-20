@@ -134,6 +134,12 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
 
         self.assertEqual(case.case_id, "topic_200_digest_134__gpt_v2")
         self.assertEqual(case.repair_instruction["failed_criterion"], "author_point_of_view")
+        self.assertEqual(
+            linkedin_post_repair_writer_benchmark._repair_target_metadata(
+                "author_point_of_view"
+            )["target_success_contract"],
+            "exactly one explicit ownership signal carrying an evidence-bounded interpretive judgment",
+        )
         self.assertEqual(case.known_quality_result["pass"], False)
         self.assertEqual(case.selected_evidence, tuple(case.post_brief["evidence_to_use"]))
 
@@ -891,6 +897,69 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(preservation["repaired_sentence_count"], 3)
         self.assertEqual(preservation["changed_sentence_count"], 2)
         self.assertEqual(preservation["changed_sentence_indexes"], [1, 2])
+
+    def test_payload_preservation_reports_target_locus_explicit_ownership_signal(self) -> None:
+        original = {
+            "post_text": (
+                "First sentence remains. "
+                "Treating these signals as proof that risk has been resolved is a mistake. "
+                "Third sentence remains."
+            )
+        }
+        repaired = {
+            "post_text": (
+                "First sentence remains. "
+                "I would not treat these signals as proof that risk has been resolved. "
+                "Third sentence remains."
+            )
+        }
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertEqual(
+            preservation["target_locus_original_text"],
+            "Treating these signals as proof that risk has been resolved is a mistake.",
+        )
+        self.assertEqual(
+            preservation["target_locus_repaired_text"],
+            "I would not treat these signals as proof that risk has been resolved.",
+        )
+        self.assertTrue(preservation["target_locus_has_explicit_ownership_signal"])
+        self.assertEqual(
+            preservation["target_locus_ownership_signal_type"],
+            "first_person_interpretive_verb",
+        )
+
+    def test_payload_preservation_reports_impersonal_target_locus_without_ownership_signal(self) -> None:
+        original = {
+            "post_text": (
+                "First sentence remains. "
+                "Yet, I see a real risk in treating these signals as proof. "
+                "Third sentence remains."
+            )
+        }
+        repaired = {
+            "post_text": (
+                "First sentence remains. "
+                "The mistake is treating these signals as proof. "
+                "Third sentence remains."
+            )
+        }
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertEqual(
+            preservation["target_locus_repaired_text"],
+            "The mistake is treating these signals as proof.",
+        )
+        self.assertFalse(preservation["target_locus_has_explicit_ownership_signal"])
+        self.assertIsNone(preservation["target_locus_ownership_signal_type"])
 
     def test_payload_preservation_reports_distinctive_fragment_preservation(self) -> None:
         distinctive = "The market is learning to price political enthusiasm without mistaking it for adoption."

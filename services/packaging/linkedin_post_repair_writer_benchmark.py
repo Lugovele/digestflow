@@ -185,6 +185,10 @@ REPAIR_WRITER_GENERIC_MARKERS = (
     "the real tension",
     "both x and y matter",
 )
+REPAIR_WRITER_OWNERSHIP_SIGNAL_PATTERNS = (
+    ("first_person_interpretive_verb", re.compile(r"\bi\s+(?:see|reject|read|would|don't|do not)\b")),
+    ("possessive_reading_marker", re.compile(r"\bmy\s+(?:reading|interpretation|view)\b")),
+)
 REPAIR_WRITER_DISTINCTIVE_FRAGMENT_LIMIT = 8
 REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_WORDS = 5
 REPAIR_WRITER_DISTINCTIVE_FRAGMENT_MIN_CHARS = 36
@@ -1426,7 +1430,7 @@ def _repair_target_metadata(failed_criterion: str) -> dict[str, Any]:
             "target_locality": "sentence_local",
             "allowed_edit_region": "one local interpretive sentence or clause",
             "replacement_preference": "replace_or_tighten_one_local_sentence",
-            "target_success_contract": "exactly one evidence-bounded interpretive judgment",
+            "target_success_contract": "exactly one explicit ownership signal carrying an evidence-bounded interpretive judgment",
         }
     return {
         "target_locality": "local_to_failed_criterion",
@@ -1661,6 +1665,11 @@ def _payload_preservation(
         original_post_text,
         repaired_post_text,
     )
+    target_locus_diagnostics = _target_locus_ownership_diagnostics(
+        original_post_text,
+        repaired_post_text,
+        sentence_diagnostics,
+    )
     return {
         "only_post_text_changed": (
             original_keys == repaired_keys == {"post_text"}
@@ -1685,6 +1694,7 @@ def _payload_preservation(
         "added_generic_marker_count": len(added_generic_markers),
         "added_generic_markers": added_generic_markers,
         **sentence_diagnostics,
+        **target_locus_diagnostics,
         **distinctive,
     }
 
@@ -1713,6 +1723,45 @@ def _sentence_level_repair_diagnostics(
         "changed_sentence_count": len(changed_indexes),
         "changed_sentence_indexes": changed_indexes,
     }
+
+
+def _target_locus_ownership_diagnostics(
+    original_text: str,
+    repaired_text: str,
+    sentence_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    changed_indexes = sentence_diagnostics.get("changed_sentence_indexes")
+    original_sentences = _sentence_like_fragments(original_text)
+    repaired_sentences = _sentence_like_fragments(repaired_text)
+    target_locus_original_text = None
+    target_locus_repaired_text = None
+    if (
+        isinstance(changed_indexes, list)
+        and len(changed_indexes) == 1
+        and changed_indexes[0] < len(original_sentences)
+        and changed_indexes[0] < len(repaired_sentences)
+    ):
+        target_index = changed_indexes[0]
+        target_locus_original_text = original_sentences[target_index]
+        target_locus_repaired_text = repaired_sentences[target_index]
+
+    signal_type = _target_locus_ownership_signal_type(target_locus_repaired_text)
+    return {
+        "target_locus_original_text": target_locus_original_text,
+        "target_locus_repaired_text": target_locus_repaired_text,
+        "target_locus_has_explicit_ownership_signal": signal_type is not None,
+        "target_locus_ownership_signal_type": signal_type,
+    }
+
+
+def _target_locus_ownership_signal_type(text: str | None) -> str | None:
+    if not text:
+        return None
+    normalized = _normalize_text_for_comparison(text)
+    for signal_type, pattern in REPAIR_WRITER_OWNERSHIP_SIGNAL_PATTERNS:
+        if pattern.search(normalized):
+            return signal_type
+    return None
 
 
 def _repair_scope_locality(original_text: str, repaired_text: str) -> str:

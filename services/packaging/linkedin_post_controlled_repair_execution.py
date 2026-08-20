@@ -1161,7 +1161,7 @@ def _repair_target_metadata(failed_criterion: str) -> dict[str, Any]:
             "target_locality": "sentence_local",
             "allowed_edit_region": "one local interpretive sentence or clause",
             "replacement_preference": "replace_or_tighten_one_local_sentence",
-            "target_success_contract": "exactly one evidence-bounded interpretive judgment",
+            "target_success_contract": "exactly one explicit ownership signal carrying an evidence-bounded interpretive judgment",
         }
     return {
         "target_locality": "local_to_failed_criterion",
