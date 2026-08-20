@@ -33,6 +33,9 @@ from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
 )
+from services.packaging.linkedin_post_repair_target_enforcement import (
+    evaluate_repair_target_enforcement,
+)
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
     GROUNDING_STATUS_NEEDS_HUMAN_REVIEW,
@@ -99,6 +102,8 @@ def build_final_post_attempt_outcome_from_gate_and_quality(
     repair_plan: dict | None = None,
     created_at: str | None = None,
     parent_attempt_index: int | None = None,
+    initiating_failed_criterion: str | None = None,
+    angle_decision: object | dict | None = None,
     decision_controller: FinalPostDecisionController | None = None,
 ) -> FinalPostAttemptOutcome:
     """Adjudicate one candidate attempt from existing gate and quality facts."""
@@ -123,6 +128,13 @@ def build_final_post_attempt_outcome_from_gate_and_quality(
             target_model_provider=target_model_provider,
             target_model_name=target_model_name,
         )
+
+    decision = _decision_after_repair_target_enforcement(
+        decision=decision,
+        quality_review=quality_review,
+        initiating_failed_criterion=initiating_failed_criterion,
+        angle_decision=angle_decision,
+    )
 
     decision_ready_result = FinalPostDecisionReadyResult(
         post_brief=post_brief,
@@ -157,6 +169,8 @@ def build_final_post_attempt_outcome_from_gate_grounding_and_quality(
     repair_plan: dict | None = None,
     created_at: str | None = None,
     parent_attempt_index: int | None = None,
+    initiating_failed_criterion: str | None = None,
+    angle_decision: object | dict | None = None,
     decision_controller: FinalPostDecisionController | None = None,
 ) -> FinalPostAttemptOutcome:
     """Adjudicate one attempt after deterministic, grounding, and quality gates."""
@@ -196,9 +210,36 @@ def build_final_post_attempt_outcome_from_gate_grounding_and_quality(
         repair_plan=repair_plan,
         created_at=created_at,
         parent_attempt_index=parent_attempt_index,
+        initiating_failed_criterion=initiating_failed_criterion,
+        angle_decision=angle_decision,
         decision_controller=decision_controller,
     )
 
+
+def _decision_after_repair_target_enforcement(
+    *,
+    decision: FinalPostDecision,
+    quality_review: dict | None,
+    initiating_failed_criterion: str | None,
+    angle_decision: object | dict | None,
+) -> FinalPostDecision:
+    if decision.action != "accept" or initiating_failed_criterion is None:
+        return decision
+    diagnostics = evaluate_repair_target_enforcement(
+        quality_review=quality_review,
+        initiating_failed_criterion=initiating_failed_criterion,
+        angle_decision=angle_decision,
+    )
+    if diagnostics.repair_target_fixed is not False:
+        return decision
+    return FinalPostDecision(
+        action=ACTION_NOT_READY,
+        reason=diagnostics.repair_target_failure_reason,
+        repair_type=None,
+        target_model_provider=None,
+        target_model_name=None,
+        needs_human_review=False,
+    )
 
 def _validate_quality_evaluation_state(
     quality_evaluation: FinalPostQualityEvaluationState,

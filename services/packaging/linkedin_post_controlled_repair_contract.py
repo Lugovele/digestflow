@@ -26,6 +26,7 @@ FAILURE_REPAIR_WRITER_PROVIDER = "repair_writer_provider_failure"
 FAILURE_REPAIR_WRITER_EMPTY_RESPONSE = "repair_writer_empty_response"
 FAILURE_REPAIR_WRITER_PARSE = "repair_writer_parse_failure"
 FAILURE_REPAIR_WRITER_ADAPTATION = "repair_writer_adaptation_failure"
+FAILURE_REPAIR_TARGET_NOT_FIXED = "repair_target_not_fixed"
 FAILURE_REPAIRED_DETERMINISTIC_GATE = "repaired_deterministic_gate_failure"
 FAILURE_REPAIRED_SEMANTIC_GROUNDING_REQUEST = (
     "repaired_semantic_grounding_request_failure"
@@ -122,6 +123,7 @@ class FinalPostControlledRepairResult:
     repaired_quality_evaluator_raw_response: object | dict | None = None
     repaired_quality_evaluation_state: object | dict | None = None
     repaired_attempt_outcome: object | dict | None = None
+    repair_target_enforcement_diagnostics: object | dict | None = None
     accepted_payload: dict[str, Any] | None = None
     terminal_outcome: str | None = None
     terminal_reason: str = ""
@@ -180,6 +182,9 @@ class FinalPostControlledRepairResult:
             ),
             "repaired_attempt_outcome": _serialize_repair_value(
                 self.repaired_attempt_outcome
+            ),
+            "repair_target_enforcement_diagnostics": _serialize_repair_value(
+                self.repair_target_enforcement_diagnostics
             ),
             "accepted_payload": _serialize_repair_value(self.accepted_payload),
             "terminal_outcome": self.terminal_outcome,

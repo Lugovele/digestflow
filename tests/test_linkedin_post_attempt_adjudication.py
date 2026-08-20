@@ -34,6 +34,10 @@ from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
 )
+from services.packaging.linkedin_post_pipeline import (
+    AngleDecision,
+    AuthorialVoiceDirective,
+)
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
     GROUNDING_STATUS_NOT_READY,
@@ -401,6 +405,88 @@ class LinkedInPostAttemptAdjudicationTests(SimpleTestCase):
         self.assertIn("attempt_history", serialized)
         self.assertIn("Final post text.", serialized)
 
+    def test_repaired_author_pov_target_score_four_is_not_accepted_when_score_five_required(self) -> None:
+        payload = _valid_payload()
+        quality_review = _quality_review(passed=True, total_score=41)
+        quality_review["scores"]["author_point_of_view"] = 4
+
+        outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(quality_review),
+            attempt_index=1,
+            parent_attempt_index=0,
+            repair_plan={"failed_criterion": "author_point_of_view"},
+            initiating_failed_criterion="author_point_of_view",
+            angle_decision=_angle_decision_object(explicit=True),
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(outcome.accepted_result)
+        self.assertEqual(outcome.decision.action, "not_ready")
+        self.assertIn("author_point_of_view score 4 < required 5", outcome.reason)
+
+    def test_repaired_author_pov_target_score_five_can_be_accepted(self) -> None:
+        payload = _valid_payload()
+        quality_review = _quality_review(passed=True, total_score=42)
+        quality_review["scores"]["author_point_of_view"] = 5
+
+        outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(quality_review),
+            attempt_index=1,
+            parent_attempt_index=0,
+            repair_plan={"failed_criterion": "author_point_of_view"},
+            initiating_failed_criterion="author_point_of_view",
+            angle_decision=_angle_decision(explicit=True),
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_ACCEPTED)
+        self.assertIs(outcome.accepted_result.accepted_payload, payload)
+
+    def test_repaired_cta_target_below_canonical_minimum_is_not_accepted(self) -> None:
+        payload = _valid_payload()
+        quality_review = _quality_review(passed=True, total_score=40)
+        quality_review["scores"]["cta"] = 3
+
+        outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(quality_review),
+            attempt_index=1,
+            parent_attempt_index=0,
+            repair_plan={"failed_criterion": "cta"},
+            initiating_failed_criterion="cta",
+            angle_decision=_angle_decision(explicit=True),
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(outcome.accepted_result)
+        self.assertIn("cta score 3 < required 4", outcome.reason)
+
+    def test_repaired_cta_target_at_canonical_minimum_can_be_accepted(self) -> None:
+        payload = _valid_payload()
+        quality_review = _quality_review(passed=True, total_score=41)
+        quality_review["scores"]["cta"] = 4
+
+        outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(quality_review),
+            attempt_index=1,
+            parent_attempt_index=0,
+            repair_plan={"failed_criterion": "cta"},
+            initiating_failed_criterion="cta",
+            angle_decision=_angle_decision(explicit=True),
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_ACCEPTED)
+        self.assertIs(outcome.accepted_result.accepted_payload, payload)
     def test_adjudication_module_has_no_provider_prompt_runtime_or_repair_dependencies(self) -> None:
         source = inspect.getsource(linkedin_post_attempt_adjudication)
 
@@ -539,6 +625,39 @@ def _post_brief() -> dict:
             }
         ]
     }
+
+
+
+def _angle_decision(*, explicit: bool) -> dict:
+    return {
+        "authorial_voice_directive": {
+            "personal_presence_requirement": (
+                "explicit_author_owned_statement_required" if explicit else "none"
+            )
+        }
+    }
+
+
+
+def _angle_decision_object(*, explicit: bool) -> AngleDecision:
+    return AngleDecision(
+        controlling_angle="Compare what the evidence supports with what market rhetoric implies.",
+        reader_problem="Readers need a clearer distinction between signal and narrative.",
+        author_position="The author rejects treating policy attention as proof of adoption.",
+        main_tension="Policy momentum versus evidence discipline.",
+        supporting_evidence_ids=["ev-1"],
+        angle_to_avoid=["unsupported certainty"],
+        authorial_voice_directive=AuthorialVoiceDirective(
+            authorial_observation="The evidence supports a narrower reading than the market narrative.",
+            rejected_reading="Reject treating attention as proof of stable adoption.",
+            why_distinction_matters="The distinction matters because readers need evidence-bounded judgment.",
+            personal_presence_requirement=(
+                "explicit_author_owned_statement_required" if explicit else "none"
+            ),
+            first_person_policy="allowed_not_required",
+            forbidden_author_claims=("personal experience",),
+        ),
+    )
 
 
 def _valid_payload(**overrides) -> dict:

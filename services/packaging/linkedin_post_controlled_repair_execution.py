@@ -37,6 +37,7 @@ from services.packaging.linkedin_post_controlled_repair_contract import (
     FAILURE_REPAIR_WRITER_EMPTY_RESPONSE,
     FAILURE_REPAIR_WRITER_PARSE,
     FAILURE_REPAIR_WRITER_PROVIDER,
+    FAILURE_REPAIR_TARGET_NOT_FIXED,
     FAILURE_REPAIR_WRITER_REQUEST,
     FAILURE_REPAIRED_DETERMINISTIC_GATE,
     FAILURE_REPAIRED_SEMANTIC_GROUNDING,
@@ -104,6 +105,9 @@ from services.packaging.linkedin_post_quality_evaluator_parser import (
 )
 from services.packaging.linkedin_post_quality_rubric_contract import (
     normalize_quality_evaluator_rubric_payload,
+)
+from services.packaging.linkedin_post_repair_target_enforcement import (
+    evaluate_repair_target_enforcement,
 )
 from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
@@ -192,6 +196,7 @@ def execute_final_post_controlled_repair_attempt(
             eligibility=eligibility,
         )
 
+    repair_instruction = _repair_instruction(initial_result)
     try:
         repair_prompt_render = render_repair_writer_prompt_input(
             original_candidate_payload=initial_result.candidate_writer_output.payload,
@@ -200,7 +205,7 @@ def execute_final_post_controlled_repair_attempt(
             selected_evidence=_selected_evidence_for_repair(post_brief, evidence_ids),
             deterministic_findings=_deterministic_findings(initial_result),
             quality_findings=_quality_findings(initial_result),
-            repair_instruction=_repair_instruction(initial_result),
+            repair_instruction=repair_instruction,
             attempt_index=REPAIR_ATTEMPT_INDEX,
             max_attempts=request.max_controlled_attempts,
             prompt_metadata=PromptMetadata(
@@ -417,9 +422,19 @@ def execute_final_post_controlled_repair_attempt(
         ),
         target_model_provider=request.initial_attempt_request.target_model_provider,
         target_model_name=request.initial_attempt_request.target_model_name,
-        repair_plan=_repair_instruction(initial_result),
+        repair_plan=repair_instruction,
         parent_attempt_index=request.initial_attempt_request.attempt_index,
+        initiating_failed_criterion=repair_instruction.get("failed_criterion"),
+        angle_decision=angle_decision,
     )
+    repair_target_enforcement_diagnostics = evaluate_repair_target_enforcement(
+        quality_review=quality_result["quality_state"].quality_review,
+        initiating_failed_criterion=repair_instruction.get("failed_criterion"),
+        angle_decision=angle_decision,
+    )
+
+    target_not_fixed = repair_target_enforcement_diagnostics.repair_target_fixed is False
+
     accepted_payload = (
         repaired_outcome.accepted_result.accepted_payload
         if repaired_outcome.accepted_result is not None
@@ -444,9 +459,17 @@ def execute_final_post_controlled_repair_attempt(
         repaired_quality_evaluator_raw_response=quality_result["raw_response"],
         repaired_quality_evaluation_state=quality_result["quality_state"],
         repaired_attempt_outcome=repaired_outcome,
+        repair_target_enforcement_diagnostics=repair_target_enforcement_diagnostics,
         accepted_payload=accepted_payload,
         terminal_outcome=repaired_outcome.outcome,
         terminal_reason=repaired_outcome.reason,
+        failure_stage="repair_target_enforcement" if target_not_fixed else None,
+        failure_code=FAILURE_REPAIR_TARGET_NOT_FIXED if target_not_fixed else None,
+        failure_message=(
+            repair_target_enforcement_diagnostics.repair_target_failure_reason
+            if target_not_fixed
+            else ""
+        ),
         candidate_writer_invocation_count=initial_result.candidate_writer_invocation_count,
         semantic_grounding_invocation_count=(
             initial_result.semantic_grounding_invocation_count

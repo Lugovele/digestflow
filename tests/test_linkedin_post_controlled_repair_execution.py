@@ -19,6 +19,7 @@ from services.packaging.linkedin_post_attempt_outcome import (
 )
 from services.packaging.linkedin_post_controlled_repair_contract import (
     FAILURE_REPAIR_INELIGIBLE,
+    FAILURE_REPAIR_TARGET_NOT_FIXED,
     FAILURE_REPAIR_WRITER_ADAPTATION,
     FAILURE_REPAIR_WRITER_EMPTY_RESPONSE,
     FAILURE_REPAIR_WRITER_PARSE,
@@ -310,6 +311,90 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(post_brief, post_brief_before)
         self.assertEqual(angle_decision, angle_decision_before)
 
+    def test_author_pov_repair_target_score_four_is_not_accepted_after_repair(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Repaired author POV post."))
+        )
+        final_quality = _quality_review_payload(
+            passed=True,
+            failed_criteria=[],
+            score_overrides={"author_point_of_view": 4},
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(_provider_response(_candidate_json())),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(
+                    json.dumps(
+                        _quality_review_payload(
+                            passed=False,
+                            failed_criteria=["author_point_of_view", "human_voice"],
+                            score_overrides={"author_point_of_view": 3},
+                        )
+                    )
+                ),
+                _provider_response(json.dumps(final_quality)),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertTrue(result.repair_executed)
+        self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(result.terminal_outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.accepted_payload)
+        self.assertEqual(result.failure_stage, "repair_target_enforcement")
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_TARGET_NOT_FIXED)
+        diagnostics = result.repair_target_enforcement_diagnostics
+        self.assertEqual(diagnostics.initiating_failed_criterion, "author_point_of_view")
+        self.assertEqual(diagnostics.target_quality_score, 4)
+        self.assertEqual(diagnostics.target_required_minimum, 5)
+        self.assertFalse(diagnostics.repair_target_fixed)
+        self.assertIn("author_point_of_view score 4 < required 5", result.terminal_reason)
+        self.assertEqual(result.repair_invocation_count, 1)
+
+    def test_cta_repair_target_below_canonical_minimum_is_not_accepted_after_repair(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Repaired CTA post."))
+        )
+        final_quality = _quality_review_payload(
+            passed=True,
+            failed_criteria=[],
+            score_overrides={"cta": 3},
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(_provider_response(_candidate_json())),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(
+                    json.dumps(
+                        _quality_review_payload(
+                            passed=False,
+                            failed_criteria=["cta", "human_voice"],
+                            score_overrides={"cta": 2},
+                        )
+                    )
+                ),
+                _provider_response(json.dumps(final_quality)),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.terminal_outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.accepted_payload)
+        self.assertEqual(result.failure_code, FAILURE_REPAIR_TARGET_NOT_FIXED)
+        diagnostics = result.repair_target_enforcement_diagnostics
+        self.assertEqual(diagnostics.initiating_failed_criterion, "cta")
+        self.assertEqual(diagnostics.target_quality_score, 3)
+        self.assertEqual(diagnostics.target_required_minimum, 4)
+        self.assertFalse(diagnostics.repair_target_fixed)
+        self.assertIn("cta score 3 < required 4", result.terminal_reason)
+        self.assertEqual(repair_client.call_count, 1)
     def test_anthropic_repair_writer_executes_when_allowed_by_role_policy(self) -> None:
         repair_client = QueuedFakeClient(
             _provider_response(_candidate_json(post_text="Claude repaired post."))
@@ -1123,6 +1208,7 @@ def _quality_review_payload(
     total_score: int | None = None,
     failed_criteria: list[str] | None = None,
     blocking_factuality_ambiguity: bool = False,
+    score_overrides: dict[str, int] | None = None,
 ) -> dict:
     scores = {
         "hook": 4,
@@ -1135,6 +1221,8 @@ def _quality_review_payload(
         "practical_value": 4,
         "cta": 4,
     }
+    if score_overrides:
+        scores.update(score_overrides)
     return {
         "scores": scores,
         "total_score": sum(scores.values()) if total_score is None else total_score,

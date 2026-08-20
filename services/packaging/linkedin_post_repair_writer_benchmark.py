@@ -92,6 +92,9 @@ from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
 )
+from services.packaging.linkedin_post_repair_target_enforcement import (
+    evaluate_repair_target_enforcement,
+)
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
     build_repair_writer_response_structure_diagnostics,
     build_repair_writer_structural_diagnostics,
@@ -107,11 +110,17 @@ from services.packaging.linkedin_post_semantic_grounding_structural_diagnostics 
     build_semantic_grounding_raw_response_diagnostics,
 )
 from services.packaging.linkedin_post_semantic_grounding_execution import (
+    PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+    PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    PRODUCTION_SEMANTIC_GROUNDING_MODEL,
+    PRODUCTION_SEMANTIC_GROUNDING_PROVIDER,
     SemanticGroundingExecutionRequest,
     SemanticGroundingRawResponse,
     build_semantic_grounding_execution_request,
     execute_semantic_grounding_prompt,
     get_semantic_grounding_execution_request_error,
+    production_semantic_grounding_execution_metadata,
+    production_semantic_grounding_reasoning_effort,
 )
 from services.packaging.linkedin_post_semantic_grounding_parser import (
     ERROR_NORMALIZATION_FAILED as GROUNDING_ERROR_NORMALIZATION_FAILED,
@@ -186,11 +195,11 @@ TARGET_ACCURACY_FIXED_CLEAN = "TARGET_FIXED_CLEAN"
 TARGET_ACCURACY_FIXED_WITH_REGRESSION = "TARGET_FIXED_WITH_REGRESSION"
 TARGET_ACCURACY_NOT_FIXED = "TARGET_NOT_FIXED"
 TARGET_ACCURACY_QE_UNAVAILABLE = "QE_UNAVAILABLE"
-FIXED_SEMANTIC_GROUNDING_PROVIDER = AI_PROVIDER_GEMINI
-FIXED_SEMANTIC_GROUNDING_MODEL = "gemini-3.6-flash"
+FIXED_SEMANTIC_GROUNDING_PROVIDER = PRODUCTION_SEMANTIC_GROUNDING_PROVIDER
+FIXED_SEMANTIC_GROUNDING_MODEL = PRODUCTION_SEMANTIC_GROUNDING_MODEL
 FIXED_QUALITY_EVALUATOR_PROVIDER = AI_PROVIDER_OPENAI
 FIXED_QUALITY_EVALUATOR_MODEL = OPENAI_FINAL_POST_MODEL
-DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 4800
+DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS
 DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS = 2400
 REPAIR_PROMPT_NAME = "fixture_repair_writer_prompt"
 REPAIR_PROMPT_VERSION = "benchmark_fixture_v1"
@@ -700,7 +709,12 @@ def _live_record(
         candidate_output=repaired_output,
         gate_output=gate_output,
     )
-    grounding_state, grounding_calls, grounding_failure = _run_semantic_grounding(
+    (
+        grounding_state,
+        grounding_calls,
+        grounding_failure,
+        grounding_config,
+    ) = _run_semantic_grounding(
         case,
         request,
         run_index,
@@ -726,6 +740,7 @@ def _live_record(
             repaired_payload=repaired_output.payload,
             repaired_gate=gate_output.to_dict(),
             semantic_grounding=grounding_state.to_dict(),
+            semantic_grounding_config=grounding_config,
             payload_preservation=preservation,
             repair_adapter_diagnostics=repair_adapter_diagnostics.to_dict(),
             response_diagnostics=_raw_response_diagnostics(raw_repair),
@@ -747,6 +762,8 @@ def _live_record(
         attempt_history=FinalPostAttemptHistory(attempts=[]),
         repair_plan=copy.deepcopy(case.repair_instruction),
         parent_attempt_index=1,
+        initiating_failed_criterion=case.repair_instruction.get("failed_criterion"),
+        angle_decision=copy.deepcopy(case.angle_decision),
     )
     return _record(
         request,
@@ -766,6 +783,7 @@ def _live_record(
         repaired_payload=repaired_output.payload,
         repaired_gate=gate_output.to_dict(),
         semantic_grounding=grounding_state.to_dict(),
+        semantic_grounding_config=grounding_config,
         quality_evaluation=quality_state.to_dict(),
         adjudication_projection=outcome.to_dict(),
         payload_preservation=preservation,
@@ -774,13 +792,29 @@ def _live_record(
     )
 
 
+def _semantic_grounding_execution_config_for_record() -> dict[str, Any]:
+    return {
+        "provider": PRODUCTION_SEMANTIC_GROUNDING_PROVIDER,
+        "model": PRODUCTION_SEMANTIC_GROUNDING_MODEL,
+        "max_output_tokens": PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        "json_mode": True,
+        "execution_profile": PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+        "reasoning_effort": production_semantic_grounding_reasoning_effort(),
+    }
+
+
 def _run_semantic_grounding(
     case: RepairWriterBenchmarkCase,
     request: RepairWriterBenchmarkRequest,
     run_index: int,
     post_editorial_input: Any,
     executor: SemanticGroundingExecutor | None,
-) -> tuple[FinalPostSemanticGroundingState, int, dict[str, str | None]]:
+) -> tuple[
+    FinalPostSemanticGroundingState,
+    int,
+    dict[str, str | None],
+    dict[str, Any],
+]:
     render = render_semantic_grounding_prompt_input(
         post_editorial_input,
         prompt_metadata=PromptMetadata(
@@ -789,15 +823,24 @@ def _run_semantic_grounding(
             "prompts/linkedin/final_post_semantic_grounding_evaluator.txt",
         ),
     )
+    execution_metadata = _execution_metadata(
+        request,
+        case,
+        "semantic_grounding",
+        run_index,
+    )
+    execution_metadata.update(production_semantic_grounding_execution_metadata())
     execution_request = build_semantic_grounding_execution_request(
         render,
         prompt_text=_prompt_text(render.prompt_path, "semantic grounding"),
-        provider=FIXED_SEMANTIC_GROUNDING_PROVIDER,
-        model=FIXED_SEMANTIC_GROUNDING_MODEL,
-        max_output_tokens=DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        provider=PRODUCTION_SEMANTIC_GROUNDING_PROVIDER,
+        model=PRODUCTION_SEMANTIC_GROUNDING_MODEL,
+        max_output_tokens=PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
         json_mode=True,
-        execution_metadata=_execution_metadata(request, case, "semantic_grounding", run_index),
+        reasoning_effort=production_semantic_grounding_reasoning_effort(),
+        execution_metadata=execution_metadata,
     )
+    execution_config = _semantic_grounding_execution_config_for_record()
     request_error = get_semantic_grounding_execution_request_error(execution_request)
     if request_error is not None:
         return (
@@ -812,6 +855,7 @@ def _run_semantic_grounding(
                 "failure_stage": "semantic_grounding_request",
                 "failure_code": FAILURE_GROUNDING_EXECUTION,
             },
+            execution_config,
         )
     raw = (executor or execute_semantic_grounding_prompt)(execution_request)
     if raw.execution_error:
@@ -828,6 +872,7 @@ def _run_semantic_grounding(
                 "failure_stage": "semantic_grounding_execution",
                 "failure_code": _semantic_execution_failure_code(raw),
             },
+            execution_config,
         )
     try:
         review = parse_and_normalize_semantic_grounding_response(
@@ -855,6 +900,7 @@ def _run_semantic_grounding(
                 else "semantic_grounding_parse",
                 "failure_code": failure_code,
             },
+            execution_config,
         )
     state = FinalPostSemanticGroundingState(
         status=(
@@ -876,8 +922,14 @@ def _run_semantic_grounding(
                 "failure_stage": "semantic_grounding_domain",
                 "failure_code": FAILURE_GROUNDING_DOMAIN,
             },
+            execution_config,
         )
-    return state, _confirmed_provider_api_call(raw), {"failure_stage": None, "failure_code": None}
+    return (
+        state,
+        _confirmed_provider_api_call(raw),
+        {"failure_stage": None, "failure_code": None},
+        execution_config,
+    )
 
 
 def _run_quality_evaluator(
@@ -1001,6 +1053,7 @@ def _dry_record(
         repair_writer_provider_api_calls=0,
         semantic_grounding_provider_api_calls=0,
         quality_evaluator_provider_api_calls=0,
+        semantic_grounding_config=_semantic_grounding_execution_config_for_record(),
     )
 
 
@@ -1031,6 +1084,7 @@ def _record(
     repair_adapter_diagnostics: dict[str, Any] | None = None,
     response_diagnostics: dict[str, Any] | None = None,
     execution_request_error: str | None = None,
+    semantic_grounding_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     provider_counts = {
         "candidate_writer_provider_api_calls": 0,
@@ -1068,8 +1122,11 @@ def _record(
         },
         "fixed_downstream_roles": {
             "semantic_grounding": {
-                "provider": FIXED_SEMANTIC_GROUNDING_PROVIDER,
-                "model": FIXED_SEMANTIC_GROUNDING_MODEL,
+                "provider": PRODUCTION_SEMANTIC_GROUNDING_PROVIDER,
+                "model": PRODUCTION_SEMANTIC_GROUNDING_MODEL,
+                "max_output_tokens": PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+                "execution_profile": PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+                "reasoning_effort": production_semantic_grounding_reasoning_effort(),
             },
             "quality_evaluator": {
                 "provider": FIXED_QUALITY_EVALUATOR_PROVIDER,
@@ -1089,6 +1146,7 @@ def _record(
         "repaired_payload": copy.deepcopy(repaired_payload),
         "repaired_gate": copy.deepcopy(repaired_gate),
         "semantic_grounding": copy.deepcopy(semantic_grounding),
+        "semantic_grounding_config": copy.deepcopy(semantic_grounding_config),
         "quality_evaluation": copy.deepcopy(quality_evaluation),
         "adjudication_projection": copy.deepcopy(adjudication_projection),
         "payload_preservation": copy.deepcopy(payload_preservation),
@@ -1437,12 +1495,17 @@ def _target_repair_diagnostics(
 ) -> dict[str, Any]:
     failed_criterion = str(case.repair_instruction.get("failed_criterion") or "")
     attempted = repair_writer_attempts > 0
+    initial_target_diagnostics = evaluate_repair_target_enforcement(
+        quality_review=None,
+        initiating_failed_criterion=failed_criterion,
+        angle_decision=case.angle_decision,
+    )
     result: dict[str, Any] = {
         "failed_criterion": failed_criterion,
         "pre_repair_failed_criterion": failed_criterion,
         "target_repair_attempted": attempted,
         "target_quality_score": None,
-        "target_required_minimum": _target_required_minimum(case, failed_criterion),
+        "target_required_minimum": initial_target_diagnostics.target_required_minimum,
         "target_repair_success": None,
         "target_repair_success_reason": "downstream quality evaluator did not run",
         "overall_quality_pass": None,
@@ -1470,15 +1533,21 @@ def _target_repair_diagnostics(
         result["target_repair_success_reason"] = "quality evaluator did not produce normalized review"
         return result
 
-    scores = review_payload.get("scores") or {}
-    score = scores.get(failed_criterion) if isinstance(scores, dict) else None
+    target_enforcement = evaluate_repair_target_enforcement(
+        quality_review=review_payload,
+        initiating_failed_criterion=failed_criterion,
+        angle_decision=case.angle_decision,
+    )
+    score = target_enforcement.target_quality_score
     if not isinstance(score, int) or isinstance(score, bool):
-        result["target_repair_success_reason"] = f"quality score for {failed_criterion} unavailable"
+        result["target_repair_success_reason"] = (
+            target_enforcement.repair_target_failure_reason
+        )
         return result
 
-    required_minimum = result["target_required_minimum"]
+    required_minimum = target_enforcement.target_required_minimum
     post_failed_criteria = _quality_failed_criteria(review_payload)
-    target_fixed = score >= required_minimum and failed_criterion not in post_failed_criteria
+    target_fixed = target_enforcement.repair_target_fixed is True
     new_failed_criteria = [
         criterion for criterion in post_failed_criteria if criterion != failed_criterion
     ]
@@ -1502,16 +1571,9 @@ def _target_repair_diagnostics(
             ),
         }
     )
-    if target_fixed:
-        result["target_repair_success_reason"] = (
-            f"{failed_criterion} score {score} >= {required_minimum} and criterion no longer failed"
-        )
-    elif failed_criterion in post_failed_criteria:
-        result["target_repair_success_reason"] = (
-            f"{failed_criterion} remains in post-repair failed_criteria"
-        )
-    else:
-        result["target_repair_success_reason"] = f"{failed_criterion} score {score} < {required_minimum}"
+    result["target_repair_success_reason"] = (
+        target_enforcement.repair_target_failure_reason
+    )
     return result
 
 
@@ -1531,33 +1593,6 @@ def _quality_failed_criteria(review_payload: dict[str, Any]) -> list[str]:
     if not isinstance(failed_criteria, list):
         return []
     return [criterion for criterion in failed_criteria if isinstance(criterion, str)]
-
-
-def _target_required_minimum(
-    case: RepairWriterBenchmarkCase,
-    failed_criterion: str,
-) -> int:
-    rubric = get_quality_evaluator_rubric_payload()
-    required_minimum = rubric.required_minimums.get(
-        failed_criterion,
-        rubric.score_max - 1,
-    )
-    if (
-        failed_criterion == "author_point_of_view"
-        and _explicit_author_owned_statement_required(case)
-    ):
-        required_minimum = max(required_minimum, rubric.score_max)
-    return required_minimum
-
-
-def _explicit_author_owned_statement_required(case: RepairWriterBenchmarkCase) -> bool:
-    directive = case.angle_decision.get("authorial_voice_directive")
-    if not isinstance(directive, dict):
-        return False
-    return (
-        directive.get("personal_presence_requirement")
-        == "explicit_author_owned_statement_required"
-    )
 
 
 def _final_adjudication_outcome(
@@ -1933,10 +1968,7 @@ def _manifest(
             ],
             "plans": [plan.to_dict() for plan in request.plans],
             "fixed_downstream_roles": {
-                "semantic_grounding": {
-                    "provider": FIXED_SEMANTIC_GROUNDING_PROVIDER,
-                    "model": FIXED_SEMANTIC_GROUNDING_MODEL,
-                },
+                "semantic_grounding": _semantic_grounding_execution_config_for_record(),
                 "quality_evaluator": {
                     "provider": FIXED_QUALITY_EVALUATOR_PROVIDER,
                     "model": FIXED_QUALITY_EVALUATOR_MODEL,

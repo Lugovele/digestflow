@@ -54,7 +54,12 @@ from services.packaging.linkedin_post_repair_writer_structural_diagnostics impor
     UNKNOWN,
 )
 from services.packaging.linkedin_post_semantic_grounding_execution import (
+    PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+    PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+    PRODUCTION_SEMANTIC_GROUNDING_MODEL,
+    PRODUCTION_SEMANTIC_GROUNDING_PROVIDER,
     SemanticGroundingRawResponse,
+    production_semantic_grounding_reasoning_effort,
 )
 from services.packaging.linkedin_post_semantic_grounding_structural_diagnostics import (
     TRUNCATED_INSIDE_JSON as SEMANTIC_TRUNCATED_INSIDE_JSON,
@@ -359,12 +364,42 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(calls["repair"][0].max_output_tokens, REPAIR_WRITER_MAX_OUTPUT_TOKENS)
         self.assertEqual(calls["repair"][0].rendered_prompt_input.to_dict()["variables"]["repair_attempt_json"].count("editorial"), 1)
         self.assertEqual(len(calls["grounding"]), 1)
-        self.assertEqual(calls["grounding"][0].provider, FIXED_SEMANTIC_GROUNDING_PROVIDER)
-        self.assertEqual(calls["grounding"][0].model, FIXED_SEMANTIC_GROUNDING_MODEL)
+        self.assertEqual(calls["grounding"][0].provider, PRODUCTION_SEMANTIC_GROUNDING_PROVIDER)
+        self.assertEqual(calls["grounding"][0].model, PRODUCTION_SEMANTIC_GROUNDING_MODEL)
+        self.assertEqual(
+            calls["grounding"][0].max_output_tokens,
+            PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        )
+        self.assertEqual(
+            calls["grounding"][0].reasoning_effort,
+            production_semantic_grounding_reasoning_effort(),
+        )
+        self.assertEqual(
+            calls["grounding"][0].execution_metadata["semantic_grounding_execution_profile"],
+            PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+        )
+        self.assertEqual(
+            calls["grounding"][0].execution_metadata["semantic_grounding_reasoning_effort"],
+            production_semantic_grounding_reasoning_effort(),
+        )
         self.assertEqual(len(calls["quality"]), 1)
         self.assertEqual(calls["quality"][0].provider, FIXED_QUALITY_EVALUATOR_PROVIDER)
         self.assertEqual(calls["quality"][0].model, FIXED_QUALITY_EVALUATOR_MODEL)
         record = result.run_records[0]
+        self.assertEqual(record["semantic_grounding_config"]["provider"], PRODUCTION_SEMANTIC_GROUNDING_PROVIDER)
+        self.assertEqual(record["semantic_grounding_config"]["model"], PRODUCTION_SEMANTIC_GROUNDING_MODEL)
+        self.assertEqual(
+            record["semantic_grounding_config"]["max_output_tokens"],
+            PRODUCTION_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS,
+        )
+        self.assertEqual(
+            record["semantic_grounding_config"]["execution_profile"],
+            PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE,
+        )
+        self.assertEqual(
+            record["semantic_grounding_config"]["reasoning_effort"],
+            production_semantic_grounding_reasoning_effort(),
+        )
         diagnostics = record["repair_adapter_diagnostics"]
         self.assertEqual(diagnostics["structural_failure_category"], UNKNOWN)
         self.assertEqual(diagnostics["parsed_top_level_keys"], ["post_text"])
@@ -901,7 +936,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(diagnostics["overall_quality_pass"], False)
         self.assertEqual(diagnostics["final_adjudication_outcome"], "repair_editorial")
         self.assertEqual(diagnostics["target_accuracy_classification"], "TARGET_NOT_FIXED")
-        self.assertIn("remains in post-repair failed_criteria", diagnostics["target_repair_success_reason"])
+        self.assertIn("remains in failed_criteria", diagnostics["target_repair_success_reason"])
 
     def test_target_repair_diagnostics_accept_author_pov_score_five_when_explicit_statement_required(self) -> None:
         case = default_repair_writer_benchmark_cases()[2]
@@ -1326,6 +1361,14 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         self.assertEqual(
             {record["repair_writer_config"]["reasoning_effort"] for record in result.run_records},
             {None, "minimal", "low"},
+        )
+        self.assertEqual(
+            {record["semantic_grounding_config"]["execution_profile"] for record in result.run_records},
+            {PRODUCTION_SEMANTIC_GROUNDING_EXECUTION_PROFILE},
+        )
+        self.assertEqual(
+            {record["semantic_grounding_config"]["reasoning_effort"] for record in result.run_records},
+            {production_semantic_grounding_reasoning_effort()},
         )
 
     def test_gemini_no_reasoning_profile_is_not_supported(self) -> None:
