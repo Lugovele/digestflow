@@ -60,7 +60,10 @@ _CRITERION_DEFINITIONS = (
         "judgment about what the author notices, rejects, or thinks matters "
         "instead of only a clear thesis, rhetorical question, or neutral "
         "source relationship. Score 5 requires exactly one explicit "
-        "author-owned interpretive statement tied to supplied evidence.",
+        "author-owned interpretive statement tied to supplied evidence. "
+        "Do not count ordinary thesis, synthesis, or rhetorical consequence "
+        "as another explicit ownership statement unless it includes explicit "
+        "author self-attribution.",
     ),
     (
         "human_voice",
@@ -119,6 +122,8 @@ _SCORING_INVARIANTS = (
     "Clean grammar and coherent structure are not sufficient for human_voice.",
     "Readable human voice is not sufficient for author_point_of_view.",
     "Score 5 for author_point_of_view requires exactly one explicit author-owned interpretive statement, a substantive choice between competing readings, evidence-tied judgment, and no fabricated experience or authority.",
+    "An explicit author-owned interpretive statement must visibly assign the interpretation to the author through a clear ownership signal such as I reject, I do not think, my reading, or I would treat this as.",
+    "Ordinary thesis, synthesis, practical takeaway, causal interpretation, or rhetorical consequence statements do not count as additional explicit author-owned statements unless they independently include explicit author self-attribution or invented author context.",
     "When personal_presence_requirement is explicit_author_owned_statement_required, zero qualifying explicit author-owned interpretive statements must score no higher than 3 for author_point_of_view and pass must be false.",
     "When personal_presence_requirement is explicit_author_owned_statement_required, multiple qualifying explicit author-owned interpretive statements must score no higher than 4 for author_point_of_view and pass must be false.",
     "Strong article-like editorial ownership with limited explicit personal presence may qualify for author_point_of_view 4 but not 5 only when explicit personal presence is not required.",

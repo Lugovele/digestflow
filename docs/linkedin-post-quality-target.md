@@ -161,10 +161,15 @@ The pattern across the sources is not tool adoption. It is integration failure.
 The author interprets facts instead of just reporting them.
 
 When the current PostFlow authorial directive requires explicit personal
-presence, maximum Author Point Of View requires exactly one author-owned
-interpretive statement: a statement that visibly assigns an evidence-derived
-judgment to the author without inventing biography, experience, credentials,
-clients, direct exposure, or emotion.
+presence, maximum Author Point Of View requires exactly one explicit
+ownership marker or author-owned interpretive statement: a statement that
+visibly assigns an evidence-derived judgment to the author without inventing
+biography, experience, credentials, clients, direct exposure, or emotion.
+
+Ordinary thesis, synthesis, practical takeaway, causal interpretation,
+rhetorical consequence, or conclusion should not count as another explicit
+author-owned statement unless it independently contains explicit author
+self-attribution or invented author context.
 
 Author-owned interpretation is separate from Human Voice. A post can sound
 natural while still lacking explicit ownership of the judgment.
@@ -348,7 +353,7 @@ Score each post from 1 to 5 on each criterion.
 
 ### Author Point Of View
 
-- 5 = exactly one explicit author-owned interpretive statement; substantive choice between competing readings; judgment tied to supplied evidence; no fabricated personal context.
+- 5 = exactly one explicit author-owned interpretive statement or ownership marker; substantive choice between competing readings; judgment tied to supplied evidence; ordinary non-explicit analysis may continue the argument; no fabricated personal context.
 - 4 = visible point of view or strong article-like authored judgment, but limited or absent explicit personal presence.
 - 3 = strong thesis without clear ownership, summary with rhetorical framing, or generic first-person marker without substantive judgment.
 - 2 = mostly neutral reporting.

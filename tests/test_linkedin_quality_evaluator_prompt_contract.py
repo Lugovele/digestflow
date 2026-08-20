@@ -227,7 +227,32 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
                 "score no higher than 3 for author_point_of_view",
                 "multiple qualifying explicit author-owned interpretive statements",
                 "score no higher than 4 for author_point_of_view",
+                "multiple separate explicit ownership markers",
                 '"pass" must be false',
+            ],
+        )
+
+
+    def test_quality_evaluator_prompt_distinguishes_explicit_ownership_from_analysis(
+        self,
+    ) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "clear ownership signal",
+                "I reject",
+                "I do not think",
+                "my reading",
+                "I would treat this as",
+                "ordinary thesis, synthesis, practical takeaway",
+                "rhetorical consequence",
+                "do not count",
+                "that distinction matters because",
+                "growth evidence does not erase risk",
+                "clear rules are not inclusive design",
             ],
         )
 

@@ -317,6 +317,150 @@ class LinkedInQualityEvaluatorCalibrationTests(SimpleTestCase):
             "invents personal experience",
         )
 
+    def test_one_explicit_ownership_marker_with_ordinary_analysis_can_receive_author_pov_five(
+        self,
+    ) -> None:
+        post_text = (
+            "I'd reject the reading that frequent use settles the question. "
+            "That distinction matters because usage measures exposure, not learning. "
+            "Adoption is not the same as impact.\n\n"
+            "Which signal would you test before calling this durable?"
+        )
+        scores = _passing_scores(author_point_of_view=5)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(post_text, scores=scores, passed=True)
+        )
+
+        self.assertEqual(normalized["scores"]["author_point_of_view"], 5)
+        self.assertIs(normalized["pass"], True)
+        self.assertEqual(normalized["automatic_fail_reason"], "")
+
+    def test_two_independent_explicit_ownership_markers_remain_below_author_pov_five(
+        self,
+    ) -> None:
+        post_text = (
+            "I don't think a solid policy proves the harder work is done. "
+            "My reading is that clear rules still need inclusive practice.\n\n"
+            "Which assumption would you test first?"
+        )
+        scores = _passing_scores(author_point_of_view=4)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                post_text,
+                scores=scores,
+                failed_criteria=["author_point_of_view"],
+            )
+        )
+
+        self.assertLessEqual(normalized["scores"]["author_point_of_view"], 4)
+        self.assertIs(normalized["pass"], False)
+        self.assertEqual(normalized["automatic_fail_reason"], "")
+        self.assertIn("author_point_of_view", normalized["failed_criteria"])
+
+    def test_one_explicit_ownership_marker_plus_cta_does_not_create_second_marker(
+        self,
+    ) -> None:
+        post_text = (
+            "I would treat this as an integration problem, not an adoption win. "
+            "Clear rules are not inclusive design.\n\n"
+            "What would you check before calling the policy mature?"
+        )
+        scores = _passing_scores(author_point_of_view=5, cta=5)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(post_text, scores=scores, passed=True)
+        )
+
+        self.assertEqual(normalized["scores"]["author_point_of_view"], 5)
+        self.assertEqual(normalized["scores"]["cta"], 5)
+        self.assertIs(normalized["pass"], True)
+
+    def test_non_first_person_crypto_analysis_does_not_count_as_multiple_explicit_markers(
+        self,
+    ) -> None:
+        post_text = (
+            "Growth evidence does not erase risk. Distinguishing between "
+            "momentum and genuine confidence is essential for seeing the real "
+            "picture.\n\n"
+            "Which signal would you separate first?"
+        )
+        scores = _passing_scores(author_point_of_view=3)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                post_text,
+                scores=scores,
+                failed_criteria=["author_point_of_view"],
+            )
+        )
+
+        self.assertLessEqual(normalized["scores"]["author_point_of_view"], 3)
+        self.assertIs(normalized["pass"], False)
+        self.assertEqual(normalized["automatic_fail_reason"], "")
+        self.assertIn("author_point_of_view", normalized["failed_criteria"])
+
+    def test_generic_first_person_scaffolding_without_interpretation_cannot_receive_five(
+        self,
+    ) -> None:
+        post_text = (
+            "In my view, this is important. I believe leaders should pay "
+            "attention.\n\nWhat do you think?"
+        )
+        scores = _passing_scores(author_point_of_view=3, human_voice=3, practical_value=2)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                post_text,
+                scores=scores,
+                failed_criteria=[
+                    "author_point_of_view",
+                    "human_voice",
+                    "practical_value",
+                ],
+            )
+        )
+
+        self.assertLessEqual(normalized["scores"]["author_point_of_view"], 3)
+        self.assertIs(normalized["pass"], False)
+
+    def test_unsupported_personal_experience_cannot_receive_author_pov_five(
+        self,
+    ) -> None:
+        post_text = (
+            "In my experience advising teams, this always fails the same way. "
+            "Clear rules are not inclusive design.\n\n"
+            "What would you test first?"
+        )
+        scores = _passing_scores(evidence=1, author_point_of_view=2, human_voice=3)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                post_text,
+                scores=scores,
+                failed_criteria=[
+                    "evidence",
+                    "author_point_of_view",
+                    "human_voice",
+                ],
+                automatic_fail_reason="invents personal experience",
+            )
+        )
+
+        self.assertIs(normalized["pass"], False)
+        self.assertEqual(
+            normalized["automatic_fail_reason"],
+            "invents personal experience",
+        )
+
+
+def _passing_scores(**overrides: int) -> dict[str, int]:
+    scores = {criterion: 4 for criterion in CANONICAL_QUALITY_SCORE_KEYS}
+    scores["human_voice"] = 5
+    scores.update(overrides)
+    return scores
+
 
 def _review_fixture(
     post_text: str,

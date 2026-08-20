@@ -149,6 +149,20 @@ author-owned interpretive statement, make a substantive choice between competing
 readings, tie the judgment to supplied evidence, and avoid fabricated experience
 or authority.
 
+An explicit author-owned interpretive statement must visibly assign the
+interpretation to the author through a clear ownership signal such as I reject,
+I do not think, my reading, or I would treat this as. Do not count ordinary
+thesis, synthesis, practical takeaway, causal interpretation, rhetorical
+consequence, or conclusion as a second explicit author-owned statement unless it
+independently contains explicit author self-attribution or invented author
+context.
+
+Ordinary authored argument can include statements such as That distinction
+matters because..., growth evidence does not erase risk, or Clear rules are not
+inclusive design. These may express interpretation, but they are not additional
+explicit ownership statements unless they carry a separate explicit ownership
+marker.
+
 For author_point_of_view score 4, the post may have strong authored judgment,
 a clear evaluative stance, or article-like editorial ownership with limited or
 absent explicit personal presence only when authorial_voice_directive_json does
@@ -162,7 +176,9 @@ interpretive statements must score no higher than 3 for author_point_of_view and
 When authorial_voice_directive_json.personal_presence_requirement is
 explicit_author_owned_statement_required, multiple qualifying explicit
 author-owned interpretive statements must score no higher than 4 for
-author_point_of_view and "pass" must be false.
+author_point_of_view and "pass" must be false. Multiple means multiple
+separate explicit ownership markers, not ordinary non-explicit analytical
+sentences that continue the same evidence-bounded argument.
 
 First-person wording alone is not enough for author_point_of_view. Penalize
 formulaic I think, in my opinion, or personally when it does not add a real
@@ -334,7 +350,9 @@ Output rules:
   authorial_voice_directive_json.personal_presence_requirement is
   explicit_author_owned_statement_required and post_text does not contain
   exactly one qualifying explicit author-owned interpretive statement, meaning
-  zero or multiple.
+  zero explicit ownership markers or multiple separate explicit ownership
+  markers. Do not treat non-explicit thesis, synthesis, consequence, or CTA
+  language as extra ownership markers by itself.
 * "pass" must be false when total_score is below 36.
 * "pass" must be false when hook, controlling_angle, author_point_of_view,
   human_voice, or evidence is below its documented minimum.
