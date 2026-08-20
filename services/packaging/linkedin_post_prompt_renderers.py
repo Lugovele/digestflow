@@ -5,6 +5,7 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import is_dataclass
 import json
+import re
 from typing import Any
 
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
@@ -43,6 +44,28 @@ REPAIR_WRITER_SAFE_TARGET_MIN_CHARS = 1150
 REPAIR_WRITER_NEAR_LIMIT_ORIGINAL_MIN_CHARS = 1200
 REPAIR_WRITER_CTA_CRITERION = "cta"
 REPAIR_WRITER_AUTHOR_POV_CRITERION = "author_point_of_view"
+REPAIR_WRITER_OWNERSHIP_MARKERS = (
+    "i see",
+    "i do not think",
+    "i don't think",
+    "i would",
+    "i would not",
+    "i wouldn't",
+    "i reject",
+    "my reading",
+    "my interpretation",
+)
+REPAIR_WRITER_INTERPRETIVE_MARKERS = (
+    "risk",
+    "mistake",
+    "treating",
+    "proof",
+    "distinction",
+    "matters",
+    "conditional",
+    "confidence",
+    "resolved",
+)
 
 AUTHORIAL_VOICE_DIRECTIVE_PROMPT_FIELDS = (
     "authorial_observation",
@@ -221,6 +244,10 @@ def render_repair_writer_prompt_input(
 ) -> RepairWriterPromptRender:
     selected_evidence_ids = _selected_evidence_ids_for_repair_prompt(selected_evidence)
     candidate_post_constraints = build_candidate_post_constraints()
+    locality_sections = _repair_writer_locality_sections(
+        original_candidate_payload,
+        repair_instruction,
+    )
     variables = {
         "repair_writer_length_guidance": _repair_writer_length_guidance(
             candidate_post_constraints,
@@ -229,6 +256,10 @@ def render_repair_writer_prompt_input(
         "repair_writer_target_guidance": _repair_writer_target_guidance(
             repair_instruction,
         ),
+        "repair_writer_target_locus": locality_sections["repair_writer_target_locus"],
+        "repair_writer_preservation_locked_text": locality_sections[
+            "repair_writer_preservation_locked_text"
+        ],
         "original_candidate_payload_json": _stable_json(
             _candidate_post_payload_for_prompt(original_candidate_payload)
         ),
@@ -550,6 +581,65 @@ def _repair_writer_length_guidance(
     )
 
 
+
+def _repair_writer_locality_sections(
+    original_candidate_payload: Any,
+    repair_instruction: Any,
+) -> dict[str, str]:
+    instruction = _repair_dict(repair_instruction, "repair_instruction")
+    failed_criterion = str(instruction.get("failed_criterion") or "").strip()
+    if failed_criterion != REPAIR_WRITER_AUTHOR_POV_CRITERION:
+        return {
+            "repair_writer_target_locus": (
+                "No single target locus is declared for this repair criterion."
+            ),
+            "repair_writer_preservation_locked_text": (
+                "Use REPAIR_WRITER_TARGET_GUIDANCE for preservation boundaries."
+            ),
+        }
+
+    post_text = _candidate_post_payload_for_prompt(original_candidate_payload)["post_text"]
+    sentences = _repair_writer_sentence_like_fragments(post_text)
+    if not sentences:
+        return {
+            "repair_writer_target_locus": "No sentence-like target locus found.",
+            "repair_writer_preservation_locked_text": "No preservation-locked sentences found.",
+        }
+
+    target_index = _repair_writer_author_pov_target_index(sentences)
+    preservation_locked = [
+        sentence for index, sentence in enumerate(sentences) if index != target_index
+    ]
+    return {
+        "repair_writer_target_locus": sentences[target_index],
+        "repair_writer_preservation_locked_text": "\n".join(preservation_locked),
+    }
+
+
+def _repair_writer_author_pov_target_index(sentences: list[str]) -> int:
+    for index, sentence in enumerate(sentences):
+        normalized = _normalize_repair_writer_sentence(sentence)
+        if any(marker in normalized for marker in REPAIR_WRITER_OWNERSHIP_MARKERS):
+            return index
+    for index, sentence in enumerate(sentences):
+        normalized = _normalize_repair_writer_sentence(sentence)
+        if any(marker in normalized for marker in REPAIR_WRITER_INTERPRETIVE_MARKERS):
+            return index
+    return 0
+
+
+def _repair_writer_sentence_like_fragments(text: str) -> list[str]:
+    return [
+        fragment.strip()
+        for fragment in re.split(r"(?<=[.!?])\s+|\n+", text)
+        if fragment.strip()
+    ]
+
+
+def _normalize_repair_writer_sentence(sentence: str) -> str:
+    return re.sub(r"\s+", " ", sentence.casefold()).strip()
+
+
 def _repair_writer_target_guidance(repair_instruction: Any) -> str:
     instruction = _repair_dict(repair_instruction, "repair_instruction")
     failed_criterion = str(instruction.get("failed_criterion") or "").strip()
@@ -575,29 +665,35 @@ def _repair_writer_target_guidance(repair_instruction: Any) -> str:
     if failed_criterion == REPAIR_WRITER_AUTHOR_POV_CRITERION:
         return (
             "TARGETED AUTHOR POINT OF VIEW REPAIR:\n"
-            "Before editing, identify all sentences that could function as explicit "
-            "author-owned interpretations, including strong interpretive rhetoric "
-            "without first-person. Choose one existing interpretive locus. Replace "
-            "or sharpen that locus so there is exactly one explicit author-owned, "
-            "evidence-bounded, isolated interpretation. Neutralize or subordinate "
-            "other interpretive conclusions so they support the chosen statement "
-            "rather than count as a second author-owned judgment. Preserve the hook, "
-            "evidence body, CTA, controlling angle, surrounding post, and existing "
-            "distinctive phrasing. Do not append another interpretation. Do not "
-            "broadly rewrite the post. Do not add multiple first-person markers or "
-            "stacked identity markers. Do not change the CTA unless required by hard "
-            "length.\n\n"
+            "Use REPAIR_WRITER_TARGET_LOCUS as the only edit locus. Modify only "
+            "that sentence or clause. Copy every sentence in "
+            "REPAIR_WRITER_PRESERVATION_LOCKED_TEXT verbatim into the returned "
+            "post_text. Do not reorder paragraphs. Do not compress unrelated prose. "
+            "Do not rewrite transitions, evidence-bearing sentences, the hook, the "
+            "CTA, or the conclusion unless the target locus is there. Prefer "
+            "converting the target locus into one explicit author-owned statement "
+            "over adding a new sentence. Do not broadly rewrite the post. Do not "
+            "add multiple first-person markers or stacked identity markers. Do not "
+            "change the CTA unless required by hard length.\n\n"
             "AUTHOR POV SUCCESS CONTRACT:\n"
-            "The repaired sentence must make a substantive choice between competing "
+            "The repaired locus must make a substantive choice between competing "
             "readings, tie the judgment directly to selected evidence, and avoid "
-            "fabricated experience or authority. Strong author-owned rhetoric can "
-            "include phrases such as is essential, the real picture is, the true "
-            "shape is, this proves, this means, the mistake is, or the reading to "
-            "reject is when they express the selected evidence-bounded judgment. Do "
-            "not merely add more first person. Avoid formulaic markers such as I "
-            "think, In my view, For me, I believe, My reading, or I urge unless that "
-            "exact wording is already necessary and substantive. Do not paraphrase "
-            "distinctive sentences merely for style."
+            "fabricated experience or authority. The ownership marker must carry a "
+            "specific evidence-bounded judgment, not a generic phrase pasted onto a "
+            "summary. Strong author-owned rhetoric can include phrases such as is "
+            "essential, the real picture is, the true shape is, this proves, this "
+            "means, the mistake is, or the reading to reject is when they express "
+            "the selected evidence-bounded judgment. Avoid formulaic markers such "
+            "as I think, In my view, For me, I believe, My reading, or I urge "
+            "unless that exact wording is already necessary and substantive. Do not "
+            "paraphrase distinctive sentences merely for style.\n\n"
+            "AUTHOR POV LOCALITY EXAMPLES:\n"
+            "BAD: Add a new first-person sentence while also rewriting the hook, "
+            "evidence body, and CTA.\n"
+            "BAD: Replace a specific market sentence with a generic consultant-style "
+            "take.\n"
+            "GOOD: Sharpen the target sentence into one owned interpretation and copy "
+            "the preservation-locked sentences verbatim."
         )
     return (
         "TARGETED REPAIR:\n"
@@ -778,6 +874,11 @@ def _build_repair_writer_input_text(variables: dict[str, str]) -> str:
     sections = [
         ("REPAIR_WRITER_LENGTH_GUIDANCE", variables["repair_writer_length_guidance"]),
         ("REPAIR_WRITER_TARGET_GUIDANCE", variables["repair_writer_target_guidance"]),
+        ("REPAIR_WRITER_TARGET_LOCUS", variables["repair_writer_target_locus"]),
+        (
+            "REPAIR_WRITER_PRESERVATION_LOCKED_TEXT",
+            variables["repair_writer_preservation_locked_text"],
+        ),
         ("ORIGINAL_CANDIDATE_PAYLOAD_JSON", variables["original_candidate_payload_json"]),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),

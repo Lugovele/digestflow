@@ -64,6 +64,8 @@ SEMANTIC_GROUNDING_VARIABLES = (
 REPAIR_WRITER_VARIABLES = (
     "repair_writer_length_guidance",
     "repair_writer_target_guidance",
+    "repair_writer_target_locus",
+    "repair_writer_preservation_locked_text",
     "original_candidate_payload_json",
     "post_brief_json",
     "angle_decision_json",
@@ -1180,6 +1182,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         headers = [
             "## REPAIR_WRITER_LENGTH_GUIDANCE",
             "## REPAIR_WRITER_TARGET_GUIDANCE",
+            "## REPAIR_WRITER_TARGET_LOCUS",
+            "## REPAIR_WRITER_PRESERVATION_LOCKED_TEXT",
             "## ORIGINAL_CANDIDATE_PAYLOAD_JSON",
             "## POST_BRIEF_JSON",
             "## ANGLE_DECISION_JSON",
@@ -1281,8 +1285,8 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         ).variables["repair_writer_target_guidance"]
 
         self.assertIn("TARGETED AUTHOR POINT OF VIEW REPAIR:", guidance)
-        self.assertIn("identify all sentences that could function as explicit", guidance)
-        self.assertIn("Choose one existing interpretive locus", guidance)
+        self.assertIn("Use REPAIR_WRITER_TARGET_LOCUS as the only edit locus", guidance)
+        self.assertIn("Copy every sentence in REPAIR_WRITER_PRESERVATION_LOCKED_TEXT", guidance)
         self.assertIn("Do not add multiple first-person markers", guidance)
         self.assertIn("Do not paraphrase distinctive sentences", guidance)
 
@@ -1383,25 +1387,162 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         ).variables["repair_writer_target_guidance"]
 
         self.assertIn("TARGETED AUTHOR POINT OF VIEW REPAIR:", target_guidance)
-        self.assertIn("identify all sentences that could function as explicit", target_guidance)
-        self.assertIn("Preserve the hook", target_guidance)
-        self.assertIn("evidence body", target_guidance)
-        self.assertIn("Preserve the hook, evidence body, CTA", target_guidance)
-        self.assertIn("surrounding post", target_guidance)
-        self.assertIn("Replace or sharpen that locus", target_guidance)
-        self.assertIn("Neutralize or subordinate other interpretive conclusions", target_guidance)
-        self.assertIn("evidence-bounded, isolated interpretation", target_guidance)
-        self.assertIn("Do not append another interpretation", target_guidance)
+        self.assertIn("Use REPAIR_WRITER_TARGET_LOCUS as the only edit locus", target_guidance)
+        self.assertIn("Modify only that sentence or clause", target_guidance)
+        self.assertIn("Copy every sentence in REPAIR_WRITER_PRESERVATION_LOCKED_TEXT", target_guidance)
+        self.assertIn("Do not reorder paragraphs", target_guidance)
+        self.assertIn("Do not compress unrelated prose", target_guidance)
+        self.assertIn("Do not rewrite transitions", target_guidance)
+        self.assertIn("evidence-bearing sentences", target_guidance)
+        self.assertIn("converting the target locus into one explicit author-owned statement", target_guidance)
         self.assertIn("substantive choice between competing readings", target_guidance)
         self.assertIn("the reading to reject is", target_guidance)
         self.assertIn("Strong author-owned rhetoric can include", target_guidance)
         self.assertIn("selected evidence-bounded judgment", target_guidance)
         self.assertIn("tie the judgment directly to selected evidence", target_guidance)
         self.assertIn("avoid fabricated experience or authority", target_guidance)
-        self.assertIn("Do not merely add more first person", target_guidance)
+        self.assertIn("ownership marker must carry a specific evidence-bounded judgment", target_guidance)
         self.assertIn("Do not broadly rewrite the post", target_guidance)
         self.assertIn("Do not add multiple first-person markers", target_guidance)
         self.assertIn("Do not paraphrase distinctive sentences", target_guidance)
+        self.assertIn("AUTHOR POV LOCALITY EXAMPLES:", target_guidance)
+        self.assertIn("GOOD: Sharpen the target sentence", target_guidance)
+        self.assertNotIn("identify all sentences", target_guidance)
+        self.assertNotIn("Neutralize or subordinate", target_guidance)
+
+    def test_author_pov_repair_render_declares_single_target_locus(self) -> None:
+        post_text = (
+            "Adoption numbers make crypto look settled. "
+            "Yet, I see a real risk in treating those numbers as proof of confidence. "
+            "Volatility still shapes how traders read the market."
+        )
+
+        render = _repair_writer_render(
+            original_candidate_payload={"post_text": post_text},
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        )
+
+        self.assertEqual(
+            render.variables["repair_writer_target_locus"],
+            "Yet, I see a real risk in treating those numbers as proof of confidence.",
+        )
+        self.assertNotIn(
+            "Yet, I see a real risk",
+            render.variables["repair_writer_preservation_locked_text"],
+        )
+        self.assertIn("## REPAIR_WRITER_TARGET_LOCUS", render.input_text)
+        self.assertIn("## REPAIR_WRITER_PRESERVATION_LOCKED_TEXT", render.input_text)
+
+    def test_author_pov_repair_render_preservation_locks_other_sentences(self) -> None:
+        first = "Adoption numbers make crypto look settled."
+        target = "Yet, I see a real risk in treating those numbers as proof of confidence."
+        third = "Volatility still shapes how traders read the market."
+
+        render = _repair_writer_render(
+            original_candidate_payload={"post_text": f"{first} {target} {third}"},
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        )
+
+        preservation_locked = render.variables["repair_writer_preservation_locked_text"]
+        self.assertIn(first, preservation_locked)
+        self.assertIn(third, preservation_locked)
+        self.assertNotIn("Sentence 1:", preservation_locked)
+        self.assertNotIn("Sentence 3:", preservation_locked)
+        self.assertIn(preservation_locked, render.input_text)
+
+    def test_author_pov_repair_render_does_not_add_sentence_labels_to_copy_verbatim_text(self) -> None:
+        render = _repair_writer_render(
+            original_candidate_payload={
+                "post_text": (
+                    "Opening sentence remains. "
+                    "Yet, I see a real risk in treating momentum as proof. "
+                    "Final sentence remains."
+                )
+            },
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        )
+
+        combined_locality_text = "\n".join(
+            [
+                render.variables["repair_writer_target_locus"],
+                render.variables["repair_writer_preservation_locked_text"],
+            ]
+        )
+        self.assertNotIn("Sentence 1:", combined_locality_text)
+        self.assertNotIn("Sentence 2", render.variables["repair_writer_target_locus"])
+        self.assertNotIn("Sentence 3:", combined_locality_text)
+
+    def test_author_pov_repair_render_uses_interpretive_marker_fallback(self) -> None:
+        post_text = (
+            "Adoption numbers are rising. "
+            "Treating that adoption as proof of resolved confidence is a mistake. "
+            "Volatility still matters."
+        )
+
+        render = _repair_writer_render(
+            original_candidate_payload={"post_text": post_text},
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        )
+
+        self.assertEqual(
+            render.variables["repair_writer_target_locus"],
+            "Treating that adoption as proof of resolved confidence is a mistake.",
+        )
+
+    def test_author_pov_repair_render_uses_first_sentence_fallback(self) -> None:
+        post_text = (
+            "Adoption numbers are rising. "
+            "Market infrastructure is still developing. "
+            "Investors are watching closely."
+        )
+
+        render = _repair_writer_render(
+            original_candidate_payload={"post_text": post_text},
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "author_point_of_view",
+                "repair_instruction": "Sharpen the author point of view.",
+            },
+        )
+
+        self.assertEqual(
+            render.variables["repair_writer_target_locus"],
+            "Adoption numbers are rising.",
+        )
+
+    def test_non_author_pov_repair_does_not_declare_single_locus(self) -> None:
+        render = _repair_writer_render(
+            repair_instruction={
+                "repair_type": "editorial",
+                "failed_criterion": "cta",
+                "repair_instruction": "Make the CTA explicit.",
+            }
+        )
+
+        self.assertEqual(
+            render.variables["repair_writer_target_locus"],
+            "No single target locus is declared for this repair criterion.",
+        )
+        self.assertEqual(
+            render.variables["repair_writer_preservation_locked_text"],
+            "Use REPAIR_WRITER_TARGET_GUIDANCE for preservation boundaries.",
+        )
 
     def test_repair_writer_render_preserves_selected_evidence_boundary(self) -> None:
         editorial_input = _post_editorial_input()

@@ -1657,6 +1657,10 @@ def _payload_preservation(
     character_delta = repaired_length - original_length
     distinctive = _distinctive_phrase_preservation(original_post_text, repaired_post_text)
     added_generic_markers = _added_generic_markers(original_post_text, repaired_post_text)
+    sentence_diagnostics = _sentence_level_repair_diagnostics(
+        original_post_text,
+        repaired_post_text,
+    )
     return {
         "only_post_text_changed": (
             original_keys == repaired_keys == {"post_text"}
@@ -1680,7 +1684,34 @@ def _payload_preservation(
         "repair_scope_locality": _repair_scope_locality(original_post_text, repaired_post_text),
         "added_generic_marker_count": len(added_generic_markers),
         "added_generic_markers": added_generic_markers,
+        **sentence_diagnostics,
         **distinctive,
+    }
+
+
+def _sentence_level_repair_diagnostics(
+    original_text: str,
+    repaired_text: str,
+) -> dict[str, Any]:
+    original_sentences = _sentence_like_fragments(original_text)
+    repaired_sentences = _sentence_like_fragments(repaired_text)
+    compared_count = min(len(original_sentences), len(repaired_sentences))
+    unchanged_count = sum(
+        1
+        for original, repaired in zip(original_sentences, repaired_sentences)
+        if original == repaired
+    )
+    changed_indexes = [
+        index
+        for index in range(max(len(original_sentences), len(repaired_sentences)))
+        if index >= compared_count or original_sentences[index] != repaired_sentences[index]
+    ]
+    return {
+        "original_sentence_count": len(original_sentences),
+        "repaired_sentence_count": len(repaired_sentences),
+        "unchanged_sentence_count": unchanged_count,
+        "changed_sentence_count": len(changed_indexes),
+        "changed_sentence_indexes": changed_indexes,
     }
 
 

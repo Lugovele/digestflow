@@ -851,6 +851,47 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
             preservation["added_generic_markers"],
             ["it's tempting", "for me", "i think", "i urge", "my reading"],
         )
+    def test_payload_preservation_reports_sentence_level_locality_metrics(self) -> None:
+        original = {
+            "post_text": (
+                "First sentence should remain. "
+                "Second sentence is the repair target. "
+                "Third sentence should remain."
+            )
+        }
+        repaired = {
+            "post_text": (
+                "First sentence should remain. "
+                "Second sentence now carries the author point of view. "
+                "Third sentence should remain."
+            )
+        }
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertEqual(preservation["original_sentence_count"], 3)
+        self.assertEqual(preservation["repaired_sentence_count"], 3)
+        self.assertEqual(preservation["unchanged_sentence_count"], 2)
+        self.assertEqual(preservation["changed_sentence_count"], 1)
+        self.assertEqual(preservation["changed_sentence_indexes"], [1])
+
+    def test_payload_preservation_reports_sentence_insertions_as_changed_indexes(self) -> None:
+        original = {"post_text": "First sentence. Second sentence."}
+        repaired = {"post_text": "First sentence. New sentence. Second sentence."}
+
+        preservation = linkedin_post_repair_writer_benchmark._payload_preservation(
+            original,
+            repaired,
+        )
+
+        self.assertEqual(preservation["original_sentence_count"], 2)
+        self.assertEqual(preservation["repaired_sentence_count"], 3)
+        self.assertEqual(preservation["changed_sentence_count"], 2)
+        self.assertEqual(preservation["changed_sentence_indexes"], [1, 2])
+
     def test_payload_preservation_reports_distinctive_fragment_preservation(self) -> None:
         distinctive = "The market is learning to price political enthusiasm without mistaking it for adoption."
         original = {"post_text": distinctive}
