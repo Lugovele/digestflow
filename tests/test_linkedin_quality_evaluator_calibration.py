@@ -244,6 +244,28 @@ class LinkedInQualityEvaluatorCalibrationTests(SimpleTestCase):
         self.assertEqual(normalized["scores"]["author_point_of_view"], 5)
         self.assertIs(normalized["pass"], True)
 
+    def test_crypto_style_one_marker_satisfies_explicit_author_presence(
+        self,
+    ) -> None:
+        post_text = (
+            "Crypto adoption is not the same as crypto confidence. "
+            "I would not treat these signals as proof that the market's "
+            "underlying risk landscape has been resolved. "
+            "Growth evidence does not erase risk; it changes which signal "
+            "needs to be tested first.\n\n"
+            "Which signal would you separate before calling this durable?"
+        )
+        scores = _passing_scores(author_point_of_view=5, cta=5)
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(post_text, scores=scores, passed=True)
+        )
+
+        self.assertEqual(normalized["scores"]["author_point_of_view"], 5)
+        self.assertNotIn("author_point_of_view", normalized["failed_criteria"])
+        self.assertEqual(normalized["automatic_fail_reason"], "")
+        self.assertIs(normalized["pass"], True)
+
     def test_generic_first_person_remains_weak_author_point_of_view(self) -> None:
         post_text = (
             "I think this is interesting.\n\n"

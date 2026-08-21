@@ -256,6 +256,26 @@ class LinkedInQualityEvaluatorPromptContractTests(SimpleTestCase):
             ],
         )
 
+    def test_quality_evaluator_prompt_treats_explicit_presence_requirement_as_conditional(
+        self,
+    ) -> None:
+        prompt = _normalized_prompt_text()
+
+        _assert_contains_all(
+            self,
+            prompt,
+            [
+                "the requirement is satisfied",
+                "the requirement value itself must not force",
+                "must not put author_point_of_view in failed_criteria",
+                "must not create an automatic_fail_reason",
+                "requirement declaration, not an automatic failure condition",
+                "do not set automatic_fail_reason merely because",
+                "must not be forced false solely because",
+                "exactly one qualifying evidence-bounded author-owned",
+            ],
+        )
+
     def test_quality_evaluator_prompt_separates_author_point_of_view_from_human_voice(
         self,
     ) -> None:

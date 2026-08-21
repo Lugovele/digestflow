@@ -180,6 +180,13 @@ author_point_of_view and "pass" must be false. Multiple means multiple
 separate explicit ownership markers, not ordinary non-explicit analytical
 sentences that continue the same evidence-bounded argument.
 
+When authorial_voice_directive_json.personal_presence_requirement is
+explicit_author_owned_statement_required and exactly one qualifying explicit
+author-owned interpretive statement is present, the requirement is satisfied.
+The requirement value itself must not force "pass" to false, must not put
+author_point_of_view in failed_criteria, and must not create an
+automatic_fail_reason.
+
 First-person wording alone is not enough for author_point_of_view. Penalize
 formulaic I think, in my opinion, or personally when it does not add a real
 owned judgment.
@@ -224,6 +231,12 @@ supplied in quality_rubric_json.
 
 Populate automatic_fail_reason only when the documented rubric requires it.
 If no automatic failure applies, return an empty string.
+
+The personal_presence_requirement value
+explicit_author_owned_statement_required is a requirement declaration, not an
+automatic failure condition. Do not set automatic_fail_reason merely because
+that requirement is present. Set automatic_fail_reason only for a separate
+documented automatic-failure condition such as invented personal experience.
 
 When any documented automatic failure applies, "pass" must be false.
 automatic_fail_reason is an evaluation finding, not a routing action.
@@ -353,6 +366,10 @@ Output rules:
   zero explicit ownership markers or multiple separate explicit ownership
   markers. Do not treat non-explicit thesis, synthesis, consequence, or CTA
   language as extra ownership markers by itself.
+* "pass" must not be forced false solely because
+  authorial_voice_directive_json.personal_presence_requirement is
+  explicit_author_owned_statement_required when post_text contains exactly one
+  qualifying evidence-bounded author-owned interpretive statement.
 * "pass" must be false when total_score is below 36.
 * "pass" must be false when hook, controlling_angle, author_point_of_view,
   human_voice, or evidence is below its documented minimum.
