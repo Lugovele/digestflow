@@ -13,6 +13,9 @@ from services.packaging.linkedin_post_quality_evaluator_execution import (
     QualityEvaluatorRawResponse,
 )
 from services.packaging.linkedin_post_repair_writer_execution import (
+    REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+    REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI,
+    REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
     RepairWriterRawResponse,
 )
 from services.packaging.linkedin_post_semantic_grounding_execution import (
@@ -285,6 +288,18 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             calls["repair"] += 1
             self.assertEqual(_request.provider, "gemini")
             self.assertEqual(_request.model, "gemini-3.6-flash")
+            self.assertEqual(
+                _request.execution_path,
+                REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI,
+            )
+            self.assertEqual(
+                _request.thinking_budget,
+                REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
+            )
+            self.assertEqual(
+                _request.response_schema,
+                REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+            )
             return RepairWriterRawResponse(
                 raw_text=json.dumps({"post_text": "Repaired human post."}),
                 provider="gemini",
@@ -535,6 +550,8 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertEqual(roles["semantic_grounding"]["provider"], "gemini")
         self.assertEqual(roles["quality_evaluator"]["provider"], "openai")
         self.assertEqual(roles["repair_writer"]["provider"], "gemini")
+        self.assertEqual(roles["repair_writer"]["execution_path"], "native_gemini")
+        self.assertEqual(roles["repair_writer"]["thinking_budget"], 256)
         self.assertEqual(roles["repair_writer"]["max_output_tokens"], 2800)
         self.assertEqual(fingerprint["provider_call_count"], 0)
         self.assertFalse(fingerprint["live_mode"])

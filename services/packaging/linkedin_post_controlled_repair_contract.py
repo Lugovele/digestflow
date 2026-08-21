@@ -66,6 +66,8 @@ class FinalPostControlledRepairRequest:
     repair_provider: str | None
     repair_model: str | None
     repair_max_output_tokens: int | None = None
+    repair_execution_path: str | None = None
+    repair_thinking_budget: int | None = None
     repair_enabled: bool = True
     max_controlled_attempts: int = 2
     execution_metadata: dict[str, Any] | None = None
@@ -80,6 +82,12 @@ class FinalPostControlledRepairRequest:
             "repair_model": _serialize_repair_value(self.repair_model),
             "repair_max_output_tokens": _serialize_repair_value(
                 self.repair_max_output_tokens
+            ),
+            "repair_execution_path": _serialize_repair_value(
+                self.repair_execution_path
+            ),
+            "repair_thinking_budget": _serialize_repair_value(
+                self.repair_thinking_budget
             ),
             "repair_enabled": _serialize_repair_value(self.repair_enabled),
             "max_controlled_attempts": _serialize_repair_value(

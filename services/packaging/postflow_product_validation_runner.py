@@ -73,8 +73,9 @@ FROZEN_ROLE_CONFIGURATION = {
     FINAL_POST_ROLE_REPAIR_WRITER: {
         "provider": "gemini",
         "model": "gemini-3.6-flash",
-        "execution_profile": "gemini_repair_minimal_reasoning",
-        "reasoning_effort": "minimal",
+        "execution_profile": "gemini_repair_native_bounded_thinking",
+        "execution_path": "native_gemini",
+        "thinking_budget": 256,
         "max_output_tokens": 2800,
     },
 }

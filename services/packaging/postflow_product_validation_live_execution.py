@@ -70,6 +70,10 @@ from services.packaging.linkedin_post_repair_writer_benchmark import (
     REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     _payload_preservation as repair_writer_payload_preservation,
 )
+from services.packaging.linkedin_post_repair_writer_execution import (
+    REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI,
+    REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
+)
 from services.packaging.linkedin_post_semantic_grounding_boundary_benchmark import (
     RUN_STATUS_BLOCK,
     RUN_STATUS_PASS,
@@ -446,10 +450,13 @@ def _product_record(
                 repair_provider=FIXED_REPAIR_WRITER_PROVIDER,
                 repair_model=FIXED_REPAIR_WRITER_MODEL,
                 repair_max_output_tokens=REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                repair_execution_path=REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI,
+                repair_thinking_budget=REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
                 execution_metadata={
                     "product_validation_role": "repair_writer",
-                    "repair_writer_execution_profile": "gemini_repair_minimal_reasoning",
-                    "repair_writer_reasoning_effort": "minimal",
+                    "repair_writer_execution_profile": "gemini_repair_native_bounded_thinking",
+                    "repair_writer_execution_path": REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI,
+                    "repair_writer_thinking_budget": REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
                 },
             ),
             initial_result=initial_result,

@@ -16,7 +16,11 @@ from apps.ai.client import (
     AI_THINKING_MODE_PROVIDER_DEFAULT,
     ANTHROPIC_API_VERSION,
     ANTHROPIC_MESSAGES_ENDPOINT,
+    GEMINI_EXECUTION_PATH_OPENAI_COMPATIBLE,
+    GEMINI_EXECUTION_PATH_NATIVE,
+    GEMINI_GENERATE_CONTENT_ENDPOINT_TEMPLATE,
     GEMINI_OPENAI_COMPATIBLE_BASE_URL,
+    GeminiNativeGenerateContentClient,
     OpenAIClient,
     build_ai_client,
     get_ai_client_configuration_error,
@@ -382,6 +386,110 @@ class AIProviderConfigTests(SimpleTestCase):
                 "total_tokens": 5,
             },
         )
+
+    @override_settings(GEMINI_API_KEY="gemini-test-key", GEMINI_TIMEOUT_SECONDS=19)
+    @patch("apps.ai.client.urlopen")
+    def test_native_gemini_request_uses_bounded_thinking_and_response_schema(
+        self,
+        mock_urlopen,
+    ):
+        response_schema = {
+            "type": "object",
+            "properties": {"post_text": {"type": "string"}},
+            "required": ["post_text"],
+            "propertyOrdering": ["post_text"],
+        }
+        mock_urlopen.return_value = _AnthropicResponse(
+            {
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [
+                                {"text": '{"post_text":"Repaired."}'},
+                            ],
+                        },
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 11,
+                    "candidatesTokenCount": 7,
+                    "thoughtsTokenCount": 3,
+                    "totalTokenCount": 21,
+                },
+            }
+        )
+        client = build_ai_client(
+            "gemini",
+            "gemini-3.6-flash",
+            execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+        )
+
+        result = client.generate_text(
+            "Prompt",
+            max_output_tokens=2800,
+            json_mode=False,
+            execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+            thinking_budget=256,
+            response_schema=response_schema,
+        )
+
+        mock_urlopen.assert_called_once()
+        request = mock_urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(
+            request.full_url,
+            GEMINI_GENERATE_CONTENT_ENDPOINT_TEMPLATE.format(
+                model="gemini-3.6-flash"
+            ),
+        )
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.headers["X-goog-api-key"], "gemini-test-key")
+        self.assertEqual(request.headers["Content-type"], "application/json")
+        self.assertEqual(
+            body["contents"],
+            [{"role": "user", "parts": [{"text": "Prompt"}]}],
+        )
+        self.assertEqual(body["generationConfig"]["maxOutputTokens"], 2800)
+        self.assertEqual(
+            body["generationConfig"]["thinkingConfig"],
+            {"thinkingBudget": 256, "includeThoughts": False},
+        )
+        self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(body["generationConfig"]["responseSchema"], response_schema)
+        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 19)
+        self.assertEqual(result.text, '{"post_text":"Repaired."}')
+        self.assertEqual(result.usage["completion_tokens"], 7)
+        self.assertEqual(result.provider_response_metadata["provider_thinking_tokens"], 3)
+        self.assertFalse(
+            result.provider_response_metadata["provider_output_limit_reached"]
+        )
+
+    @override_settings(
+        GEMINI_API_KEY="gemini-test-key",
+        OPENAI_TIMEOUT_SECONDS=30,
+    )
+    @patch("apps.ai.client.OpenAI")
+    def test_openai_compatible_gemini_rejects_native_controls_before_invocation(
+        self,
+        mock_openai,
+    ):
+        client = build_ai_client(
+            "gemini",
+            "gemini-3.6-flash",
+            execution_path=GEMINI_EXECUTION_PATH_OPENAI_COMPATIBLE,
+        )
+
+        with self.assertRaisesRegex(ValueError, "unsupported AI execution_path"):
+            client.generate_text(
+                "Prompt",
+                execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+                thinking_budget=256,
+                response_schema={"type": "object"},
+            )
+
+        mock_openai.return_value.chat.completions.create.assert_not_called()
+        mock_openai.return_value.responses.create.assert_not_called()
 
     @override_settings(
         GEMINI_API_KEY="gemini-test-key",

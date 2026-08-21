@@ -15,8 +15,11 @@ from services.packaging import linkedin_post_repair_writer_execution
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 from apps.ai.client import AI_REASONING_EFFORT_LOW
+from apps.ai.client import GEMINI_EXECUTION_PATH_NATIVE
 from services.packaging.linkedin_post_repair_writer_execution import (
     DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+    REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+    REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
     RepairWriterExecutionRequest,
     RepairWriterRawResponse,
     build_repair_writer_execution_request,
@@ -366,6 +369,102 @@ class RepairWriterExecutionTests(SimpleTestCase):
         self.assertIn("unsupported repair writer reasoning_effort", raw_response.execution_error)
         mock_build_ai_client.assert_not_called()
 
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_native_gemini_repair_writer_passes_execution_path_and_thinking_budget(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = _request(
+            provider="gemini",
+            model="gemini-3.6-flash",
+            execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+            thinking_budget=REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
+            response_schema=REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+        )
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"post_text":"Repaired by native Gemini."}',
+            raw={"id": "gemini-native"},
+            usage={"total_tokens": 19},
+            provider_response_metadata={
+                "provider": "gemini",
+                "model": "gemini-3.6-flash",
+                "execution_path": "native_gemini",
+                "thinking_budget_configured": 256,
+                "provider_output_limit_reached": False,
+            },
+        )
+
+        raw_response = execute_repair_writer_prompt(request)
+
+        mock_build_ai_client.assert_called_once_with(
+            provider="gemini",
+            model="gemini-3.6-flash",
+            execution_path="native_gemini",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=True,
+            execution_path="native_gemini",
+            thinking_budget=256,
+            response_schema=REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+        )
+        self.assertIsNone(raw_response.execution_error)
+        self.assertEqual(
+            raw_response.provider_response_metadata["thinking_budget_configured"],
+            256,
+        )
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_native_gemini_repair_writer_requires_response_schema(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        raw_response = execute_repair_writer_prompt(
+            _request(
+                provider="gemini",
+                model="gemini-3.6-flash",
+                execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+                thinking_budget=256,
+                response_schema=None,
+            )
+        )
+
+        self.assertEqual(
+            raw_response.execution_error,
+            "native Gemini repair writer execution_path requires response_schema",
+        )
+        mock_build_ai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
+    def test_native_gemini_provider_failure_uses_native_endpoint_diagnostics(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        mock_build_ai_client.return_value.generate_text.side_effect = _ProviderError(
+            "secret native gemini details",
+            status_code=503,
+            code="server_error",
+        )
+
+        raw_response = execute_repair_writer_prompt(
+            _request(
+                provider="gemini",
+                model="gemini-3.6-flash",
+                execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+                thinking_budget=REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
+                response_schema=REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+            )
+        )
+
+        self.assertEqual(raw_response.execution_error, "provider invocation failed")
+        self.assertEqual(
+            raw_response.execution_diagnostics["provider_endpoint_family"],
+            "native_gemini_generate_content",
+        )
+        self.assertNotIn("secret native gemini details", json.dumps(raw_response.to_dict()))
+
     @patch("services.packaging.linkedin_post_repair_writer_execution.build_ai_client")
     def test_anthropic_repair_writer_config_is_allowed_and_calls_provider(
         self,
@@ -454,6 +553,9 @@ def _request(
     model: str = "gpt-4.1-2025-04-14",
     max_output_tokens: object = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     reasoning_effort: str | None = None,
+    execution_path: str | None = None,
+    thinking_budget: int | None = None,
+    response_schema: dict | None = None,
     execution_metadata: dict | None = None,
 ) -> RepairWriterExecutionRequest:
     return RepairWriterExecutionRequest(
@@ -463,6 +565,9 @@ def _request(
         model=model,
         max_output_tokens=max_output_tokens,
         reasoning_effort=reasoning_effort,
+        execution_path=execution_path,
+        thinking_budget=thinking_budget,
+        response_schema=response_schema,
         execution_metadata=execution_metadata,
     )
 

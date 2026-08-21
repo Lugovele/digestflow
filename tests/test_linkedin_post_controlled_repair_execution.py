@@ -10,6 +10,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from apps.ai.client import AI_REASONING_EFFORT_MINIMAL
+from apps.ai.client import GEMINI_EXECUTION_PATH_NATIVE
 from services.packaging import linkedin_post_controlled_repair_execution
 from services.packaging.linkedin_post_attempt_outcome import (
     OUTCOME_ACCEPTED,
@@ -55,6 +56,8 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 )
 from services.packaging.linkedin_post_repair_writer_execution import (
     DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+    REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+    REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
 )
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
     CANDIDATE_POST_OTHER_VALIDATION_FAILURE,
@@ -324,6 +327,70 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             metadata["target_success_contract"],
             "exactly one explicit ownership signal carrying an evidence-bounded interpretive judgment",
         )
+
+
+    def test_native_gemini_repair_writer_path_is_forwarded_to_repair_client(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(_candidate_json(post_text="Repaired human post."))
+        )
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(
+                repair_provider="gemini",
+                repair_model="gemini-3.6-flash",
+                repair_execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+                repair_thinking_budget=REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET,
+                repair_max_output_tokens=DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                execution_metadata={"audit": "native-gemini-test"},
+            ),
+            candidate_writer_client=QueuedFakeClient(_provider_response(_candidate_json())),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(_quality_review_payload(passed=True))),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(result.repair_invocation_count, 1)
+        self.assertEqual(repair_client.extra_kwargs["execution_path"], "native_gemini")
+        self.assertEqual(repair_client.extra_kwargs["thinking_budget"], 256)
+        self.assertEqual(
+            repair_client.extra_kwargs["response_schema"],
+            REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
+        )
+        self.assertTrue(repair_client.json_mode)
+        self.assertEqual(
+            result.repair_writer_raw_response.execution_metadata["audit"],
+            "native-gemini-test",
+        )
+
+    def test_semantic_grounding_route_does_not_receive_native_gemini_repair_options(self) -> None:
+        semantic_client = _passing_semantic_client()
+        execute_final_post_controlled_repair_attempt(
+            _controlled_request(
+                repair_provider="gemini",
+                repair_model="gemini-3.6-flash",
+                repair_execution_path=GEMINI_EXECUTION_PATH_NATIVE,
+                repair_thinking_budget=256,
+                repair_max_output_tokens=DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+            ),
+            candidate_writer_client=QueuedFakeClient(_provider_response(_candidate_json())),
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(_quality_review_payload(passed=True))),
+            ),
+            repair_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json(post_text="Repaired human post."))
+            ),
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(semantic_client.extra_kwargs.get("reasoning_effort"), "minimal")
+        self.assertNotIn("execution_path", semantic_client.extra_kwargs)
+        self.assertNotIn("thinking_budget", semantic_client.extra_kwargs)
+        self.assertNotIn("response_schema", semantic_client.extra_kwargs)
 
     def test_author_pov_repair_target_score_four_is_not_accepted_after_repair(self) -> None:
         repair_client = QueuedFakeClient(
@@ -1037,6 +1104,8 @@ def _controlled_request(
     repair_provider: str | None = "openai",
     repair_model: str = OPENAI_FINAL_POST_MODEL,
     repair_max_output_tokens: int = 1200,
+    repair_execution_path: str | None = None,
+    repair_thinking_budget: int | None = None,
     max_controlled_attempts: int = 2,
     execution_metadata: dict | None = None,
 ) -> FinalPostControlledRepairRequest:
@@ -1048,6 +1117,8 @@ def _controlled_request(
         repair_provider=repair_provider,
         repair_model=repair_model,
         repair_max_output_tokens=repair_max_output_tokens,
+        repair_execution_path=repair_execution_path,
+        repair_thinking_budget=repair_thinking_budget,
         repair_enabled=repair_enabled,
         max_controlled_attempts=max_controlled_attempts,
         execution_metadata=copy.deepcopy(execution_metadata),

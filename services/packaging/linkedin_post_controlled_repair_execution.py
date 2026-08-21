@@ -110,6 +110,7 @@ from services.packaging.linkedin_post_repair_target_enforcement import (
     evaluate_repair_target_enforcement,
 )
 from services.packaging.linkedin_post_repair_writer_execution import (
+    REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA,
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
 )
@@ -252,6 +253,13 @@ def continue_final_post_controlled_repair_attempt(
                 1200
                 if request.repair_max_output_tokens is None
                 else request.repair_max_output_tokens
+            ),
+            execution_path=request.repair_execution_path,
+            thinking_budget=request.repair_thinking_budget,
+            response_schema=(
+                REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA
+                if request.repair_execution_path == "native_gemini"
+                else None
             ),
             execution_metadata=request.execution_metadata,
         )

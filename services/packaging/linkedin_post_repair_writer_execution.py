@@ -13,7 +13,11 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import build_ai_client, get_ai_provider_reasoning_effort_error
+from apps.ai.client import (
+    GEMINI_EXECUTION_PATH_NATIVE,
+    build_ai_client,
+    get_ai_provider_reasoning_effort_error,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_model_role_policy import (
     FINAL_POST_ROLE_REPAIR_WRITER,
@@ -26,6 +30,14 @@ from services.packaging.linkedin_post_prompt_renderers import RepairWriterPrompt
 
 
 DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 2800
+REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI = GEMINI_EXECUTION_PATH_NATIVE
+REPAIR_WRITER_NATIVE_GEMINI_THINKING_BUDGET = 256
+REPAIR_WRITER_CANDIDATE_POST_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"post_text": {"type": "string"}},
+    "required": ["post_text"],
+    "propertyOrdering": ["post_text"],
+}
 STAGE_NAME = "repair writer"
 PROVIDER_RESPONSE_METADATA_FIELDS = (
     "provider",
@@ -43,6 +55,9 @@ PROVIDER_RESPONSE_METADATA_FIELDS = (
     "provider_output_budget_utilization_percent",
     "provider_reasoning_tokens",
     "provider_thinking_tokens",
+    "execution_path",
+    "thinking_budget_configured",
+    "provider_thinking_budget",
 )
 
 
@@ -54,6 +69,9 @@ class RepairWriterExecutionRequest:
     model: str
     max_output_tokens: int = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS
     reasoning_effort: str | None = None
+    execution_path: str | None = None
+    thinking_budget: int | None = None
+    response_schema: dict[str, Any] | None = None
     execution_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +82,9 @@ class RepairWriterExecutionRequest:
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
             "reasoning_effort": self.reasoning_effort,
+            "execution_path": self.execution_path,
+            "thinking_budget": self.thinking_budget,
+            "response_schema": copy.deepcopy(self.response_schema),
             "execution_metadata": copy.deepcopy(self.execution_metadata),
         }
 
@@ -114,6 +135,9 @@ def build_repair_writer_execution_request(
     model: str | None = None,
     max_output_tokens: int = DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
     reasoning_effort: str | None = None,
+    execution_path: str | None = None,
+    thinking_budget: int | None = None,
+    response_schema: dict[str, Any] | None = None,
     execution_metadata: dict[str, Any] | None = None,
 ) -> RepairWriterExecutionRequest:
     return RepairWriterExecutionRequest(
@@ -123,6 +147,9 @@ def build_repair_writer_execution_request(
         model=_resolve_model(model),
         max_output_tokens=max_output_tokens,
         reasoning_effort=reasoning_effort,
+        execution_path=execution_path,
+        thinking_budget=thinking_budget,
+        response_schema=copy.deepcopy(response_schema),
         execution_metadata=copy.deepcopy(execution_metadata),
     )
 
@@ -150,10 +177,10 @@ def execute_repair_writer_prompt(
         text_client = client
     else:
         try:
-            text_client = build_ai_client(
-                provider=request.provider,
-                model=request.model,
-            )
+            client_kwargs = {"provider": request.provider, "model": request.model}
+            if request.execution_path is not None:
+                client_kwargs["execution_path"] = request.execution_path
+            text_client = build_ai_client(**client_kwargs)
         except ValueError as exc:
             return RepairWriterRawResponse(
                 raw_text="",
@@ -167,10 +194,16 @@ def execute_repair_writer_prompt(
     provider_kwargs: dict[str, Any] = {
         "prompt": prompt,
         "max_output_tokens": request.max_output_tokens,
-        "json_mode": False,
+        "json_mode": request.response_schema is not None,
     }
     if request.reasoning_effort is not None:
         provider_kwargs["reasoning_effort"] = request.reasoning_effort
+    if request.execution_path is not None:
+        provider_kwargs["execution_path"] = request.execution_path
+    if request.thinking_budget is not None:
+        provider_kwargs["thinking_budget"] = request.thinking_budget
+    if request.response_schema is not None:
+        provider_kwargs["response_schema"] = copy.deepcopy(request.response_schema)
 
     try:
         response = text_client.generate_text(**provider_kwargs)
@@ -184,13 +217,7 @@ def execute_repair_writer_prompt(
                 exc,
                 provider=request.provider,
                 model=request.model,
-                endpoint_family="responses"
-                if request.provider == "openai"
-                else "openai_compatible_chat"
-                if request.provider == "gemini"
-                else "messages"
-                if request.provider == "anthropic"
-                else "unknown",
+                endpoint_family=_provider_endpoint_family(request),
             ),
             execution_error="provider invocation failed",
             execution_metadata=execution_metadata,
@@ -261,12 +288,41 @@ def _execution_request_error(request: RepairWriterExecutionRequest) -> str | Non
     )
     if reasoning_effort_error is not None:
         return reasoning_effort_error
+    if (
+        request.execution_path is not None
+        and request.execution_path != REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI
+    ):
+        return f"unsupported repair writer execution_path: {request.execution_path}"
+    if request.execution_path == REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI:
+        if request.provider != "gemini":
+            return "native Gemini repair writer execution_path requires provider gemini"
+        if isinstance(request.thinking_budget, bool) or not isinstance(
+            request.thinking_budget,
+            int,
+        ):
+            return "invalid repair writer thinking_budget: must be a non-negative integer"
+        if request.thinking_budget < 0:
+            return "invalid repair writer thinking_budget: must be a non-negative integer"
+        if not isinstance(request.response_schema, dict):
+            return "native Gemini repair writer execution_path requires response_schema"
     if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
         return "missing repair writer prompt text"
     rendered_input_text = request.rendered_prompt_input.input_text
     if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
         return "missing repair writer rendered input text"
     return None
+
+
+def _provider_endpoint_family(request: RepairWriterExecutionRequest) -> str:
+    if request.provider == "openai":
+        return "responses"
+    if request.provider == "gemini":
+        if request.execution_path == REPAIR_WRITER_EXECUTION_PATH_NATIVE_GEMINI:
+            return "native_gemini_generate_content"
+        return "openai_compatible_chat"
+    if request.provider == "anthropic":
+        return "messages"
+    return "unknown"
 
 
 def _build_provider_prompt(request: RepairWriterExecutionRequest) -> str:
@@ -305,11 +361,17 @@ def _sanitize_provider_response_metadata(metadata: Any) -> dict[str, Any] | None
             "provider_combined_output_tokens",
             "provider_reasoning_tokens",
             "provider_thinking_tokens",
+            "thinking_budget_configured",
+            "provider_thinking_budget",
         ):
             if _is_non_negative_int(value):
                 sanitized[field_name] = value
         elif field_name == "provider_output_budget_utilization_percent":
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
                 sanitized[field_name] = round(float(value), 2)
         elif field_name == "provider_output_limit_reached":
             if value is None or isinstance(value, bool):

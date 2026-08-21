@@ -38,6 +38,15 @@ GEMINI_SUPPORTED_REASONING_EFFORTS = (
 GEMINI_OPENAI_COMPATIBLE_BASE_URL = (
     "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
+GEMINI_GENERATE_CONTENT_ENDPOINT_TEMPLATE = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
+GEMINI_EXECUTION_PATH_OPENAI_COMPATIBLE = "openai_compatible"
+GEMINI_EXECUTION_PATH_NATIVE = "native_gemini"
+GEMINI_SUPPORTED_EXECUTION_PATHS = (
+    GEMINI_EXECUTION_PATH_OPENAI_COMPATIBLE,
+    GEMINI_EXECUTION_PATH_NATIVE,
+)
 GEMINI_SUPPORTED_MODELS = ("gemini-3.6-flash",)
 ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
@@ -114,6 +123,9 @@ class OpenAICompatibleClient:
         allow_json_mode_fallback: bool = True,
         thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
         reasoning_effort: str | None = None,
+        execution_path: str | None = None,
+        thinking_budget: int | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> AIResponse:
         thinking_mode_error = get_ai_provider_thinking_mode_error(
             provider=self.provider,
@@ -127,6 +139,15 @@ class OpenAICompatibleClient:
         )
         if reasoning_effort_error is not None:
             raise ValueError(reasoning_effort_error)
+        if execution_path not in (None, GEMINI_EXECUTION_PATH_OPENAI_COMPATIBLE):
+            raise ValueError(
+                f"unsupported AI execution_path for provider {self.provider}: "
+                f"{execution_path}"
+            )
+        if thinking_budget is not None:
+            raise ValueError("thinking_budget is supported only by native Gemini execution")
+        if response_schema is not None:
+            raise ValueError("response_schema is supported only by native Gemini execution")
         if self.provider == AI_PROVIDER_GEMINI:
             return self._generate_chat_completion(
                 prompt=prompt,
@@ -253,6 +274,9 @@ class AnthropicMessagesClient:
         allow_json_mode_fallback: bool = True,
         thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
         reasoning_effort: str | None = None,
+        execution_path: str | None = None,
+        thinking_budget: int | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> AIResponse:
         normalized_thinking_mode = _normalize_thinking_mode(thinking_mode)
         thinking_mode_error = get_ai_provider_thinking_mode_error(
@@ -267,6 +291,15 @@ class AnthropicMessagesClient:
         )
         if reasoning_effort_error is not None:
             raise ValueError(reasoning_effort_error)
+        if execution_path is not None:
+            raise ValueError(
+                f"unsupported AI execution_path for provider {self.provider}: "
+                f"{execution_path}"
+            )
+        if thinking_budget is not None:
+            raise ValueError("thinking_budget is supported only by native Gemini execution")
+        if response_schema is not None:
+            raise ValueError("response_schema is supported only by native Gemini execution")
 
         request_body: dict[str, Any] = {
             "model": self.model,
@@ -335,6 +368,143 @@ class AnthropicMessagesClient:
             raw=raw if text else {},
             usage=usage,
             provider_response_metadata=metadata,
+        )
+
+
+class GeminiNativeGenerateContentClient:
+    """Synchronous native Gemini GenerateContent client using AIResponse."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        timeout: int | None = None,
+    ) -> None:
+        self.model = model
+        self.provider = AI_PROVIDER_GEMINI
+        self.execution_path = GEMINI_EXECUTION_PATH_NATIVE
+        self.api_key = api_key
+        self.timeout = (
+            timeout
+            if timeout is not None
+            else int(
+                getattr(
+                    settings,
+                    "GEMINI_TIMEOUT_SECONDS",
+                    settings.OPENAI_TIMEOUT_SECONDS,
+                )
+            )
+        )
+
+    def generate_text(
+        self,
+        prompt: str,
+        max_output_tokens: int = 1200,
+        json_mode: bool = False,
+        allow_json_mode_fallback: bool = True,
+        thinking_mode: str = AI_THINKING_MODE_PROVIDER_DEFAULT,
+        reasoning_effort: str | None = None,
+        execution_path: str | None = None,
+        thinking_budget: int | None = None,
+        response_schema: dict[str, Any] | None = None,
+    ) -> AIResponse:
+        if execution_path not in (None, GEMINI_EXECUTION_PATH_NATIVE):
+            raise ValueError(
+                f"unsupported AI execution_path for provider gemini: {execution_path}"
+            )
+        thinking_mode_error = get_ai_provider_thinking_mode_error(
+            provider=self.provider,
+            thinking_mode=thinking_mode,
+        )
+        if thinking_mode_error is not None:
+            raise ValueError(thinking_mode_error)
+        if reasoning_effort is not None:
+            raise ValueError(
+                "reasoning_effort is not supported by native Gemini execution; "
+                "use thinking_budget"
+            )
+        if isinstance(thinking_budget, bool) or not isinstance(thinking_budget, int):
+            raise ValueError("native Gemini thinking_budget must be an integer")
+        if thinking_budget < 0:
+            raise ValueError("native Gemini thinking_budget must be non-negative")
+
+        generation_config: dict[str, Any] = {
+            "maxOutputTokens": max_output_tokens,
+            "thinkingConfig": {
+                "thinkingBudget": thinking_budget,
+                "includeThoughts": False,
+            },
+        }
+        if json_mode or response_schema is not None:
+            generation_config["responseMimeType"] = "application/json"
+            if response_schema is not None:
+                generation_config["responseSchema"] = copy_json_value(response_schema)
+
+        request_body: dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": generation_config,
+        }
+        request = Request(
+            GEMINI_GENERATE_CONTENT_ENDPOINT_TEMPLATE.format(model=self.model),
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={
+                "x-goog-api-key": self.api_key,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                raw_bytes = response.read()
+        except HTTPError as exc:
+            raise AIProviderRequestError(
+                "gemini native provider request failed",
+                status_code=exc.code,
+                code=f"http_{exc.code}",
+            ) from None
+        except TimeoutError:
+            raise AIProviderRequestError(
+                "gemini native provider request failed",
+                code="timeout",
+            ) from None
+        except URLError:
+            raise AIProviderRequestError(
+                "gemini native provider request failed",
+                code="url_error",
+            ) from None
+        except OSError:
+            raise AIProviderRequestError(
+                "gemini native provider request failed",
+                code="os_error",
+            ) from None
+
+        try:
+            raw = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise RuntimeError(
+                "gemini native provider response was not valid JSON"
+            ) from None
+
+        if not _is_valid_gemini_native_response_shape(raw):
+            raise RuntimeError("gemini native provider response shape was invalid") from None
+        text = _extract_gemini_native_text(raw)
+        return AIResponse(
+            text=text,
+            raw=raw if text else {},
+            usage=_extract_gemini_native_usage(raw),
+            provider_response_metadata=_build_gemini_native_provider_response_metadata(
+                raw,
+                model=self.model,
+                max_output_tokens=max_output_tokens,
+                thinking_budget=thinking_budget,
+            ),
         )
 
 
@@ -480,12 +650,43 @@ def get_ai_provider_reasoning_effort_error(
     return None
 
 
-def build_ai_client(provider: str, model: str) -> OpenAICompatibleClient | AnthropicMessagesClient:
+def build_ai_client(
+    provider: str,
+    model: str,
+    *,
+    execution_path: str | None = None,
+) -> (
+    OpenAICompatibleClient
+    | AnthropicMessagesClient
+    | GeminiNativeGenerateContentClient
+):
     normalized_model = str(model or "").strip()
     configuration_error = get_ai_client_configuration_error(provider, normalized_model)
     if configuration_error is not None:
         raise ValueError(configuration_error)
     config = get_ai_provider_config(provider)
+    normalized_execution_path = _normalize_optional_execution_path(execution_path)
+    if config.provider == AI_PROVIDER_GEMINI:
+        if normalized_execution_path == GEMINI_EXECUTION_PATH_NATIVE:
+            return GeminiNativeGenerateContentClient(
+                api_key=config.api_key,
+                model=normalized_model,
+                timeout=int(
+                    getattr(
+                        settings,
+                        "GEMINI_TIMEOUT_SECONDS",
+                        settings.OPENAI_TIMEOUT_SECONDS,
+                    )
+                ),
+            )
+        if normalized_execution_path not in (None, GEMINI_EXECUTION_PATH_OPENAI_COMPATIBLE):
+            raise ValueError(
+                f"unsupported AI execution_path for provider gemini: {execution_path}"
+            )
+    elif normalized_execution_path is not None:
+        raise ValueError(
+            f"unsupported AI execution_path for provider {config.provider}: {execution_path}"
+        )
     if config.provider == AI_PROVIDER_ANTHROPIC:
         return AnthropicMessagesClient(
             api_key=config.api_key,
@@ -532,6 +733,126 @@ def _normalize_optional_reasoning_effort(reasoning_effort: str | None) -> str | 
         return None
     normalized = str(reasoning_effort).strip().lower()
     return normalized or None
+
+
+def _normalize_optional_execution_path(execution_path: str | None) -> str | None:
+    if execution_path is None:
+        return None
+    normalized = str(execution_path).strip().lower()
+    return normalized or None
+
+
+def copy_json_value(value: Any) -> Any:
+    return json.loads(json.dumps(value))
+
+
+def _is_valid_gemini_native_response_shape(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    candidates = raw.get("candidates")
+    if not isinstance(candidates, list):
+        return False
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return False
+        content = candidate.get("content", {})
+        if not isinstance(content, dict):
+            return False
+        parts = content.get("parts", [])
+        if not isinstance(parts, list):
+            return False
+        for part in parts:
+            if not isinstance(part, dict):
+                return False
+            if "text" in part and not isinstance(part.get("text"), str):
+                return False
+    usage = raw.get("usageMetadata", {})
+    if not isinstance(usage, dict):
+        return False
+    for usage_key in (
+        "promptTokenCount",
+        "candidatesTokenCount",
+        "thoughtsTokenCount",
+        "totalTokenCount",
+    ):
+        value = usage.get(usage_key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            return False
+    return True
+
+
+def _extract_gemini_native_text(raw: dict[str, Any]) -> str:
+    parts: list[str] = []
+    candidates = raw.get("candidates", [])
+    if not candidates:
+        return ""
+    content = candidates[0].get("content", {})
+    for part in content.get("parts", []):
+        if part.get("thought") is True:
+            continue
+        text = part.get("text")
+        if text is not None:
+            parts.append(str(text))
+    return "".join(parts)
+
+
+def _extract_gemini_native_usage(raw: dict[str, Any]) -> dict[str, int | None]:
+    usage = raw.get("usageMetadata", {}) if isinstance(raw, dict) else {}
+    prompt_tokens = usage.get("promptTokenCount") if isinstance(usage, dict) else None
+    completion_tokens = (
+        usage.get("candidatesTokenCount") if isinstance(usage, dict) else None
+    )
+    total_tokens = usage.get("totalTokenCount") if isinstance(usage, dict) else None
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _build_gemini_native_provider_response_metadata(
+    raw: dict[str, Any],
+    *,
+    model: str,
+    max_output_tokens: int,
+    thinking_budget: int,
+) -> dict[str, Any]:
+    candidates = raw.get("candidates", [])
+    candidate = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
+    finish_reason = _safe_metadata_text(candidate.get("finishReason"))
+    usage = raw.get("usageMetadata", {})
+    prompt_tokens = _safe_metadata_int(usage.get("promptTokenCount"))
+    visible_output_tokens = _safe_metadata_int(usage.get("candidatesTokenCount"))
+    thinking_tokens = _safe_metadata_int(usage.get("thoughtsTokenCount"))
+    total_tokens = _safe_metadata_int(usage.get("totalTokenCount"))
+    return {
+        "provider": AI_PROVIDER_GEMINI,
+        "model": model,
+        "execution_path": GEMINI_EXECUTION_PATH_NATIVE,
+        "provider_finish_reason": finish_reason,
+        "provider_stop_reason": None,
+        "provider_max_output_tokens": _safe_metadata_int(max_output_tokens),
+        "thinking_budget_configured": _safe_metadata_int(thinking_budget),
+        "provider_thinking_budget": _safe_metadata_int(thinking_budget),
+        "provider_reported_output_tokens": visible_output_tokens,
+        "provider_output_limit_reached": _provider_output_limit_reached(
+            finish_reason=finish_reason,
+            stop_reason=None,
+        ),
+        **_provider_token_accounting_metadata(
+            prompt_tokens=prompt_tokens,
+            visible_output_tokens=visible_output_tokens,
+            total_tokens=total_tokens,
+            max_output_tokens=max_output_tokens,
+            thinking_tokens=thinking_tokens,
+        ),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": visible_output_tokens,
+        "total_tokens": total_tokens,
+        "thoughts_token_count": thinking_tokens,
+    }
 
 
 def _is_valid_anthropic_response_shape(raw: Any) -> bool:

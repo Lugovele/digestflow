@@ -438,11 +438,12 @@
       "provider": "openai"
     },
     "repair_writer": {
-      "execution_profile": "gemini_repair_minimal_reasoning",
+      "execution_path": "native_gemini",
+      "execution_profile": "gemini_repair_native_bounded_thinking",
       "max_output_tokens": 2800,
       "model": "gemini-3.6-flash",
       "provider": "gemini",
-      "reasoning_effort": "minimal"
+      "thinking_budget": 256
     },
     "semantic_grounding": {
       "execution_profile": "grounding_minimal_reasoning",
