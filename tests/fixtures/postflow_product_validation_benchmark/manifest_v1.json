@@ -439,6 +439,7 @@
     },
     "repair_writer": {
       "execution_profile": "gemini_repair_minimal_reasoning",
+      "max_output_tokens": 2800,
       "model": "gemini-3.6-flash",
       "provider": "gemini",
       "reasoning_effort": "minimal"

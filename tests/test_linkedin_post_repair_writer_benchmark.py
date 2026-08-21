@@ -96,7 +96,11 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
         )
         self.assertEqual(
             tuple(plan.max_output_tokens for plan in plans),
-            (1800, 1800, 1800),
+            (
+                REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+            ),
         )
         self.assertEqual(tuple(plan.json_mode for plan in plans), (False, False, False))
         self.assertEqual(
@@ -702,7 +706,7 @@ class RepairWriterBenchmarkTests(SimpleTestCase):
                     "provider": "gemini",
                     "model": "gemini-3.6-flash",
                     "provider_finish_reason": "length",
-                    "provider_max_output_tokens": 1800,
+                    "provider_max_output_tokens": REPAIR_WRITER_MAX_OUTPUT_TOKENS,
                     "provider_reported_output_tokens": 70,
                     "provider_output_limit_reached": True,
                     "provider_prompt_tokens": 2067,

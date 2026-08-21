@@ -25,7 +25,7 @@ from services.packaging.linkedin_post_provider_diagnostics import (
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 
 
-DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 1800
+DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 2800
 STAGE_NAME = "repair writer"
 PROVIDER_RESPONSE_METADATA_FIELDS = (
     "provider",

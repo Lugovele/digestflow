@@ -535,6 +535,7 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertEqual(roles["semantic_grounding"]["provider"], "gemini")
         self.assertEqual(roles["quality_evaluator"]["provider"], "openai")
         self.assertEqual(roles["repair_writer"]["provider"], "gemini")
+        self.assertEqual(roles["repair_writer"]["max_output_tokens"], 2800)
         self.assertEqual(fingerprint["provider_call_count"], 0)
         self.assertFalse(fingerprint["live_mode"])
         self.assertIn("benchmark_runner_version", fingerprint)

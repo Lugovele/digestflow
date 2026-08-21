@@ -75,6 +75,7 @@ FROZEN_ROLE_CONFIGURATION = {
         "model": "gemini-3.6-flash",
         "execution_profile": "gemini_repair_minimal_reasoning",
         "reasoning_effort": "minimal",
+        "max_output_tokens": 2800,
     },
 }
 FINGERPRINT_FILE_PATHS = (

@@ -53,6 +53,9 @@ from services.packaging.linkedin_post_model_role_policy import OPENAI_FINAL_POST
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
+from services.packaging.linkedin_post_repair_writer_execution import (
+    DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+)
 from services.packaging.linkedin_post_repair_writer_structural_diagnostics import (
     CANDIDATE_POST_OTHER_VALIDATION_FAILURE,
     POST_TEXT_TOO_LONG,
@@ -836,7 +839,9 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         overlength = "x" * (FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS + 1)
 
         result = execute_final_post_controlled_repair_attempt(
-            _controlled_request(),
+            _controlled_request(
+                repair_max_output_tokens=DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+            ),
             candidate_writer_client=QueuedFakeClient(
                 _provider_response(_candidate_json())
             ),
@@ -1031,6 +1036,7 @@ def _controlled_request(
     repair_enabled: bool = True,
     repair_provider: str | None = "openai",
     repair_model: str = OPENAI_FINAL_POST_MODEL,
+    repair_max_output_tokens: int = 1200,
     max_controlled_attempts: int = 2,
     execution_metadata: dict | None = None,
 ) -> FinalPostControlledRepairRequest:
@@ -1041,7 +1047,7 @@ def _controlled_request(
         repair_prompt_text="Repair Writer prompt text.",
         repair_provider=repair_provider,
         repair_model=repair_model,
-        repair_max_output_tokens=1200,
+        repair_max_output_tokens=repair_max_output_tokens,
         repair_enabled=repair_enabled,
         max_controlled_attempts=max_controlled_attempts,
         execution_metadata=copy.deepcopy(execution_metadata),
