@@ -18,8 +18,34 @@ from services.packaging.linkedin_post_attempt_adjudication import (
     FinalPostQualityEvaluationState,
     build_final_post_attempt_outcome_from_gate_grounding_and_quality,
 )
+from services.packaging.linkedin_post_controlled_repair_contract import (
+    FAILURE_REPAIRED_DETERMINISTIC_GATE,
+    FAILURE_REPAIRED_SEMANTIC_GROUNDING,
+    FAILURE_REPAIR_TARGET_NOT_FIXED,
+    FinalPostControlledRepairRequest,
+)
+from services.packaging.linkedin_post_controlled_repair_execution import (
+    continue_final_post_controlled_repair_attempt,
+)
 from services.packaging.linkedin_post_deterministic_gate import (
     run_candidate_post_deterministic_gate,
+)
+from services.packaging.linkedin_post_final_post_attempt_contract import (
+    STAGE_ATTEMPT_ADJUDICATION,
+    STAGE_ATTEMPT_OUTCOME,
+    STAGE_DETERMINISTIC_GATE,
+    STAGE_QUALITY_EVALUATOR_EXECUTION,
+    STAGE_QUALITY_EVALUATOR_PARSE,
+    STAGE_QUALITY_EVALUATOR_REQUEST,
+    STAGE_QUALITY_REVIEW_NORMALIZATION,
+    STAGE_SEMANTIC_GROUNDING_EXECUTION,
+    STAGE_SEMANTIC_GROUNDING_NORMALIZATION,
+    STAGE_SEMANTIC_GROUNDING_PARSE,
+    STAGE_SEMANTIC_GROUNDING_REQUEST,
+    STATUS_SUCCEEDED,
+    FinalPostAttemptRequest,
+    FinalPostAttemptStageStatus,
+    FinalPostStandaloneAttemptResult,
 )
 from services.packaging.linkedin_post_flow_contracts import FinalPostAttemptHistory
 from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
@@ -38,6 +64,11 @@ from services.packaging.linkedin_post_quality_evaluator_parser import (
 )
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
+)
+from services.packaging.linkedin_post_repair_writer_benchmark import (
+    REPAIR_PROMPT_TEXT,
+    REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+    _payload_preservation as repair_writer_payload_preservation,
 )
 from services.packaging.linkedin_post_semantic_grounding_boundary_benchmark import (
     RUN_STATUS_BLOCK,
@@ -99,6 +130,8 @@ PRODUCT_CORPUS_PREFERRED_CASES = 20
 SYSTEMIC_FAILURE_MIN_CASES = 2
 SEMANTIC_GROUNDING_PROMPT_PATH = "prompts/linkedin/final_post_semantic_grounding_evaluator.txt"
 QUALITY_EVALUATOR_PROMPT_PATH = "prompts/linkedin/final_post_quality_evaluator.txt"
+FIXED_REPAIR_WRITER_PROVIDER = "gemini"
+FIXED_REPAIR_WRITER_MODEL = "gemini-3.6-flash"
 
 RoleExecutor = Callable[[Any], Any]
 
@@ -144,7 +177,11 @@ def planned_provider_calls_for_case_family(family: str) -> dict[str, int]:
     if family == CASE_FAMILY_SEMANTIC_BOUNDARY:
         return _provider_counts(semantic_grounding=1)
     if family == CASE_FAMILY_CANDIDATE_QE:
-        return _provider_counts(semantic_grounding=1, quality_evaluator=1)
+        return _provider_counts(
+            semantic_grounding=2,
+            quality_evaluator=2,
+            repair_writer=1,
+        )
     return _provider_counts()
 
 
@@ -376,28 +413,69 @@ def _product_record(
         status=QUALITY_EVALUATION_READY,
         quality_review=quality_result["quality_review"],
     )
+    attempt_request = _product_attempt_request()
     attempt_outcome = build_final_post_attempt_outcome_from_gate_grounding_and_quality(
         post_brief=post_brief,
         candidate_output=candidate_output,
         gate_output=gate_output,
         semantic_grounding=semantic_state,
         quality_evaluation=quality_state,
-        attempt_index=1,
-        attempt_history=FinalPostAttemptHistory(attempts=[]),
+        attempt_index=attempt_request.attempt_index,
+        attempt_history=attempt_request.attempt_history,
+        policy=attempt_request.policy,
+        alternative_model_available=attempt_request.alternative_model_available,
+        target_model_provider=attempt_request.target_model_provider,
+        target_model_name=attempt_request.target_model_name,
         angle_decision=angle_decision,
     )
     accepted = attempt_outcome.accepted_result is not None
-    live_outcome = LIVE_ACCEPTED_FIRST_ATTEMPT if accepted else LIVE_QE_REJECTED
     if attempt_outcome.repair_required:
-        live_outcome = LIVE_REPAIR_REQUIRED_NOT_EXECUTED
+        initial_result = _product_initial_attempt_result(
+            request=attempt_request,
+            candidate_output=candidate_output,
+            gate_output=gate_output,
+            post_editorial_input=post_editorial_input,
+            semantic_state=semantic_state,
+            quality_state=quality_state,
+            attempt_outcome=attempt_outcome,
+        )
+        repair_result = continue_final_post_controlled_repair_attempt(
+            FinalPostControlledRepairRequest(
+                initial_attempt_request=attempt_request,
+                repair_prompt_text=REPAIR_PROMPT_TEXT,
+                repair_provider=FIXED_REPAIR_WRITER_PROVIDER,
+                repair_model=FIXED_REPAIR_WRITER_MODEL,
+                repair_max_output_tokens=REPAIR_WRITER_MAX_OUTPUT_TOKENS,
+                execution_metadata={
+                    "product_validation_role": "repair_writer",
+                    "repair_writer_execution_profile": "gemini_repair_minimal_reasoning",
+                    "repair_writer_reasoning_effort": "minimal",
+                },
+            ),
+            initial_result=initial_result,
+            post_brief=post_brief,
+            angle_decision=angle_decision,
+            selected_evidence_ids=selected_evidence_ids,
+            semantic_grounding_executor=executors.semantic_grounding_executor,
+            quality_evaluator_executor=executors.quality_evaluator_executor,
+            repair_writer_executor=executors.repair_writer_executor,
+        )
+        return _product_repair_record(
+            candidate_payload=candidate_payload,
+            initial_semantic_state=semantic_state,
+            initial_quality_state=quality_state,
+            initial_attempt_outcome=attempt_outcome,
+            repair_result=repair_result,
+        )
+
     return _with_counts(
         {
             "live_execution_status": LIVE_EXECUTION_COMPLETED,
-            "live_outcome": live_outcome,
+            "live_outcome": LIVE_ACCEPTED_FIRST_ATTEMPT if accepted else LIVE_QE_REJECTED,
             "live_failure_category": (
                 FAILURE_CATEGORY_PRODUCT_BEHAVIOR if accepted else FAILURE_CATEGORY_PRODUCT
             ),
-            "live_failure_code": None if accepted else "quality_or_repair_required_not_executed",
+            "live_failure_code": None if accepted else "quality_not_accepted",
             "live_failure_stage": None if accepted else "quality_adjudication",
             "live_stage_outcomes": {
                 "deterministic_gate": "pass",
@@ -417,6 +495,177 @@ def _product_record(
         semantic_grounding=grounding_result["calls"],
         quality_evaluator=quality_result["calls"],
     )
+
+
+def _product_attempt_request() -> FinalPostAttemptRequest:
+    return FinalPostAttemptRequest(
+        candidate_writer_render={},
+        candidate_writer_prompt_text="benchmark fixed candidate payload",
+        quality_rubric=get_quality_evaluator_rubric_payload(),
+        quality_evaluator_prompt_text=_prompt_text(QUALITY_EVALUATOR_PROMPT_PATH),
+        attempt_index=0,
+        max_attempts=2,
+        attempt_history=FinalPostAttemptHistory(attempts=[]),
+        candidate_writer_provider="anthropic",
+        candidate_writer_model="claude-sonnet-5",
+        semantic_grounding_prompt_text=_prompt_text(SEMANTIC_GROUNDING_PROMPT_PATH),
+        semantic_grounding_provider="gemini",
+        semantic_grounding_model="gemini-3.6-flash",
+        semantic_grounding_max_output_tokens=4800,
+        quality_evaluator_provider="openai",
+        quality_evaluator_model="gpt-4.1-2025-04-14",
+        quality_evaluator_max_output_tokens=2400,
+        execution_metadata={"product_validation_role": "candidate_quality_case"},
+    )
+
+
+def _product_initial_attempt_result(
+    *,
+    request: FinalPostAttemptRequest,
+    candidate_output: CandidateWriterOutput,
+    gate_output: Any,
+    post_editorial_input: Any,
+    semantic_state: FinalPostSemanticGroundingState,
+    quality_state: FinalPostQualityEvaluationState,
+    attempt_outcome: Any,
+) -> FinalPostStandaloneAttemptResult:
+    return FinalPostStandaloneAttemptResult(
+        request=request,
+        stage_statuses=(
+            _succeeded_stage(STAGE_DETERMINISTIC_GATE),
+            _succeeded_stage(STAGE_SEMANTIC_GROUNDING_REQUEST),
+            _succeeded_stage(STAGE_SEMANTIC_GROUNDING_EXECUTION),
+            _succeeded_stage(STAGE_SEMANTIC_GROUNDING_PARSE),
+            _succeeded_stage(STAGE_SEMANTIC_GROUNDING_NORMALIZATION),
+            _succeeded_stage(STAGE_QUALITY_EVALUATOR_REQUEST),
+            _succeeded_stage(STAGE_QUALITY_EVALUATOR_EXECUTION),
+            _succeeded_stage(STAGE_QUALITY_EVALUATOR_PARSE),
+            _succeeded_stage(STAGE_QUALITY_REVIEW_NORMALIZATION),
+            _succeeded_stage(STAGE_ATTEMPT_ADJUDICATION),
+            _succeeded_stage(STAGE_ATTEMPT_OUTCOME),
+        ),
+        completed_stage=STAGE_ATTEMPT_OUTCOME,
+        candidate_writer_output=candidate_output,
+        deterministic_gate_output=gate_output,
+        post_editorial_input=post_editorial_input,
+        semantic_grounding_state=semantic_state,
+        quality_evaluation_state=quality_state,
+        final_attempt_outcome=attempt_outcome,
+        candidate_writer_invocation_count=0,
+        semantic_grounding_invocation_count=1,
+        quality_evaluator_invocation_count=1,
+        audit_metadata={"product_validation_fixed_candidate": True},
+    )
+
+
+def _succeeded_stage(stage: str) -> FinalPostAttemptStageStatus:
+    return FinalPostAttemptStageStatus(stage=stage, status=STATUS_SUCCEEDED)
+
+
+def _repair_live_outcome_and_category(repair_result: Any) -> tuple[str, str]:
+    if repair_result.accepted_payload:
+        return LIVE_REPAIR_ACCEPTED, FAILURE_CATEGORY_PRODUCT_BEHAVIOR
+    if repair_result.failure_code == FAILURE_REPAIR_TARGET_NOT_FIXED:
+        return LIVE_REPAIR_TARGET_NOT_FIXED, FAILURE_CATEGORY_PRODUCT
+    if repair_result.failure_code == FAILURE_REPAIRED_DETERMINISTIC_GATE:
+        return LIVE_DETERMINISTIC_BLOCK, FAILURE_CATEGORY_PRODUCT
+    if repair_result.failure_code == FAILURE_REPAIRED_SEMANTIC_GROUNDING:
+        return LIVE_GROUNDING_BLOCK, FAILURE_CATEGORY_PRODUCT_BEHAVIOR
+    if repair_result.failure_code:
+        return LIVE_OTHER_INFRA_FAILURE, FAILURE_CATEGORY_INFRASTRUCTURE
+    return LIVE_QE_REJECTED, FAILURE_CATEGORY_PRODUCT
+
+def _product_repair_record(
+    *,
+    candidate_payload: dict[str, Any],
+    initial_semantic_state: FinalPostSemanticGroundingState,
+    initial_quality_state: FinalPostQualityEvaluationState,
+    initial_attempt_outcome: Any,
+    repair_result: Any,
+) -> dict[str, Any]:
+    repaired_payload = _repaired_payload(repair_result)
+    final_candidate = repaired_payload or candidate_payload
+    target_diagnostics = _repair_target_diagnostics(repair_result)
+    preservation = _repair_preservation(candidate_payload, repaired_payload)
+    accepted_payload = copy.deepcopy(repair_result.accepted_payload)
+    accepted = accepted_payload is not None
+    live_outcome, live_failure_category = _repair_live_outcome_and_category(repair_result)
+
+    record = {
+        "live_execution_status": LIVE_EXECUTION_COMPLETED,
+        "live_outcome": live_outcome,
+        "live_failure_category": live_failure_category,
+        "live_failure_code": repair_result.failure_code,
+        "live_failure_stage": repair_result.failure_stage,
+        "live_failure_message": repair_result.failure_message,
+        "live_stage_outcomes": {
+            "deterministic_gate": "pass",
+            "semantic_grounding": initial_semantic_state.to_dict(),
+            "quality_evaluation": initial_quality_state.to_dict(),
+            "adjudication": initial_attempt_outcome.to_dict(),
+            "repair": repair_result.to_dict(),
+        },
+        "quality_review_summary": _quality_summary(_final_quality_review(repair_result, initial_quality_state)),
+        "initial_quality_review_summary": _quality_summary(initial_quality_state.quality_review),
+        "accepted_payload": accepted_payload,
+        "final_candidate": copy.deepcopy(final_candidate),
+        "repaired_candidate": copy.deepcopy(repaired_payload),
+        "repair_target_enforcement": copy.deepcopy(target_diagnostics),
+        "target_repair_success": target_diagnostics.get("repair_target_fixed"),
+        "target_repair_failure_reason": target_diagnostics.get("repair_target_failure_reason", ""),
+        "publication_packaging_invocations": 0,
+    }
+    if preservation:
+        record.update(
+            {
+                "preservation_rate": preservation.get("distinctive_preservation_rate"),
+                "changed_sentence_count": preservation.get("changed_sentence_count"),
+                "generic_marker_count": preservation.get("added_generic_marker_count"),
+                "generic_marker_introduced": bool(preservation.get("added_generic_marker_count")),
+                "material_genericization": preservation.get("added_generic_marker_count", 0) > 0,
+                "payload_preservation": preservation,
+            }
+        )
+    return _with_counts(
+        record,
+        candidate_writer=repair_result.candidate_writer_invocation_count,
+        semantic_grounding=repair_result.semantic_grounding_invocation_count,
+        quality_evaluator=repair_result.quality_evaluator_invocation_count,
+        repair_writer=repair_result.repair_invocation_count,
+    )
+
+
+def _repaired_payload(repair_result: Any) -> dict[str, Any] | None:
+    output = getattr(repair_result, "repaired_candidate_output", None)
+    payload = getattr(output, "payload", None)
+    return copy.deepcopy(payload) if isinstance(payload, dict) else None
+
+
+def _repair_target_diagnostics(repair_result: Any) -> dict[str, Any]:
+    diagnostics = getattr(repair_result, "repair_target_enforcement_diagnostics", None)
+    if diagnostics is not None and hasattr(diagnostics, "to_dict"):
+        return diagnostics.to_dict()
+    return {}
+
+
+def _repair_preservation(
+    original_payload: dict[str, Any],
+    repaired_payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(repaired_payload, dict):
+        return None
+    return repair_writer_payload_preservation(original_payload, repaired_payload)
+
+
+def _final_quality_review(
+    repair_result: Any,
+    fallback_quality_state: FinalPostQualityEvaluationState,
+) -> dict[str, Any]:
+    repaired_quality_state = getattr(repair_result, "repaired_quality_evaluation_state", None)
+    review = getattr(repaired_quality_state, "quality_review", None)
+    if isinstance(review, dict):
+        return review
+    return fallback_quality_state.quality_review
 
 
 def _run_product_grounding(

@@ -8,14 +8,19 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_quality_evaluator_execution import (
     QualityEvaluatorRawResponse,
+)
+from services.packaging.linkedin_post_repair_writer_execution import (
+    RepairWriterRawResponse,
 )
 from services.packaging.linkedin_post_semantic_grounding_execution import (
     SemanticGroundingRawResponse,
 )
 from services.packaging import postflow_product_validation_corpus as corpus
 from services.packaging import postflow_product_validation_live_execution as live_execution
+from services.packaging import postflow_product_validation_metrics as metrics
 from services.packaging import postflow_product_validation_runner as runner
 
 
@@ -153,6 +158,17 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         )
         self.assertEqual(result.provider_call_count, 28)
 
+    def test_dry_run_plans_single_repair_continuation_for_product_cases(self) -> None:
+        planned = live_execution.planned_provider_calls_for_case_family(
+            corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+
+        self.assertEqual(planned["candidate_writer_provider_api_calls"], 0)
+        self.assertEqual(planned["semantic_grounding_provider_api_calls"], 2)
+        self.assertEqual(planned["quality_evaluator_provider_api_calls"], 2)
+        self.assertEqual(planned["repair_writer_provider_api_calls"], 1)
+        self.assertEqual(planned["publication_packaging_invocations"], 0)
+
     def test_historical_labels_are_separate_from_live_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             result = runner.run_product_validation_benchmark(
@@ -236,7 +252,7 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertEqual(record["total_provider_calls"], 2)
         self.assertEqual(calls, {"grounding": 1, "quality": 1})
 
-    def test_repair_required_product_case_is_not_reported_as_repair_executed(self) -> None:
+    def test_repair_required_product_case_continues_through_repair_once(self) -> None:
         manifest = corpus.load_product_validation_corpus_manifest()
         case = next(
             item for item in manifest.cases
@@ -244,6 +260,10 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         )
         payload = corpus.resolve_product_validation_case(case)
         calls = {"grounding": 0, "quality": 0, "repair": 0}
+        quality_payloads = [
+            _quality_review_fail_payload(),
+            _quality_review_pass_payload(),
+        ]
 
         def fake_grounding(_request):
             calls["grounding"] += 1
@@ -256,14 +276,21 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         def fake_quality(_request):
             calls["quality"] += 1
             return QualityEvaluatorRawResponse(
-                raw_text=json.dumps(_quality_review_fail_payload()),
+                raw_text=json.dumps(quality_payloads.pop(0)),
                 provider="openai",
                 model="gpt-4.1-2025-04-14",
             )
 
         def fake_repair(_request):
             calls["repair"] += 1
-            raise AssertionError("product validation must not invent repair execution")
+            self.assertEqual(_request.provider, "gemini")
+            self.assertEqual(_request.model, "gemini-3.6-flash")
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": "Repaired human post."}),
+                provider="gemini",
+                model="gemini-3.6-flash",
+                prompt_metadata=_repair_prompt_metadata(),
+            )
 
         record = live_execution.execute_product_validation_live_case(
             case=case,
@@ -278,15 +305,197 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             ),
         )
 
+        self.assertEqual(record["live_outcome"], live_execution.LIVE_REPAIR_ACCEPTED)
+        self.assertEqual(record["provider_invocation_counts"]["candidate_writer_provider_api_calls"], 0)
+        self.assertEqual(record["provider_invocation_counts"]["semantic_grounding_provider_api_calls"], 2)
+        self.assertEqual(record["provider_invocation_counts"]["quality_evaluator_provider_api_calls"], 2)
+        self.assertEqual(record["provider_invocation_counts"]["repair_writer_provider_api_calls"], 1)
+        self.assertEqual(record["total_provider_calls"], 5)
+        self.assertEqual(calls, {"grounding": 2, "quality": 2, "repair": 1})
+        self.assertEqual(record["repaired_candidate"]["post_text"], "Repaired human post.")
+        self.assertEqual(record["final_candidate"]["post_text"], "Repaired human post.")
+        self.assertTrue(record["target_repair_success"])
         self.assertEqual(
-            record["live_outcome"],
-            live_execution.LIVE_REPAIR_REQUIRED_NOT_EXECUTED,
+            record["repair_target_enforcement"]["initiating_failed_criterion"],
+            "author_point_of_view",
         )
-        self.assertEqual(record["live_failure_code"], "quality_or_repair_required_not_executed")
-        self.assertEqual(record["provider_invocation_counts"]["repair_writer_provider_api_calls"], 0)
-        self.assertEqual(record["total_provider_calls"], 2)
-        self.assertEqual(calls, {"grounding": 1, "quality": 1, "repair": 0})
+        self.assertIn("repair", record["live_stage_outcomes"])
+        self.assertTrue(record["live_stage_outcomes"]["repair"]["repair_executed"])
 
+    def test_repair_target_comes_from_live_quality_review_not_historical_labels(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+        payload = corpus.resolve_product_validation_case(case)
+        payload["expected_outcome"] = "historical_label_must_not_drive_repair"
+        human_voice_failure = _quality_review_pass_payload()
+        human_voice_failure["pass"] = False
+        human_voice_failure["scores"]["human_voice"] = 3
+        human_voice_failure["total_score"] = 36
+        human_voice_failure["failed_criteria"] = ["human_voice"]
+        human_voice_failure["notes"] = ["Needs a more human voice."]
+        human_voice_failure["criterion_rationales"]["human_voice"]["score"] = 3
+        human_voice_failure["criterion_rationales"]["human_voice"]["failure_reason"] = "Needs repair."
+        quality_payloads = [
+            human_voice_failure,
+            _quality_review_pass_payload(),
+        ]
+
+        def fake_grounding(_request):
+            return SemanticGroundingRawResponse(
+                raw_text=json.dumps(_semantic_grounding_pass_payload(payload)),
+                provider="gemini",
+                model="gemini-3.6-flash",
+            )
+
+        def fake_quality(_request):
+            return QualityEvaluatorRawResponse(
+                raw_text=json.dumps(quality_payloads.pop(0)),
+                provider="openai",
+                model="gpt-4.1-2025-04-14",
+            )
+
+        def fake_repair(_request):
+            self.assertIn('"failed_criterion": "human_voice"', _request.rendered_prompt_input.input_text)
+            self.assertNotIn("historical_label_must_not_drive_repair", _request.rendered_prompt_input.input_text)
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": "Repaired human voice post."}),
+                provider="gemini",
+                model="gemini-3.6-flash",
+                prompt_metadata=_repair_prompt_metadata(),
+            )
+
+        record = live_execution.execute_product_validation_live_case(
+            case=case,
+            fixture_payload=payload,
+            experiment_id="fake-live-product-live-target",
+            started_at=_fixed_now().isoformat(),
+            completed_at=_fixed_now().isoformat(),
+            executors=live_execution.ProductValidationLiveExecutors(
+                semantic_grounding_executor=fake_grounding,
+                quality_evaluator_executor=fake_quality,
+                repair_writer_executor=fake_repair,
+            ),
+        )
+
+        self.assertEqual(
+            record["repair_target_enforcement"]["initiating_failed_criterion"],
+            "human_voice",
+        )
+
+    def test_post_repair_quality_rejection_counts_as_repair_attempt(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+        payload = corpus.resolve_product_validation_case(case)
+        cta_failure = _quality_review_pass_payload()
+        cta_failure["pass"] = False
+        cta_failure["scores"]["cta"] = 3
+        cta_failure["total_score"] = 37
+        cta_failure["failed_criteria"] = ["cta"]
+        cta_failure["notes"] = ["CTA needs repair."]
+        cta_failure["criterion_rationales"]["cta"]["score"] = 3
+        cta_failure["criterion_rationales"]["cta"]["failure_reason"] = "Needs repair."
+        unrelated_failure = _quality_review_pass_payload()
+        unrelated_failure["pass"] = False
+        unrelated_failure["scores"]["human_voice"] = 3
+        unrelated_failure["total_score"] = 36
+        unrelated_failure["failed_criteria"] = ["human_voice"]
+        unrelated_failure["notes"] = ["Still needs a more human voice."]
+        unrelated_failure["criterion_rationales"]["human_voice"]["score"] = 3
+        unrelated_failure["criterion_rationales"]["human_voice"]["failure_reason"] = "Needs repair."
+        quality_payloads = [cta_failure, unrelated_failure]
+
+        def fake_grounding(_request):
+            return SemanticGroundingRawResponse(
+                raw_text=json.dumps(_semantic_grounding_pass_payload(payload)),
+                provider="gemini",
+                model="gemini-3.6-flash",
+            )
+
+        def fake_quality(_request):
+            return QualityEvaluatorRawResponse(
+                raw_text=json.dumps(quality_payloads.pop(0)),
+                provider="openai",
+                model="gpt-4.1-2025-04-14",
+            )
+
+        def fake_repair(_request):
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": "Repaired but still weak post."}),
+                provider="gemini",
+                model="gemini-3.6-flash",
+                prompt_metadata=_repair_prompt_metadata(),
+            )
+
+        record = live_execution.execute_product_validation_live_case(
+            case=case,
+            fixture_payload=payload,
+            experiment_id="fake-live-product-repair-still-rejected",
+            started_at=_fixed_now().isoformat(),
+            completed_at=_fixed_now().isoformat(),
+            executors=live_execution.ProductValidationLiveExecutors(
+                semantic_grounding_executor=fake_grounding,
+                quality_evaluator_executor=fake_quality,
+                repair_writer_executor=fake_repair,
+            ),
+        )
+        record["family"] = corpus.CASE_FAMILY_CANDIDATE_QE
+        computed = metrics.compute_product_validation_metrics((record,))
+        product_metrics = computed["product_metrics"]
+
+        self.assertEqual(record["live_outcome"], live_execution.LIVE_QE_REJECTED)
+        self.assertEqual(record["live_failure_category"], corpus.FAILURE_CATEGORY_PRODUCT)
+        self.assertTrue(record["live_stage_outcomes"]["repair"]["repair_executed"])
+        self.assertEqual(product_metrics["repair_attempt_count"], 1)
+        self.assertEqual(product_metrics["repair_attempt_rate"], 1.0)
+        self.assertEqual(product_metrics["final_not_ready_count"], 1)
+        self.assertEqual(product_metrics["repair_accepted_count"], 0)
+        self.assertEqual(product_metrics["repair_accepted_rate"], 0.0)
+        self.assertEqual(product_metrics["TARGET_FIXED_CLEAN_count"], 0)
+
+    def test_target_not_fixed_metrics_use_live_repair_target(self) -> None:
+        record = {
+            "family": corpus.CASE_FAMILY_CANDIDATE_QE,
+            "live_execution_status": live_execution.LIVE_EXECUTION_COMPLETED,
+            "live_outcome": live_execution.LIVE_REPAIR_TARGET_NOT_FIXED,
+            "live_failure_category": corpus.FAILURE_CATEGORY_PRODUCT,
+            "live_stage_outcomes": {"repair": {"repair_executed": True}},
+            "provider_invocation_counts": {
+                "candidate_writer_provider_api_calls": 0,
+                "semantic_grounding_provider_api_calls": 2,
+                "quality_evaluator_provider_api_calls": 2,
+                "repair_writer_provider_api_calls": 1,
+                "publication_packaging_invocations": 0,
+            },
+            "product_case_distribution": {
+                "length": 900,
+                "repair_target": "historical_target_must_not_drive_signature",
+            },
+            "repair_target_enforcement": {
+                "initiating_failed_criterion": "human_voice",
+                "repair_target_fixed": False,
+            },
+            "quality_review_summary": {"failed_criteria": ["human_voice"]},
+        }
+
+        record["family"] = corpus.CASE_FAMILY_CANDIDATE_QE
+        computed = metrics.compute_product_validation_metrics((record,))
+        product_metrics = computed["product_metrics"]
+        signatures = computed["repeated_failure_signatures"]["signature_counts"]
+
+        self.assertEqual(product_metrics["repair_attempt_count"], 1)
+        self.assertEqual(product_metrics["target_not_fixed_count"], 1)
+        self.assertEqual(product_metrics["target_not_fixed_rate"], 1.0)
+        self.assertIn("repair_target_not_fixed:human_voice", signatures)
+        self.assertNotIn(
+            "repair_target_not_fixed:historical_target_must_not_drive_signature",
+            signatures,
+        )
     def test_metrics_separate_product_and_infrastructure_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             result = runner.run_product_validation_benchmark(
@@ -527,6 +736,14 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertTrue(Path("services/packaging/linkedin_post_final_post_payload_contract.py").exists())
 
 
+def _repair_prompt_metadata() -> PromptMetadata:
+    return PromptMetadata(
+        prompt_name="final_post_repair_writer",
+        prompt_version="1.0",
+        prompt_path=None,
+    )
+
+
 def _fixed_now() -> datetime:
     return datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
@@ -567,14 +784,14 @@ def _quality_review_pass_payload() -> dict:
         "reader_problem": 4,
         "pattern_interrupt": 4,
         "evidence": 4,
-        "author_point_of_view": 4,
+        "author_point_of_view": 5,
         "human_voice": 5,
         "practical_value": 4,
         "cta": 4,
     }
     return {
         "scores": scores,
-        "total_score": 37,
+        "total_score": 38,
         "pass": True,
         "failed_criteria": [],
         "automatic_fail_reason": "",
@@ -592,7 +809,10 @@ def _quality_review_pass_payload() -> dict:
     }
 
 
-def _quality_review_fail_payload() -> dict:
+def _quality_review_fail_payload(
+    *,
+    failed_criteria: list[str] | None = None,
+) -> dict:
     scores = {
         "hook": 4,
         "controlling_angle": 4,
@@ -604,11 +824,12 @@ def _quality_review_fail_payload() -> dict:
         "practical_value": 3,
         "cta": 4,
     }
+    failed = ["author_point_of_view", "human_voice"] if failed_criteria is None else failed_criteria
     return {
         "scores": scores,
         "total_score": 30,
         "pass": False,
-        "failed_criteria": ["author_point_of_view", "human_voice"],
+        "failed_criteria": failed,
         "automatic_fail_reason": "",
         "notes": ["Needs a stronger author-owned point of view."],
         "criterion_rationales": {
@@ -618,7 +839,7 @@ def _quality_review_fail_payload() -> dict:
                 "rationale": f"{criterion} score recorded for this benchmark fixture.",
                 "post_text_evidence": "A phrase from the candidate post.",
                 "failure_reason": (
-                    "Needs repair." if criterion in {"author_point_of_view", "human_voice"} else ""
+                    "Needs repair." if criterion in set(failed) else ""
                 ),
             }
             for criterion, score in scores.items()

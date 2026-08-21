@@ -139,12 +139,12 @@ def _product_metrics(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     ]
     accepted = _count(tuple(live_records), LIVE_ACCEPTED_FIRST_ATTEMPT)
     repair_accepted = _count(tuple(live_records), LIVE_REPAIR_ACCEPTED)
-    repair_attempts = sum(
-        1 for record in live_records
-        if record.get("live_outcome")
-        in {LIVE_REPAIR_ACCEPTED, LIVE_REPAIR_REGRESSION, LIVE_REPAIR_EXCESSIVE_REWRITE}
-    )
+    repair_attempts = sum(1 for record in live_records if _repair_executed(record))
     repair_required_not_executed = _count(tuple(live_records), LIVE_REPAIR_REQUIRED_NOT_EXECUTED)
+    target_repair_successes = sum(
+        1 for record in live_records
+        if _repair_executed(record) and record.get("target_repair_success") is True
+    )
     quality_reached = sum(
         1 for record in live_records
         if "quality_evaluation" in (record.get("live_stage_outcomes") or {})
@@ -180,8 +180,8 @@ def _product_metrics(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
         "evaluable_final_acceptance_rate": _rate(accepted + repair_accepted, len(evaluable)),
         "final_not_ready_count": _count(tuple(live_records), LIVE_QE_REJECTED),
         "final_not_ready_rate": _rate(_count(tuple(live_records), LIVE_QE_REJECTED), len(evaluable)),
-        "target_repair_success_count": repair_accepted,
-        "target_repair_success_rate": _rate(repair_accepted, repair_attempts),
+        "target_repair_success_count": target_repair_successes,
+        "target_repair_success_rate": _rate(target_repair_successes, repair_attempts),
         "TARGET_FIXED_CLEAN_count": repair_accepted,
         "TARGET_FIXED_CLEAN_rate": _rate(repair_accepted, repair_attempts),
         "target_not_fixed_count": _count(tuple(live_records), LIVE_REPAIR_TARGET_NOT_FIXED),
@@ -317,6 +317,19 @@ def _repeated_failure_signatures(records: tuple[dict[str, Any], ...]) -> dict[st
     }
 
 
+def _repair_executed(record: dict[str, Any]) -> bool:
+    repair_stage = (record.get("live_stage_outcomes") or {}).get("repair") or {}
+    if isinstance(repair_stage, dict) and repair_stage.get("repair_executed") is True:
+        return True
+    counts = record.get("provider_invocation_counts") or {}
+    return int(counts.get("repair_writer_provider_api_calls", 0) or 0) > 0
+
+
+def _live_repair_target(record: dict[str, Any]) -> str:
+    diagnostics = record.get("repair_target_enforcement") or {}
+    target = diagnostics.get("initiating_failed_criterion")
+    return str(target or "")
+
 def _failure_signature(record: dict[str, Any]) -> str:
     outcome = record.get("live_outcome")
     if not outcome:
@@ -325,7 +338,7 @@ def _failure_signature(record: dict[str, Any]) -> str:
         target = (record.get("product_case_distribution") or {}).get("repair_target")
         return f"repair_required_not_executed:{target or 'unknown'}"
     if outcome == LIVE_REPAIR_TARGET_NOT_FIXED:
-        target = (record.get("product_case_distribution") or {}).get("repair_target")
+        target = _live_repair_target(record)
         return f"repair_target_not_fixed:{target or 'unknown'}"
     if outcome in {LIVE_DETERMINISTIC_BLOCK, LIVE_OVER_LENGTH, LIVE_GROUNDING_BLOCK, LIVE_QE_REJECTED}:
         return str(outcome).removeprefix("LIVE_").lower()

@@ -188,6 +188,35 @@ def execute_final_post_controlled_repair_attempt(
         semantic_grounding_client=semantic_grounding_client,
         quality_evaluator_client=quality_evaluator_client,
     )
+    return continue_final_post_controlled_repair_attempt(
+        request,
+        initial_result=initial_result,
+        post_brief=post_brief,
+        angle_decision=angle_decision,
+        selected_evidence_ids=evidence_ids,
+        semantic_grounding_client=semantic_grounding_client,
+        quality_evaluator_client=quality_evaluator_client,
+        repair_writer_client=repair_writer_client,
+    )
+
+
+def continue_final_post_controlled_repair_attempt(
+    request: FinalPostControlledRepairRequest,
+    *,
+    initial_result: FinalPostStandaloneAttemptResult,
+    post_brief: object | dict,
+    angle_decision: object | dict,
+    selected_evidence_ids: tuple[str, ...] | list[str],
+    semantic_grounding_client: Any | None = None,
+    quality_evaluator_client: Any | None = None,
+    repair_writer_client: Any | None = None,
+    semantic_grounding_executor: Any | None = None,
+    quality_evaluator_executor: Any | None = None,
+    repair_writer_executor: Any | None = None,
+) -> FinalPostControlledRepairResult:
+    """Continue an already-computed first attempt through at most one repair."""
+
+    evidence_ids = tuple(selected_evidence_ids)
     eligibility = _repair_eligibility(request, initial_result)
     if not eligibility.eligible:
         return _ineligible_result(
@@ -251,9 +280,13 @@ def execute_final_post_controlled_repair_attempt(
             repair_invocation_count=0,
         )
 
-    repair_raw_response = execute_repair_writer_prompt(
-        repair_request,
-        client=repair_writer_client,
+    repair_raw_response = (
+        repair_writer_executor(repair_request)
+        if repair_writer_executor is not None
+        else execute_repair_writer_prompt(
+            repair_request,
+            client=repair_writer_client,
+        )
     )
     if repair_raw_response.execution_error:
         return _repair_failure_result(
@@ -343,6 +376,7 @@ def execute_final_post_controlled_repair_attempt(
         repaired_gate=repaired_gate,
         selected_evidence_ids=evidence_ids,
         semantic_grounding_client=semantic_grounding_client,
+        semantic_grounding_executor=semantic_grounding_executor,
     )
     if grounding_result["failure_code"] is not None:
         return _repair_failure_result(
@@ -379,6 +413,7 @@ def execute_final_post_controlled_repair_attempt(
         repaired_candidate_output=repaired_candidate_output,
         repaired_gate=repaired_gate,
         quality_evaluator_client=quality_evaluator_client,
+        quality_evaluator_executor=quality_evaluator_executor,
     )
     if quality_result["failure_code"] is not None:
         return _repair_failure_result(
@@ -654,6 +689,7 @@ def _run_repaired_quality_evaluation(
     repaired_candidate_output: Any,
     repaired_gate: Any,
     quality_evaluator_client: Any | None,
+    quality_evaluator_executor: Any | None = None,
 ) -> dict[str, Any]:
     try:
         post_editorial_input = build_post_editorial_input(
@@ -717,9 +753,13 @@ def _run_repaired_quality_evaluation(
             invocation_count=0,
         )
 
-    raw_response = execute_quality_evaluator_prompt(
-        quality_request,
-        client=quality_evaluator_client,
+    raw_response = (
+        quality_evaluator_executor(quality_request)
+        if quality_evaluator_executor is not None
+        else execute_quality_evaluator_prompt(
+            quality_request,
+            client=quality_evaluator_client,
+        )
     )
     if raw_response.execution_error:
         failure_code = _repaired_quality_execution_failure_code(raw_response)
@@ -799,6 +839,7 @@ def _run_repaired_semantic_grounding(
     repaired_gate: Any,
     selected_evidence_ids: tuple[str, ...],
     semantic_grounding_client: Any | None,
+    semantic_grounding_executor: Any | None = None,
 ) -> dict[str, Any]:
     try:
         post_editorial_input = build_post_editorial_input(
@@ -879,9 +920,13 @@ def _run_repaired_semantic_grounding(
             invocation_count=0,
         )
 
-    raw_response = execute_semantic_grounding_prompt(
-        semantic_request,
-        client=semantic_grounding_client,
+    raw_response = (
+        semantic_grounding_executor(semantic_request)
+        if semantic_grounding_executor is not None
+        else execute_semantic_grounding_prompt(
+            semantic_request,
+            client=semantic_grounding_client,
+        )
     )
     if raw_response.execution_error:
         failure_code = _repaired_semantic_execution_failure_code(raw_response)
