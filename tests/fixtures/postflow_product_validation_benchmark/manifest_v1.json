@@ -1,0 +1,461 @@
+{
+  "cases": [
+    {
+      "case_id": "source:topic_140_digest_126",
+      "expected_outcome": "source_ready",
+      "failure_category": "product_behavior",
+      "family": "source_article_case",
+      "fixture_path": "tests/fixtures/linkedin_post_cases/topic_140_digest_126.json",
+      "human_review_required": false,
+      "notes": "Source article fixture included for corpus coverage.",
+      "provenance": {
+        "source": "linkedin_post_cases"
+      },
+      "risk_type": "source_readiness",
+      "sha256": "69aa43e6c10f166e8b05d9fcfcacec76a77ff1fe59addf0a321e6c385776c099",
+      "topic": "education"
+    },
+    {
+      "case_id": "source:topic_200_digest_134",
+      "expected_outcome": "source_ready",
+      "failure_category": "product_behavior",
+      "family": "source_article_case",
+      "fixture_path": "tests/fixtures/linkedin_post_cases/topic_200_digest_134.json",
+      "human_review_required": false,
+      "notes": "Source article fixture included for corpus coverage.",
+      "provenance": {
+        "source": "linkedin_post_cases"
+      },
+      "risk_type": "source_readiness",
+      "sha256": "22a9a88a56a60736eec59bda0b5e4e51dc3ce23aaf17e4b5efed9b3dd0769196",
+      "topic": "bitcoin_market"
+    },
+    {
+      "case_id": "source:topic_214_digest_128",
+      "expected_outcome": "source_ready",
+      "failure_category": "product_behavior",
+      "family": "source_article_case",
+      "fixture_path": "tests/fixtures/linkedin_post_cases/topic_214_digest_128.json",
+      "human_review_required": false,
+      "notes": "Source article fixture included for corpus coverage.",
+      "provenance": {
+        "source": "linkedin_post_cases"
+      },
+      "risk_type": "source_readiness",
+      "sha256": "f207bf0287bbb390159805d14b4e96b51362fed39d7e8753dd5c373dae5f532c",
+      "topic": "remote_work"
+    },
+    {
+      "case_id": "source:topic_215_digest_129",
+      "expected_outcome": "source_ready",
+      "failure_category": "product_behavior",
+      "family": "source_article_case",
+      "fixture_path": "tests/fixtures/linkedin_post_cases/topic_215_digest_129.json",
+      "human_review_required": false,
+      "notes": "Source article fixture included for corpus coverage.",
+      "provenance": {
+        "source": "linkedin_post_cases"
+      },
+      "risk_type": "source_readiness",
+      "sha256": "1ac582d91a531c9e6c653a7738c504fb55d5e12221728b88fb6a8cf832803415",
+      "topic": "workplace"
+    },
+    {
+      "case_id": "source:topic_217_digest_131",
+      "expected_outcome": "source_ready",
+      "failure_category": "product_behavior",
+      "family": "source_article_case",
+      "fixture_path": "tests/fixtures/linkedin_post_cases/topic_217_digest_131.json",
+      "human_review_required": false,
+      "notes": "Source article fixture included for corpus coverage.",
+      "provenance": {
+        "source": "linkedin_post_cases"
+      },
+      "risk_type": "source_readiness",
+      "sha256": "76c800d809d418bd5b3655d5da6529e202190d342747e1558d67cabd721b86b9",
+      "topic": "workplace"
+    },
+    {
+      "case_id": "topic_140_digest_126",
+      "expected_outcome": "known_quality_rejected",
+      "failure_category": "product_failure",
+      "family": "candidate_quality_case",
+      "fixture_path": "tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_140_digest_126__gpt_v3.json",
+      "human_review_required": true,
+      "notes": "Historical candidate fixture used as product validation signal.",
+      "provenance": {
+        "source": "historical_writer_or_quality_fixture"
+      },
+      "risk_type": "weak_generic_contrast",
+      "sha256": "f74b05f9fad69e7c7d72538e761f7e5d8fb04006f4b725befcd4477ba725e399",
+      "topic": "education"
+    },
+    {
+      "case_id": "topic_214_digest_128__claude_v3",
+      "expected_outcome": "known_repair_required",
+      "failure_category": "product_behavior",
+      "family": "candidate_quality_case",
+      "fixture_path": "tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_214_digest_128__claude_v3.json",
+      "human_review_required": true,
+      "notes": "Historical candidate fixture used as product validation signal.",
+      "provenance": {
+        "source": "historical_writer_or_quality_fixture"
+      },
+      "risk_type": "cta_diagnostic_anchor",
+      "sha256": "17087157dacf8c6287c73ac21dca4ed63b874c05a510f2c7b3b27254c57a046a",
+      "topic": "remote_work"
+    },
+    {
+      "case_id": "topic_200_digest_134__gpt_v2",
+      "expected_outcome": "known_quality_rejected",
+      "failure_category": "product_failure",
+      "family": "candidate_quality_case",
+      "fixture_path": "tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_200_digest_134__gpt_v2.json",
+      "human_review_required": true,
+      "notes": "Historical candidate fixture used as product validation signal.",
+      "provenance": {
+        "source": "historical_writer_or_quality_fixture"
+      },
+      "risk_type": "borderline_author_pov_anchor",
+      "sha256": "06acf890061c9cf86407b89691355d641f68b4cc22d82aca008af3dc9091daca",
+      "topic": "bitcoin_market"
+    },
+    {
+      "case_id": "candidate_quality:topic_140_digest_126__strong",
+      "expected_outcome": "known_accepted_projection",
+      "failure_category": "product_behavior",
+      "family": "candidate_quality_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5/topic_140_digest_126.json",
+      "human_review_required": false,
+      "notes": "Historical candidate fixture used as product validation signal.",
+      "provenance": {
+        "source": "historical_writer_or_quality_fixture"
+      },
+      "risk_type": "accepted_projection",
+      "sha256": "412f3af380e11998ad58bb3e85fe05c07e57574c0bab4f75b4f4f3f23f2d4197",
+      "topic": "education"
+    },
+    {
+      "case_id": "candidate_quality:topic_200_digest_134__strong",
+      "expected_outcome": "known_accepted_projection",
+      "failure_category": "product_behavior",
+      "family": "candidate_quality_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_benchmark/claude_sonnet_5_v5/topic_200_digest_134.json",
+      "human_review_required": false,
+      "notes": "Historical candidate fixture used as product validation signal.",
+      "provenance": {
+        "source": "historical_writer_or_quality_fixture"
+      },
+      "risk_type": "accepted_projection",
+      "sha256": "1656a78a0df450298404b1141b7fd0e5adf48cc5e04d6b7d463743d60c368db8",
+      "topic": "bitcoin_market"
+    },
+    {
+      "case_id": "candidate_quality:topic_214_digest_128__generic",
+      "expected_outcome": "known_quality_rejected",
+      "failure_category": "product_failure",
+      "family": "candidate_quality_case",
+      "fixture_path": "tests/fixtures/linkedin_post_quality_evaluator_benchmark/writer_variants/topic_214_digest_128__gpt_v5.json",
+      "human_review_required": true,
+      "notes": "Historical candidate fixture used as product validation signal.",
+      "provenance": {
+        "source": "historical_writer_or_quality_fixture"
+      },
+      "risk_type": "generic_writer_variant",
+      "sha256": "44387d79016dc695797e674c8179538bc057e40d9c811f62627b294bbf05d106",
+      "topic": "remote_work"
+    },
+    {
+      "boundary_case_id": "authorial_synthesis_valid",
+      "case_id": "boundary:authorial_synthesis_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "authorial_synthesis"
+    },
+    {
+      "boundary_case_id": "authorial_synthesis_invalid",
+      "case_id": "boundary:authorial_synthesis_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "authorial_synthesis"
+    },
+    {
+      "boundary_case_id": "coexistence_vs_causation_valid",
+      "case_id": "boundary:coexistence_vs_causation_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "coexistence_vs_causation"
+    },
+    {
+      "boundary_case_id": "coexistence_vs_causation_invalid",
+      "case_id": "boundary:coexistence_vs_causation_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "coexistence_vs_causation"
+    },
+    {
+      "boundary_case_id": "forecast_vs_certainty_valid",
+      "case_id": "boundary:forecast_vs_certainty_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "forecast_vs_certainty"
+    },
+    {
+      "boundary_case_id": "forecast_vs_certainty_invalid",
+      "case_id": "boundary:forecast_vs_certainty_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "forecast_vs_certainty"
+    },
+    {
+      "boundary_case_id": "attribution_precision_valid",
+      "case_id": "boundary:attribution_precision_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "attribution_precision"
+    },
+    {
+      "boundary_case_id": "attribution_precision_invalid",
+      "case_id": "boundary:attribution_precision_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "attribution_precision"
+    },
+    {
+      "boundary_case_id": "rhetorical_rejection_valid",
+      "case_id": "boundary:rhetorical_rejection_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "rhetorical_rejection"
+    },
+    {
+      "boundary_case_id": "rhetorical_rejection_invalid",
+      "case_id": "boundary:rhetorical_rejection_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "rhetorical_rejection"
+    },
+    {
+      "boundary_case_id": "metaphor_without_new_fact_valid",
+      "case_id": "boundary:metaphor_without_new_fact_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "metaphor_without_new_fact"
+    },
+    {
+      "boundary_case_id": "metaphor_without_new_fact_invalid",
+      "case_id": "boundary:metaphor_without_new_fact_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "metaphor_without_new_fact"
+    },
+    {
+      "boundary_case_id": "multi_source_synthesis_valid",
+      "case_id": "boundary:multi_source_synthesis_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "multi_source_synthesis"
+    },
+    {
+      "boundary_case_id": "multi_source_synthesis_invalid",
+      "case_id": "boundary:multi_source_synthesis_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "multi_source_synthesis"
+    },
+    {
+      "boundary_case_id": "editorial_compression_valid",
+      "case_id": "boundary:editorial_compression_valid",
+      "expected_outcome": "boundary_valid_preserved",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "editorial_compression"
+    },
+    {
+      "boundary_case_id": "editorial_compression_invalid",
+      "case_id": "boundary:editorial_compression_invalid",
+      "expected_outcome": "boundary_invalid_blocked",
+      "failure_category": "product_behavior",
+      "family": "semantic_boundary_case",
+      "fixture_path": "tests/fixtures/linkedin_post_semantic_grounding_boundary/boundary_cases_v1.json",
+      "human_review_required": false,
+      "notes": "Synthetic Semantic Grounding boundary case; separated from product cases by family.",
+      "provenance": {
+        "source": "semantic_grounding_boundary_v1"
+      },
+      "risk_type": "semantic_grounding_boundary",
+      "sha256": "0c08a778830ab9e7e922755224eb34f56a28a6c7474aa0745b7ac93541f3889f",
+      "topic": "editorial_compression"
+    }
+  ],
+  "corpus_id": "postflow_product_validation_v1",
+  "frozen_anchor_case_ids": [
+    "topic_140_digest_126",
+    "topic_214_digest_128__claude_v3",
+    "topic_200_digest_134__gpt_v2"
+  ],
+  "frozen_model_role_configuration": {
+    "candidate_writer": {
+      "model": "claude-sonnet-5",
+      "provider": "anthropic"
+    },
+    "quality_evaluator": {
+      "model": "gpt-4.1-2025-04-14",
+      "provider": "openai"
+    },
+    "repair_writer": {
+      "execution_profile": "gemini_repair_minimal_reasoning",
+      "model": "gemini-3.6-flash",
+      "provider": "gemini",
+      "reasoning_effort": "minimal"
+    },
+    "semantic_grounding": {
+      "execution_profile": "grounding_minimal_reasoning",
+      "json_mode": true,
+      "max_output_tokens": 4800,
+      "model": "gemini-3.6-flash",
+      "provider": "gemini",
+      "reasoning_effort": "minimal"
+    }
+  },
+  "provenance": {
+    "description": "Provider-free PostFlow product validation corpus assembled from existing fixtures.",
+    "scope": "26A"
+  },
+  "schema_version": "2026-08-21",
+  "target_case_count": 27
+}
