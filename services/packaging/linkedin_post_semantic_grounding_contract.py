@@ -242,13 +242,19 @@ def normalize_semantic_grounding_review_result(
         raise ValueError(
             "semantic grounding human_review_reason must be empty when human review is not required."
         )
+    has_failure_signal = bool(
+        blocking_claim_ids or automatic_fail_reason or requires_human_review
+    )
+    if not passed and not has_failure_signal and not repairable and not repair_instructions:
+        passed = True
+
     if passed and repairable:
         raise ValueError("semantic grounding pass cannot be true when repairable.")
     if passed and repair_instructions:
         raise ValueError(
             "semantic grounding pass cannot be true with repair_instructions."
         )
-    if not passed and not blocking_claim_ids and not automatic_fail_reason and not requires_human_review:
+    if not passed and not has_failure_signal:
         raise ValueError("semantic grounding fail requires a failure signal.")
     if repairable and not blocking_claim_ids:
         raise ValueError("semantic grounding repairable requires blocking claims.")

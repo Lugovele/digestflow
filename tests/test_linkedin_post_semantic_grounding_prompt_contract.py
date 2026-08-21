@@ -39,6 +39,15 @@ class LinkedInPostSemanticGroundingPromptContractTests(SimpleTestCase):
         self.assertIn('"claim_id": "c1"', prompt)
         self.assertIn('"instruction": "Remove or qualify unsupported strengthened claims."', prompt)
 
+    def test_prompt_names_clean_grounding_top_level_state(self) -> None:
+        prompt = _prompt_text()
+
+        self.assertIn("If there are no blocking claims", prompt)
+        self.assertIn('set "pass": true', prompt)
+        self.assertIn('"failed_claim_ids": []', prompt)
+        self.assertIn('"repairable": false', prompt)
+        self.assertIn('"repair_instructions": []', prompt)
+
     def test_prompt_preserves_strict_json_only_output(self) -> None:
         prompt = _prompt_text()
 

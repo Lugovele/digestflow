@@ -81,3 +81,7 @@ Return only JSON compatible with this shape:
 Set pass, failed_claim_ids, automatic_fail_reason, requires_human_review,
 human_review_reason, repairable, and repair_instructions according to
 SEMANTIC_GROUNDING_RULES_JSON.
+
+If there are no blocking claims, no automatic fail reason, and no human review
+reason, set "pass": true, "failed_claim_ids": [], "repairable": false, and
+"repair_instructions": [].

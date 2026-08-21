@@ -639,6 +639,41 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             result.quality_evaluator_prompt_render.variables["candidate_payload_json"],
         )
 
+    def test_full_attempt_clean_grounding_false_pass_still_runs_quality_evaluator(
+        self,
+    ) -> None:
+        semantic_payload = _semantic_review_payload(passed=True)
+        semantic_payload["pass"] = False
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+        grounding_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(semantic_payload))
+        )
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertIsNone(result.failure_code)
+        self.assertEqual(grounding_client.call_count, 1)
+        self.assertEqual(evaluator_client.call_count, 1)
+        self.assertEqual(result.semantic_grounding_state.status, "pass")
+        self.assertTrue(result.semantic_grounding_state.grounding_review.passed)
+        self.assertEqual(
+            result.semantic_grounding_state.grounding_review.blocking_claim_ids,
+            (),
+        )
+        self.assertEqual(result.quality_evaluator_invocation_count, 1)
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_ACCEPTED)
+
     def test_full_attempt_preserves_explicit_quality_evaluator_token_override(
         self,
     ) -> None:

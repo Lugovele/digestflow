@@ -227,6 +227,30 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
         self.assertEqual(result.blocking_claim_ids, ())
         self.assertEqual(result.claim_reviews[0].support_status, SUPPORT_STATUS_SUPPORTED)
 
+    def test_clean_non_blocking_false_provider_pass_normalizes_to_pass(self) -> None:
+        payload = _review_payload(passed=False)
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+        self.assertFalse(result.repairable)
+        self.assertEqual(result.repair_instructions, ())
+
+    def test_clean_non_blocking_false_provider_pass_with_repairable_is_rejected(
+        self,
+    ) -> None:
+        payload = _review_payload(passed=False, repairable=True)
+
+        with self.assertRaisesRegex(ValueError, "failure signal"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
     def test_mixed_authorial_sentence_can_split_framing_from_supported_claim(
         self,
     ) -> None:
@@ -448,14 +472,18 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 selected_evidence_ids=("a0-summary",),
             )
 
-    def test_bare_fail_with_no_signal_is_rejected(self) -> None:
+    def test_bare_fail_with_no_signal_normalizes_to_clean_pass(self) -> None:
         payload = _review_payload(passed=False, repairable=False)
 
-        with self.assertRaisesRegex(ValueError, "fail requires a failure signal"):
-            normalize_semantic_grounding_review_result(
-                payload,
-                selected_evidence_ids=("a0-summary",),
-            )
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+        self.assertFalse(result.repairable)
+        self.assertEqual(result.repair_instructions, ())
 
     def test_repairable_failed_grounding_requires_repair_instructions(self) -> None:
         payload = _review_payload(

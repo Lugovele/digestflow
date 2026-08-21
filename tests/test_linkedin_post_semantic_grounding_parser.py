@@ -159,10 +159,22 @@ class LinkedInPostSemanticGroundingParserTests(SimpleTestCase):
 
         self.assertEqual(error.exception.code, ERROR_NORMALIZATION_FAILED)
 
+    def test_clean_non_blocking_false_provider_pass_normalizes_to_pass(self) -> None:
+        payload = _review_payload(passed=False)
+
+        result = parse_and_normalize_semantic_grounding_response(
+            _raw(json.dumps(payload)),
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+        self.assertFalse(result.repairable)
+
     def test_invalid_consistency_combinations_are_normalization_failures(self) -> None:
         invalid_payloads = [
             _review_payload(repairable=True),
-            _review_payload(passed=False),
+            _review_payload(passed=False, repairable=True),
             _review_payload(
                 passed=False,
                 automatic_fail_reason="automatic failure",
