@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from apps.ai.client import get_ai_client_configuration_error
 from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_EXECUTION_FAILED,
     QUALITY_EVALUATION_NORMALIZATION_FAILED,
@@ -71,6 +72,10 @@ from services.packaging.linkedin_post_flow_decision import (
 from services.packaging.linkedin_post_flow_input_builders import (
     build_post_editorial_input,
 )
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_REPAIR_WRITER,
+    get_final_post_role_provider_model_policy_failure,
+)
 from services.packaging.linkedin_post_prompt_renderers import (
     render_quality_evaluator_prompt_input,
     render_repair_writer_prompt_input,
@@ -93,6 +98,7 @@ from services.packaging.linkedin_post_quality_rubric_contract import (
 from services.packaging.linkedin_post_repair_writer_execution import (
     build_repair_writer_execution_request,
     execute_repair_writer_prompt,
+    get_repair_writer_execution_request_error,
 )
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
@@ -129,6 +135,27 @@ def execute_final_post_controlled_repair_attempt(
     repair_writer_client: Any | None = None,
 ) -> FinalPostControlledRepairResult:
     """Run one initial attempt and, when eligible, exactly one repair attempt."""
+
+    repair_preflight_error = _repair_writer_provider_model_preflight_error(
+        request,
+        repair_writer_client=repair_writer_client,
+    )
+    if repair_preflight_error is not None:
+        return FinalPostControlledRepairResult(
+            request=request,
+            initial_attempt_result=None,
+            repair_eligibility=_ineligible(repair_preflight_error),
+            repair_executed=False,
+            terminal_outcome="not_ready",
+            terminal_reason=repair_preflight_error,
+            failure_stage="repair_writer_request",
+            failure_code=FAILURE_REPAIR_WRITER_REQUEST,
+            failure_message=repair_preflight_error,
+            candidate_writer_invocation_count=0,
+            semantic_grounding_invocation_count=0,
+            repair_invocation_count=0,
+            quality_evaluator_invocation_count=0,
+        )
 
     evidence_ids = tuple(selected_evidence_ids)
     initial_result = execute_final_post_standalone_attempt(
@@ -455,6 +482,37 @@ def _repair_eligibility(
         eligible=True,
         reason=f"initial attempt eligible for one {decision.repair_type} repair",
     )
+
+
+def _repair_writer_provider_model_preflight_error(
+    request: FinalPostControlledRepairRequest,
+    *,
+    repair_writer_client: Any | None,
+) -> str | None:
+    if not request.repair_enabled:
+        return None
+    provider = str(request.repair_provider or "").strip().lower()
+    model = str(request.repair_model or "").strip()
+    if not provider:
+        return "missing repair writer provider"
+    if not model:
+        return "missing repair writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_REPAIR_WRITER,
+        provider=provider,
+        model=model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
+    if repair_writer_client is None:
+        configuration_error = get_ai_client_configuration_error(
+            provider,
+            model,
+            stage_name="repair writer",
+        )
+        if configuration_error is not None:
+            return configuration_error
+    return None
 
 
 def _ineligible(reason: str) -> FinalPostRepairEligibility:
@@ -1076,25 +1134,7 @@ def _gate_failure_message(gate_output: Any) -> str:
 
 
 def _repair_writer_request_error(request: Any) -> str | None:
-    if not request.provider:
-        return "missing repair writer provider"
-    if request.provider != "openai":
-        return f"unsupported repair writer provider: {request.provider}"
-    if not request.model:
-        return "missing repair writer model"
-    if isinstance(request.max_output_tokens, bool) or not isinstance(
-        request.max_output_tokens,
-        int,
-    ):
-        return "invalid repair writer max_output_tokens: must be a positive integer"
-    if request.max_output_tokens <= 0:
-        return "invalid repair writer max_output_tokens: must be a positive integer"
-    if not isinstance(request.prompt_text, str) or not request.prompt_text.strip():
-        return "missing repair writer prompt text"
-    rendered_input_text = request.rendered_prompt_input.input_text
-    if not isinstance(rendered_input_text, str) or not rendered_input_text.strip():
-        return "missing repair writer rendered input text"
-    return None
+    return get_repair_writer_execution_request_error(request)
 
 
 def _quality_evaluator_request_error(request: Any) -> str | None:

@@ -74,7 +74,7 @@ class RepairWriterExecutionTests(SimpleTestCase):
 
         raw_response = execute_repair_writer_prompt(request)
 
-        mock_openai_client.assert_called_once_with(model="repair-model")
+        mock_openai_client.assert_called_once_with(model="gpt-4.1-2025-04-14")
         mock_openai_client.return_value.generate_text.assert_called_once_with(
             prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
             max_output_tokens=request.max_output_tokens,
@@ -82,7 +82,7 @@ class RepairWriterExecutionTests(SimpleTestCase):
         )
         self.assertEqual(raw_response.raw_text, provider_response.text)
         self.assertEqual(raw_response.provider, "openai")
-        self.assertEqual(raw_response.model, "repair-model")
+        self.assertEqual(raw_response.model, "gpt-4.1-2025-04-14")
         self.assertIsNone(raw_response.execution_error)
 
     @patch("services.packaging.linkedin_post_repair_writer_execution.OpenAIClient")
@@ -142,7 +142,18 @@ class RepairWriterExecutionTests(SimpleTestCase):
             (_request(provider=""), "missing repair writer provider"),
             (
                 _request(provider="gemini"),
-                "unsupported repair writer provider: gemini",
+                "unsupported PostFlow final post role/provider/model: "
+                "role=repair_writer provider=gemini model=gpt-4.1-2025-04-14",
+            ),
+            (
+                _request(provider="anthropic", model="claude-sonnet-5"),
+                "unsupported PostFlow final post role/provider/model: "
+                "role=repair_writer provider=anthropic model=claude-sonnet-5",
+            ),
+            (
+                _request(provider="openai", model="repair-model"),
+                "unsupported PostFlow final post role/provider/model: "
+                "role=repair_writer provider=openai model=repair-model",
             ),
             (_request(model=""), "missing repair writer model"),
             (
@@ -214,7 +225,7 @@ def _request(
     render: RepairWriterPromptRender | None = None,
     prompt_text: str = "Repair writer prompt.",
     provider: str = "openai",
-    model: str = "repair-model",
+    model: str = "gpt-4.1-2025-04-14",
     max_output_tokens: object = 1200,
     execution_metadata: dict | None = None,
 ) -> RepairWriterExecutionRequest:

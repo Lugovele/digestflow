@@ -36,6 +36,29 @@ REQUIRED_QUALITY_CHECKS = {
     "linkedin_ready",
 }
 
+AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED = "allowed_not_required"
+
+AUTHORIAL_PERSONAL_PRESENCE_REQUIRED = "explicit_author_owned_statement_required"
+AUTHORIAL_PERSONAL_PRESENCE_ALLOWED = "author_owned_statement_allowed"
+AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY = "editorial_stance_only"
+AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS = (
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+    AUTHORIAL_PERSONAL_PRESENCE_ALLOWED,
+    AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY,
+)
+
+AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS = (
+    "personal experience",
+    "professional authority",
+    "direct market exposure",
+    "client or customer stories",
+    "invented emotional reaction",
+    "biographical claims",
+)
+
+FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS = 1300
+FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_CHARS = 1250
+
 
 class LinkedInPostPipelineContractError(ValueError):
     """Raised when a LinkedIn posting pipeline contract is invalid."""
@@ -135,6 +158,16 @@ class EditorialSynthesisResult:
 
 
 @dataclass(frozen=True)
+class AuthorialVoiceDirective:
+    authorial_observation: str
+    rejected_reading: str
+    why_distinction_matters: str
+    personal_presence_requirement: str
+    first_person_policy: str
+    forbidden_author_claims: list[str]
+
+
+@dataclass(frozen=True)
 class AngleDecision:
     controlling_angle: str
     reader_problem: str
@@ -142,6 +175,7 @@ class AngleDecision:
     main_tension: str
     supporting_evidence_ids: list[str]
     angle_to_avoid: list[str]
+    authorial_voice_directive: AuthorialVoiceDirective
 
 
 @dataclass(frozen=True)
@@ -395,6 +429,9 @@ def build_angle_decision_from_contextual_evidence_pack(
         angle_to_avoid=_build_angle_to_avoid(
             contextual_evidence_pack,
             selected_items,
+        ),
+        authorial_voice_directive=_build_authorial_voice_directive_for_relationship(
+            relationship
         ),
     )
     validate_angle_decision_for_contextual_evidence(
@@ -814,6 +851,55 @@ def validate_angle_decision(decision: AngleDecision) -> None:
     _require_non_empty_string(decision.main_tension, "AngleDecision.main_tension")
     _require_string_list(decision.supporting_evidence_ids, "AngleDecision.supporting_evidence_ids")
     _require_string_list(decision.angle_to_avoid, "AngleDecision.angle_to_avoid")
+    validate_authorial_voice_directive(decision.authorial_voice_directive)
+
+
+def validate_authorial_voice_directive(
+    directive: AuthorialVoiceDirective,
+) -> None:
+    if not isinstance(directive, AuthorialVoiceDirective):
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive must be an AuthorialVoiceDirective."
+        )
+
+    _require_non_empty_string(
+        directive.authorial_observation,
+        "AngleDecision.authorial_voice_directive.authorial_observation",
+    )
+    _require_non_empty_string(
+        directive.rejected_reading,
+        "AngleDecision.authorial_voice_directive.rejected_reading",
+    )
+    _require_non_empty_string(
+        directive.why_distinction_matters,
+        "AngleDecision.authorial_voice_directive.why_distinction_matters",
+    )
+    _require_non_empty_string(
+        directive.personal_presence_requirement,
+        "AngleDecision.authorial_voice_directive.personal_presence_requirement",
+    )
+    if (
+        directive.personal_presence_requirement
+        not in AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS
+    ):
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive.personal_presence_requirement "
+            "must be one of "
+            f"{', '.join(AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS)}."
+        )
+    _require_non_empty_string(
+        directive.first_person_policy,
+        "AngleDecision.authorial_voice_directive.first_person_policy",
+    )
+    if directive.first_person_policy != AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED:
+        raise LinkedInPostPipelineContractError(
+            "AngleDecision.authorial_voice_directive.first_person_policy "
+            f"must be {AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED}."
+        )
+    _require_unique_non_empty_string_list(
+        directive.forbidden_author_claims,
+        "AngleDecision.authorial_voice_directive.forbidden_author_claims",
+    )
 
 
 def validate_angle_decision_for_contextual_evidence(
@@ -991,9 +1077,10 @@ def validate_final_post_payload(payload: FinalPostPayload) -> None:
         raise LinkedInPostPipelineContractError("payload must be a FinalPostPayload.")
 
     _require_non_empty_string(payload.post_text, "FinalPostPayload.post_text")
-    if len(payload.post_text) > 1300:
+    if len(payload.post_text) > FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS:
         raise LinkedInPostPipelineContractError(
-            "FinalPostPayload.post_text must not exceed 1300 characters."
+            "FinalPostPayload.post_text must not exceed "
+            f"{FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS} characters."
         )
     _require_string_list(
         payload.hook_variants,
@@ -1026,6 +1113,15 @@ def validate_final_post_payload(payload: FinalPostPayload) -> None:
             raise LinkedInPostPipelineContractError(
                 f"FinalPostPayload.quality_checks.{key} must be a boolean."
             )
+
+
+def build_final_post_payload_constraints() -> dict[str, Any]:
+    return {
+        "post_text": {
+            "max_chars": FINAL_POST_PAYLOAD_POST_TEXT_MAX_CHARS,
+            "prompt_target_chars": FINAL_POST_PAYLOAD_POST_TEXT_PROMPT_TARGET_CHARS,
+        }
+    }
 
 
 def final_post_payload_to_dict(payload: FinalPostPayload) -> dict[str, Any]:
@@ -1937,6 +2033,35 @@ def _practical_point_for_relationship(relationship: EvidenceRelationship) -> str
     )
 
 
+def _build_authorial_voice_directive_for_relationship(
+    relationship: EvidenceRelationship,
+) -> AuthorialVoiceDirective:
+    observation = (
+        "The author notices that "
+        f"{relationship.left_label} and {relationship.right_label} should not be "
+        "collapsed into one easy conclusion."
+    )
+    rejected_reading = (
+        "Reject treating "
+        f"{relationship.left_label} as proof that {relationship.right_label} "
+        "has been resolved."
+    )
+    why_distinction_matters = (
+        "The distinction matters because "
+        f"{relationship.reader_problem[:1].lower()}{relationship.reader_problem[1:]}"
+        if relationship.reader_problem
+        else "The distinction matters because the reader needs a judgment, not a recap."
+    )
+    return AuthorialVoiceDirective(
+        authorial_observation=observation,
+        rejected_reading=rejected_reading,
+        why_distinction_matters=why_distinction_matters,
+        personal_presence_requirement=AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+        first_person_policy=AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+        forbidden_author_claims=list(AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS),
+    )
+
+
 def _contains_unsupported_causal_strengthening(text: str) -> bool:
     lowered = text.lower()
     forbidden_phrases = [
@@ -2238,10 +2363,17 @@ __all__ = [
     "ALLOWED_BEST_USE_VALUES",
     "ALLOWED_EVIDENCE_TYPES",
     "ALLOWED_SPECIFICITY_LEVELS",
+    "AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED",
+    "AUTHORIAL_FORBIDDEN_AUTHOR_CLAIMS",
+    "AUTHORIAL_PERSONAL_PRESENCE_ALLOWED",
+    "AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY",
+    "AUTHORIAL_PERSONAL_PRESENCE_REQUIRED",
+    "AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS",
     "REQUIRED_QUALITY_CHECKS",
     "AngleDecision",
     "ArticleEvidence",
     "ArticleEvidencePack",
+    "AuthorialVoiceDirective",
     "BriefEvidenceUse",
     "ContextualEvidence",
     "ContextualEvidencePack",
@@ -2258,6 +2390,7 @@ __all__ = [
     "build_article_evidence_pack_from_pipeline_input",
     "build_contextual_evidence_pack_from_article_evidence_pack",
     "build_editorial_synthesis_result_for_selected_items",
+    "build_final_post_payload_constraints",
     "build_final_post_payload_from_post_brief",
     "build_pipeline_input_from_digest",
     "build_post_brief_from_angle_decision",
@@ -2266,6 +2399,7 @@ __all__ = [
     "validate_angle_decision_for_contextual_evidence",
     "validate_article_evidence_pack",
     "validate_article_evidence_pack_for_pipeline_input",
+    "validate_authorial_voice_directive",
     "validate_contextual_evidence_pack",
     "validate_contextual_evidence_pack_for_article_evidence",
     "validate_editorial_synthesis_result",

@@ -16,6 +16,9 @@ from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
 )
+from services.packaging.linkedin_post_pipeline import (
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS,
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,7 @@ def build_candidate_writer_input(
     angle_decision: object | dict,
     prompt_metadata: PromptMetadata | None = None,
 ) -> CandidateWriterInput:
+    _require_candidate_writer_angle_decision(angle_decision)
     return CandidateWriterInput(
         post_brief=post_brief,
         angle_decision=angle_decision,
@@ -61,6 +65,7 @@ def build_post_editorial_input(
     generation_metadata: PostGenerationMetadata | None = None,
     prompt_metadata: PromptMetadata | None = None,
 ) -> PostEditorialInput:
+    _require_candidate_writer_angle_decision(angle_decision)
     _require_passing_gate(gate_output)
     _require_matching_candidate_payload(candidate_output, gate_output)
 
@@ -107,6 +112,57 @@ def _normalize_selected_evidence_item(item: object | dict) -> dict[str, str]:
                 f"PostBrief.evidence_to_use.{field_name} must be a non-empty string."
             )
     return normalized
+
+
+def _require_candidate_writer_angle_decision(angle_decision: object | dict) -> None:
+    directive = _get_required_value(
+        angle_decision,
+        "authorial_voice_directive",
+        "AngleDecision",
+    )
+    serialized = _serialize_input_value(directive)
+    if not isinstance(serialized, dict):
+        raise ValueError(
+            "AngleDecision.authorial_voice_directive must serialize to a dictionary."
+        )
+    for field_name in (
+        "authorial_observation",
+        "rejected_reading",
+        "why_distinction_matters",
+        "personal_presence_requirement",
+        "first_person_policy",
+    ):
+        field_value = serialized.get(field_name)
+        if not isinstance(field_value, str) or not field_value.strip():
+            raise ValueError(
+                "AngleDecision.authorial_voice_directive."
+                f"{field_name} must be present."
+            )
+    if (
+        serialized["personal_presence_requirement"]
+        not in AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS
+    ):
+        raise ValueError(
+            "AngleDecision.authorial_voice_directive.personal_presence_requirement "
+            "must be a supported personal-presence policy."
+        )
+    if serialized["first_person_policy"] != "allowed_not_required":
+        raise ValueError(
+            "AngleDecision.authorial_voice_directive.first_person_policy "
+            "must be allowed_not_required."
+        )
+    forbidden_claims = serialized.get("forbidden_author_claims")
+    if not isinstance(forbidden_claims, (list, tuple)) or not forbidden_claims:
+        raise ValueError(
+            "AngleDecision.authorial_voice_directive.forbidden_author_claims "
+            "must be a non-empty list or tuple."
+        )
+    for claim in forbidden_claims:
+        if not isinstance(claim, str) or not claim.strip():
+            raise ValueError(
+                "AngleDecision.authorial_voice_directive.forbidden_author_claims "
+                "must contain non-empty strings."
+            )
 
 
 def _selected_evidence_from_post_brief(post_brief: object | dict) -> tuple[dict[str, str], ...]:

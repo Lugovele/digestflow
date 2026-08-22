@@ -13,15 +13,25 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import OpenAIClient
+from apps.ai.client import (
+    THINKING_MODE_PROVIDER_DEFAULT,
+    build_ai_client,
+    get_ai_provider_model_error,
+    get_ai_provider_thinking_mode_error,
+)
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_CANDIDATE_WRITER,
+    get_final_post_role_provider_model_policy_failure,
+    get_final_post_role_thinking_mode,
+)
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
 )
 
 
 DEFAULT_CANDIDATE_WRITER_MAX_OUTPUT_TOKENS = 1200
-SUPPORTED_PROVIDER = "openai"
+STAGE_NAME = "candidate writer"
 
 
 @dataclass(frozen=True)
@@ -31,6 +41,7 @@ class CandidateWriterExecutionRequest:
     provider: str
     model: str
     max_output_tokens: int = DEFAULT_CANDIDATE_WRITER_MAX_OUTPUT_TOKENS
+    thinking_mode: str = THINKING_MODE_PROVIDER_DEFAULT
     execution_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +51,7 @@ class CandidateWriterExecutionRequest:
             "provider": self.provider,
             "model": self.model,
             "max_output_tokens": self.max_output_tokens,
+            "thinking_mode": self.thinking_mode,
             "execution_metadata": copy.deepcopy(self.execution_metadata),
         }
 
@@ -51,6 +63,7 @@ class CandidateWriterRawResponse:
     model: str
     prompt_metadata: PromptMetadata | None = None
     usage: dict[str, Any] | None = None
+    provider_response_metadata: dict[str, Any] | None = None
     raw_provider_response: dict[str, Any] | None = None
     execution_error: str | None = None
     execution_metadata: dict[str, Any] | None = None
@@ -65,6 +78,10 @@ class CandidateWriterRawResponse:
             result["prompt_metadata"] = self.prompt_metadata.to_dict()
         if self.usage is not None:
             result["usage"] = copy.deepcopy(self.usage)
+        if self.provider_response_metadata is not None:
+            result["provider_response_metadata"] = copy.deepcopy(
+                self.provider_response_metadata
+            )
         if self.raw_provider_response is not None:
             result["raw_provider_response"] = copy.deepcopy(self.raw_provider_response)
         if self.execution_error is not None:
@@ -81,14 +98,27 @@ def build_candidate_writer_execution_request(
     provider: str | None = None,
     model: str | None = None,
     max_output_tokens: int = DEFAULT_CANDIDATE_WRITER_MAX_OUTPUT_TOKENS,
+    thinking_mode: str | None = None,
     execution_metadata: dict[str, Any] | None = None,
 ) -> CandidateWriterExecutionRequest:
+    resolved_provider = _resolve_provider(provider)
+    resolved_model = _resolve_model(model)
+    resolved_thinking_mode = (
+        str(thinking_mode or "").strip().lower()
+        if thinking_mode is not None
+        else get_final_post_role_thinking_mode(
+            role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+            provider=resolved_provider,
+            model=resolved_model,
+        )
+    )
     return CandidateWriterExecutionRequest(
         rendered_prompt_input=rendered_prompt_input,
         prompt_text=prompt_text,
-        provider=_resolve_provider(provider),
-        model=_resolve_model(model),
+        provider=resolved_provider,
+        model=resolved_model,
         max_output_tokens=max_output_tokens,
+        thinking_mode=resolved_thinking_mode,
         execution_metadata=copy.deepcopy(execution_metadata),
     )
 
@@ -113,11 +143,25 @@ def execute_candidate_writer_prompt(
 
     prompt = _build_provider_prompt(request)
     try:
-        text_client = client if client is not None else OpenAIClient(model=request.model)
+        text_client = (
+            client
+            if client is not None
+            else build_ai_client(provider=request.provider, model=request.model)
+        )
         response = text_client.generate_text(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
             json_mode=False,
+            thinking_mode=request.thinking_mode,
+        )
+    except ValueError as exc:
+        return CandidateWriterRawResponse(
+            raw_text="",
+            provider=request.provider,
+            model=request.model,
+            prompt_metadata=prompt_metadata,
+            execution_error=str(exc),
+            execution_metadata=execution_metadata,
         )
     except Exception:  # pragma: no cover - covered with fake failure.
         return CandidateWriterRawResponse(
@@ -130,6 +174,9 @@ def execute_candidate_writer_prompt(
         )
 
     raw_text = response.text
+    provider_response_metadata = copy.deepcopy(
+        getattr(response, "provider_response_metadata", None)
+    )
     if raw_text is None or not str(raw_text).strip():
         return CandidateWriterRawResponse(
             raw_text=str(raw_text or ""),
@@ -137,6 +184,7 @@ def execute_candidate_writer_prompt(
             model=request.model,
             prompt_metadata=prompt_metadata,
             usage=copy.deepcopy(response.usage),
+            provider_response_metadata=provider_response_metadata,
             raw_provider_response=copy.deepcopy(response.raw),
             execution_error="empty provider response",
             execution_metadata=execution_metadata,
@@ -148,6 +196,7 @@ def execute_candidate_writer_prompt(
         model=request.model,
         prompt_metadata=prompt_metadata,
         usage=copy.deepcopy(response.usage),
+        provider_response_metadata=provider_response_metadata,
         raw_provider_response=copy.deepcopy(response.raw),
         execution_metadata=execution_metadata,
     )
@@ -166,10 +215,29 @@ def _resolve_model(model: str | None) -> str:
 def _execution_request_error(request: CandidateWriterExecutionRequest) -> str | None:
     if not request.provider:
         return "missing candidate writer provider"
-    if request.provider != SUPPORTED_PROVIDER:
-        return f"unsupported candidate writer provider: {request.provider}"
     if not request.model:
         return "missing candidate writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
+    provider_model_error = get_ai_provider_model_error(
+        request.provider,
+        request.model,
+        stage_name=STAGE_NAME,
+    )
+    if provider_model_error is not None:
+        return provider_model_error
+    thinking_mode_error = get_ai_provider_thinking_mode_error(
+        provider=request.provider,
+        thinking_mode=request.thinking_mode,
+        stage_name=STAGE_NAME,
+    )
+    if thinking_mode_error is not None:
+        return thinking_mode_error
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,

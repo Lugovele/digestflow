@@ -14,22 +14,41 @@ Human-facing fields:
 Use only selected evidence. Do not use raw articles, outside knowledge, topic
 knowledge, or assumptions.
 
+Treat SEMANTIC_GROUNDING_RULES_JSON as the authoritative decision contract.
+It defines the allowed support_status/severity pairs, blocking conditions,
+failed_claim_ids consistency rules, repairability rules, qualification
+invariants, and causal-fidelity rules. Do not invent alternate status,
+severity, pass/fail, or repair rules.
+
 For each factual, causal, comparative, predictive, interpretive, or prescriptive
 claim, create one claim review. Split compound sentences into separate claims.
-Pure rhetorical lines that do not imply a factual state may be marked not_claim.
+Pure rhetorical lines that do not imply a factual state may be marked according
+to the not-a-claim rule in SEMANTIC_GROUNDING_RULES_JSON.
 
-Qualification rules:
-* projected remains projected
-* likely remains attributed likelihood
-* may remains possibility
-* analysis remains attributed analysis
-* risk remains risk
+Procedure:
+1. Extract atomic claims from human-facing fields only.
+2. Compare each claim to selected evidence only.
+3. Assign support_status and severity using SEMANTIC_GROUNDING_RULES_JSON.
+4. Derive failed_claim_ids from blocking claim reviews in claim_reviews order.
+5. Set pass, automatic_fail_reason, repairable, and repair_instructions from the
+   same rules.
+6. Before returning, check that failed_claim_ids exactly matches the derived
+   blocking claim IDs.
 
-Causal-fidelity rules:
-* Do not turn coexistence into cause.
-* Do not turn forecast into guaranteed outcome.
-* Do not turn positioning or risk into stability, recovery, optimism, or growth.
-* Do not turn adoption interest into mainstream inevitability.
+Repairability:
+* repairable=true only for failed, non-human-review results with blocking claims.
+* every repairable blocking claim must have a non-empty repair_hint.
+* every repair_instruction must start with the relevant claim ID followed by a
+  colon, for example: "c1: Restore the missing likelihood qualifier."
+* do not use generic repair instructions that are not tied to a claim ID.
+
+Consistency checks:
+* partially_supported with minor severity is advisory and does not make pass=false.
+* partially_supported with major severity is blocking.
+* automatic_fail_reason requires at least one blocking claim.
+* pass=true cannot include blocking claims, automatic_fail_reason,
+  repairable=true, repair_instructions, or a human-review requirement.
+* pass=false requires blocking claims or a human-review requirement.
 
 Return only JSON compatible with this shape:
 
@@ -48,7 +67,7 @@ Return only JSON compatible with this shape:
       "required_qualifications": ["may"],
       "missing_qualifications": [],
       "rationale": "brief source-fidelity rationale",
-      "repair_hint": "specific repair instruction"
+      "repair_hint": "specific claim-level repair instruction"
     }
   ],
   "failed_claim_ids": ["c1"],
@@ -56,7 +75,7 @@ Return only JSON compatible with this shape:
   "requires_human_review": false,
   "human_review_reason": "",
   "repairable": true,
-  "repair_instructions": ["Remove or qualify unsupported strengthened claims."]
+  "repair_instructions": ["c1: Remove or qualify the unsupported strengthened claim."]
 }
 
 Allowed claim_type values:
@@ -70,23 +89,3 @@ Allowed claim_type values:
 * recommendation
 * personal_experience_or_case
 * cta_or_rhetorical
-
-Allowed support_status values:
-* not_claim
-* supported
-* supported_with_required_qualification
-* partially_supported
-* missing_required_qualification
-* causal_overreach
-* unsupported
-* contradicted
-* not_evaluable
-
-Allowed severity values:
-* info
-* minor
-* major
-* blocking
-
-Set pass to false when any major or blocking claim is unsupported, contradicted,
-missing required qualification, or causal overreach.

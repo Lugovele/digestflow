@@ -43,6 +43,7 @@ class PostBriefStub:
 class AngleDecisionStub:
     controlling_angle: str
     supporting_evidence_ids: list[str]
+    authorial_voice_directive: dict[str, object] | None = None
 
 
 class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
@@ -83,6 +84,7 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
         angle_decision = AngleDecisionStub(
             controlling_angle="Make remote work explicit.",
             supporting_evidence_ids=["a-extra", "a1-kp0"],
+            authorial_voice_directive=_angle_decision().authorial_voice_directive,
         )
 
         candidate_input = build_candidate_writer_input(_post_brief(), angle_decision)
@@ -124,6 +126,22 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
         self.assertIs(candidate_input.post_brief, post_brief)
         self.assertIs(candidate_input.angle_decision, angle_decision)
 
+    def test_candidate_writer_input_preserves_authorial_voice_directive(self) -> None:
+        candidate_input = build_candidate_writer_input(_post_brief(), _angle_decision())
+
+        self.assertEqual(
+            candidate_input.to_dict()["angle_decision"]["authorial_voice_directive"][
+                "authorial_observation"
+            ],
+            "What stands out is that remote policies and isolation are separate signals.",
+        )
+        self.assertEqual(
+            candidate_input.to_dict()["angle_decision"]["authorial_voice_directive"][
+                "personal_presence_requirement"
+            ],
+            "explicit_author_owned_statement_required",
+        )
+
     def test_prompt_metadata_is_included_when_provided(self) -> None:
         prompt_metadata = PromptMetadata(
             prompt_name="final_post_candidate_from_brief",
@@ -157,6 +175,14 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
         angle_decision = {
             "controlling_angle": "Make hybrid work explicit.",
             "supporting_evidence_ids": ["a2-summary"],
+            "authorial_voice_directive": {
+                "authorial_observation": "What stands out is the coordination gap.",
+                "rejected_reading": "Reject treating flexibility as self-managing.",
+                "why_distinction_matters": "The distinction matters for hybrid teams.",
+                "personal_presence_requirement": "explicit_author_owned_statement_required",
+                "first_person_policy": "allowed_not_required",
+                "forbidden_author_claims": ["personal experience"],
+            },
         }
 
         candidate_input = build_candidate_writer_input(post_brief, angle_decision)
@@ -173,6 +199,86 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
                 },
             ),
         )
+
+    def test_builder_rejects_missing_authorial_voice_directive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "authorial_voice_directive"):
+            build_candidate_writer_input(
+                _post_brief(),
+                {
+                    "controlling_angle": "Make remote work explicit.",
+                    "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+                },
+            )
+
+    def test_builder_rejects_missing_personal_presence_policy(self) -> None:
+        directive = dict(_angle_decision().authorial_voice_directive)
+        directive.pop("personal_presence_requirement")
+
+        with self.assertRaisesRegex(ValueError, "personal_presence_requirement"):
+            build_candidate_writer_input(
+                _post_brief(),
+                AngleDecisionStub(
+                    controlling_angle="Make remote work explicit.",
+                    supporting_evidence_ids=["a0-summary", "a1-kp0"],
+                    authorial_voice_directive=directive,
+                ),
+            )
+
+    def test_builder_rejects_unknown_personal_presence_policy(self) -> None:
+        directive = dict(_angle_decision().authorial_voice_directive)
+        directive["personal_presence_requirement"] = "invent_persona"
+
+        with self.assertRaisesRegex(ValueError, "personal-presence policy"):
+            build_candidate_writer_input(
+                _post_brief(),
+                AngleDecisionStub(
+                    controlling_angle="Make remote work explicit.",
+                    supporting_evidence_ids=["a0-summary", "a1-kp0"],
+                    authorial_voice_directive=directive,
+                ),
+            )
+
+    def test_builder_rejects_blank_authorial_observation(self) -> None:
+        directive = dict(_angle_decision().authorial_voice_directive)
+        directive["authorial_observation"] = "   "
+
+        with self.assertRaisesRegex(ValueError, "authorial_observation"):
+            build_candidate_writer_input(
+                _post_brief(),
+                AngleDecisionStub(
+                    controlling_angle="Make remote work explicit.",
+                    supporting_evidence_ids=["a0-summary", "a1-kp0"],
+                    authorial_voice_directive=directive,
+                ),
+            )
+
+    def test_builder_rejects_invalid_first_person_policy(self) -> None:
+        directive = dict(_angle_decision().authorial_voice_directive)
+        directive["first_person_policy"] = "required"
+
+        with self.assertRaisesRegex(ValueError, "first_person_policy"):
+            build_candidate_writer_input(
+                _post_brief(),
+                AngleDecisionStub(
+                    controlling_angle="Make remote work explicit.",
+                    supporting_evidence_ids=["a0-summary", "a1-kp0"],
+                    authorial_voice_directive=directive,
+                ),
+            )
+
+    def test_builder_rejects_empty_forbidden_author_claims(self) -> None:
+        directive = dict(_angle_decision().authorial_voice_directive)
+        directive["forbidden_author_claims"] = []
+
+        with self.assertRaisesRegex(ValueError, "forbidden_author_claims"):
+            build_candidate_writer_input(
+                _post_brief(),
+                AngleDecisionStub(
+                    controlling_angle="Make remote work explicit.",
+                    supporting_evidence_ids=["a0-summary", "a1-kp0"],
+                    authorial_voice_directive=directive,
+                ),
+            )
 
     def test_to_dict_is_json_serializable(self) -> None:
         candidate_input = build_candidate_writer_input(_post_brief(), _angle_decision())
@@ -219,6 +325,22 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
         self.assertIsInstance(editorial_input, PostEditorialInput)
         self.assertTrue(editorial_input.final_payload_validation_passed)
         self.assertEqual(editorial_input.final_payload_validation_error, "")
+
+    def test_post_editorial_input_rejects_incomplete_authorial_voice_directive(self) -> None:
+        directive = dict(_angle_decision().authorial_voice_directive)
+        directive["why_distinction_matters"] = ""
+
+        with self.assertRaisesRegex(ValueError, "why_distinction_matters"):
+            build_post_editorial_input(
+                post_brief=_post_brief(),
+                angle_decision=AngleDecisionStub(
+                    controlling_angle="Make remote work explicit.",
+                    supporting_evidence_ids=["a0-summary", "a1-kp0"],
+                    authorial_voice_directive=directive,
+                ),
+                candidate_output=_candidate_output(),
+                gate_output=_passing_gate_output(),
+            )
 
     def test_post_editorial_input_rejects_validation_failure(self) -> None:
         gate_output = _passing_gate_output(validation_passed=False)
@@ -361,6 +483,7 @@ class LinkedInPostFlowInputBuildersTests(SimpleTestCase):
             angle_decision=AngleDecisionStub(
                 controlling_angle="Make remote work explicit.",
                 supporting_evidence_ids=["a-extra", "a1-kp0"],
+                authorial_voice_directive=_angle_decision().authorial_voice_directive,
             ),
             candidate_output=_candidate_output(),
             gate_output=_passing_gate_output(),
@@ -781,6 +904,23 @@ def _angle_decision() -> AngleDecisionStub:
     return AngleDecisionStub(
         controlling_angle="Make remote work explicit.",
         supporting_evidence_ids=["a0-summary", "a1-kp0"],
+        authorial_voice_directive={
+            "authorial_observation": (
+                "What stands out is that remote policies and isolation are separate signals."
+            ),
+            "rejected_reading": (
+                "Do not treat policy documentation as proof that isolation has been solved."
+            ),
+            "why_distinction_matters": (
+                "The distinction matters because remote work needs both operating rules and support."
+            ),
+            "personal_presence_requirement": "explicit_author_owned_statement_required",
+            "first_person_policy": "allowed_not_required",
+            "forbidden_author_claims": [
+                "personal experience",
+                "professional authority",
+            ],
+        },
     )
 
 

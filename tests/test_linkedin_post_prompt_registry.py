@@ -77,6 +77,9 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
         self.assertIn("PostBrief", contract.input_contract)
         self.assertIn("AngleDecision", contract.input_contract)
         self.assertIn("selected evidence", contract.input_contract)
+        self.assertIn("authorial_voice_directive_json", contract.input_contract)
+        self.assertIn("personal_presence_instruction", contract.input_contract)
+        self.assertIn("final_post_payload_constraints_json", contract.input_contract)
         self.assertIn("FinalPostPayload", access_contract.allowed_outputs)
         self.assertEqual(contract.output_contract, "FinalPostPayload")
 
@@ -88,6 +91,12 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
         self.assertEqual(contract.access_mode, access_contract.access_mode)
         self.assertIn("PostEditorialInput", access_contract.allowed_inputs)
         self.assertIn("PostEditorialInput", contract.input_contract)
+        self.assertIn("candidate_payload_json", contract.input_contract)
+        self.assertIn("post_brief_json", contract.input_contract)
+        self.assertIn("angle_decision_json", contract.input_contract)
+        self.assertIn("authorial_voice_directive_json", contract.input_contract)
+        self.assertIn("selected_evidence_json", contract.input_contract)
+        self.assertIn("quality_rubric_json", contract.input_contract)
         self.assertIn("QualityReviewResult", access_contract.allowed_outputs)
         self.assertEqual(contract.output_contract, "QualityReviewResult")
 
@@ -96,7 +105,9 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
 
         self.assertEqual(
             contract.input_contract,
-            "PostBrief + AngleDecision + selected evidence",
+            "PostBrief + AngleDecision + selected evidence + "
+            "authorial_voice_directive_json + personal_presence_instruction + "
+            "final_post_payload_constraints_json",
         )
 
     def test_prompt_output_contract_is_final_post_payload(self) -> None:
@@ -107,7 +118,12 @@ class LinkedInPostPromptRegistryTests(SimpleTestCase):
     def test_quality_evaluator_prompt_contract_is_post_editorial_input_to_quality_review(self) -> None:
         contract = get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)
 
-        self.assertEqual(contract.input_contract, "PostEditorialInput")
+        self.assertEqual(
+            contract.input_contract,
+            "PostEditorialInput + candidate_payload_json + post_brief_json + "
+            "angle_decision_json + authorial_voice_directive_json + "
+            "selected_evidence_json + quality_rubric_json",
+        )
         self.assertEqual(contract.output_contract, "QualityReviewResult")
 
     def test_prompt_status_is_baseline(self) -> None:

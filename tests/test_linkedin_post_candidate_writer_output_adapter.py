@@ -24,6 +24,7 @@ from services.packaging.linkedin_post_candidate_writer_output_adapter import (
 )
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_flow_handoffs import CandidateWriterOutput
+from services.packaging.linkedin_post_pipeline import build_final_post_payload_constraints
 
 
 class CandidateWriterOutputAdapterTests(SimpleTestCase):
@@ -87,6 +88,40 @@ class CandidateWriterOutputAdapterTests(SimpleTestCase):
                     error.exception.code,
                     ERROR_INVALID_FINAL_POST_PAYLOAD,
                 )
+
+    def test_post_text_at_contract_max_adapts_successfully(self) -> None:
+        max_chars = build_final_post_payload_constraints()["post_text"]["max_chars"]
+
+        payload = adapt_candidate_writer_payload(
+            _parsed_candidate(post_text="x" * max_chars)
+        )
+
+        self.assertEqual(len(payload["post_text"]), max_chars)
+
+    def test_post_text_over_contract_max_fails_with_safe_validation_detail(self) -> None:
+        max_chars = build_final_post_payload_constraints()["post_text"]["max_chars"]
+
+        with self.assertRaises(CandidateWriterOutputAdaptationError) as error:
+            adapt_candidate_writer_payload(
+                _parsed_candidate(post_text="x" * (max_chars + 1))
+            )
+
+        self.assertEqual(error.exception.code, ERROR_INVALID_FINAL_POST_PAYLOAD)
+        self.assertEqual(
+            error.exception.validation_detail,
+            {
+                "field_path": "FinalPostPayload.post_text",
+                "field_name": "post_text",
+                "message": (
+                    "FinalPostPayload.post_text must not exceed "
+                    f"{max_chars} characters."
+                ),
+                "max_chars": max_chars,
+                "actual_chars": max_chars + 1,
+                "excess_chars": 1,
+            },
+        )
+        self.assertNotIn("x" * 20, str(error.exception))
 
     def test_non_boolean_quality_check_values_fail(self) -> None:
         parsed = _parsed_candidate(

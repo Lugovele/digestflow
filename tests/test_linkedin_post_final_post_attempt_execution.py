@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from apps.ai.client import THINKING_MODE_DISABLED, THINKING_MODE_PROVIDER_DEFAULT
 from services.packaging import linkedin_post_final_post_attempt_execution
 from services.packaging.linkedin_post_attempt_adjudication import (
     QUALITY_EVALUATION_EXECUTION_FAILED,
@@ -69,6 +70,7 @@ from services.packaging.linkedin_post_flow_decision import (
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
 )
+from services.packaging.linkedin_post_pipeline import build_final_post_payload_constraints
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
@@ -206,7 +208,22 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.candidate_writer_invocation_count, 1)
 
     def test_empty_response_does_not_produce_candidate_output(self) -> None:
-        fake_client = FakeCandidateWriterClient(_provider_response("   "))
+        fake_client = FakeCandidateWriterClient(
+            _provider_response(
+                "   ",
+                provider_response_metadata={
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_output_tokens",
+                    "content_block_types": ["thinking"],
+                    "input_tokens": 1234,
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                    "headers": {"authorization": "Bearer secret"},
+                    "raw_prompt": "prompt secret",
+                },
+            )
+        )
 
         result = execute_final_post_standalone_candidate_attempt(
             _request(),
@@ -220,6 +237,149 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertIsNone(result.parsed_candidate)
         self.assertIsNone(result.candidate_writer_output)
         self.assertEqual(result.candidate_writer_invocation_count, 1)
+        failed_status = result.stage_statuses[1]
+        self.assertEqual(
+            failed_status.metadata,
+            {
+                "provider_response_metadata": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_output_tokens",
+                    "content_block_types": ["thinking"],
+                    "input_tokens": 1234,
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                },
+                "empty_text_classification": "MAX_TOKENS_BEFORE_TEXT",
+            },
+        )
+        serialized_status = json.dumps(failed_status.to_dict(), sort_keys=True)
+        self.assertNotIn("authorization", serialized_status)
+        self.assertNotIn("Bearer secret", serialized_status)
+        self.assertNotIn("prompt secret", serialized_status)
+
+    def test_empty_response_classifies_thinking_only_without_text(self) -> None:
+        fake_client = FakeCandidateWriterClient(
+            _provider_response(
+                "",
+                provider_response_metadata={
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "end_turn",
+                    "content_block_types": ["thinking"],
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "thinking_tokens": 20,
+                },
+            )
+        )
+
+        result = execute_final_post_standalone_candidate_attempt(
+            _request(),
+            selected_evidence_ids=("ev-1",),
+            candidate_writer_client=fake_client,
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE)
+        self.assertEqual(
+            result.stage_statuses[1].metadata["empty_text_classification"],
+            "THINKING_ONLY_RESPONSE",
+        )
+
+    def test_empty_response_classifies_tool_use_only_without_text(self) -> None:
+        fake_client = FakeCandidateWriterClient(
+            _provider_response(
+                "",
+                provider_response_metadata={
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "tool_use",
+                    "content_block_types": ["tool_use"],
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "thinking_tokens": None,
+                },
+            )
+        )
+
+        result = execute_final_post_standalone_candidate_attempt(
+            _request(),
+            selected_evidence_ids=("ev-1",),
+            candidate_writer_client=fake_client,
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE)
+        self.assertEqual(
+            result.stage_statuses[1].metadata["empty_text_classification"],
+            "TOOL_USE_ONLY_RESPONSE",
+        )
+
+    def test_empty_response_classifies_remaining_provider_neutral_cases(self) -> None:
+        cases = (
+            (
+                "empty_content",
+                {
+                    "provider": "openai",
+                    "model": "gpt-4.1-2025-04-14",
+                    "stop_reason": None,
+                    "content_block_types": [],
+                    "input_tokens": 10,
+                    "output_tokens": 0,
+                    "thinking_tokens": None,
+                },
+                "EMPTY_CONTENT_SUCCESS_RESPONSE",
+            ),
+            (
+                "stop_without_text",
+                {
+                    "provider": "openai",
+                    "model": "gpt-4.1-2025-04-14",
+                    "stop_reason": "stop",
+                    "content_block_types": ["text"],
+                    "input_tokens": 10,
+                    "output_tokens": 0,
+                    "thinking_tokens": None,
+                },
+                "REFUSAL_OR_STOP_WITHOUT_TEXT",
+            ),
+            (
+                "unknown_empty_text",
+                {
+                    "provider": "unknown-provider",
+                    "model": "unknown-model",
+                    "stop_reason": None,
+                    "content_block_types": ["message"],
+                    "input_tokens": 10,
+                    "output_tokens": 0,
+                    "thinking_tokens": None,
+                },
+                "UNKNOWN_EMPTY_TEXT_RESPONSE",
+            ),
+        )
+
+        for name, provider_response_metadata, expected_classification in cases:
+            with self.subTest(name=name):
+                fake_client = FakeCandidateWriterClient(
+                    _provider_response(
+                        "",
+                        provider_response_metadata=provider_response_metadata,
+                    )
+                )
+
+                result = execute_final_post_standalone_candidate_attempt(
+                    _request(),
+                    selected_evidence_ids=("ev-1",),
+                    candidate_writer_client=fake_client,
+                )
+
+                self.assertEqual(
+                    result.failure_code,
+                    FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE,
+                )
+                self.assertEqual(
+                    result.stage_statuses[1].metadata["empty_text_classification"],
+                    expected_classification,
+                )
 
     def test_parse_failure_does_not_invoke_adaptation(self) -> None:
         fake_client = FakeCandidateWriterClient(_provider_response("{not-json"))
@@ -262,6 +422,45 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         self.assertEqual(result.completed_stage, STAGE_CANDIDATE_WRITER_PARSE)
         self.assertEqual(result.parsed_candidate, {"post_text": "Missing fields"})
         self.assertIsNone(result.candidate_writer_output)
+
+    def test_post_text_length_adaptation_failure_carries_safe_stage_metadata(
+        self,
+    ) -> None:
+        max_chars = build_final_post_payload_constraints()["post_text"]["max_chars"]
+        fake_client = FakeCandidateWriterClient(
+            _provider_response(
+                json.dumps(_candidate_payload(post_text="x" * (max_chars + 32)))
+            )
+        )
+
+        result = execute_final_post_standalone_candidate_attempt(
+            _request(),
+            selected_evidence_ids=("ev-1",),
+            candidate_writer_client=fake_client,
+        )
+
+        failed_status = next(
+            status
+            for status in result.stage_statuses
+            if status.stage == STAGE_CANDIDATE_WRITER_ADAPTATION
+        )
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_ADAPTATION)
+        self.assertEqual(
+            failed_status.metadata,
+            {
+                "validation_detail": {
+                    "field_path": "FinalPostPayload.post_text",
+                    "field_name": "post_text",
+                    "message": (
+                        "FinalPostPayload.post_text must not exceed "
+                        f"{max_chars} characters."
+                    ),
+                    "max_chars": max_chars,
+                    "actual_chars": max_chars + 32,
+                    "excess_chars": 32,
+                }
+            },
+        )
 
     def test_deterministic_gate_failure_preserves_candidate_text_and_skips_quality(
         self,
@@ -421,6 +620,107 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             result.quality_evaluator_prompt_render.variables["candidate_payload_json"],
         )
 
+    def test_full_attempt_allows_gemini_candidate_and_grounding_with_openai_quality(
+        self,
+    ) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+        semantic_client = _passing_semantic_client()
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(
+                candidate_writer_provider="gemini",
+                candidate_writer_model="gemini-3.6-flash",
+                semantic_grounding_provider="gemini",
+                semantic_grounding_model="gemini-3.6-flash",
+                quality_evaluator_provider="openai",
+                quality_evaluator_model="gpt-4.1-2025-04-14",
+            ),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertIsNone(result.failure_code)
+        self.assertEqual(candidate_client.call_count, 1)
+        self.assertFalse(candidate_client.json_mode)
+        self.assertEqual(candidate_client.thinking_mode, THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertEqual(candidate_client.max_output_tokens, 1200)
+        self.assertEqual(semantic_client.call_count, 1)
+        self.assertTrue(semantic_client.json_mode)
+        self.assertFalse(semantic_client.allow_json_mode_fallback)
+        self.assertEqual(semantic_client.thinking_mode, THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertEqual(evaluator_client.call_count, 1)
+        self.assertTrue(evaluator_client.json_mode)
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_ACCEPTED)
+
+    def test_full_attempt_allows_anthropic_candidate_and_grounding_with_openai_quality(
+        self,
+    ) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+        semantic_client = _passing_semantic_client()
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(
+                candidate_writer_provider="anthropic",
+                candidate_writer_model="claude-sonnet-5",
+                candidate_writer_max_output_tokens=4000,
+                semantic_grounding_provider="anthropic",
+                semantic_grounding_model="claude-sonnet-5",
+                quality_evaluator_provider="openai",
+                quality_evaluator_model="gpt-4.1-2025-04-14",
+            ),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertIsNone(result.failure_code)
+        self.assertEqual(candidate_client.call_count, 1)
+        self.assertFalse(candidate_client.json_mode)
+        self.assertEqual(candidate_client.thinking_mode, THINKING_MODE_DISABLED)
+        self.assertEqual(candidate_client.max_output_tokens, 4000)
+        self.assertEqual(semantic_client.call_count, 1)
+        self.assertTrue(semantic_client.json_mode)
+        self.assertFalse(semantic_client.allow_json_mode_fallback)
+        self.assertEqual(semantic_client.thinking_mode, THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertEqual(evaluator_client.call_count, 1)
+        self.assertTrue(evaluator_client.json_mode)
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_ACCEPTED)
+
+    def test_candidate_provider_model_mismatch_fails_before_candidate_call(self) -> None:
+        candidate_client = FakeCandidateWriterClient(
+            _provider_response(_candidate_json())
+        )
+
+        result = execute_final_post_standalone_candidate_attempt(
+            _request(
+                candidate_writer_provider="gemini",
+                candidate_writer_model="gpt-4.1-2025-04-14",
+            ),
+            selected_evidence_ids=("ev-1",),
+            candidate_writer_client=candidate_client,
+        )
+
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(result.failure_stage, STAGE_CANDIDATE_WRITER_REQUEST)
+        self.assertEqual(result.failure_code, FAILURE_CANDIDATE_WRITER_REQUEST)
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            result.failure_message,
+        )
+
     def test_full_attempt_preserves_explicit_quality_evaluator_token_override(
         self,
     ) -> None:
@@ -477,25 +777,26 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         evaluator_client = FakeCandidateWriterClient(
             _provider_response(json.dumps(_quality_review_payload(passed=True)))
         )
+        candidate_client = FakeCandidateWriterClient(_provider_response(_candidate_json()))
 
         result = execute_final_post_standalone_attempt(
             _request(semantic_grounding_provider=""),
-            candidate_writer_client=FakeCandidateWriterClient(
-                _provider_response(_candidate_json())
-            ),
+            candidate_writer_client=candidate_client,
             semantic_grounding_client=grounding_client,
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
 
+        self.assertEqual(candidate_client.call_count, 0)
         self.assertEqual(grounding_client.call_count, 0)
         self.assertEqual(evaluator_client.call_count, 0)
         self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_REQUEST)
         self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_REQUEST)
+        self.assertEqual(result.candidate_writer_invocation_count, 0)
         self.assertEqual(result.semantic_grounding_invocation_count, 0)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
-        self.assertEqual(result.semantic_grounding_state.status, "not_ready")
-        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.semantic_grounding_state)
+        self.assertIsNone(result.final_attempt_outcome)
 
     def test_full_attempt_grounding_provider_failure_skips_quality(self) -> None:
         grounding_client = FailingCandidateWriterClient(RuntimeError("secret"))
@@ -592,6 +893,36 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
             result.failure_message,
         )
 
+    def test_full_attempt_grounding_false_without_reason_is_normalization_failure(
+        self,
+    ) -> None:
+        invalid_review = _semantic_review_payload(passed=True)
+        invalid_review["pass"] = False
+        invalid_review["repairable"] = False
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+
+        result = execute_final_post_standalone_attempt(
+            _request(),
+            candidate_writer_client=FakeCandidateWriterClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=FakeCandidateWriterClient(
+                _provider_response(json.dumps(invalid_review))
+            ),
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(result.failure_code, FAILURE_SEMANTIC_GROUNDING_NORMALIZATION)
+        self.assertEqual(result.failure_stage, STAGE_SEMANTIC_GROUNDING_NORMALIZATION)
+        self.assertEqual(result.semantic_grounding_invocation_count, 1)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.semantic_grounding_state.status, "not_ready")
+        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+
     def test_full_attempt_grounding_pass_with_human_review_flag_is_normalization_failure(
         self,
     ) -> None:
@@ -660,6 +991,7 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         human_review_payload["requires_human_review"] = True
         human_review_payload["human_review_reason"] = "candidate contradicts evidence"
         human_review_payload["repairable"] = False
+        human_review_payload["repair_instructions"] = []
         evaluator_client = FakeCandidateWriterClient(
             _provider_response(json.dumps(_quality_review_payload(passed=True)))
         )
@@ -800,23 +1132,95 @@ class FinalPostStandaloneAttemptExecutionTests(SimpleTestCase):
         evaluator_client = FakeCandidateWriterClient(
             _provider_response(json.dumps(_quality_review_payload(passed=True)))
         )
+        candidate_client = FakeCandidateWriterClient(_provider_response(_candidate_json()))
+        grounding_client = _passing_semantic_client()
 
         result = execute_final_post_standalone_attempt(
             _request(quality_evaluator_provider=""),
-            candidate_writer_client=FakeCandidateWriterClient(
-                _provider_response(_candidate_json())
-            ),
-            semantic_grounding_client=_passing_semantic_client(),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=grounding_client,
             quality_evaluator_client=evaluator_client,
             **_full_attempt_kwargs(),
         )
 
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(grounding_client.call_count, 0)
         self.assertEqual(evaluator_client.call_count, 0)
         self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
         self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.candidate_writer_invocation_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
         self.assertEqual(result.quality_evaluator_invocation_count, 0)
-        self.assertEqual(result.quality_evaluation_state.status, "not_run")
-        self.assertEqual(result.final_attempt_outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.quality_evaluation_state)
+        self.assertIsNone(result.final_attempt_outcome)
+
+    def test_full_attempt_rejects_gemini_quality_evaluator_before_provider(
+        self,
+    ) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+        candidate_client = FakeCandidateWriterClient(_provider_response(_candidate_json()))
+        grounding_client = _passing_semantic_client()
+
+        result = execute_final_post_standalone_attempt(
+            _request(
+                quality_evaluator_provider="gemini",
+                quality_evaluator_model="gemini-3.6-flash",
+            ),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(grounding_client.call_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            result.failure_message,
+        )
+        self.assertEqual(result.candidate_writer_invocation_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertIsNone(result.final_attempt_outcome)
+
+    def test_full_attempt_rejects_anthropic_quality_evaluator_before_provider(
+        self,
+    ) -> None:
+        evaluator_client = FakeCandidateWriterClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=True)))
+        )
+        candidate_client = FakeCandidateWriterClient(_provider_response(_candidate_json()))
+        grounding_client = _passing_semantic_client()
+
+        result = execute_final_post_standalone_attempt(
+            _request(
+                quality_evaluator_provider="anthropic",
+                quality_evaluator_model="claude-sonnet-5",
+            ),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=grounding_client,
+            quality_evaluator_client=evaluator_client,
+            **_full_attempt_kwargs(),
+        )
+
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(grounding_client.call_count, 0)
+        self.assertEqual(evaluator_client.call_count, 0)
+        self.assertEqual(result.failure_code, FAILURE_QUALITY_EVALUATOR_REQUEST)
+        self.assertEqual(result.failure_stage, STAGE_QUALITY_EVALUATOR_REQUEST)
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            result.failure_message,
+        )
+        self.assertEqual(result.candidate_writer_invocation_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
+        self.assertIsNone(result.final_attempt_outcome)
 
     def test_full_attempt_too_small_evaluator_budget_fails_before_provider(
         self,
@@ -1144,12 +1548,14 @@ class FakeCandidateWriterClient:
         max_output_tokens: int,
         json_mode: bool,
         allow_json_mode_fallback: bool = True,
+        thinking_mode: str = THINKING_MODE_PROVIDER_DEFAULT,
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
         self.allow_json_mode_fallback = allow_json_mode_fallback
+        self.thinking_mode = thinking_mode
         return self.response
 
 
@@ -1167,13 +1573,14 @@ def _request(
     *,
     candidate_writer_render: object | None = None,
     candidate_writer_provider: str | None = "openai",
-    candidate_writer_model: str | None = "candidate-model",
+    candidate_writer_model: str | None = "gpt-4.1-2025-04-14",
     candidate_writer_max_output_tokens: object = 1200,
+    candidate_writer_thinking_mode: str | None = None,
     semantic_grounding_provider: str | None = "openai",
-    semantic_grounding_model: str | None = "semantic-model",
+    semantic_grounding_model: str | None = "gpt-4.1-2025-04-14",
     semantic_grounding_max_output_tokens: object = None,
     quality_evaluator_provider: str | None = "openai",
-    quality_evaluator_model: str | None = "quality-model",
+    quality_evaluator_model: str | None = "gpt-4.1-2025-04-14",
     quality_evaluator_max_output_tokens: object = None,
     quality_rubric: object | dict | None = None,
     policy: object | dict | None = None,
@@ -1198,6 +1605,7 @@ def _request(
         candidate_writer_provider=candidate_writer_provider,
         candidate_writer_model=candidate_writer_model,
         candidate_writer_max_output_tokens=candidate_writer_max_output_tokens,
+        candidate_writer_thinking_mode=candidate_writer_thinking_mode,
         semantic_grounding_prompt_text="Semantic grounding prompt text.",
         semantic_grounding_provider=semantic_grounding_provider,
         semantic_grounding_model=semantic_grounding_model,
@@ -1228,11 +1636,16 @@ def _render() -> CandidateWriterPromptRender:
     )
 
 
-def _provider_response(raw_text: str) -> SimpleNamespace:
+def _provider_response(
+    raw_text: str,
+    *,
+    provider_response_metadata: dict | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         text=raw_text,
         raw={"id": "resp-1", "metadata_sentinel": "provider-metadata"},
         usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        provider_response_metadata=provider_response_metadata,
     )
 
 
@@ -1265,8 +1678,8 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
         "automatic_fail_reason": "" if passed else "unsupported claim",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
-        "repair_instructions": [] if passed else ["Remove unsupported wording."],
+        "repairable": not passed,
+        "repair_instructions": [] if passed else ["c1: Remove unsupported wording."],
     }
 
 
@@ -1322,6 +1735,23 @@ def _angle_decision() -> dict:
     return {
         "controlling_angle": "Remote policies need clarity and inclusion.",
         "author_position": "Leaders should connect policy clarity with team trust.",
+        "authorial_voice_directive": {
+            "authorial_observation": (
+                "What stands out is that policy clarity and team trust are separate signals."
+            ),
+            "rejected_reading": (
+                "Do not treat a written policy as proof that inclusion is solved."
+            ),
+            "why_distinction_matters": (
+                "The distinction matters because remote work needs both rules and support."
+            ),
+            "personal_presence_requirement": "explicit_author_owned_statement_required",
+            "first_person_policy": "allowed_not_required",
+            "forbidden_author_claims": [
+                "personal experience",
+                "professional authority",
+            ],
+        },
     }
 
 
@@ -1358,6 +1788,24 @@ def _bitcoin_angle_decision() -> dict:
     return {
         "controlling_angle": "Bitcoin market signals need qualified interpretation.",
         "author_position": "Do not turn likelihood and risk into certainty.",
+        "authorial_voice_directive": {
+            "authorial_observation": (
+                "What stands out is how quickly different Bitcoin signals get collapsed into one conclusion."
+            ),
+            "rejected_reading": (
+                "Do not treat adoption interest, growth forecasts, and trader positioning as the same signal."
+            ),
+            "why_distinction_matters": (
+                "The distinction matters because projected growth and qualified positioning do not prove certainty."
+            ),
+            "personal_presence_requirement": "explicit_author_owned_statement_required",
+            "first_person_policy": "allowed_not_required",
+            "forbidden_author_claims": [
+                "personal experience",
+                "professional authority",
+                "direct market exposure",
+            ],
+        },
     }
 
 
@@ -1443,8 +1891,10 @@ def _bitcoin_drift_grounding_payload() -> dict:
         "human_review_reason": "",
         "repairable": True,
         "repair_instructions": [
-            "Remove optimism/stability/recovery/growth causal drift.",
-            "Keep likely, may, projected, and risk remains qualifications.",
+            "c-optimism: Remove optimism unless directly grounded.",
+            "c-stability: Preserve likely/may/risk framing.",
+            "c-recovery: Remove recovery-causality wording.",
+            "c-growth: Separate projected growth from trader-positioning risk.",
         ],
     }
 

@@ -56,15 +56,19 @@ _CRITERION_DEFINITIONS = (
     ),
     (
         "author_point_of_view",
-        "Evaluate whether the author interprets the evidence with a clear "
-        "judgment or thesis in the post text instead of neutrally reporting "
-        "facts or repeating source relationships.",
+        "Evaluate whether the post text contains a visible author-owned "
+        "judgment about what the author notices, rejects, or thinks matters "
+        "instead of only a clear thesis, rhetorical question, or neutral "
+        "source relationship. Score 5 requires an explicit author-owned "
+        "interpretive statement tied to supplied evidence; score 4 may reflect "
+        "strong article-like editorial ownership with limited personal "
+        "presence only when explicit personal presence is not required.",
     ),
     (
         "human_voice",
-        "Evaluate whether the post sounds natural, specific, and human rather "
-        "than corporate, template-like, summary-like, or generic AI-generated "
-        "text.",
+        "Evaluate whether the post sounds natural, readable, specific, and "
+        "human rather than corporate, template-like, summary-like, or generic "
+        "AI-generated text. Do not require first person for human_voice.",
     ),
     (
         "practical_value",
@@ -99,6 +103,7 @@ _AUTOMATIC_FAIL_CONDITIONS = (
     "sounds like generic AI-generated content",
     "reads like a corporate memo instead of a human LinkedIn post",
     "has no human author voice",
+    "invents biography, professional authority, direct exposure, or emotional reaction",
     "makes source terminology the main angle by accident",
     "exceeds 1300 characters",
     "relies on generic phrases as the main argument",
@@ -115,6 +120,13 @@ _SCORING_INVARIANTS = (
     "Unsupported factual or causal drift must fail evidence or trigger automatic failure.",
     "Source coverage is not the same as synthesis.",
     "Clean grammar and coherent structure are not sufficient for human_voice.",
+    "Readable human voice is not sufficient for author_point_of_view.",
+    "Score 5 for author_point_of_view requires an explicit author-owned interpretive statement, a substantive choice between competing readings, evidence-tied judgment, and no fabricated experience or authority.",
+    "Strong article-like editorial ownership with limited explicit personal presence may qualify for author_point_of_view 4 but not 5 only when explicit personal presence is not required.",
+    "When personal_presence_requirement is explicit_author_owned_statement_required, not exactly one qualifying explicit author-owned interpretive statement, meaning zero or multiple, must score no higher than 3 for author_point_of_view and pass must be false.",
+    "A strong thesis, rhetorical question, short sentences, or editorial confidence alone is not sufficient for author_point_of_view 5.",
+    "First-person wording alone is not sufficient for author_point_of_view.",
+    "Personal presence must not automatically increase human_voice.",
     "Declared brief or angle metadata must not inflate scores when post_text does not deliver it.",
     "Any automatic failure forces pass to false regardless of total_score.",
 )

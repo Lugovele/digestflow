@@ -70,6 +70,7 @@ EXPECTED_AUTOMATIC_FAIL_CONDITIONS = (
     "sounds like generic AI-generated content",
     "reads like a corporate memo instead of a human LinkedIn post",
     "has no human author voice",
+    "invents biography, professional authority, direct exposure, or emotional reaction",
     "makes source terminology the main angle by accident",
     "exceeds 1300 characters",
     "relies on generic phrases as the main argument",
@@ -86,6 +87,13 @@ EXPECTED_SCORING_INVARIANTS = (
     "Unsupported factual or causal drift must fail evidence or trigger automatic failure.",
     "Source coverage is not the same as synthesis.",
     "Clean grammar and coherent structure are not sufficient for human_voice.",
+    "Readable human voice is not sufficient for author_point_of_view.",
+    "Score 5 for author_point_of_view requires an explicit author-owned interpretive statement, a substantive choice between competing readings, evidence-tied judgment, and no fabricated experience or authority.",
+    "Strong article-like editorial ownership with limited explicit personal presence may qualify for author_point_of_view 4 but not 5 only when explicit personal presence is not required.",
+    "When personal_presence_requirement is explicit_author_owned_statement_required, not exactly one qualifying explicit author-owned interpretive statement, meaning zero or multiple, must score no higher than 3 for author_point_of_view and pass must be false.",
+    "A strong thesis, rhetorical question, short sentences, or editorial confidence alone is not sufficient for author_point_of_view 5.",
+    "First-person wording alone is not sufficient for author_point_of_view.",
+    "Personal presence must not automatically increase human_voice.",
     "Declared brief or angle metadata must not inflate scores when post_text does not deliver it.",
     "Any automatic failure forces pass to false regardless of total_score.",
 )
@@ -213,11 +221,46 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
             "causal drift",
             "Source coverage is not the same as synthesis",
             "Clean grammar and coherent structure",
+            "Readable human voice is not sufficient",
+            "explicit author-owned interpretive statement",
+            "article-like editorial ownership",
+            "explicit_author_owned_statement_required",
+            "meaning zero or multiple",
+            "pass must be false",
+            "First-person wording alone",
+            "Personal presence must not automatically increase human_voice",
             "metadata must not inflate scores",
             "automatic failure forces pass to false",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, invariants)
+
+    def test_author_point_of_view_definition_requires_owned_judgment(self) -> None:
+        definition = get_quality_evaluator_rubric_payload().criteria[
+            "author_point_of_view"
+        ]
+
+        for phrase in (
+            "author-owned judgment",
+            "what the author notices",
+            "rejects",
+            "thinks matters",
+            "Score 5",
+            "interpretive statement",
+            "score 4",
+            "editorial ownership",
+            "rhetorical question",
+            "neutral source relationship",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, definition)
+
+    def test_human_voice_definition_does_not_require_first_person(self) -> None:
+        definition = get_quality_evaluator_rubric_payload().criteria["human_voice"]
+
+        self.assertIn("natural", definition)
+        self.assertIn("readable", definition)
+        self.assertIn("Do not require first person", definition)
 
     def test_automatic_failures_contain_no_routing_action_names(self) -> None:
         payload = get_quality_evaluator_rubric_payload()
@@ -540,6 +583,26 @@ class LinkedInPostQualityRubricContractTests(SimpleTestCase):
         self.assertIn("use only automatic-failure rules defined", prompt)
         self.assertIn("any documented automatic failure applies", prompt)
         self.assertIn('"pass" must be false when automatic_fail_reason is not an empty string', prompt)
+
+    def test_quality_target_documents_required_personal_presence_rule(self) -> None:
+        quality_target = Path("docs/linkedin-post-quality-target.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("personal_presence_requirement", quality_target)
+        self.assertIn("explicit_author_owned_statement_required", quality_target)
+        self.assertIn("not exactly one qualifying explicit", quality_target)
+        self.assertIn("meaning zero or multiple", quality_target)
+
+    def test_posting_stage_contract_documents_personal_presence_field(self) -> None:
+        stage_contract = Path("docs/linkedin-posting-stage-contracts.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("personal_presence_requirement", stage_contract)
+        self.assertIn("explicit_author_owned_statement_required", stage_contract)
+        self.assertIn("author_owned_statement_allowed", stage_contract)
+        self.assertIn("editorial_stance_only", stage_contract)
 
     def test_prompt_and_payload_versions_are_consistent(self) -> None:
         contract = get_prompt_contract(PROMPT_FINAL_POST_QUALITY_EVALUATOR)

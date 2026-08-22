@@ -12,14 +12,18 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import OpenAIClient
+from apps.ai.client import build_ai_client, get_ai_provider_model_error
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+    get_final_post_role_provider_model_policy_failure,
+)
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 2400
 MIN_MAX_OUTPUT_TOKENS = 2000
 DEFAULT_JSON_MODE = True
-SUPPORTED_PROVIDER = "openai"
+STAGE_NAME = "semantic grounding"
 
 
 @dataclass(frozen=True)
@@ -110,12 +114,24 @@ def execute_semantic_grounding_prompt(
 
     prompt = f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}"
     try:
-        text_client = client if client is not None else OpenAIClient(model=request.model)
+        text_client = (
+            client
+            if client is not None
+            else build_ai_client(provider=request.provider, model=request.model)
+        )
         response = text_client.generate_text(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
             json_mode=request.json_mode,
             allow_json_mode_fallback=False,
+        )
+    except ValueError as exc:
+        return SemanticGroundingRawResponse(
+            raw_text="",
+            provider=request.provider,
+            model=request.model,
+            prompt_metadata=prompt_metadata,
+            execution_error=str(exc),
         )
     except Exception:  # pragma: no cover - covered with fake failure.
         return SemanticGroundingRawResponse(
@@ -153,10 +169,22 @@ def get_semantic_grounding_execution_request_error(
 ) -> str | None:
     if not request.provider:
         return "missing semantic grounding provider"
-    if request.provider != SUPPORTED_PROVIDER:
-        return f"unsupported semantic grounding provider: {request.provider}"
     if not request.model:
         return "missing semantic grounding model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
+    provider_model_error = get_ai_provider_model_error(
+        request.provider,
+        request.model,
+        stage_name=STAGE_NAME,
+    )
+    if provider_model_error is not None:
+        return provider_model_error
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,

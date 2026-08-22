@@ -472,8 +472,8 @@ def _semantic_state(*, passed: bool) -> FinalPostSemanticGroundingState:
             "automatic_fail_reason": "" if passed else "unsupported claim",
             "requires_human_review": False,
             "human_review_reason": "",
-            "repairable": True,
-            "repair_instructions": [] if passed else ["Remove unsupported claim."],
+            "repairable": not passed,
+            "repair_instructions": [] if passed else ["c1: Remove unsupported claim."],
         },
         selected_evidence_ids=["a0-summary"],
     )

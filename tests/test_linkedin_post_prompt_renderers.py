@@ -13,9 +13,13 @@ from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
 from services.packaging.linkedin_post_editorial_boundary import PostGenerationMetadata
 from services.packaging.linkedin_post_flow_input_builders import (
+    CandidateWriterInput,
     build_candidate_writer_input,
 )
-from services.packaging.linkedin_post_pipeline import FinalPostPayload
+from services.packaging.linkedin_post_pipeline import (
+    FinalPostPayload,
+    build_final_post_payload_constraints,
+)
 from services.packaging.linkedin_post_prompt_renderers import (
     CandidateWriterPromptRender,
     FINAL_POST_PAYLOAD_PROMPT_FIELDS,
@@ -31,14 +35,28 @@ from services.packaging.linkedin_post_prompt_renderers import (
 from services.packaging.linkedin_post_quality_rubric_contract import (
     get_quality_evaluator_rubric_payload,
 )
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    build_semantic_grounding_prompt_rules,
+)
 
 
 QUALITY_EVALUATOR_VARIABLES = (
     "candidate_payload_json",
     "post_brief_json",
     "angle_decision_json",
+    "authorial_voice_directive_json",
     "selected_evidence_json",
     "quality_rubric_json",
+)
+
+CANDIDATE_WRITER_VARIABLES = (
+    "post_brief_json",
+    "angle_decision_json",
+    "authorial_voice_directive_json",
+    "personal_presence_instruction",
+    "selected_evidence_json",
+    "final_post_payload_constraints_json",
+    "candidate_writer_input_json",
 )
 
 SEMANTIC_GROUNDING_VARIABLES = (
@@ -46,13 +64,15 @@ SEMANTIC_GROUNDING_VARIABLES = (
     "post_brief_json",
     "angle_decision_json",
     "selected_evidence_json",
-    "grounding_rules_json",
+    "semantic_grounding_rules_json",
 )
 
 REPAIR_WRITER_VARIABLES = (
     "original_candidate_payload_json",
     "post_brief_json",
     "angle_decision_json",
+    "authorial_voice_directive_json",
+    "personal_presence_instruction",
     "selected_evidence_json",
     "deterministic_findings_json",
     "quality_findings_json",
@@ -78,6 +98,7 @@ class PostBriefStub:
 class AngleDecisionStub:
     controlling_angle: str
     supporting_evidence_ids: list[str]
+    authorial_voice_directive: dict[str, object]
 
 
 class LinkedInPostPromptRenderersTests(SimpleTestCase):
@@ -91,13 +112,17 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
 
         self.assertEqual(
             set(render.variables),
-            {
-                "post_brief_json",
-                "angle_decision_json",
-                "selected_evidence_json",
-                "candidate_writer_input_json",
-            },
+            set(CANDIDATE_WRITER_VARIABLES),
         )
+
+    def test_candidate_writer_constraints_use_final_post_payload_contract(self) -> None:
+        render = render_candidate_writer_prompt_input(_candidate_input())
+
+        constraints = json.loads(render.variables["final_post_payload_constraints_json"])
+
+        self.assertEqual(constraints, build_final_post_payload_constraints())
+        self.assertEqual(constraints["post_text"]["max_chars"], 1300)
+        self.assertEqual(constraints["post_text"]["prompt_target_chars"], 1250)
 
     def test_rendered_selected_evidence_preserves_id_order(self) -> None:
         render = render_candidate_writer_prompt_input(_candidate_input())
@@ -155,6 +180,89 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             ["a0-summary", "a1-kp0"],
         )
         self.assertIn("ANGLE_DECISION_JSON", render.input_text)
+
+    def test_candidate_writer_render_includes_authorial_voice_directive(self) -> None:
+        render = render_candidate_writer_prompt_input(_candidate_input())
+
+        directive = json.loads(render.variables["authorial_voice_directive_json"])
+
+        self.assertEqual(
+            directive["authorial_observation"],
+            "What stands out is that remote policies and isolation are separate signals.",
+        )
+        self.assertEqual(
+            directive["first_person_policy"],
+            "allowed_not_required",
+        )
+        self.assertEqual(
+            directive["personal_presence_requirement"],
+            "explicit_author_owned_statement_required",
+        )
+        self.assertIn("AUTHORIAL_VOICE_DIRECTIVE_JSON", render.input_text)
+
+    def test_candidate_writer_render_includes_personal_presence_instruction(self) -> None:
+        render = render_candidate_writer_prompt_input(_candidate_input())
+
+        self.assertIn("personal_presence_instruction", render.variables)
+        self.assertIn(
+            "Include exactly one naturally integrated author-owned interpretive statement",
+            render.variables["personal_presence_instruction"],
+        )
+        self.assertIn(
+            "An impersonal editorial judgment is not sufficient",
+            render.variables["personal_presence_instruction"],
+        )
+        self.assertIn("PERSONAL_PRESENCE_INSTRUCTION", render.input_text)
+
+    def test_candidate_writer_render_maps_personal_presence_policies(self) -> None:
+        expected_phrases = {
+            "explicit_author_owned_statement_required": "exactly one",
+            "author_owned_statement_allowed": "allowed when natural, but not required",
+            "editorial_stance_only": "without adding explicit personal-presence wording",
+        }
+
+        for policy, expected_phrase in expected_phrases.items():
+            with self.subTest(policy=policy):
+                render = render_candidate_writer_prompt_input(
+                    _candidate_input(
+                        angle_decision=_angle_decision_with_personal_presence_policy(
+                            policy
+                        )
+                    )
+                )
+
+                self.assertIn(
+                    expected_phrase,
+                    render.variables["personal_presence_instruction"],
+                )
+
+    def test_candidate_writer_render_rejects_unknown_personal_presence_policy(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "personal-presence policy"):
+            render_candidate_writer_prompt_input(
+                _candidate_input(
+                    angle_decision=_angle_decision_with_personal_presence_policy(
+                        "invent_persona"
+                    )
+                )
+            )
+
+    def test_candidate_writer_render_rejects_missing_authorial_voice_directive(
+        self,
+    ) -> None:
+        candidate_input = CandidateWriterInput(
+            post_brief=_post_brief(),
+            angle_decision={
+                "controlling_angle": "Make remote work explicit.",
+                "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+            },
+            selected_evidence=(),
+            prompt_metadata=None,
+        )
+
+        with self.assertRaisesRegex(TypeError, "authorial_voice_directive"):
+            render_candidate_writer_prompt_input(candidate_input)
 
     def test_prompt_metadata_is_copied_when_provided(self) -> None:
         prompt_metadata = _prompt_metadata()
@@ -258,6 +366,10 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             _stable_json(editorial_input.angle_decision),
         )
         self.assertEqual(
+            render.variables["authorial_voice_directive_json"],
+            _stable_json(editorial_input.angle_decision["authorial_voice_directive"]),
+        )
+        self.assertEqual(
             render.variables["selected_evidence_json"],
             _stable_json(_prompt_selected_evidence(editorial_input.selected_evidence)),
         )
@@ -286,6 +398,104 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             {field.name for field in fields(FinalPostPayload)},
         )
 
+    def test_quality_evaluator_render_includes_authorial_voice_directive(self) -> None:
+        render = render_quality_evaluator_prompt_input(
+            _post_editorial_input(),
+            get_quality_evaluator_rubric_payload(),
+        )
+
+        directive = json.loads(render.variables["authorial_voice_directive_json"])
+
+        self.assertEqual(
+            directive["rejected_reading"],
+            "Do not treat policy documentation as proof that isolation has been solved.",
+        )
+        self.assertIn("AUTHORIAL_VOICE_DIRECTIVE_JSON", render.input_text)
+
+    def test_quality_evaluator_render_rejects_missing_authorial_voice_directive(
+        self,
+    ) -> None:
+        editorial_input = _post_editorial_input(
+            angle_decision={
+                "controlling_angle": "Make remote work explicit.",
+                "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+            },
+        )
+
+        with self.assertRaisesRegex(TypeError, "authorial_voice_directive"):
+            render_quality_evaluator_prompt_input(
+                editorial_input,
+                get_quality_evaluator_rubric_payload(),
+            )
+
+    def test_quality_evaluator_render_rejects_missing_personal_presence_policy(
+        self,
+    ) -> None:
+        angle_decision = _post_editorial_input().angle_decision
+        directive = dict(angle_decision["authorial_voice_directive"])
+        directive.pop("personal_presence_requirement")
+        editorial_input = _post_editorial_input(
+            angle_decision={
+                **angle_decision,
+                "authorial_voice_directive": directive,
+            }
+        )
+
+        with self.assertRaisesRegex(TypeError, "personal_presence_requirement"):
+            render_quality_evaluator_prompt_input(
+                editorial_input,
+                get_quality_evaluator_rubric_payload(),
+            )
+
+    def test_quality_evaluator_render_rejects_unknown_personal_presence_policy(
+        self,
+    ) -> None:
+        angle_decision = _post_editorial_input().angle_decision
+        directive = dict(angle_decision["authorial_voice_directive"])
+        directive["personal_presence_requirement"] = "invent_persona"
+        editorial_input = _post_editorial_input(
+            angle_decision={
+                **angle_decision,
+                "authorial_voice_directive": directive,
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "personal-presence policy"):
+            render_quality_evaluator_prompt_input(
+                editorial_input,
+                get_quality_evaluator_rubric_payload(),
+            )
+
+    def test_quality_evaluator_render_rejects_incomplete_authorial_voice_directive(
+        self,
+    ) -> None:
+        cases = (
+            ("authorial_observation", "   ", TypeError),
+            ("rejected_reading", "", TypeError),
+            ("why_distinction_matters", None, TypeError),
+            ("first_person_policy", "required", ValueError),
+            ("forbidden_author_claims", [], TypeError),
+            ("forbidden_author_claims", ["personal experience", ""], TypeError),
+        )
+
+        for field_name, field_value, expected_error in cases:
+            with self.subTest(field_name=field_name):
+                angle_decision = _post_editorial_input().angle_decision
+                directive = dict(angle_decision["authorial_voice_directive"])
+                directive[field_name] = field_value
+                editorial_input = _post_editorial_input(
+                    angle_decision={
+                        **angle_decision,
+                        "authorial_voice_directive": directive,
+                    }
+                )
+
+                with self.assertRaisesRegex(expected_error, field_name):
+                    render_quality_evaluator_prompt_input(
+                        editorial_input,
+                        get_quality_evaluator_rubric_payload(),
+                    )
+
     def test_render_semantic_grounding_prompt_input_returns_contract(self) -> None:
         render = render_semantic_grounding_prompt_input(_post_editorial_input())
 
@@ -295,6 +505,15 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         render = render_semantic_grounding_prompt_input(_post_editorial_input())
 
         self.assertEqual(tuple(render.variables), SEMANTIC_GROUNDING_VARIABLES)
+
+    def test_semantic_grounding_rules_are_rendered_from_contract(self) -> None:
+        render = render_semantic_grounding_prompt_input(_post_editorial_input())
+
+        self.assertEqual(
+            render.variables["semantic_grounding_rules_json"],
+            _stable_json(build_semantic_grounding_prompt_rules()),
+        )
+        self.assertIn("SEMANTIC_GROUNDING_RULES_JSON", render.input_text)
 
     def test_semantic_grounding_preserves_selected_evidence_order_and_text(self) -> None:
         editorial_input = _post_editorial_input(
@@ -708,6 +927,7 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             "## CANDIDATE_PAYLOAD_JSON",
             "## POST_BRIEF_JSON",
             "## ANGLE_DECISION_JSON",
+            "## AUTHORIAL_VOICE_DIRECTIVE_JSON",
             "## SELECTED_EVIDENCE_JSON",
             "## QUALITY_RUBRIC_JSON",
         ]
@@ -894,6 +1114,23 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
             ["opening support", "practical tension"],
         )
 
+    def test_repair_writer_render_includes_authorial_voice_and_personal_presence(
+        self,
+    ) -> None:
+        render = _repair_writer_render()
+        directive = json.loads(render.variables["authorial_voice_directive_json"])
+
+        self.assertEqual(
+            directive["personal_presence_requirement"],
+            "explicit_author_owned_statement_required",
+        )
+        self.assertIn(
+            "Include exactly one naturally integrated author-owned interpretive statement",
+            render.variables["personal_presence_instruction"],
+        )
+        self.assertIn("AUTHORIAL_VOICE_DIRECTIVE_JSON", render.input_text)
+        self.assertIn("PERSONAL_PRESENCE_INSTRUCTION", render.input_text)
+
     def test_repair_writer_render_filters_candidate_payload_runtime_fields(self) -> None:
         render = _repair_writer_render(
             original_candidate_payload={
@@ -1012,10 +1249,10 @@ class LinkedInPostPromptRenderersTests(SimpleTestCase):
         self.assertIsNone(render.prompt_path)
 
 
-def _candidate_input(prompt_metadata=None):
+def _candidate_input(prompt_metadata=None, angle_decision=None):
     return build_candidate_writer_input(
         _post_brief(),
-        _angle_decision(),
+        angle_decision or _angle_decision(),
         prompt_metadata=prompt_metadata,
     )
 
@@ -1042,6 +1279,36 @@ def _angle_decision() -> AngleDecisionStub:
     return AngleDecisionStub(
         controlling_angle="Make remote work explicit.",
         supporting_evidence_ids=["a0-summary", "a1-kp0"],
+        authorial_voice_directive={
+            "authorial_observation": (
+                "What stands out is that remote policies and isolation are separate signals."
+            ),
+            "rejected_reading": (
+                "Do not treat policy documentation as proof that isolation has been solved."
+            ),
+            "why_distinction_matters": (
+                "The distinction matters because remote work needs both operating rules and support."
+            ),
+            "personal_presence_requirement": "explicit_author_owned_statement_required",
+            "first_person_policy": "allowed_not_required",
+            "forbidden_author_claims": [
+                "personal experience",
+                "professional authority",
+            ],
+        },
+    )
+
+
+def _angle_decision_with_personal_presence_policy(
+    policy: str,
+) -> AngleDecisionStub:
+    angle_decision = _angle_decision()
+    directive = dict(angle_decision.authorial_voice_directive)
+    directive["personal_presence_requirement"] = policy
+    return AngleDecisionStub(
+        controlling_angle=angle_decision.controlling_angle,
+        supporting_evidence_ids=angle_decision.supporting_evidence_ids,
+        authorial_voice_directive=directive,
     )
 
 
@@ -1094,6 +1361,23 @@ def _post_editorial_input(
             "reader_problem": "Hybrid teams often rely on implicit norms.",
             "main_tension": "Flexibility can create isolation.",
             "supporting_evidence_ids": ["a0-summary", "a1-kp0"],
+            "authorial_voice_directive": {
+                "authorial_observation": (
+                    "What stands out is that remote policies and isolation are separate signals."
+                ),
+                "rejected_reading": (
+                    "Do not treat policy documentation as proof that isolation has been solved."
+                ),
+                "why_distinction_matters": (
+                    "The distinction matters because remote work needs both operating rules and support."
+                ),
+                "personal_presence_requirement": "explicit_author_owned_statement_required",
+                "first_person_policy": "allowed_not_required",
+                "forbidden_author_claims": [
+                    "personal experience",
+                    "professional authority",
+                ],
+            },
         },
         selected_evidence=selected_evidence or [
             {

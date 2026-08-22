@@ -316,7 +316,7 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
                     "repair_type": "semantic_grounding",
                     "failed_claim_ids": ["c1"],
                     "repair_scope": "human-facing FinalPostPayload fields",
-                    "repair_instruction": "Remove unsupported wording.",
+                    "repair_instruction": "c1: Remove unsupported wording.",
                     "decision_reason": "semantic grounding failed: unsupported claim",
                     "preserve": [
                         "selected evidence only",
@@ -485,19 +485,20 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(result.repair_invocation_count, 1)
 
     def test_repair_request_failure_does_not_mark_repair_executed(self) -> None:
+        candidate_client = QueuedFakeClient(_provider_response(_candidate_json()))
+        semantic_client = _passing_semantic_client()
+        quality_client = QueuedFakeClient(
+            _provider_response(json.dumps(_quality_review_payload(passed=False)))
+        )
         repair_client = QueuedFakeClient(
             _provider_response(_candidate_json(post_text="Should not be called."))
         )
 
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(repair_provider="unsupported"),
-            candidate_writer_client=QueuedFakeClient(
-                _provider_response(_candidate_json())
-            ),
-            semantic_grounding_client=_passing_semantic_client(),
-            quality_evaluator_client=QueuedFakeClient(
-                _provider_response(json.dumps(_quality_review_payload(passed=False)))
-            ),
+            candidate_writer_client=candidate_client,
+            semantic_grounding_client=semantic_client,
+            quality_evaluator_client=quality_client,
             repair_writer_client=repair_client,
             **_flow_kwargs(),
         )
@@ -505,6 +506,13 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
         self.assertEqual(result.failure_code, FAILURE_REPAIR_WRITER_REQUEST)
         self.assertEqual(result.failure_stage, "repair_writer_request")
         self.assertFalse(result.repair_executed)
+        self.assertIsNone(result.initial_attempt_result)
+        self.assertEqual(candidate_client.call_count, 0)
+        self.assertEqual(semantic_client.call_count, 0)
+        self.assertEqual(quality_client.call_count, 0)
+        self.assertEqual(result.candidate_writer_invocation_count, 0)
+        self.assertEqual(result.semantic_grounding_invocation_count, 0)
+        self.assertEqual(result.quality_evaluator_invocation_count, 0)
         self.assertEqual(result.repair_invocation_count, 0)
         self.assertEqual(repair_client.call_count, 0)
 
@@ -689,12 +697,14 @@ class QueuedFakeClient:
         max_output_tokens: int,
         json_mode: bool,
         allow_json_mode_fallback: bool = True,
+        thinking_mode: str = "provider_default",
     ) -> SimpleNamespace:
         self.call_count += 1
         self.prompts.append(prompt)
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
         self.allow_json_mode_fallback = allow_json_mode_fallback
+        self.thinking_mode = thinking_mode
         if not self.responses:
             raise AssertionError("No queued fake response available.")
         return self.responses.pop(0)
@@ -737,7 +747,7 @@ def _controlled_request(
         ),
         repair_prompt_text="Repair Writer prompt text.",
         repair_provider=repair_provider,
-        repair_model="repair-model",
+        repair_model="gpt-4.1-2025-04-14",
         repair_max_output_tokens=1200,
         repair_enabled=repair_enabled,
         max_controlled_attempts=max_controlled_attempts,
@@ -770,14 +780,14 @@ def _attempt_request(
         attempt_index=0,
         max_attempts=max_attempts,
         candidate_writer_provider=candidate_writer_provider,
-        candidate_writer_model="candidate-model",
+        candidate_writer_model="gpt-4.1-2025-04-14",
         candidate_writer_max_output_tokens=1200,
         semantic_grounding_prompt_text="Semantic grounding prompt text.",
         semantic_grounding_provider="openai",
-        semantic_grounding_model="semantic-model",
+        semantic_grounding_model="gpt-4.1-2025-04-14",
         semantic_grounding_max_output_tokens=None,
         quality_evaluator_provider="openai",
-        quality_evaluator_model="quality-model",
+        quality_evaluator_model="gpt-4.1-2025-04-14",
         quality_evaluator_max_output_tokens=None,
         policy=policy or FinalPostDecisionPolicy(max_total_attempts=2),
     )
@@ -813,6 +823,23 @@ def _angle_decision() -> dict:
     return {
         "controlling_angle": "Remote policies need clarity and inclusion.",
         "author_position": "Leaders should connect policy clarity with team trust.",
+        "authorial_voice_directive": {
+            "authorial_observation": (
+                "What stands out is that policy clarity and team trust are separate signals."
+            ),
+            "rejected_reading": (
+                "Do not treat a written policy as proof that inclusion is solved."
+            ),
+            "why_distinction_matters": (
+                "The distinction matters because remote work needs both rules and support."
+            ),
+            "personal_presence_requirement": "explicit_author_owned_statement_required",
+            "first_person_policy": "allowed_not_required",
+            "forbidden_author_claims": [
+                "personal experience",
+                "professional authority",
+            ],
+        },
     }
 
 
@@ -854,8 +881,8 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
         "automatic_fail_reason": "" if passed else "unsupported claim",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
-        "repair_instructions": [] if passed else ["Remove unsupported wording."],
+        "repairable": not passed,
+        "repair_instructions": [] if passed else ["c1: Remove unsupported wording."],
     }
 
 

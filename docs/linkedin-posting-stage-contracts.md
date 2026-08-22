@@ -407,6 +407,16 @@ Required fields:
 - `main_tension`
 - `supporting_evidence_ids`
 - `angle_to_avoid`
+- `authorial_voice_directive`
+
+The `authorial_voice_directive` object must include:
+
+- `authorial_observation`: the author's interpretive observation that should be visible in the final post;
+- `rejected_reading`: the tempting but unsupported reading the writer must avoid;
+- `why_distinction_matters`: why the distinction matters for the reader or decision;
+- `personal_presence_requirement`: bounded policy for whether the final post must visibly assign the interpretation to the author. Current LinkedIn flow uses `explicit_author_owned_statement_required`; other supported values are `author_owned_statement_allowed` and `editorial_stance_only`;
+- `first_person_policy`: currently `allowed_not_required`, meaning first person is permitted but not required;
+- `forbidden_author_claims`: author claims the writer must not invent, such as personal experience, professional authority, direct market exposure, or client stories.
 
 Validation rules:
 
@@ -415,6 +425,8 @@ Validation rules:
 - `author_position` must be visible;
 - supporting evidence IDs must refer to contextualized evidence;
 - `angle_to_avoid` should prevent likely drift.
+- `authorial_voice_directive` must preserve author perspective without inventing biography, credentials, client work, market exposure, or personal experience.
+- `personal_presence_requirement` must be one of `explicit_author_owned_statement_required`, `author_owned_statement_allowed`, or `editorial_stance_only`; do not silently supply a generic default.
 
 Must not contain:
 
@@ -432,7 +444,19 @@ Example JSON:
   "author_position": "Proof of judgment matters more than surface polish.",
   "main_tension": "Finished outcomes look credible, but they can hide how the person actually works.",
   "supporting_evidence_ids": ["e1"],
-  "angle_to_avoid": "Do not make this a broad post about visual identity, authenticity, or personal brand strategy."
+  "angle_to_avoid": "Do not make this a broad post about visual identity, authenticity, or personal brand strategy.",
+  "authorial_voice_directive": {
+    "authorial_observation": "The author notices that polished output and visible judgment should not be treated as the same proof.",
+    "rejected_reading": "Do not imply the author has personally audited the reader's profile or client work.",
+    "why_distinction_matters": "The distinction matters because readers need a grounded judgment, not another neutral recap of branding advice.",
+    "personal_presence_requirement": "explicit_author_owned_statement_required",
+    "first_person_policy": "allowed_not_required",
+    "forbidden_author_claims": [
+      "personal experience",
+      "professional authority",
+      "client or customer stories"
+    ]
+  }
 }
 ```
 

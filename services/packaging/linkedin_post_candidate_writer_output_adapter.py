@@ -16,6 +16,7 @@ from services.packaging.linkedin_post_pipeline import (
     FinalPostPayload,
     LinkedInPostPipelineContractError,
     REQUIRED_QUALITY_CHECKS,
+    build_final_post_payload_constraints,
     final_post_payload_to_dict,
     validate_final_post_payload,
 )
@@ -74,9 +75,16 @@ REQUIRED_PROMPT_METADATA_ATTRIBUTES = (
 class CandidateWriterOutputAdaptationError(ValueError):
     """Raised when parsed Candidate Writer output cannot become a handoff."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        validation_detail: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.validation_detail = copy.deepcopy(validation_detail)
 
 
 def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +121,10 @@ def adapt_candidate_writer_payload(parsed_candidate: dict[str, Any]) -> dict[str
         raise CandidateWriterOutputAdaptationError(
             ERROR_INVALID_FINAL_POST_PAYLOAD,
             "parsed candidate does not satisfy FinalPostPayload structure.",
+            validation_detail=_final_post_payload_validation_detail(
+                exc,
+                canonical_payload,
+            ),
         ) from exc
 
     return copy.deepcopy(final_post_payload_to_dict(final_post_payload))
@@ -168,6 +180,31 @@ def _copy_canonical_field(value: Any, field_name: str) -> Any:
             if key in value
         }
     return copy.deepcopy(value)
+
+
+def _final_post_payload_validation_detail(
+    exc: BaseException,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    constraints = build_final_post_payload_constraints()
+    post_text_constraints = constraints["post_text"]
+    max_chars = post_text_constraints["max_chars"]
+    message = str(exc)
+    expected_post_text_length_message = (
+        f"FinalPostPayload.post_text must not exceed {max_chars} characters."
+    )
+    post_text = payload.get("post_text")
+    if message == expected_post_text_length_message and isinstance(post_text, str):
+        actual_chars = len(post_text)
+        return {
+            "field_path": "FinalPostPayload.post_text",
+            "field_name": "post_text",
+            "message": message,
+            "max_chars": max_chars,
+            "actual_chars": actual_chars,
+            "excess_chars": max(0, actual_chars - max_chars),
+        }
+    return None
 
 
 def _require_attributes(value: Any, attribute_names: tuple[str, ...], label: str) -> None:

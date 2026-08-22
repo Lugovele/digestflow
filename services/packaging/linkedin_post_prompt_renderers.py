@@ -10,8 +10,18 @@ from typing import Any
 from services.packaging.linkedin_post_editorial_boundary import PostEditorialInput
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
 from services.packaging.linkedin_post_flow_input_builders import CandidateWriterInput
+from services.packaging.linkedin_post_pipeline import (
+    AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED,
+)
+from services.packaging.linkedin_post_pipeline import (
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS,
+)
+from services.packaging.linkedin_post_pipeline import build_final_post_payload_constraints
 from services.packaging.linkedin_post_quality_rubric_contract import (
     QualityEvaluatorRubricPayload,
+)
+from services.packaging.linkedin_post_semantic_grounding_contract import (
+    build_semantic_grounding_prompt_rules,
 )
 
 
@@ -48,6 +58,33 @@ REPAIR_ANGLE_DECISION_PROMPT_FIELDS = (
     "supporting_evidence_ids",
     "angle_to_avoid",
 )
+
+PERSONAL_PRESENCE_INSTRUCTIONS = {
+    "explicit_author_owned_statement_required": (
+        "Include exactly one naturally integrated author-owned interpretive "
+        "statement derived from authorial_observation, rejected_reading, or "
+        "why_distinction_matters. Align it with AngleDecision.controlling_angle. "
+        "An impersonal editorial judgment is not sufficient. Do not force stock "
+        "wording, do not require first person at the opening, and do not add "
+        "more than one ownership statement. Do not introduce new facts or "
+        "invent personal experience, professional authority, client/customer "
+        "evidence, biography, or emotional history."
+    ),
+    "author_owned_statement_allowed": (
+        "An author-owned interpretive statement is allowed when natural, but "
+        "not required. If used, derive it from authorial_observation, "
+        "rejected_reading, or why_distinction_matters and avoid invented "
+        "experience, authority, client/customer evidence, biography, or "
+        "emotional history."
+    ),
+    "editorial_stance_only": (
+        "Use an editorial stance without adding explicit personal-presence "
+        "wording. Preserve the authorial judgment from authorial_observation, "
+        "rejected_reading, or why_distinction_matters, but do not add invented "
+        "experience, authority, client/customer evidence, biography, or "
+        "emotional history."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -126,11 +163,21 @@ def render_candidate_writer_prompt_input(
     candidate_input: CandidateWriterInput,
 ) -> CandidateWriterPromptRender:
     candidate_input_dict = candidate_input.to_dict()
+    authorial_voice_directive = _authorial_voice_directive_for_prompt(
+        candidate_input_dict["angle_decision"]
+    )
     variables = {
         "post_brief_json": _stable_json(candidate_input_dict["post_brief"]),
         "angle_decision_json": _stable_json(candidate_input_dict["angle_decision"]),
+        "authorial_voice_directive_json": _stable_json(authorial_voice_directive),
+        "personal_presence_instruction": _personal_presence_instruction_for_prompt(
+            authorial_voice_directive
+        ),
         "selected_evidence_json": _stable_json(
             candidate_input_dict["selected_evidence"]
+        ),
+        "final_post_payload_constraints_json": _stable_json(
+            build_final_post_payload_constraints()
         ),
         "candidate_writer_input_json": _stable_json(candidate_input_dict),
     }
@@ -159,6 +206,7 @@ def render_repair_writer_prompt_input(
     prompt_metadata: PromptMetadata | None = None,
 ) -> RepairWriterPromptRender:
     selected_evidence_ids = _selected_evidence_ids_for_repair_prompt(selected_evidence)
+    authorial_voice_directive = _authorial_voice_directive_for_prompt(angle_decision)
     variables = {
         "original_candidate_payload_json": _stable_json(
             _candidate_payload_for_quality_prompt(original_candidate_payload)
@@ -168,6 +216,10 @@ def render_repair_writer_prompt_input(
         ),
         "angle_decision_json": _stable_json(
             _angle_decision_for_repair_prompt(angle_decision, selected_evidence_ids)
+        ),
+        "authorial_voice_directive_json": _stable_json(authorial_voice_directive),
+        "personal_presence_instruction": _personal_presence_instruction_for_prompt(
+            authorial_voice_directive
         ),
         "selected_evidence_json": _stable_json(
             _selected_evidence_for_quality_prompt(selected_evidence)
@@ -213,6 +265,9 @@ def render_quality_evaluator_prompt_input(
         "angle_decision_json": _stable_json(
             _serialize_render_value(editorial_input.angle_decision)
         ),
+        "authorial_voice_directive_json": _stable_json(
+            _authorial_voice_directive_for_prompt(editorial_input.angle_decision)
+        ),
         "selected_evidence_json": _stable_json(
             _selected_evidence_for_quality_prompt(editorial_input.selected_evidence)
         ),
@@ -254,7 +309,9 @@ def render_semantic_grounding_prompt_input(
         "selected_evidence_json": _stable_json(
             _selected_evidence_for_quality_prompt(editorial_input.selected_evidence)
         ),
-        "grounding_rules_json": _stable_json(_semantic_grounding_rules()),
+        "semantic_grounding_rules_json": _stable_json(
+            build_semantic_grounding_prompt_rules()
+        ),
     }
 
     return SemanticGroundingPromptRender(
@@ -289,6 +346,82 @@ def _serialize_render_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_serialize_render_value(item) for item in value]
     return value
+
+
+def _authorial_voice_directive_for_prompt(angle_decision: Any) -> dict[str, Any]:
+    serialized = _serialize_render_value(angle_decision)
+    if not isinstance(serialized, dict):
+        raise TypeError("angle_decision must serialize to a dictionary.")
+    directive = serialized.get("authorial_voice_directive")
+    if directive is None:
+        raise TypeError(
+            "angle_decision.authorial_voice_directive must be present and serialize "
+            "to a dictionary."
+        )
+    if not isinstance(directive, dict):
+        raise TypeError(
+            "angle_decision.authorial_voice_directive must serialize to a dictionary."
+        )
+    _validate_authorial_voice_directive_for_prompt(directive)
+    return directive
+
+
+def _validate_authorial_voice_directive_for_prompt(
+    directive: dict[str, Any],
+) -> None:
+    for field_name in (
+        "authorial_observation",
+        "rejected_reading",
+        "why_distinction_matters",
+        "personal_presence_requirement",
+        "first_person_policy",
+    ):
+        field_value = directive.get(field_name)
+        if not isinstance(field_value, str) or not field_value.strip():
+            raise TypeError(
+                "angle_decision.authorial_voice_directive."
+                f"{field_name} must be present and serialize to a non-empty string."
+            )
+    if directive["personal_presence_requirement"] not in AUTHORIAL_PERSONAL_PRESENCE_REQUIREMENTS:
+        raise ValueError(
+            "angle_decision.authorial_voice_directive.personal_presence_requirement "
+            "must be a supported personal-presence policy."
+        )
+    if directive["first_person_policy"] != AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED:
+        raise ValueError(
+            "angle_decision.authorial_voice_directive.first_person_policy "
+            f"must be {AUTHORIAL_FIRST_PERSON_ALLOWED_NOT_REQUIRED}."
+        )
+    forbidden_claims = directive.get("forbidden_author_claims")
+    if not isinstance(forbidden_claims, (list, tuple)) or not forbidden_claims:
+        raise TypeError(
+            "angle_decision.authorial_voice_directive.forbidden_author_claims "
+            "must serialize to a non-empty list or tuple."
+        )
+    for claim in forbidden_claims:
+        if not isinstance(claim, str) or not claim.strip():
+            raise TypeError(
+                "angle_decision.authorial_voice_directive.forbidden_author_claims "
+                "must contain non-empty strings."
+            )
+
+
+def _personal_presence_instruction_for_prompt(
+    authorial_voice_directive: dict[str, Any],
+) -> str:
+    requirement = authorial_voice_directive.get("personal_presence_requirement")
+    if not isinstance(requirement, str) or not requirement.strip():
+        raise TypeError(
+            "angle_decision.authorial_voice_directive.personal_presence_requirement "
+            "must be present and serialize to a non-empty string."
+        )
+    try:
+        return PERSONAL_PRESENCE_INSTRUCTIONS[requirement]
+    except KeyError as exc:
+        raise ValueError(
+            "angle_decision.authorial_voice_directive.personal_presence_requirement "
+            "must be a supported personal-presence policy."
+        ) from exc
 
 
 def _candidate_payload_for_quality_prompt(candidate_payload: Any) -> dict[str, Any]:
@@ -409,7 +542,19 @@ def _build_input_text(variables: dict[str, str]) -> str:
     sections = [
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
+        (
+            "AUTHORIAL_VOICE_DIRECTIVE_JSON",
+            variables["authorial_voice_directive_json"],
+        ),
+        (
+            "PERSONAL_PRESENCE_INSTRUCTION",
+            variables["personal_presence_instruction"],
+        ),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
+        (
+            "FINAL_POST_PAYLOAD_CONSTRAINTS_JSON",
+            variables["final_post_payload_constraints_json"],
+        ),
         ("CANDIDATE_WRITER_INPUT_JSON", variables["candidate_writer_input_json"]),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)
@@ -420,6 +565,14 @@ def _build_repair_writer_input_text(variables: dict[str, str]) -> str:
         ("ORIGINAL_CANDIDATE_PAYLOAD_JSON", variables["original_candidate_payload_json"]),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
+        (
+            "AUTHORIAL_VOICE_DIRECTIVE_JSON",
+            variables["authorial_voice_directive_json"],
+        ),
+        (
+            "PERSONAL_PRESENCE_INSTRUCTION",
+            variables["personal_presence_instruction"],
+        ),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
         ("DETERMINISTIC_FINDINGS_JSON", variables["deterministic_findings_json"]),
         ("QUALITY_FINDINGS_JSON", variables["quality_findings_json"]),
@@ -434,32 +587,14 @@ def _build_quality_evaluator_input_text(variables: dict[str, str]) -> str:
         ("CANDIDATE_PAYLOAD_JSON", variables["candidate_payload_json"]),
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
+        (
+            "AUTHORIAL_VOICE_DIRECTIVE_JSON",
+            variables["authorial_voice_directive_json"],
+        ),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
         ("QUALITY_RUBRIC_JSON", variables["quality_rubric_json"]),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)
-
-
-def _semantic_grounding_rules() -> dict[str, Any]:
-    return {
-        "atomic_claim": (
-            "One assessable assertion from human-facing post text; split "
-            "compound sentences into separate claims."
-        ),
-        "qualification_invariants": [
-            "projected remains projected",
-            "likely remains attributed likelihood",
-            "may remains possibility",
-            "risk remains risk",
-            "analysis remains attributed analysis",
-        ],
-        "causal_fidelity": [
-            "Do not turn coexistence into cause.",
-            "Do not turn forecasts into outcomes.",
-            "Do not turn positioning or risk into stability, recovery, optimism, or growth.",
-        ],
-        "selected_evidence_only": True,
-    }
 
 
 def _build_semantic_grounding_input_text(variables: dict[str, str]) -> str:
@@ -468,6 +603,9 @@ def _build_semantic_grounding_input_text(variables: dict[str, str]) -> str:
         ("POST_BRIEF_JSON", variables["post_brief_json"]),
         ("ANGLE_DECISION_JSON", variables["angle_decision_json"]),
         ("SELECTED_EVIDENCE_JSON", variables["selected_evidence_json"]),
-        ("GROUNDING_RULES_JSON", variables["grounding_rules_json"]),
+        (
+            "SEMANTIC_GROUNDING_RULES_JSON",
+            variables["semantic_grounding_rules_json"],
+        ),
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in sections)

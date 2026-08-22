@@ -13,6 +13,7 @@ from django.core.management import call_command
 from django.test import SimpleTestCase
 from django.test import override_settings
 
+from apps.ai.client import THINKING_MODE_DISABLED, THINKING_MODE_PROVIDER_DEFAULT
 from apps.packaging.management.commands import smoke_linkedin_final_post
 from services.packaging import linkedin_post_final_post_smoke_runner
 from services.packaging.linkedin_post_final_post_smoke_runner import (
@@ -60,6 +61,293 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
             result.sanitized_result,
         )
 
+    def test_dry_run_can_display_gemini_candidate_and_grounding_selections(
+        self,
+    ) -> None:
+        result = run_final_post_smoke(
+            FinalPostSmokeRunRequest(
+                input_path=FIXTURE_PATH,
+                candidate_provider="gemini",
+                candidate_model="gemini-3.6-flash",
+                semantic_grounding_provider="gemini",
+                semantic_grounding_model="gemini-3.6-flash",
+                quality_evaluator_provider="openai",
+                quality_evaluator_model="gpt-4.1-2025-04-14",
+            )
+        )
+
+        self.assertEqual(result.status, SMOKE_STATUS_DRY_RUN)
+        self.assertEqual(
+            result.invocation_counts,
+            {
+                "candidate_writer": 0,
+                "semantic_grounding": 0,
+                "quality_evaluator": 0,
+                "repair_writer": 0,
+            },
+        )
+        self.assertEqual(
+            result.provider_models["candidate_writer"],
+            {"provider": "gemini", "model": "gemini-3.6-flash"},
+        )
+        self.assertEqual(
+            result.provider_models["semantic_grounding"],
+            {"provider": "gemini", "model": "gemini-3.6-flash"},
+        )
+        self.assertEqual(
+            result.provider_models["quality_evaluator"],
+            {"provider": "openai", "model": "gpt-4.1-2025-04-14"},
+        )
+        self.assertEqual(
+            result.sanitized_result["thinking_modes"]["candidate_writer"],
+            THINKING_MODE_PROVIDER_DEFAULT,
+        )
+        self.assertEqual(
+            result.sanitized_result["thinking_modes"]["semantic_grounding"],
+            THINKING_MODE_PROVIDER_DEFAULT,
+        )
+
+    def test_dry_run_exposes_anthropic_candidate_writer_disabled_thinking_mode(
+        self,
+    ) -> None:
+        result = run_final_post_smoke(
+            FinalPostSmokeRunRequest(
+                input_path=FIXTURE_PATH,
+                candidate_provider="anthropic",
+                candidate_model="claude-sonnet-5",
+                candidate_max_output_tokens=4000,
+                semantic_grounding_provider="anthropic",
+                semantic_grounding_model="claude-sonnet-5",
+                quality_evaluator_provider="openai",
+                quality_evaluator_model="gpt-4.1-2025-04-14",
+            )
+        )
+
+        self.assertEqual(result.status, SMOKE_STATUS_DRY_RUN)
+        self.assertEqual(
+            result.sanitized_result["thinking_modes"]["candidate_writer"],
+            THINKING_MODE_DISABLED,
+        )
+        self.assertEqual(
+            result.sanitized_result["thinking_modes"]["semantic_grounding"],
+            THINKING_MODE_PROVIDER_DEFAULT,
+        )
+
+    def test_dry_run_can_construct_manual_mixed_provider_matrix(self) -> None:
+        cases = (
+            ("openai", "gpt-4.1-2025-04-14", "openai", "gpt-4.1-2025-04-14"),
+            ("gemini", "gemini-3.6-flash", "openai", "gpt-4.1-2025-04-14"),
+            ("openai", "gpt-4.1-2025-04-14", "gemini", "gemini-3.6-flash"),
+            ("gemini", "gemini-3.6-flash", "gemini", "gemini-3.6-flash"),
+            ("anthropic", "claude-sonnet-5", "openai", "gpt-4.1-2025-04-14"),
+            ("openai", "gpt-4.1-2025-04-14", "anthropic", "claude-sonnet-5"),
+            ("anthropic", "claude-sonnet-5", "anthropic", "claude-sonnet-5"),
+        )
+
+        for (
+            candidate_provider,
+            candidate_model,
+            grounding_provider,
+            grounding_model,
+        ) in cases:
+            with self.subTest(
+                candidate_provider=candidate_provider,
+                grounding_provider=grounding_provider,
+            ):
+                result = run_final_post_smoke(
+                    FinalPostSmokeRunRequest(
+                        input_path=FIXTURE_PATH,
+                        candidate_provider=candidate_provider,
+                        candidate_model=candidate_model,
+                        semantic_grounding_provider=grounding_provider,
+                        semantic_grounding_model=grounding_model,
+                        quality_evaluator_provider="openai",
+                        quality_evaluator_model="gpt-4.1-2025-04-14",
+                    )
+                )
+
+                self.assertEqual(result.status, SMOKE_STATUS_DRY_RUN)
+                self.assertEqual(
+                    result.invocation_counts,
+                    {
+                        "candidate_writer": 0,
+                        "semantic_grounding": 0,
+                        "quality_evaluator": 0,
+                        "repair_writer": 0,
+                    },
+                )
+                self.assertEqual(
+                    result.provider_models["candidate_writer"]["provider"],
+                    candidate_provider,
+                )
+                self.assertEqual(
+                    result.provider_models["semantic_grounding"]["provider"],
+                    grounding_provider,
+                )
+                self.assertEqual(
+                    result.provider_models["quality_evaluator"],
+                    {"provider": "openai", "model": "gpt-4.1-2025-04-14"},
+                )
+
+    def test_provider_model_mismatch_returns_config_error_before_provider_execution(
+        self,
+    ) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    candidate_provider="gemini",
+                    candidate_model="gpt-4.1-2025-04-14",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            result.safe_failure_message,
+        )
+
+    def test_unsupported_provider_returns_config_error_before_provider_execution(
+        self,
+    ) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    semantic_grounding_provider="unknown",
+                    semantic_grounding_model="model",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(
+            result.safe_failure_message,
+            "unsupported PostFlow final post role/provider/model: "
+            "role=semantic_grounding provider=unknown model=model",
+        )
+
+    def test_controlled_repair_keeps_repair_writer_openai_only_before_execution(
+        self,
+    ) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_controlled_repair_attempt",
+        ) as controlled:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    mode=SMOKE_MODE_CONTROLLED_REPAIR,
+                    repair_provider="gemini",
+                    repair_model="gemini-3.6-flash",
+                )
+            )
+
+        controlled.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(
+            result.safe_failure_message,
+            "unsupported PostFlow final post role/provider/model: "
+            "role=repair_writer provider=gemini model=gemini-3.6-flash",
+        )
+
+    def test_quality_evaluator_gemini_returns_config_error_before_execution(
+        self,
+    ) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    quality_evaluator_provider="gemini",
+                    quality_evaluator_model="gemini-3.6-flash",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(
+            result.safe_failure_message,
+            "unsupported PostFlow final post role/provider/model: "
+            "role=quality_evaluator provider=gemini model=gemini-3.6-flash",
+        )
+        self.assertEqual(result.invocation_counts["quality_evaluator"], 0)
+
+    def test_quality_evaluator_anthropic_returns_config_error_before_execution(
+        self,
+    ) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    quality_evaluator_provider="anthropic",
+                    quality_evaluator_model="claude-sonnet-5",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(
+            result.safe_failure_message,
+            "unsupported PostFlow final post role/provider/model: "
+            "role=quality_evaluator provider=anthropic model=claude-sonnet-5",
+        )
+        self.assertEqual(result.invocation_counts["quality_evaluator"], 0)
+
+    @override_settings(OPENAI_API_KEY="sk-test", GEMINI_API_KEY="")
+    def test_allow_api_requires_gemini_key_before_provider_execution(self) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    allow_api=True,
+                    candidate_provider="gemini",
+                    candidate_model="gemini-3.6-flash",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(result.exit_code, EXIT_CONFIG_ERROR)
+        self.assertIn("GEMINI_API_KEY", result.safe_failure_message)
+        self.assertNotIn("sk-test", json.dumps(result.to_dict(), sort_keys=True))
+
+    @override_settings(OPENAI_API_KEY="sk-test", ANTHROPIC_API_KEY="")
+    def test_allow_api_requires_anthropic_key_before_provider_execution(self) -> None:
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+        ) as standalone:
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    allow_api=True,
+                    candidate_provider="anthropic",
+                    candidate_model="claude-sonnet-5",
+                )
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, SMOKE_STATUS_CONFIG_ERROR)
+        self.assertEqual(result.exit_code, EXIT_CONFIG_ERROR)
+        self.assertIn("ANTHROPIC_API_KEY", result.safe_failure_message)
+        self.assertNotIn("sk-test", json.dumps(result.to_dict(), sort_keys=True))
+
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_standalone_mode_delegates_once_to_public_api(self) -> None:
         fake_result = _standalone_result()
@@ -88,6 +376,13 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertEqual(
             result.sanitized_result["quality_review"]["criterion_rationales"],
             {"human_voice": {"rationale": "Human voice is specific."}},
+        )
+        self.assertEqual(
+            result.sanitized_result["thinking_modes"],
+            {
+                "candidate_writer": "provider_default",
+                "semantic_grounding": "provider_default",
+            },
         )
 
     @override_settings(OPENAI_API_KEY="sk-test")
@@ -283,6 +578,120 @@ class FinalPostSmokeRunnerTests(SimpleTestCase):
         self.assertIn("candidate raw text", debug_serialized)
         self.assertNotIn("raw_provider_response", debug_serialized)
         self.assertNotIn("secret-provider-metadata", debug_serialized)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_empty_candidate_response_includes_safe_provider_metadata_on_failure(
+        self,
+    ) -> None:
+        fake_result = _standalone_result(
+            failure_code="candidate_writer_empty_response",
+            failure_message="empty provider response",
+            stage_metadata={
+                "provider_response_metadata": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "stop_reason": "max_tokens",
+                    "content_block_types": ["thinking"],
+                    "input_tokens": 1234,
+                    "output_tokens": 4000,
+                    "thinking_tokens": 4000,
+                    "headers": {"authorization": "Bearer secret"},
+                    "raw_prompt": "prompt secret",
+                },
+                "empty_text_classification": "MAX_TOKENS_BEFORE_TEXT",
+            },
+            accepted_payload=None,
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(
+                    input_path=FIXTURE_PATH,
+                    allow_api=True,
+                    include_raw_responses=True,
+                )
+            )
+
+        serialized = json.dumps(result.to_dict(), sort_keys=True)
+        failed_status = result.sanitized_result["stage_statuses"][0]
+        self.assertEqual(
+            failed_status["metadata"]["provider_response_metadata"],
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "stop_reason": "max_tokens",
+                "content_block_types": ["thinking"],
+                "input_tokens": 1234,
+                "output_tokens": 4000,
+                "thinking_tokens": 4000,
+            },
+        )
+        self.assertEqual(
+            failed_status["metadata"]["empty_text_classification"],
+            "MAX_TOKENS_BEFORE_TEXT",
+        )
+        self.assertNotIn("raw_provider_response", serialized)
+        self.assertNotIn("authorization", serialized)
+        self.assertNotIn("Bearer secret", serialized)
+        self.assertNotIn("prompt secret", serialized)
+
+    @override_settings(OPENAI_API_KEY="sk-test")
+    def test_adaptation_failure_sanitized_output_includes_safe_validation_detail(
+        self,
+    ) -> None:
+        fake_result = _standalone_result(
+            failure_code="candidate_writer_adaptation_failure",
+            failure_message="parsed candidate does not satisfy FinalPostPayload structure.",
+            accepted_payload=None,
+            failure_stage="candidate_writer_adaptation",
+            stage_metadata={
+                "validation_detail": {
+                    "field_path": "FinalPostPayload.post_text",
+                    "field_name": "post_text",
+                    "message": (
+                        "FinalPostPayload.post_text must not exceed 1300 characters."
+                    ),
+                    "max_chars": 1300,
+                    "actual_chars": 1332,
+                    "excess_chars": 32,
+                    "raw_prompt": "prompt secret",
+                    "api_key": "sk-secret",
+                }
+            },
+        )
+
+        with patch.object(
+            linkedin_post_final_post_smoke_runner,
+            "execute_final_post_standalone_attempt",
+            return_value=fake_result,
+        ):
+            result = run_final_post_smoke(
+                FinalPostSmokeRunRequest(input_path=FIXTURE_PATH, allow_api=True)
+            )
+
+        stage_status = result.sanitized_result["stage_statuses"][0]
+        self.assertEqual(
+            stage_status["metadata"],
+            {
+                "validation_detail": {
+                    "field_path": "FinalPostPayload.post_text",
+                    "field_name": "post_text",
+                    "message": (
+                        "FinalPostPayload.post_text must not exceed 1300 characters."
+                    ),
+                    "max_chars": 1300,
+                    "actual_chars": 1332,
+                    "excess_chars": 32,
+                }
+            },
+        )
+        serialized = json.dumps(result.to_dict(), sort_keys=True)
+        self.assertNotIn("prompt secret", serialized)
+        self.assertNotIn("sk-secret", serialized)
 
     @override_settings(OPENAI_API_KEY="sk-test")
     def test_unaccepted_candidate_text_is_hidden_from_default_sanitized_outputs(
@@ -558,23 +967,32 @@ def _standalone_result(
     failure_message: str = "",
     accepted_payload: dict | None = None,
     candidate_post_text: str | None = None,
+    failure_stage: str | None = None,
+    stage_metadata: dict | None = None,
 ) -> SimpleNamespace:
+    failed_stage = failure_stage or "candidate_writer_execution"
     payload = (
         {"post_text": "Accepted smoke post."}
         if accepted_payload is None and failure_code is None
         else accepted_payload
     )
+    completed_stage = (
+        "candidate_writer_parse"
+        if failed_stage == "candidate_writer_adaptation"
+        else "candidate_writer_execution"
+    )
     return SimpleNamespace(
-        completed_stage="attempt_outcome" if failure_code is None else "candidate_writer_execution",
-        failure_stage=None if failure_code is None else "candidate_writer_execution",
+        completed_stage="attempt_outcome" if failure_code is None else completed_stage,
+        failure_stage=None if failure_code is None else failed_stage,
         failure_code=failure_code,
         failure_message=failure_message,
         stage_statuses=[
             SimpleNamespace(
-                stage="candidate_writer_execution",
+                stage="candidate_writer_execution" if failure_code is None else failed_stage,
                 status="succeeded" if failure_code is None else "failed",
                 error_code=failure_code,
                 error_message=failure_message,
+                metadata=copy.deepcopy(stage_metadata),
             )
         ],
         candidate_writer_invocation_count=1,
@@ -638,6 +1056,11 @@ def _standalone_result(
         quality_evaluator_raw_response=SimpleNamespace(
             raw_text="quality raw text",
             raw_provider_response={"secret": "secret-provider-metadata"},
+        ),
+        request=SimpleNamespace(
+            candidate_writer_thinking_mode="provider_default",
+            semantic_grounding_provider="openai",
+            semantic_grounding_model="gpt-4.1-2025-04-14",
         ),
     )
 

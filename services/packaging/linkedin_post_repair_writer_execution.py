@@ -15,11 +15,14 @@ from django.conf import settings
 
 from apps.ai.client import OpenAIClient
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_REPAIR_WRITER,
+    get_final_post_role_provider_model_policy_failure,
+)
 from services.packaging.linkedin_post_prompt_renderers import RepairWriterPromptRender
 
 
 DEFAULT_REPAIR_WRITER_MAX_OUTPUT_TOKENS = 1200
-SUPPORTED_PROVIDER = "openai"
 
 
 @dataclass(frozen=True)
@@ -98,7 +101,7 @@ def execute_repair_writer_prompt(
 ) -> RepairWriterRawResponse:
     prompt_metadata = _prompt_metadata_from_render(request.rendered_prompt_input)
     execution_metadata = copy.deepcopy(request.execution_metadata)
-    execution_error = _execution_request_error(request)
+    execution_error = get_repair_writer_execution_request_error(request)
     if execution_error is not None:
         return RepairWriterRawResponse(
             raw_text="",
@@ -161,13 +164,20 @@ def _resolve_model(model: str | None) -> str:
     return str(resolved or "").strip()
 
 
-def _execution_request_error(request: RepairWriterExecutionRequest) -> str | None:
+def get_repair_writer_execution_request_error(
+    request: RepairWriterExecutionRequest,
+) -> str | None:
     if not request.provider:
         return "missing repair writer provider"
-    if request.provider != SUPPORTED_PROVIDER:
-        return f"unsupported repair writer provider: {request.provider}"
     if not request.model:
         return "missing repair writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_REPAIR_WRITER,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,

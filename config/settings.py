@@ -90,11 +90,14 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # Legacy shared model setting. PostFlow stage-specific settings below should be
 # preferred by new staged pipeline code; keep this as a compatibility fallback.
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_TIMEOUT_SECONDS = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
+ANTHROPIC_TIMEOUT_SECONDS = int(os.getenv("ANTHROPIC_TIMEOUT_SECONDS", str(OPENAI_TIMEOUT_SECONDS)))
 AI_DAILY_TOKEN_BUDGET = int(os.getenv("AI_DAILY_TOKEN_BUDGET", "100000"))
 POSTFLOW_RESEARCH_PROVIDER = _postflow_provider_setting("POSTFLOW_RESEARCH_PROVIDER")
 POSTFLOW_POST_PROVIDER = _postflow_provider_setting("POSTFLOW_POST_PROVIDER")

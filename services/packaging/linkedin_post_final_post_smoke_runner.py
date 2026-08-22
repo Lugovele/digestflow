@@ -19,6 +19,7 @@ from typing import Any
 
 from django.conf import settings
 
+from apps.ai.client import get_ai_client_configuration_error, get_ai_provider_model_error
 from services.packaging.linkedin_post_controlled_repair_contract import (
     FinalPostControlledRepairRequest,
 )
@@ -35,6 +36,12 @@ from services.packaging.linkedin_post_final_post_attempt_execution import (
 from services.packaging.linkedin_post_flow_decision import FinalPostDecisionPolicy
 from services.packaging.linkedin_post_flow_input_builders import (
     build_candidate_writer_input,
+)
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_CANDIDATE_WRITER,
+    FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+    get_final_post_role_provider_model_policy_failure,
+    get_final_post_role_thinking_mode,
 )
 from services.packaging.linkedin_post_prompt_registry import (
     PROMPT_FINAL_POST_CANDIDATE_FROM_BRIEF,
@@ -78,7 +85,6 @@ DEFAULT_SEMANTIC_GROUNDING_MAX_OUTPUT_TOKENS = 2400
 DEFAULT_QUALITY_MAX_OUTPUT_TOKENS = DEFAULT_QUALITY_EVALUATOR_MAX_OUTPUT_TOKENS
 DEFAULT_REPAIR_MAX_OUTPUT_TOKENS = 1200
 
-PLACEHOLDER_API_KEYS = {"", "sk-your-key", "your-openai-api-key-here"}
 SECRET_FIELD_FRAGMENTS = (
     "api_key",
     "apikey",
@@ -262,7 +268,20 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
 
     _validate_provider_models(provider_models)
     if request.allow_api:
-        _validate_api_key()
+        _validate_api_keys(provider_models)
+
+    thinking_modes = {
+        "candidate_writer": get_final_post_role_thinking_mode(
+            role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+            provider=provider_models["candidate_writer"]["provider"],
+            model=provider_models["candidate_writer"]["model"],
+        ),
+        "semantic_grounding": get_final_post_role_thinking_mode(
+            role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+            provider=provider_models["semantic_grounding"]["provider"],
+            model=provider_models["semantic_grounding"]["model"],
+        ),
+    }
 
     policy = FinalPostDecisionPolicy(max_total_attempts=2)
     initial_request = FinalPostAttemptRequest(
@@ -275,6 +294,7 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
         candidate_writer_provider=provider_models["candidate_writer"]["provider"],
         candidate_writer_model=provider_models["candidate_writer"]["model"],
         candidate_writer_max_output_tokens=request.candidate_max_output_tokens,
+        candidate_writer_thinking_mode=thinking_modes["candidate_writer"],
         semantic_grounding_prompt_text=semantic_grounding_prompt_text,
         semantic_grounding_provider=provider_models["semantic_grounding"]["provider"],
         semantic_grounding_model=provider_models["semantic_grounding"]["model"],
@@ -301,6 +321,7 @@ def _prepare_smoke_run(request: FinalPostSmokeRunRequest) -> dict[str, Any]:
         "angle_decision": copy.deepcopy(angle_decision),
         "selected_evidence_ids": selected_evidence_ids,
         "initial_request": initial_request,
+        "thinking_modes": thinking_modes,
         "repair_request": (
             FinalPostControlledRepairRequest(
                 initial_attempt_request=initial_request,
@@ -395,6 +416,7 @@ def _dry_run_result(
         sanitized_result={
             "prompt_paths": copy.deepcopy(prepared["prompt_paths"]),
             "selected_evidence_ids": list(prepared["selected_evidence_ids"]),
+            "thinking_modes": copy.deepcopy(prepared["thinking_modes"]),
             "max_call_budget": _invocation_budget(request.mode),
             "manual_smoke_only": True,
             "api_call": "skipped",
@@ -684,18 +706,33 @@ def _validate_provider_models(provider_models: dict[str, dict[str, str]]) -> Non
     for role, provider_model in provider_models.items():
         provider = provider_model["provider"]
         model = provider_model["model"]
-        if provider != "openai":
-            raise FinalPostSmokeInputError(f"unsupported {role} provider: {provider}")
-        if not model:
-            raise FinalPostSmokeInputError(f"missing {role} model")
-
-
-def _validate_api_key() -> None:
-    api_key = str(settings.OPENAI_API_KEY or "").strip()
-    if api_key in PLACEHOLDER_API_KEYS:
-        raise FinalPostSmokeInputError(
-            "OPENAI_API_KEY must be configured with a real key before provider smoke execution"
+        stage_name = role.replace("_", " ")
+        policy_failure = get_final_post_role_provider_model_policy_failure(
+            role=role,
+            provider=provider,
+            model=model,
         )
+        if policy_failure is not None:
+            raise FinalPostSmokeInputError(str(policy_failure))
+        provider_model_error = get_ai_provider_model_error(
+            provider,
+            model,
+            stage_name=stage_name,
+        )
+        if provider_model_error is not None:
+            raise FinalPostSmokeInputError(provider_model_error)
+
+
+def _validate_api_keys(provider_models: dict[str, dict[str, str]]) -> None:
+    for role, provider_model in provider_models.items():
+        stage_name = role.replace("_", " ")
+        configuration_error = get_ai_client_configuration_error(
+            provider_model["provider"],
+            provider_model["model"],
+            stage_name=stage_name,
+        )
+        if configuration_error is not None:
+            raise FinalPostSmokeInputError(configuration_error)
 
 
 def _invocation_budget(mode: str) -> dict[str, int]:
@@ -840,6 +877,7 @@ def _sanitize_standalone_result(
         ),
         "quality_review": _quality_review_summary(result),
         "semantic_grounding_review": _semantic_grounding_review_summary(result),
+        "thinking_modes": _thinking_modes_from_standalone(result),
         **(
             {"raw_texts": _raw_texts_from_standalone(result)}
             if include_raw_responses
@@ -899,15 +937,34 @@ def _sanitize_controlled_result(
 
 def _stage_statuses(result: Any) -> list[dict[str, Any]]:
     statuses = getattr(result, "stage_statuses", None) or []
-    return [
-        {
+    sanitized_statuses = []
+    for status in statuses:
+        safe_metadata = _safe_stage_metadata(getattr(status, "metadata", None))
+        sanitized_status = {
             "stage": getattr(status, "stage", None),
             "status": getattr(status, "status", None),
             "error_code": getattr(status, "error_code", None),
             "error_message": _safe_message(getattr(status, "error_message", "")),
         }
-        for status in statuses
-    ]
+        if safe_metadata is not None:
+            sanitized_status["metadata"] = safe_metadata
+        sanitized_statuses.append(sanitized_status)
+    return sanitized_statuses
+
+
+def _thinking_modes_from_standalone(result: Any) -> dict[str, str | None]:
+    request = getattr(result, "request", None)
+    semantic_grounding = None
+    if request is not None:
+        semantic_grounding = get_final_post_role_thinking_mode(
+            role=FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+            provider=getattr(request, "semantic_grounding_provider", None),
+            model=getattr(request, "semantic_grounding_model", None),
+        )
+    return {
+        "candidate_writer": getattr(request, "candidate_writer_thinking_mode", None),
+        "semantic_grounding": semantic_grounding,
+    }
 
 
 def _final_attempt_outcome_summary(result: Any) -> dict[str, Any] | None:
@@ -1053,6 +1110,88 @@ def _safe_message(message: Any) -> str:
         if marker in text:
             return "redacted provider/configuration message"
     return text
+
+
+def _safe_stage_metadata(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    safe_metadata: dict[str, Any] = {}
+    validation_detail = metadata.get("validation_detail")
+    if isinstance(validation_detail, dict):
+        safe_validation_detail = {
+            key: validation_detail[key]
+            for key in (
+                "field_path",
+                "field_name",
+                "message",
+                "max_chars",
+                "actual_chars",
+                "excess_chars",
+            )
+            if key in validation_detail
+        }
+        if "message" in safe_validation_detail:
+            safe_validation_detail["message"] = _safe_message(
+                safe_validation_detail["message"]
+            )
+        safe_metadata["validation_detail"] = _to_json_safe(safe_validation_detail)
+
+    provider_response_metadata = metadata.get("provider_response_metadata")
+    if isinstance(provider_response_metadata, dict):
+        safe_provider_metadata = _safe_provider_response_metadata(
+            provider_response_metadata
+        )
+        if safe_provider_metadata:
+            safe_metadata["provider_response_metadata"] = safe_provider_metadata
+
+    empty_text_classification = metadata.get("empty_text_classification")
+    if isinstance(empty_text_classification, str) and empty_text_classification:
+        safe_metadata["empty_text_classification"] = empty_text_classification[:80]
+
+    return safe_metadata or None
+
+
+def _safe_provider_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe_metadata = {
+        "provider": _safe_short_text(metadata.get("provider")),
+        "model": _safe_short_text(metadata.get("model")),
+        "stop_reason": _safe_short_text(metadata.get("stop_reason")),
+        "content_block_types": _safe_content_block_types(
+            metadata.get("content_block_types")
+        ),
+        "input_tokens": _safe_non_negative_int(metadata.get("input_tokens")),
+        "output_tokens": _safe_non_negative_int(metadata.get("output_tokens")),
+        "thinking_tokens": _safe_non_negative_int(metadata.get("thinking_tokens")),
+    }
+    return _to_json_safe(safe_metadata)
+
+
+def _safe_content_block_types(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    block_types = []
+    for item in value[:20]:
+        safe_item = _safe_short_text(item)
+        if safe_item is not None:
+            block_types.append(safe_item)
+    return block_types
+
+
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _safe_short_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:120]
 
 
 def _to_json_safe(value: Any) -> Any:

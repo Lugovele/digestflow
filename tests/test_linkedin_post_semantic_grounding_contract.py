@@ -8,16 +8,71 @@ from django.test import SimpleTestCase
 from services.packaging.linkedin_post_semantic_grounding_contract import (
     GROUNDING_STATUS_FAIL,
     GROUNDING_STATUS_PASS,
+    SEMANTIC_GROUNDING_STATUS_SEVERITY_MATRIX,
+    SUPPORT_STATUS_CONTRADICTED,
     SUPPORT_STATUS_CAUSAL_OVERREACH,
+    SUPPORT_STATUS_MISSING_REQUIRED_QUALIFICATION,
+    SUPPORT_STATUS_NOT_CLAIM,
+    SUPPORT_STATUS_NOT_EVALUABLE,
+    SUPPORT_STATUS_PARTIALLY_SUPPORTED,
     SUPPORT_STATUS_SUPPORTED,
+    SUPPORT_STATUS_SUPPORTED_WITH_REQUIRED_QUALIFICATION,
     SUPPORT_STATUS_UNSUPPORTED,
     FinalPostSemanticGroundingState,
     SemanticGroundingReviewResult,
+    build_semantic_grounding_prompt_rules,
+    is_blocking_claim_state,
+    is_valid_status_severity_pair,
     normalize_semantic_grounding_review_result,
 )
 
 
 class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
+    def test_status_severity_matrix_lists_every_support_status(self) -> None:
+        self.assertEqual(
+            set(SEMANTIC_GROUNDING_STATUS_SEVERITY_MATRIX),
+            {
+                SUPPORT_STATUS_NOT_CLAIM,
+                SUPPORT_STATUS_SUPPORTED,
+                SUPPORT_STATUS_SUPPORTED_WITH_REQUIRED_QUALIFICATION,
+                SUPPORT_STATUS_PARTIALLY_SUPPORTED,
+                SUPPORT_STATUS_MISSING_REQUIRED_QUALIFICATION,
+                SUPPORT_STATUS_CAUSAL_OVERREACH,
+                SUPPORT_STATUS_UNSUPPORTED,
+                SUPPORT_STATUS_CONTRADICTED,
+                SUPPORT_STATUS_NOT_EVALUABLE,
+            },
+        )
+
+    def test_status_severity_pair_helpers_follow_matrix(self) -> None:
+        self.assertTrue(
+            is_valid_status_severity_pair(SUPPORT_STATUS_PARTIALLY_SUPPORTED, "minor")
+        )
+        self.assertTrue(
+            is_valid_status_severity_pair(SUPPORT_STATUS_PARTIALLY_SUPPORTED, "major")
+        )
+        self.assertFalse(
+            is_valid_status_severity_pair(SUPPORT_STATUS_SUPPORTED, "major")
+        )
+        self.assertTrue(
+            is_blocking_claim_state(SUPPORT_STATUS_PARTIALLY_SUPPORTED, "major")
+        )
+        self.assertFalse(
+            is_blocking_claim_state(SUPPORT_STATUS_PARTIALLY_SUPPORTED, "minor")
+        )
+
+    def test_prompt_rules_payload_is_json_safe_and_defensive(self) -> None:
+        rules = build_semantic_grounding_prompt_rules()
+        rules["status_severity_matrix"][SUPPORT_STATUS_SUPPORTED].append("major")
+
+        json.dumps(build_semantic_grounding_prompt_rules(), allow_nan=False)
+        self.assertNotIn(
+            "major",
+            build_semantic_grounding_prompt_rules()["status_severity_matrix"][
+                SUPPORT_STATUS_SUPPORTED
+            ],
+        )
+
     def test_directly_supported_claim_passes(self) -> None:
         result = normalize_semantic_grounding_review_result(
             _review_payload(),
@@ -48,6 +103,56 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
         self.assertTrue(result.passed)
         self.assertEqual(result.claim_reviews[0].required_qualifications, ("projected",))
 
+    def test_partially_supported_minor_is_advisory_and_can_pass(self) -> None:
+        result = normalize_semantic_grounding_review_result(
+            _review_payload(
+                claims=[
+                    _claim(
+                        support_status=SUPPORT_STATUS_PARTIALLY_SUPPORTED,
+                        severity="minor",
+                        repair_hint="Optional wording can be tightened.",
+                    )
+                ],
+            ),
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ())
+
+    def test_partially_supported_major_is_blocking(self) -> None:
+        result = normalize_semantic_grounding_review_result(
+            _review_payload(
+                passed=False,
+                claims=[
+                    _claim(
+                        support_status=SUPPORT_STATUS_PARTIALLY_SUPPORTED,
+                        severity="major",
+                        repair_hint="Narrow the claim to the supported portion.",
+                    )
+                ],
+                failed_claim_ids=["c1"],
+                automatic_fail_reason="material overstatement",
+                repairable=True,
+                repair_instructions=["c1: Narrow the claim to the supported portion."],
+            ),
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.blocking_claim_ids, ("c1",))
+
+    def test_invalid_support_status_severity_pair_fails(self) -> None:
+        payload = _review_payload(
+            claims=[_claim(support_status=SUPPORT_STATUS_SUPPORTED, severity="major")]
+        )
+
+        with self.assertRaisesRegex(ValueError, "support_status/severity pair"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
     def test_missing_likelihood_qualification_fails(self) -> None:
         payload = _review_payload(
             passed=False,
@@ -57,11 +162,13 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                     severity="major",
                     required_qualifications=["likely"],
                     missing_qualifications=["likely"],
+                    repair_hint="Restore likely attribution.",
                 )
             ],
             failed_claim_ids=["c1"],
             automatic_fail_reason="missing required qualification",
-            repair_instructions=["Restore likely attribution."],
+            repairable=True,
+            repair_instructions=["c1: Restore likely attribution."],
         )
 
         result = normalize_semantic_grounding_review_result(
@@ -105,6 +212,73 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 selected_evidence_ids=("a0-summary",),
             )
 
+    def test_pass_false_without_blocking_reason_or_human_review_fails(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    support_status="supported_with_required_qualification",
+                    severity="info",
+                    required_qualifications=["likely"],
+                ),
+                _claim(
+                    claim_id="c2",
+                    support_status="not_claim",
+                    severity="info",
+                ),
+            ],
+            failed_claim_ids=[],
+            automatic_fail_reason="",
+            requires_human_review=False,
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "pass=false requires"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_pass_true_with_blocking_claim_fails(self) -> None:
+        payload = _review_payload(
+            passed=True,
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                )
+            ],
+            failed_claim_ids=["c1"],
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "pass cannot be true"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_pass_true_with_repairable_flag_fails(self) -> None:
+        payload = _review_payload(repairable=True)
+
+        with self.assertRaisesRegex(ValueError, "repairable"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_pass_true_with_repair_instructions_fails(self) -> None:
+        payload = _review_payload(
+            repairable=False,
+            repair_instructions=["Repair text despite pass."],
+        )
+
+        with self.assertRaisesRegex(ValueError, "repair_instructions"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
     def test_repairable_failed_grounding_requires_repair_instructions(self) -> None:
         payload = _review_payload(
             passed=False,
@@ -126,19 +300,140 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 selected_evidence_ids=("a0-summary",),
             )
 
-    def test_repairable_failed_grounding_requires_instructions_even_without_failed_claim_ids(
+    def test_automatic_fail_reason_requires_blocking_claims(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            automatic_fail_reason="generic automatic fail without a claim",
+        )
+
+        with self.assertRaisesRegex(ValueError, "automatic_fail_reason requires"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repairable_blocking_claim_requires_repair_hint(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                    repair_hint="",
+                )
+            ],
+            failed_claim_ids=["c1"],
+            automatic_fail_reason="unsupported claim",
+            repairable=True,
+            repair_instructions=["c1: Remove unsupported claim."],
+        )
+
+        with self.assertRaisesRegex(ValueError, "repair_hint"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repairable_instructions_must_be_claim_addressed(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                    repair_hint="Remove unsupported claim.",
+                )
+            ],
+            failed_claim_ids=["c1"],
+            automatic_fail_reason="unsupported claim",
+            repairable=True,
+            repair_instructions=["Remove unsupported claim."],
+        )
+
+        with self.assertRaisesRegex(ValueError, "start with claim_id"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repairable_instructions_must_match_each_failed_claim(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                    repair_hint="Remove unsupported claim.",
+                ),
+                _claim(
+                    claim_id="c2",
+                    support_status=SUPPORT_STATUS_CAUSAL_OVERREACH,
+                    severity="major",
+                    repair_hint="Remove unsupported causality.",
+                ),
+            ],
+            failed_claim_ids=["c1", "c2"],
+            automatic_fail_reason="unsupported claims",
+            repairable=True,
+            repair_instructions=["c1: Remove unsupported claim."],
+        )
+
+        with self.assertRaisesRegex(ValueError, "address each blocking claim"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repairable_failed_grounding_requires_blocking_claims(
         self,
     ) -> None:
         payload = _review_payload(
             passed=False,
             claims=[_claim()],
             failed_claim_ids=[],
-            automatic_fail_reason="semantic grounding failed without claim IDs",
+            automatic_fail_reason="",
             repairable=True,
-            repair_instructions=[],
+            repair_instructions=["c1: Repair unsupported claim."],
         )
 
-        with self.assertRaisesRegex(ValueError, "repair_instructions"):
+        with self.assertRaisesRegex(ValueError, "pass=false requires blocking"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_repairable_failed_grounding_with_human_review_fails(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                )
+            ],
+            failed_claim_ids=["c1"],
+            automatic_fail_reason="unsupported claim",
+            requires_human_review=True,
+            human_review_reason="Needs human factuality review.",
+            repairable=True,
+            repair_instructions=["c1: Repair unsupported claim."],
+        )
+
+        with self.assertRaisesRegex(ValueError, "human review"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_human_review_requires_reason(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            requires_human_review=True,
+            human_review_reason="",
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "human_review_reason"):
             normalize_semantic_grounding_review_result(
                 payload,
                 selected_evidence_ids=("a0-summary",),
@@ -191,7 +486,10 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
             "human_review_reason": "",
             "repairable": True,
             "repair_instructions": [
-                "Remove optimism, stability, recovery, and future growth drift."
+                "c1: Remove the unsupported optimism bridge claim.",
+                "c2: Keep K33's likelihood and risk language.",
+                "c3: Remove recovery causality.",
+                "c4: Remove future growth causality.",
             ],
         }
 
@@ -233,6 +531,60 @@ class LinkedInPostSemanticGroundingContractTests(SimpleTestCase):
                 selected_evidence_ids=("a0-summary",),
             )
 
+    def test_failed_claim_ids_must_reference_blocking_claims(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            failed_claim_ids=["c1"],
+            automatic_fail_reason="unsupported",
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "must reference blocking claims"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_failed_claim_ids_must_include_each_derived_blocking_claim(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            claims=[
+                _claim(
+                    support_status=SUPPORT_STATUS_UNSUPPORTED,
+                    severity="major",
+                )
+            ],
+            failed_claim_ids=[],
+            automatic_fail_reason="unsupported claim",
+            requires_human_review=False,
+            repairable=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "exactly match blocking claims"):
+            normalize_semantic_grounding_review_result(
+                payload,
+                selected_evidence_ids=("a0-summary",),
+            )
+
+    def test_valid_human_review_grounding_result_normalizes(self) -> None:
+        payload = _review_payload(
+            passed=False,
+            failed_claim_ids=[],
+            automatic_fail_reason="",
+            requires_human_review=True,
+            human_review_reason="Needs human factuality review.",
+            repairable=False,
+        )
+
+        result = normalize_semantic_grounding_review_result(
+            payload,
+            selected_evidence_ids=("a0-summary",),
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(result.requires_human_review)
+        self.assertEqual(result.human_review_reason, "Needs human factuality review.")
+
 
 def _review_payload(**overrides) -> dict:
     if "passed" in overrides:
@@ -244,7 +596,7 @@ def _review_payload(**overrides) -> dict:
         "automatic_fail_reason": "",
         "requires_human_review": False,
         "human_review_reason": "",
-        "repairable": True,
+        "repairable": False,
         "repair_instructions": [],
     }
     payload.update(overrides)

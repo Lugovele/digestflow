@@ -36,6 +36,9 @@ Use these inputs:
 * PostBrief.evidence_to_use selected evidence IDs
 * PostBrief.evidence_to_use selected evidence text
 * PostBrief.evidence_to_use role_in_post values
+* AngleDecision.authorial_voice_directive
+* personal_presence_instruction
+* final_post_payload_constraints_json
 * quality constraints supplied by the caller
 * forbidden claims and safety rules supplied by the caller
 
@@ -48,6 +51,12 @@ PostBrief is the source of truth for exact selected evidence.
 Exact evidence text is preserved upstream through PostBrief.
 
 Preserve AngleDecision.controlling_angle.
+
+Use AngleDecision.authorial_voice_directive as the source of truth for the
+author-owned judgment the post should express.
+
+Use personal_presence_instruction as the resolved policy for whether the post
+must visibly assign that judgment to the author.
 
 Use only selected evidence from PostBrief.evidence_to_use.
 
@@ -110,13 +119,71 @@ selected evidence, evidence above, source-grounded, separate signals,
 keep claims attributed, avoid unsupported conclusions, according to one source,
 another source, research cited in a third source, or sources matter.
 
-Keep post_text under the existing final payload limit.
+Use final_post_payload_constraints_json as the source of truth for payload
+length constraints.
+
+post_text must be 1300 characters or fewer.
+
+Aim for about 1100-1250 characters so the final post has a safety margin below
+the hard maximum.
+
+Before returning JSON, verify post_text character count is 1300 characters or fewer.
+If post_text is too long, shorten it before output.
+
+Do not output a character count field.
 
 Write a finished LinkedIn post, not a brief, research summary, evidence report,
 repair instruction, debug note, or runtime log.
 
 The post may be opinionated only when the opinion is grounded in PostBrief and
 AngleDecision.
+
+## Authorial Voice Rules
+
+Use AngleDecision.authorial_voice_directive for the semantic source of the
+authorial judgment.
+
+Use personal_presence_instruction for the bounded personal-presence requirement.
+
+Explicit personal presence means the post visibly assigns the interpretation to
+the author instead of only sounding like editorial copy.
+
+Use the directive to express what the author notices, what reading the author
+rejects, or why the distinction matters.
+
+When personal_presence_instruction requires an explicit author-owned
+interpretive statement, the post must include exactly one naturally integrated
+statement that visibly assigns the interpretation to the author.
+
+In required mode, personal_presence_instruction requires an explicit author-owned interpretive statement.
+
+That statement must derive from authorial_observation, rejected_reading, or
+why_distinction_matters, and it must match AngleDecision.controlling_angle.
+
+An impersonal editorial judgment is not sufficient when explicit personal
+presence is required.
+
+First person is allowed but not required. Natural first-person phrasing such as
+what stands out to me or my issue with this argument is acceptable when it fits
+the evidence.
+
+Do not mechanically prepend I think, in my opinion, personally, or similar
+phrasing just to simulate voice.
+
+Do not require the post to open with first person.
+
+Do not include more than one explicit ownership statement.
+
+A finished post may use third person or direct phrasing only when the resolved
+personal_presence_instruction permits editorial stance without explicit personal
+presence.
+
+Do not invent biography, personal experience, professional authority, direct
+market exposure, client stories, customer stories, emotional reactions, or
+private observations.
+
+Do not make the post sound like a neutral article recap, market note, or
+columnist summary when the directive asks for an owned distinction.
 
 ## Safety / Financial Advice Rules
 
@@ -139,7 +206,29 @@ When finance, crypto, or investment context is present, do not use direct advice
 
 ## Output JSON Requirements
 
+Return one valid JSON object only.
+
+Do not wrap the JSON in markdown fences.
+
+Do not include prose before or after the JSON.
+
 Return only valid JSON matching the existing FinalPostPayload schema.
+
+Use valid JSON double-quoted keys and double-quoted string values.
+
+All line breaks inside JSON string values must be escaped as \n characters.
+
+If post_text needs paragraph breaks, encode them inside the JSON string as \n\n.
+
+Never place literal physical line breaks inside a quoted JSON string.
+
+Do not use trailing commas.
+
+Do not use comments.
+
+Do not use single-quoted JSON.
+
+Before returning, verify that the entire response can be parsed by a strict JSON parser without preprocessing.
 
 The JSON must include:
 

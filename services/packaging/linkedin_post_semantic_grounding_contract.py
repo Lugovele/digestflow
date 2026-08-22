@@ -95,6 +95,101 @@ SEMANTIC_GROUNDING_SEVERITIES = (
     SEVERITY_BLOCKING,
 )
 
+SEMANTIC_GROUNDING_STATUS_SEVERITY_MATRIX = {
+    SUPPORT_STATUS_NOT_CLAIM: (SEVERITY_INFO,),
+    SUPPORT_STATUS_SUPPORTED: (SEVERITY_INFO,),
+    SUPPORT_STATUS_SUPPORTED_WITH_REQUIRED_QUALIFICATION: (SEVERITY_INFO,),
+    SUPPORT_STATUS_PARTIALLY_SUPPORTED: (SEVERITY_MINOR, SEVERITY_MAJOR),
+    SUPPORT_STATUS_MISSING_REQUIRED_QUALIFICATION: (
+        SEVERITY_MAJOR,
+        SEVERITY_BLOCKING,
+    ),
+    SUPPORT_STATUS_CAUSAL_OVERREACH: (SEVERITY_MAJOR, SEVERITY_BLOCKING),
+    SUPPORT_STATUS_UNSUPPORTED: (SEVERITY_MAJOR, SEVERITY_BLOCKING),
+    SUPPORT_STATUS_CONTRADICTED: (SEVERITY_BLOCKING,),
+    SUPPORT_STATUS_NOT_EVALUABLE: (SEVERITY_MAJOR, SEVERITY_BLOCKING),
+}
+
+SEMANTIC_GROUNDING_SUPPORTED_STATUSES = (
+    SUPPORT_STATUS_SUPPORTED,
+    SUPPORT_STATUS_SUPPORTED_WITH_REQUIRED_QUALIFICATION,
+)
+SEMANTIC_GROUNDING_ADVISORY_STATUSES = (
+    SUPPORT_STATUS_PARTIALLY_SUPPORTED,
+)
+SEMANTIC_GROUNDING_BLOCKING_ELIGIBLE_STATUSES = (
+    SUPPORT_STATUS_PARTIALLY_SUPPORTED,
+    SUPPORT_STATUS_MISSING_REQUIRED_QUALIFICATION,
+    SUPPORT_STATUS_CAUSAL_OVERREACH,
+    SUPPORT_STATUS_UNSUPPORTED,
+    SUPPORT_STATUS_CONTRADICTED,
+    SUPPORT_STATUS_NOT_EVALUABLE,
+)
+SEMANTIC_GROUNDING_BLOCKING_SEVERITIES = (
+    SEVERITY_MAJOR,
+    SEVERITY_BLOCKING,
+)
+SEMANTIC_GROUNDING_NOT_A_CLAIM_STATUSES = (
+    SUPPORT_STATUS_NOT_CLAIM,
+)
+
+
+def is_valid_status_severity_pair(support_status: str, severity: str) -> bool:
+    return severity in SEMANTIC_GROUNDING_STATUS_SEVERITY_MATRIX.get(
+        support_status,
+        (),
+    )
+
+
+def is_blocking_claim_state(support_status: str, severity: str) -> bool:
+    return (
+        support_status in SEMANTIC_GROUNDING_BLOCKING_ELIGIBLE_STATUSES
+        and severity in SEMANTIC_GROUNDING_BLOCKING_SEVERITIES
+    )
+
+
+def build_semantic_grounding_prompt_rules() -> dict[str, Any]:
+    """Return the canonical model-facing semantic-grounding decision rules."""
+
+    return {
+        "status_severity_matrix": {
+            status: list(severities)
+            for status, severities in SEMANTIC_GROUNDING_STATUS_SEVERITY_MATRIX.items()
+        },
+        "supported_statuses": list(SEMANTIC_GROUNDING_SUPPORTED_STATUSES),
+        "advisory_statuses": list(SEMANTIC_GROUNDING_ADVISORY_STATUSES),
+        "blocking_eligible_statuses": list(
+            SEMANTIC_GROUNDING_BLOCKING_ELIGIBLE_STATUSES
+        ),
+        "blocking_severities": list(SEMANTIC_GROUNDING_BLOCKING_SEVERITIES),
+        "not_a_claim_statuses": list(SEMANTIC_GROUNDING_NOT_A_CLAIM_STATUSES),
+        "decision_rules": [
+            "Use only status/severity pairs from status_severity_matrix.",
+            "supported and supported_with_required_qualification must use info severity.",
+            "partially_supported with minor severity is advisory and does not fail grounding.",
+            "partially_supported with major severity is a blocking claim.",
+            "missing_required_qualification, causal_overreach, unsupported, contradicted, and not_evaluable are blocking when paired with a blocking severity.",
+            "failed_claim_ids must exactly match blocking claim IDs in claim_reviews order.",
+            "pass can be true only when there are no blocking claims, no automatic_fail_reason, no human-review requirement, no repairable flag, and no repair instructions.",
+            "automatic_fail_reason requires at least one blocking claim.",
+            "repairable can be true only for failed, non-human-review grounding results with blocking claims.",
+            "Every repairable blocking claim requires a non-empty repair_hint and a top-level repair instruction beginning with '<claim_id>:'.",
+        ],
+        "qualification_invariants": [
+            "projected remains projected",
+            "likely remains attributed likelihood",
+            "may remains possibility",
+            "risk remains risk",
+            "analysis remains attributed analysis",
+        ],
+        "causal_fidelity": [
+            "Do not turn coexistence into cause.",
+            "Do not turn forecasts into outcomes.",
+            "Do not turn positioning or risk into stability, recovery, optimism, or growth.",
+        ],
+        "selected_evidence_only": True,
+    }
+
 
 @dataclass(frozen=True)
 class SemanticGroundingClaimReview:
@@ -136,7 +231,7 @@ class SemanticGroundingReviewResult:
     automatic_fail_reason: str = ""
     requires_human_review: bool = False
     human_review_reason: str = ""
-    repairable: bool = True
+    repairable: bool = False
     repair_instructions: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -197,7 +292,7 @@ def normalize_semantic_grounding_review_result(
     automatic_fail_reason = _optional_string(payload, "automatic_fail_reason")
     requires_human_review = _optional_bool(payload, "requires_human_review", False)
     human_review_reason = _optional_string(payload, "human_review_reason")
-    repairable = _optional_bool(payload, "repairable", True)
+    repairable = _optional_bool(payload, "repairable", False)
     repair_instructions = _string_tuple(
         payload.get("repair_instructions", ()),
         "repair_instructions",
@@ -206,14 +301,27 @@ def normalize_semantic_grounding_review_result(
     blocking_claim_ids = tuple(
         claim.claim_id
         for claim in claim_reviews
-        if _claim_blocks_grounding(claim)
+        if is_blocking_claim_state(claim.support_status, claim.severity)
     )
-    expected_failed = tuple(dict.fromkeys((*failed_claim_ids, *blocking_claim_ids)))
-    if expected_failed and passed:
+    claim_by_id = {claim.claim_id: claim for claim in claim_reviews}
+    for claim_id in failed_claim_ids:
+        if not _claim_blocks_grounding(claim_by_id[claim_id]):
+            raise ValueError(
+                "semantic grounding failed_claim_ids must reference blocking claims."
+            )
+    if failed_claim_ids != blocking_claim_ids:
+        raise ValueError(
+            "semantic grounding failed_claim_ids must exactly match blocking claims."
+        )
+    if blocking_claim_ids and passed:
         raise ValueError("semantic grounding pass cannot be true with failed claims.")
     if automatic_fail_reason and passed:
         raise ValueError(
             "semantic grounding pass cannot be true with automatic_fail_reason."
+        )
+    if automatic_fail_reason and not blocking_claim_ids:
+        raise ValueError(
+            "semantic grounding automatic_fail_reason requires blocking claims."
         )
     if requires_human_review and passed:
         raise ValueError(
@@ -223,15 +331,45 @@ def normalize_semantic_grounding_review_result(
         raise ValueError(
             "semantic grounding human_review_reason is required when human review is required."
         )
+    if repairable and passed:
+        raise ValueError(
+            "semantic grounding pass cannot be true when repairable is true."
+        )
+    if repair_instructions and passed:
+        raise ValueError(
+            "semantic grounding pass cannot be true with repair_instructions."
+        )
+    if repair_instructions and not repairable:
+        raise ValueError(
+            "semantic grounding repair_instructions must be empty when repairable is false."
+        )
+    if repairable and requires_human_review:
+        raise ValueError(
+            "semantic grounding repairable cannot be true when human review is required."
+        )
+    if not passed and not blocking_claim_ids and not requires_human_review:
+        raise ValueError(
+            "semantic grounding pass=false requires blocking claims or human review."
+        )
+    if repairable and not blocking_claim_ids:
+        raise ValueError(
+            "semantic grounding repairable failures require blocking claims."
+        )
     if repairable and not passed and not requires_human_review and not repair_instructions:
         raise ValueError(
             "semantic grounding repairable failures require repair_instructions."
+        )
+    if repairable:
+        _validate_claim_addressed_repair(
+            claim_by_id=claim_by_id,
+            blocking_claim_ids=blocking_claim_ids,
+            repair_instructions=repair_instructions,
         )
 
     return SemanticGroundingReviewResult(
         passed=passed,
         claim_reviews=claim_reviews,
-        blocking_claim_ids=expected_failed,
+        blocking_claim_ids=blocking_claim_ids,
         automatic_fail_reason=automatic_fail_reason,
         requires_human_review=requires_human_review,
         human_review_reason=human_review_reason,
@@ -264,6 +402,20 @@ def _normalize_claim_reviews(
                 raise ValueError(
                     f"semantic grounding claim {claim_id} references unselected evidence ID: {evidence_id}"
                 )
+        support_status = _required_enum(
+            claim,
+            "support_status",
+            SEMANTIC_GROUNDING_SUPPORT_STATUSES,
+        )
+        severity = _required_enum(
+            claim,
+            "severity",
+            SEMANTIC_GROUNDING_SEVERITIES,
+        )
+        if not is_valid_status_severity_pair(support_status, severity):
+            raise ValueError(
+                "semantic grounding support_status/severity pair is not allowed."
+            )
         reviews.append(
             SemanticGroundingClaimReview(
                 claim_id=claim_id,
@@ -275,16 +427,8 @@ def _normalize_claim_reviews(
                     "claim_type",
                     SEMANTIC_GROUNDING_CLAIM_TYPES,
                 ),
-                support_status=_required_enum(
-                    claim,
-                    "support_status",
-                    SEMANTIC_GROUNDING_SUPPORT_STATUSES,
-                ),
-                severity=_required_enum(
-                    claim,
-                    "severity",
-                    SEMANTIC_GROUNDING_SEVERITIES,
-                ),
+                support_status=support_status,
+                severity=severity,
                 supported_evidence_ids=evidence_ids,
                 required_qualifications=_string_tuple(
                     claim.get("required_qualifications", ()),
@@ -302,13 +446,37 @@ def _normalize_claim_reviews(
 
 
 def _claim_blocks_grounding(claim: SemanticGroundingClaimReview) -> bool:
-    if claim.severity in {SEVERITY_MAJOR, SEVERITY_BLOCKING}:
-        return claim.support_status not in {
-            SUPPORT_STATUS_SUPPORTED,
-            SUPPORT_STATUS_SUPPORTED_WITH_REQUIRED_QUALIFICATION,
-            SUPPORT_STATUS_NOT_CLAIM,
-        }
-    return False
+    return is_blocking_claim_state(claim.support_status, claim.severity)
+
+
+def _validate_claim_addressed_repair(
+    *,
+    claim_by_id: dict[str, SemanticGroundingClaimReview],
+    blocking_claim_ids: tuple[str, ...],
+    repair_instructions: tuple[str, ...],
+) -> None:
+    if len(repair_instructions) != len(blocking_claim_ids):
+        raise ValueError(
+            "semantic grounding repair_instructions must address each blocking claim."
+        )
+
+    addressed_claim_ids = []
+    for claim_id, instruction in zip(blocking_claim_ids, repair_instructions):
+        if not claim_by_id[claim_id].repair_hint.strip():
+            raise ValueError(
+                "semantic grounding repairable blocking claims require repair_hint."
+            )
+        stripped = instruction.strip()
+        if not stripped.startswith(f"{claim_id}:") or not stripped[len(claim_id) + 1 :].strip():
+            raise ValueError(
+                "semantic grounding repair_instructions must start with claim_id."
+            )
+        addressed_claim_ids.append(claim_id)
+
+    if tuple(addressed_claim_ids) != blocking_claim_ids:
+        raise ValueError(
+            "semantic grounding repair_instructions must match failed_claim_ids."
+        )
 
 
 def _required_bool(payload: dict[str, Any], field_name: str) -> bool:

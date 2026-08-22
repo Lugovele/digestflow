@@ -339,19 +339,28 @@ Score each post from 1 to 5 on each criterion.
 
 ### Author Point Of View
 
-- 5 = clear interpretation, judgment, or thesis from the author.
-- 4 = visible point of view, but not very distinctive.
-- 3 = mild opinion.
+- 5 = explicit author-owned interpretive statement, substantive choice between competing readings, judgment tied to supplied evidence, and no fabricated experience or authority.
+- 4 = strong authored judgment, clear evaluative stance, or article-like editorial ownership with limited or absent explicit personal presence when explicit personal presence is not required.
+- 3 = strong thesis without clear ownership, generic first-person marker without substantive judgment, or summary plus rhetorical framing.
 - 2 = mostly neutral reporting.
 - 1 = no author position.
 
+When `authorial_voice_directive.personal_presence_requirement` is
+`explicit_author_owned_statement_required`, not exactly one qualifying explicit
+author-owned interpretive statement, meaning zero or multiple, must score no
+higher than 3 for Author Point Of View and the review must fail.
+
 ### Human Voice
 
-- 5 = sounds natural, specific, and human; has clear author interpretation; avoids corporate or template phrasing.
+- 5 = sounds natural, specific, and human; avoids corporate or template phrasing.
 - 4 = mostly human and readable, with minor generic phrasing.
 - 3 = understandable but somewhat generic or polished.
 - 2 = corporate, summary-like, or overly safe.
 - 1 = clearly template-like, generic AI text, consultant-speak, or no human voice.
+
+Human Voice and Author Point Of View are separate. Readable, fluent, non-corporate
+prose can score well for Human Voice while still scoring 3 or lower for Author
+Point Of View if the post lacks a visible author-owned judgment.
 
 ### Practical Value
 
@@ -379,6 +388,7 @@ A post passes if:
 - evidence score is at least 3;
 - author point of view score is at least 4;
 - human voice score is at least 4;
+- if `authorial_voice_directive.personal_presence_requirement` is `explicit_author_owned_statement_required`, the post contains exactly one qualifying explicit author-owned interpretive statement, not zero and not multiple;
 - there are no unsupported claims;
 - there is only one CTA;
 - there are no links in the body;
@@ -399,6 +409,7 @@ A post fails automatically if it:
 - sounds like generic AI-generated content;
 - reads like a corporate memo instead of a human LinkedIn post;
 - has no human author voice;
+- invents biography, professional authority, direct exposure, or emotional reaction;
 - makes source terminology the main angle by accident;
 - exceeds 1300 characters;
 - relies on generic phrases as the main argument;

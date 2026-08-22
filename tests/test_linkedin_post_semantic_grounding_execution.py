@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import inspect
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -51,7 +52,7 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
             _render(),
             prompt_text="Semantic prompt.",
             provider="openai",
-            model="grounding-model",
+            model="gpt-4.1-2025-04-14",
             execution_metadata={"trace": "audit-only"},
         )
 
@@ -65,13 +66,139 @@ class LinkedInPostSemanticGroundingExecutionTests(SimpleTestCase):
         self.assertNotIn("audit-only", client.prompts[0])
         self.assertEqual(response.raw_text, '{"pass": true, "claims": [], "failed_claim_ids": []}')
 
+    @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
+    def test_gemini_grounding_uses_selected_model_with_strict_json_mode(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="gemini",
+            model="gemini-3.6-flash",
+        )
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"pass": true, "claims": [], "failed_claim_ids": []}',
+            raw={"id": "gemini-grounding"},
+            usage={"total_tokens": 12},
+        )
+
+        response = execute_semantic_grounding_prompt(request)
+
+        mock_build_ai_client.assert_called_once_with(
+            provider="gemini",
+            model="gemini-3.6-flash",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=True,
+            allow_json_mode_fallback=False,
+        )
+        self.assertEqual(response.provider, "gemini")
+        self.assertEqual(response.model, "gemini-3.6-flash")
+
+    @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
+    def test_unsupported_provider_returns_execution_error_without_provider_call(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="unknown",
+            model="grounding-model",
+        )
+
+        response = execute_semantic_grounding_prompt(request)
+
+        self.assertEqual(
+            response.execution_error,
+            "unsupported PostFlow final post role/provider/model: "
+            "role=semantic_grounding provider=unknown model=grounding-model",
+        )
+        mock_build_ai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
+    def test_anthropic_grounding_uses_selected_model_with_strict_json_mode(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="anthropic",
+            model="claude-sonnet-5",
+        )
+        mock_build_ai_client.return_value.generate_text.return_value = SimpleNamespace(
+            text='{"pass": true, "claims": [], "failed_claim_ids": []}',
+            raw={"id": "claude-grounding"},
+            usage={"total_tokens": 12},
+        )
+
+        response = execute_semantic_grounding_prompt(request)
+
+        mock_build_ai_client.assert_called_once_with(
+            provider="anthropic",
+            model="claude-sonnet-5",
+        )
+        mock_build_ai_client.return_value.generate_text.assert_called_once_with(
+            prompt=f"{request.prompt_text}\n\n{request.rendered_prompt_input.input_text}",
+            max_output_tokens=request.max_output_tokens,
+            json_mode=True,
+            allow_json_mode_fallback=False,
+        )
+        self.assertEqual(response.provider, "anthropic")
+        self.assertEqual(response.model, "claude-sonnet-5")
+
+    @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
+    def test_provider_model_mismatch_returns_error_without_provider_call(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="gemini",
+            model="gpt-4.1-2025-04-14",
+        )
+
+        response = execute_semantic_grounding_prompt(request)
+
+        self.assertIn(
+            "unsupported PostFlow final post role/provider/model",
+            response.execution_error,
+        )
+        mock_build_ai_client.assert_not_called()
+
+    @patch("services.packaging.linkedin_post_semantic_grounding_execution.build_ai_client")
+    def test_client_configuration_failure_preserves_safe_error_without_provider_call(
+        self,
+        mock_build_ai_client,
+    ) -> None:
+        request = build_semantic_grounding_execution_request(
+            _render(),
+            prompt_text="Semantic prompt.",
+            provider="openai",
+            model="gpt-4.1-2025-04-14",
+        )
+        mock_build_ai_client.side_effect = ValueError("semantic grounding config error")
+
+        response = execute_semantic_grounding_prompt(request)
+
+        self.assertEqual(
+            response.execution_error,
+            "semantic grounding config error",
+        )
+        self.assertEqual(response.raw_text, "")
+
     def test_empty_response_is_execution_error(self) -> None:
         client = FakeClient("")
         request = build_semantic_grounding_execution_request(
             _render(),
             prompt_text="Semantic prompt.",
             provider="openai",
-            model="grounding-model",
+            model="gpt-4.1-2025-04-14",
         )
 
         response = execute_semantic_grounding_prompt(request, client=client)

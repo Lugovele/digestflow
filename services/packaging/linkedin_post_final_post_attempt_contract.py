@@ -87,6 +87,7 @@ class FinalPostAttemptRequest:
     candidate_writer_provider: str | None = None
     candidate_writer_model: str | None = None
     candidate_writer_max_output_tokens: int | None = None
+    candidate_writer_thinking_mode: str | None = None
     semantic_grounding_prompt_text: str = ""
     semantic_grounding_provider: str | None = None
     semantic_grounding_model: str | None = None
@@ -125,6 +126,9 @@ class FinalPostAttemptRequest:
             ),
             "candidate_writer_max_output_tokens": _serialize_attempt_value(
                 self.candidate_writer_max_output_tokens
+            ),
+            "candidate_writer_thinking_mode": _serialize_attempt_value(
+                self.candidate_writer_thinking_mode
             ),
             "semantic_grounding_prompt_text": _serialize_attempt_value(
                 self.semantic_grounding_prompt_text

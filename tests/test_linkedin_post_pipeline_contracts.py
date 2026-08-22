@@ -6,9 +6,13 @@ from django.test import SimpleTestCase
 from apps.digests.models import Digest, DigestRun
 from apps.topics.models import Topic
 from services.packaging.linkedin_post_pipeline import (
+    AUTHORIAL_PERSONAL_PRESENCE_ALLOWED,
+    AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY,
+    AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
     AngleDecision,
     ArticleEvidence,
     ArticleEvidencePack,
+    AuthorialVoiceDirective,
     BriefEvidenceUse,
     ContextualEvidence,
     ContextualEvidencePack,
@@ -31,6 +35,7 @@ from services.packaging.linkedin_post_pipeline import (
     validate_angle_decision_for_contextual_evidence,
     validate_article_evidence_pack,
     validate_article_evidence_pack_for_pipeline_input,
+    validate_authorial_voice_directive,
     validate_contextual_evidence_pack,
     validate_contextual_evidence_pack_for_article_evidence,
     validate_editorial_synthesis_result,
@@ -229,6 +234,21 @@ def make_contextual_evidence_pack(
     )
 
 
+def make_authorial_voice_directive() -> AuthorialVoiceDirective:
+    return AuthorialVoiceDirective(
+        authorial_observation=(
+            "The author notices that visible decisions are stronger proof than polish."
+        ),
+        rejected_reading="Reject treating the evidence as generic branding advice.",
+        why_distinction_matters=(
+            "This distinction matters because the reader needs an owned judgment."
+        ),
+        personal_presence_requirement=AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+        first_person_policy="allowed_not_required",
+        forbidden_author_claims=["personal experience", "professional authority"],
+    )
+
+
 def primary_editorial_text(
     angle_decision: AngleDecision,
     post_brief: PostBrief | None = None,
@@ -254,6 +274,7 @@ def make_angle_decision(supporting_evidence_ids: list[str] | None = None) -> Ang
         if supporting_evidence_ids is not None
         else ["e1"],
         angle_to_avoid=["generic personal branding advice"],
+        authorial_voice_directive=make_authorial_voice_directive(),
     )
 
 
@@ -866,6 +887,92 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             contextual_pack,
             angle_decision,
         )
+
+    def test_build_angle_decision_adds_authorial_voice_directive(self) -> None:
+        angle_decision = build_angle_decision_from_contextual_evidence_pack(
+            make_contextual_evidence_pack()
+        )
+
+        directive = angle_decision.authorial_voice_directive
+
+        self.assertIsInstance(directive, AuthorialVoiceDirective)
+        validate_authorial_voice_directive(directive)
+        self.assertIn("notices", directive.authorial_observation)
+        self.assertIn("Reject treating", directive.rejected_reading)
+        self.assertIn("distinction matters", directive.why_distinction_matters)
+        self.assertEqual(
+            directive.personal_presence_requirement,
+            AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+        )
+        self.assertEqual(directive.first_person_policy, "allowed_not_required")
+        self.assertIn("personal experience", directive.forbidden_author_claims)
+        self.assertIn("professional authority", directive.forbidden_author_claims)
+
+    def test_authorial_voice_directive_requires_personal_presence_policy(self) -> None:
+        with self.assertRaises(TypeError):
+            AuthorialVoiceDirective(
+                authorial_observation="The author notices a false shortcut.",
+                rejected_reading="Reject treating adoption as proof of trust.",
+                why_distinction_matters="The distinction matters for interpretation.",
+                first_person_policy="allowed_not_required",
+                forbidden_author_claims=["personal experience"],
+            )
+
+    def test_validate_authorial_voice_directive_rejects_unknown_personal_presence_policy(
+        self,
+    ) -> None:
+        directive = AuthorialVoiceDirective(
+            authorial_observation="The author notices a false shortcut.",
+            rejected_reading="Reject treating adoption as proof of trust.",
+            why_distinction_matters="The distinction matters for interpretation.",
+            personal_presence_requirement="generic_default",
+            first_person_policy="allowed_not_required",
+            forbidden_author_claims=["personal experience"],
+        )
+
+        with self.assertRaisesRegex(
+            LinkedInPostPipelineContractError,
+            "personal_presence_requirement",
+        ):
+            validate_authorial_voice_directive(directive)
+
+    def test_authorial_voice_directive_allows_bounded_personal_presence_policies(
+        self,
+    ) -> None:
+        for policy in (
+            AUTHORIAL_PERSONAL_PRESENCE_REQUIRED,
+            AUTHORIAL_PERSONAL_PRESENCE_ALLOWED,
+            AUTHORIAL_PERSONAL_PRESENCE_EDITORIAL_ONLY,
+        ):
+            with self.subTest(policy=policy):
+                directive = AuthorialVoiceDirective(
+                    authorial_observation="The author notices a false shortcut.",
+                    rejected_reading="Reject treating adoption as proof of trust.",
+                    why_distinction_matters="The distinction matters for interpretation.",
+                    personal_presence_requirement=policy,
+                    first_person_policy="allowed_not_required",
+                    forbidden_author_claims=["personal experience"],
+                )
+
+                validate_authorial_voice_directive(directive)
+
+    def test_validate_angle_decision_rejects_missing_authorial_voice_directive(self) -> None:
+        decision = make_angle_decision()
+        invalid_decision = AngleDecision(
+            controlling_angle=decision.controlling_angle,
+            reader_problem=decision.reader_problem,
+            author_position=decision.author_position,
+            main_tension=decision.main_tension,
+            supporting_evidence_ids=decision.supporting_evidence_ids,
+            angle_to_avoid=decision.angle_to_avoid,
+            authorial_voice_directive=None,
+        )
+
+        with self.assertRaisesRegex(
+            LinkedInPostPipelineContractError,
+            "authorial_voice_directive",
+        ):
+            validate_angle_decision(invalid_decision)
 
     def test_build_angle_decision_from_contextual_evidence_pack_uses_only_main_candidates(self) -> None:
         contextual_pack = make_contextual_evidence_pack(
@@ -2220,6 +2327,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             main_tension="Finished outcomes can hide how the person actually works.",
             supporting_evidence_ids=["e1"],
             angle_to_avoid=["generic personal branding advice"],
+            authorial_voice_directive=make_authorial_voice_directive(),
         )
         post_brief = build_post_brief_from_angle_decision(
             contextual_pack,
@@ -2932,6 +3040,7 @@ class LinkedInPostPipelineContractTests(SimpleTestCase):
             main_tension="Finished outcomes can hide how the person actually works.",
             supporting_evidence_ids=["e1"],
             angle_to_avoid=["generic personal branding advice"],
+            authorial_voice_directive=make_authorial_voice_directive(),
         )
 
         validate_angle_decision(decision)

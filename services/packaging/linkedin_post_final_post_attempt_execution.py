@@ -7,10 +7,12 @@ packaging runtime.
 """
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
+from apps.ai.client import get_ai_client_configuration_error, get_ai_provider_model_error
 from services.packaging.linkedin_post_candidate_writer_execution import (
     CandidateWriterExecutionRequest,
     CandidateWriterRawResponse,
@@ -81,6 +83,12 @@ from services.packaging.linkedin_post_final_post_attempt_contract import (
 from services.packaging.linkedin_post_flow_input_builders import (
     build_post_editorial_input,
 )
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_CANDIDATE_WRITER,
+    FINAL_POST_ROLE_QUALITY_EVALUATOR,
+    FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+    get_final_post_role_provider_model_policy_failure,
+)
 from services.packaging.linkedin_post_prompt_renderers import (
     render_semantic_grounding_prompt_input,
     render_quality_evaluator_prompt_input,
@@ -133,6 +141,12 @@ def execute_final_post_standalone_candidate_attempt(
 
     candidate_writer_request = _build_candidate_writer_request(request)
     request_error = _candidate_writer_request_error(candidate_writer_request)
+    if request_error is None and candidate_writer_client is None:
+        request_error = get_ai_client_configuration_error(
+            candidate_writer_request.provider,
+            candidate_writer_request.model,
+            stage_name="candidate writer",
+        )
     if request_error is not None:
         return _failure_result(
             request=_request_with_failure_safe_candidate_writer_render(request),
@@ -165,6 +179,9 @@ def execute_final_post_standalone_candidate_attempt(
                     STAGE_CANDIDATE_WRITER_EXECUTION,
                     failure_code,
                     raw_response.execution_error,
+                    metadata=_candidate_writer_execution_failure_metadata(
+                        raw_response
+                    ),
                 ),
                 _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
@@ -217,6 +234,7 @@ def execute_final_post_standalone_candidate_attempt(
                     STAGE_CANDIDATE_WRITER_ADAPTATION,
                     FAILURE_CANDIDATE_WRITER_ADAPTATION,
                     str(exc),
+                    metadata=_candidate_writer_adaptation_failure_metadata(exc),
                 ),
                 _skipped_status(STAGE_SEMANTIC_GROUNDING_REQUEST),
                 _skipped_status(STAGE_QUALITY_EVALUATOR_REQUEST),
@@ -292,6 +310,23 @@ def execute_final_post_standalone_attempt(
     quality_evaluator_client: Any | None = None,
 ) -> FinalPostStandaloneAttemptResult:
     """Run one standalone attempt through quality evaluation and adjudication."""
+
+    preflight_error = _attempt_provider_model_preflight_error(
+        request,
+        candidate_writer_client=candidate_writer_client,
+        semantic_grounding_client=semantic_grounding_client,
+        quality_evaluator_client=quality_evaluator_client,
+    )
+    if preflight_error is not None:
+        stage, failure_code, failure_message = preflight_error
+        return _failure_result(
+            request=_request_with_failure_safe_candidate_writer_render(request),
+            stage_statuses=_preflight_failure_statuses(stage, failure_code, failure_message),
+            failure_stage=stage,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            candidate_writer_invocation_count=0,
+        )
 
     candidate_result = execute_final_post_standalone_candidate_attempt(
         request,
@@ -651,6 +686,7 @@ def _build_candidate_writer_request(
             if request.candidate_writer_max_output_tokens is None
             else request.candidate_writer_max_output_tokens
         ),
+        thinking_mode=request.candidate_writer_thinking_mode,
         execution_metadata=request.execution_metadata,
     )
 
@@ -696,10 +732,22 @@ def _candidate_writer_request_error(
 ) -> str | None:
     if not request.provider:
         return "missing candidate writer provider"
-    if request.provider != "openai":
-        return f"unsupported candidate writer provider: {request.provider}"
     if not request.model:
         return "missing candidate writer model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_CANDIDATE_WRITER,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
+    provider_model_error = get_ai_provider_model_error(
+        request.provider,
+        request.model,
+        stage_name="candidate writer",
+    )
+    if provider_model_error is not None:
+        return provider_model_error
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,
@@ -728,6 +776,92 @@ def _semantic_grounding_request_error(
     request: SemanticGroundingExecutionRequest,
 ) -> str | None:
     return get_semantic_grounding_execution_request_error(request)
+
+
+def _attempt_provider_model_preflight_error(
+    request: FinalPostAttemptRequest,
+    *,
+    candidate_writer_client: Any | None,
+    semantic_grounding_client: Any | None,
+    quality_evaluator_client: Any | None,
+) -> tuple[str, str, str] | None:
+    checks = (
+        (
+            STAGE_CANDIDATE_WRITER_REQUEST,
+            FAILURE_CANDIDATE_WRITER_REQUEST,
+            FINAL_POST_ROLE_CANDIDATE_WRITER,
+            request.candidate_writer_provider,
+            request.candidate_writer_model,
+            "candidate writer",
+            candidate_writer_client,
+        ),
+        (
+            STAGE_SEMANTIC_GROUNDING_REQUEST,
+            FAILURE_SEMANTIC_GROUNDING_REQUEST,
+            FINAL_POST_ROLE_SEMANTIC_GROUNDING,
+            request.semantic_grounding_provider,
+            request.semantic_grounding_model,
+            "semantic grounding",
+            semantic_grounding_client,
+        ),
+        (
+            STAGE_QUALITY_EVALUATOR_REQUEST,
+            FAILURE_QUALITY_EVALUATOR_REQUEST,
+            FINAL_POST_ROLE_QUALITY_EVALUATOR,
+            request.quality_evaluator_provider,
+            request.quality_evaluator_model,
+            "quality evaluator",
+            quality_evaluator_client,
+        ),
+    )
+    for stage, failure_code, role, provider, model, stage_label, client in checks:
+        provider_value = str(provider or "").strip().lower()
+        model_value = str(model or "").strip()
+        if not provider_value:
+            return stage, failure_code, f"missing {stage_label} provider"
+        if not model_value:
+            return stage, failure_code, f"missing {stage_label} model"
+        policy_failure = get_final_post_role_provider_model_policy_failure(
+            role=role,
+            provider=provider_value,
+            model=model_value,
+        )
+        if policy_failure is not None:
+            return stage, failure_code, str(policy_failure)
+        provider_model_error = get_ai_provider_model_error(
+            provider_value,
+            model_value,
+            stage_name=stage_label,
+        )
+        if provider_model_error is not None:
+            return stage, failure_code, provider_model_error
+        if client is None:
+            configuration_error = get_ai_client_configuration_error(
+                provider_value,
+                model_value,
+                stage_name=stage_label,
+            )
+            if configuration_error is not None:
+                return stage, failure_code, configuration_error
+    return None
+
+
+def _preflight_failure_statuses(
+    failed_stage: str,
+    failure_code: str,
+    failure_message: str,
+) -> tuple[FinalPostAttemptStageStatus, ...]:
+    statuses: list[FinalPostAttemptStageStatus] = []
+    for stage in (
+        STAGE_CANDIDATE_WRITER_REQUEST,
+        STAGE_SEMANTIC_GROUNDING_REQUEST,
+        STAGE_QUALITY_EVALUATOR_REQUEST,
+    ):
+        if stage == failed_stage:
+            statuses.append(_failed_status(stage, failure_code, failure_message))
+        else:
+            statuses.append(_skipped_status(stage))
+    return tuple(statuses)
 
 
 def _request_with_failure_safe_candidate_writer_render(
@@ -788,6 +922,113 @@ def _candidate_writer_execution_failure_code(
     if raw_response.execution_error == "empty provider response":
         return FAILURE_CANDIDATE_WRITER_EMPTY_RESPONSE
     return FAILURE_CANDIDATE_WRITER_PROVIDER
+
+
+def _candidate_writer_execution_failure_metadata(
+    raw_response: CandidateWriterRawResponse,
+) -> dict[str, Any] | None:
+    if raw_response.execution_error != "empty provider response":
+        return None
+    provider_response_metadata = getattr(
+        raw_response,
+        "provider_response_metadata",
+        None,
+    )
+    if not isinstance(provider_response_metadata, dict):
+        return None
+    safe_provider_response_metadata = _safe_provider_response_metadata(
+        provider_response_metadata
+    )
+    return {
+        "provider_response_metadata": safe_provider_response_metadata,
+        "empty_text_classification": _classify_empty_candidate_writer_response(
+            safe_provider_response_metadata
+        ),
+    }
+
+
+def _classify_empty_candidate_writer_response(
+    provider_response_metadata: dict[str, Any],
+) -> str:
+    stop_reason = str(provider_response_metadata.get("stop_reason") or "").strip()
+    content_block_types = provider_response_metadata.get("content_block_types")
+    if not isinstance(content_block_types, list):
+        content_block_types = []
+    normalized_types = {
+        str(block_type).strip().lower()
+        for block_type in content_block_types
+        if str(block_type).strip()
+    }
+    if _is_max_output_stop_reason(stop_reason):
+        return "MAX_TOKENS_BEFORE_TEXT"
+    if normalized_types and normalized_types <= {"thinking"}:
+        return "THINKING_ONLY_RESPONSE"
+    if normalized_types and normalized_types <= {"tool_use", "tool-use"}:
+        return "TOOL_USE_ONLY_RESPONSE"
+    if not normalized_types:
+        return "EMPTY_CONTENT_SUCCESS_RESPONSE"
+    if stop_reason:
+        return "REFUSAL_OR_STOP_WITHOUT_TEXT"
+    return "UNKNOWN_EMPTY_TEXT_RESPONSE"
+
+
+def _is_max_output_stop_reason(stop_reason: str) -> bool:
+    normalized = stop_reason.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {
+        "length",
+        "max_token",
+        "max_tokens",
+        "max_output_token",
+        "max_output_tokens",
+        "max_completion_token",
+        "max_completion_tokens",
+        "token_limit",
+        "output_token_limit",
+    }:
+        return True
+    return "max" in normalized and "token" in normalized
+
+
+def _safe_provider_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider": _safe_short_text(metadata.get("provider")),
+        "model": _safe_short_text(metadata.get("model")),
+        "stop_reason": _safe_short_text(metadata.get("stop_reason")),
+        "content_block_types": _safe_content_block_types(
+            metadata.get("content_block_types")
+        ),
+        "input_tokens": _safe_non_negative_int(metadata.get("input_tokens")),
+        "output_tokens": _safe_non_negative_int(metadata.get("output_tokens")),
+        "thinking_tokens": _safe_non_negative_int(metadata.get("thinking_tokens")),
+    }
+
+
+def _safe_content_block_types(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    safe_types: list[str] = []
+    for item in value[:20]:
+        safe_item = _safe_short_text(item)
+        if safe_item is not None:
+            safe_types.append(safe_item)
+    return safe_types
+
+
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _safe_short_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:120]
 
 
 def _quality_evaluator_execution_failure_code(
@@ -1145,6 +1386,15 @@ def _semantic_grounding_failure_message(
     return "semantic grounding failed"
 
 
+def _candidate_writer_adaptation_failure_metadata(
+    exc: CandidateWriterOutputAdaptationError,
+) -> dict[str, Any] | None:
+    detail = getattr(exc, "validation_detail", None)
+    if not isinstance(detail, dict):
+        return None
+    return {"validation_detail": detail}
+
+
 def _succeeded_status(stage: str) -> FinalPostAttemptStageStatus:
     return FinalPostAttemptStageStatus(stage=stage, status=STATUS_SUCCEEDED)
 
@@ -1153,12 +1403,15 @@ def _failed_status(
     stage: str,
     error_code: str,
     error_message: str,
+    *,
+    metadata: dict[str, Any] | None = None,
 ) -> FinalPostAttemptStageStatus:
     return FinalPostAttemptStageStatus(
         stage=stage,
         status=STATUS_FAILED,
         error_code=error_code,
         error_message=error_message,
+        metadata=metadata,
     )
 
 

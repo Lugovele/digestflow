@@ -96,6 +96,122 @@ WEAK_BITCOIN_CANDIDATES = (
     },
 )
 
+AUTHORIAL_PRESENCE_CALIBRATION_FIXTURES = (
+    {
+        "name": "article_like_judgment",
+        "post_text": (
+            "Bitcoin's current market story sounds cleaner than it is.\n\n"
+            "ETF inflows and institutional interest point to broader adoption. "
+            "But that story skips a step. Confidence, volatility, and policy "
+            "risk are still separate questions.\n\n"
+            "Treating one as evidence for the other is where the clean narrative "
+            "breaks down.\n\n"
+            "Which signal would you trust least?"
+        ),
+        "scores": {
+            "hook": 4,
+            "controlling_angle": 4,
+            "reader_problem": 4,
+            "pattern_interrupt": 4,
+            "evidence": 4,
+            "author_point_of_view": 3,
+            "human_voice": 4,
+            "practical_value": 4,
+            "cta": 4,
+        },
+        "expected_author_point_of_view_max": 3,
+        "failed_criteria": ["author_point_of_view"],
+        "rationale": (
+            "Strong article-like editorial ownership, but no explicit personal "
+            "presence assigning the interpretation to the author."
+        ),
+    },
+    {
+        "name": "explicit_personal_presence",
+        "post_text": (
+            "Bitcoin's current market story sounds cleaner than it is.\n\n"
+            "What bothers me is not the growth data itself. It is how quickly "
+            "that data gets treated as proof that the underlying risk questions "
+            "have been resolved.\n\n"
+            "Adoption, confidence, volatility, and policy risk are answering "
+            "different questions.\n\n"
+            "Which signal would you trust least?"
+        ),
+        "scores": {
+            "hook": 4,
+            "controlling_angle": 4,
+            "reader_problem": 4,
+            "pattern_interrupt": 4,
+            "evidence": 4,
+            "author_point_of_view": 5,
+            "human_voice": 4,
+            "practical_value": 4,
+            "cta": 4,
+        },
+        "expected_author_point_of_view": 5,
+        "rationale": (
+            "Explicit author-owned interpretive statement tied to supplied "
+            "market signals without invented experience or authority."
+        ),
+    },
+    {
+        "name": "generic_first_person",
+        "post_text": (
+            "I think this is interesting. Bitcoin adoption is rising, but the "
+            "market still has risks. Investors should watch the different "
+            "signals carefully.\n\n"
+            "Which signal would you trust least?"
+        ),
+        "scores": {
+            "hook": 3,
+            "controlling_angle": 3,
+            "reader_problem": 3,
+            "pattern_interrupt": 2,
+            "evidence": 3,
+            "author_point_of_view": 2,
+            "human_voice": 2,
+            "practical_value": 2,
+            "cta": 4,
+        },
+        "failed_criteria": [
+            "hook",
+            "controlling_angle",
+            "author_point_of_view",
+            "human_voice",
+        ],
+        "rationale": "Generic first-person marker without substantive judgment.",
+    },
+    {
+        "name": "fabricated_experience",
+        "post_text": (
+            "In my experience, investors always make this mistake. They see "
+            "Bitcoin adoption rising and assume the remaining risk questions "
+            "are solved.\n\n"
+            "Which signal would you trust least?"
+        ),
+        "scores": {
+            "hook": 3,
+            "controlling_angle": 3,
+            "reader_problem": 3,
+            "pattern_interrupt": 3,
+            "evidence": 2,
+            "author_point_of_view": 2,
+            "human_voice": 2,
+            "practical_value": 2,
+            "cta": 4,
+        },
+        "failed_criteria": [
+            "hook",
+            "controlling_angle",
+            "evidence",
+            "author_point_of_view",
+            "human_voice",
+        ],
+        "automatic_fail_reason": "invents personal experience",
+        "rationale": "Fabricated experience is forbidden unless supported by input.",
+    },
+)
+
 
 # These fixtures calibrate the deterministic review contract and parser surface.
 # They intentionally do not claim a live provider will assign identical scores.
@@ -187,6 +303,80 @@ class LinkedInQualityEvaluatorCalibrationTests(SimpleTestCase):
         self.assertEqual(normalized["total_score"], 36)
         self.assertEqual(normalized["failed_criteria"], [])
         self.assertEqual(normalized["automatic_fail_reason"], "")
+
+    def test_article_like_required_mode_is_capped_at_author_pov_three(self) -> None:
+        candidate = AUTHORIAL_PRESENCE_CALIBRATION_FIXTURES[0]
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                candidate["post_text"],
+                scores=candidate["scores"],
+                failed_criteria=candidate["failed_criteria"],
+            )
+        )
+
+        self.assertIs(normalized["pass"], False)
+        self.assertLessEqual(
+            normalized["scores"]["author_point_of_view"],
+            candidate["expected_author_point_of_view_max"],
+        )
+        self.assertIn(
+            "article-like editorial ownership",
+            candidate["rationale"],
+        )
+
+    def test_explicit_personal_presence_may_qualify_for_author_pov_five(self) -> None:
+        candidate = AUTHORIAL_PRESENCE_CALIBRATION_FIXTURES[1]
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                candidate["post_text"],
+                scores=candidate["scores"],
+                passed=True,
+            )
+        )
+
+        self.assertEqual(
+            normalized["scores"]["author_point_of_view"],
+            candidate["expected_author_point_of_view"],
+        )
+        self.assertIn(
+            "What bothers me is not the growth data itself",
+            candidate["post_text"],
+        )
+
+    def test_generic_first_person_does_not_qualify_as_strong_author_pov(self) -> None:
+        candidate = AUTHORIAL_PRESENCE_CALIBRATION_FIXTURES[2]
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                candidate["post_text"],
+                scores=candidate["scores"],
+                failed_criteria=candidate["failed_criteria"],
+            )
+        )
+
+        self.assertLess(normalized["scores"]["author_point_of_view"], 4)
+        self.assertIn("I think this is interesting", candidate["post_text"])
+
+    def test_fabricated_experience_is_forbidden_or_materially_penalized(self) -> None:
+        candidate = AUTHORIAL_PRESENCE_CALIBRATION_FIXTURES[3]
+
+        normalized = normalize_quality_review_result(
+            _review_fixture(
+                candidate["post_text"],
+                scores=candidate["scores"],
+                failed_criteria=candidate["failed_criteria"],
+                automatic_fail_reason=candidate["automatic_fail_reason"],
+            )
+        )
+
+        self.assertIs(normalized["pass"], False)
+        self.assertEqual(
+            normalized["automatic_fail_reason"],
+            "invents personal experience",
+        )
+        self.assertLess(normalized["scores"]["author_point_of_view"], 4)
 
 
 def _review_fixture(

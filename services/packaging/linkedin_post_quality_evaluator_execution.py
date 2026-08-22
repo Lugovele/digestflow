@@ -12,8 +12,12 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.client import OpenAIClient
+from apps.ai.client import build_ai_client, get_ai_provider_model_error
 from services.packaging.linkedin_post_editorial_boundary import PromptMetadata
+from services.packaging.linkedin_post_model_role_policy import (
+    FINAL_POST_ROLE_QUALITY_EVALUATOR,
+    get_final_post_role_provider_model_policy_failure,
+)
 from services.packaging.linkedin_post_prompt_renderers import (
     QualityEvaluatorPromptRender,
 )
@@ -22,7 +26,7 @@ from services.packaging.linkedin_post_prompt_renderers import (
 DEFAULT_MAX_OUTPUT_TOKENS = 2400
 MIN_MAX_OUTPUT_TOKENS = 2000
 DEFAULT_JSON_MODE = True
-SUPPORTED_PROVIDER = "openai"
+STAGE_NAME = "quality evaluator"
 
 
 @dataclass(frozen=True)
@@ -113,12 +117,24 @@ def execute_quality_evaluator_prompt(
 
     prompt = _build_provider_prompt(request)
     try:
-        text_client = client if client is not None else OpenAIClient(model=request.model)
+        text_client = (
+            client
+            if client is not None
+            else build_ai_client(provider=request.provider, model=request.model)
+        )
         response = text_client.generate_text(
             prompt=prompt,
             max_output_tokens=request.max_output_tokens,
             json_mode=request.json_mode,
             allow_json_mode_fallback=False,
+        )
+    except ValueError as exc:
+        return QualityEvaluatorRawResponse(
+            raw_text="",
+            provider=request.provider,
+            model=request.model,
+            prompt_metadata=prompt_metadata,
+            execution_error=str(exc),
         )
     except Exception as exc:  # pragma: no cover - covered with fake failure.
         return QualityEvaluatorRawResponse(
@@ -170,10 +186,22 @@ def get_quality_evaluator_execution_request_error(
 ) -> str | None:
     if not request.provider:
         return "missing quality evaluator provider"
-    if request.provider != SUPPORTED_PROVIDER:
-        return f"unsupported quality evaluator provider: {request.provider}"
     if not request.model:
         return "missing quality evaluator model"
+    policy_failure = get_final_post_role_provider_model_policy_failure(
+        role=FINAL_POST_ROLE_QUALITY_EVALUATOR,
+        provider=request.provider,
+        model=request.model,
+    )
+    if policy_failure is not None:
+        return str(policy_failure)
+    provider_model_error = get_ai_provider_model_error(
+        request.provider,
+        request.model,
+        stage_name=STAGE_NAME,
+    )
+    if provider_model_error is not None:
+        return provider_model_error
     if isinstance(request.max_output_tokens, bool) or not isinstance(
         request.max_output_tokens,
         int,
