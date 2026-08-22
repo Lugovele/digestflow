@@ -14,12 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PRODUCT_VALIDATION_SCHEMA_VERSION = "2026-08-21"
+PRODUCT_VALIDATION_SCHEMA_VERSION = "2026-08-22"
 PRODUCT_VALIDATION_CORPUS_ID = "postflow_product_validation_v1"
 DEFAULT_MANIFEST_PATH = Path(
     "tests/fixtures/postflow_product_validation_benchmark/manifest_v1.json"
 )
-TARGET_CASE_COUNT = 27
+TARGET_CASE_COUNT = 33
 FROZEN_ANCHOR_CASE_IDS = (
     "topic_140_digest_126",
     "topic_214_digest_128__claude_v3",
@@ -71,6 +71,15 @@ FAILURE_CATEGORIES = (
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
 
+HUMAN_DISPOSITIONS = ("ACCEPT", "REPAIR", "NOT_READY")
+HUMAN_REVIEW_STATUSES = ("REVIEWED", "NEEDS_SECOND_REVIEW")
+HUMAN_CONFIDENCE_LEVELS = ("HIGH", "MEDIUM", "LOW")
+HUMAN_TRIAGE_VALUES = ("PASS", "FAIL", "BORDERLINE")
+HUMAN_GENERICIZATION_VALUES = ("NONE", "MINOR", "MATERIAL")
+HUMAN_DISTINCTIVE_VOICE_VALUES = ("STRONG", "ADEQUATE", "WEAK")
+HUMAN_REPAIR_LOCALITY_VALUES = ("ending_local", "sentence_local", "broad", "none")
+
+
 
 @dataclass(frozen=True)
 class ProductValidationCorpusCase:
@@ -86,6 +95,13 @@ class ProductValidationCorpusCase:
     boundary_case_id: str | None = None
     human_review_required: bool = False
     notes: str = ""
+    candidate_origin: str = ""
+    candidate_provider: str = ""
+    candidate_model: str = ""
+    candidate_version: str = ""
+    historical_expected_outcome: str = ""
+    independence_group: str = ""
+    human_ground_truth: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +117,13 @@ class ProductValidationCorpusCase:
             "boundary_case_id": self.boundary_case_id,
             "human_review_required": self.human_review_required,
             "notes": self.notes,
+            "candidate_origin": self.candidate_origin,
+            "candidate_provider": self.candidate_provider,
+            "candidate_model": self.candidate_model,
+            "candidate_version": self.candidate_version,
+            "historical_expected_outcome": self.historical_expected_outcome,
+            "independence_group": self.independence_group,
+            "human_ground_truth": copy.deepcopy(self.human_ground_truth),
         }
 
 
@@ -163,7 +186,7 @@ def validate_product_validation_corpus_manifest(
     if manifest.target_case_count != TARGET_CASE_COUNT:
         raise ProductValidationCorpusError("unexpected target_case_count")
     if len(manifest.cases) != TARGET_CASE_COUNT:
-        raise ProductValidationCorpusError("manifest must contain exactly 27 cases")
+        raise ProductValidationCorpusError(f"manifest must contain exactly {TARGET_CASE_COUNT} cases")
     case_ids = [case.case_id for case in manifest.cases]
     if len(case_ids) != len(set(case_ids)):
         raise ProductValidationCorpusError("case_id values must be unique")
@@ -221,6 +244,13 @@ def _case_from_dict(raw: dict[str, Any]) -> ProductValidationCorpusCase:
         boundary_case_id=raw.get("boundary_case_id"),
         human_review_required=bool(raw.get("human_review_required", False)),
         notes=str(raw.get("notes", "")),
+        candidate_origin=str(raw.get("candidate_origin", "")),
+        candidate_provider=str(raw.get("candidate_provider", "")),
+        candidate_model=str(raw.get("candidate_model", "")),
+        candidate_version=str(raw.get("candidate_version", "")),
+        historical_expected_outcome=str(raw.get("historical_expected_outcome", "")),
+        independence_group=str(raw.get("independence_group", "")),
+        human_ground_truth=copy.deepcopy(raw.get("human_ground_truth")),
     )
 
 
@@ -239,5 +269,68 @@ def _validate_case(case: ProductValidationCorpusCase) -> None:
         )
     if case.family == CASE_FAMILY_SEMANTIC_BOUNDARY and not case.boundary_case_id:
         raise ProductValidationCorpusError("semantic boundary cases require boundary_case_id")
+    if case.family == CASE_FAMILY_CANDIDATE_QE:
+        _validate_product_case_metadata(case)
     if not case.sha256:
         raise ProductValidationCorpusError(f"missing sha256 for {case.case_id}")
+
+
+def _validate_product_case_metadata(case: ProductValidationCorpusCase) -> None:
+    if not case.independence_group:
+        raise ProductValidationCorpusError(f"missing independence_group for {case.case_id}")
+    if not isinstance(case.human_ground_truth, dict):
+        raise ProductValidationCorpusError(f"missing human_ground_truth for {case.case_id}")
+    truth = case.human_ground_truth
+    required = (
+        "schema_version",
+        "final_disposition",
+        "primary_reason",
+        "repair_target",
+        "repair_locality",
+        "grounding_fidelity",
+        "genericization",
+        "distinctive_voice",
+        "human_voice",
+        "cta",
+        "author_point_of_view",
+        "length_validity",
+        "distinctive_voice_preservation",
+        "review_status",
+        "confidence",
+        "notes",
+    )
+    missing = [key for key in required if key not in truth]
+    if missing:
+        raise ProductValidationCorpusError(
+            f"human_ground_truth missing keys for {case.case_id}: {', '.join(missing)}"
+        )
+    if truth["final_disposition"] not in HUMAN_DISPOSITIONS:
+        raise ProductValidationCorpusError(f"invalid human final_disposition for {case.case_id}")
+    if truth["review_status"] not in HUMAN_REVIEW_STATUSES:
+        raise ProductValidationCorpusError(f"invalid human review_status for {case.case_id}")
+    if truth["confidence"] not in HUMAN_CONFIDENCE_LEVELS:
+        raise ProductValidationCorpusError(f"invalid human confidence for {case.case_id}")
+    if truth["repair_locality"] not in HUMAN_REPAIR_LOCALITY_VALUES:
+        raise ProductValidationCorpusError(f"invalid human repair_locality for {case.case_id}")
+    if truth["genericization"] not in HUMAN_GENERICIZATION_VALUES:
+        raise ProductValidationCorpusError(f"invalid human genericization for {case.case_id}")
+    if truth["distinctive_voice"] not in HUMAN_DISTINCTIVE_VOICE_VALUES:
+        raise ProductValidationCorpusError(f"invalid human distinctive_voice for {case.case_id}")
+    for key in (
+        "grounding_fidelity",
+        "human_voice",
+        "cta",
+        "author_point_of_view",
+        "length_validity",
+    ):
+        if truth[key] not in HUMAN_TRIAGE_VALUES:
+            raise ProductValidationCorpusError(f"invalid human {key} for {case.case_id}")
+    if (
+        truth["distinctive_voice_preservation"] not in HUMAN_TRIAGE_VALUES
+        and truth["distinctive_voice_preservation"] not in HUMAN_DISTINCTIVE_VOICE_VALUES
+    ):
+        raise ProductValidationCorpusError(
+            f"invalid human distinctive_voice_preservation for {case.case_id}"
+        )
+    if truth["final_disposition"] == "REPAIR" and not truth["repair_target"]:
+        raise ProductValidationCorpusError(f"repair_target required for human REPAIR case {case.case_id}")

@@ -327,13 +327,19 @@ def _build_record(
         "boundary_case_id": case.boundary_case_id,
         "fixture_valid": True,
         "expected_outcome": case.expected_outcome,
-        "historical_expected_outcome": case.expected_outcome,
+        "historical_expected_outcome": case.historical_expected_outcome or case.expected_outcome,
         "historical_classification": case.failure_category,
         "historical_notes": case.notes,
-        "historical_outcome": case.expected_outcome,
+        "historical_outcome": case.historical_expected_outcome or case.expected_outcome,
         "failure_category": case.failure_category,
         "human_review_required": case.human_review_required,
         "provenance": copy.deepcopy(case.provenance),
+        "candidate_origin": case.candidate_origin,
+        "candidate_provider": case.candidate_provider,
+        "candidate_model": case.candidate_model,
+        "candidate_version": case.candidate_version,
+        "independence_group": case.independence_group,
+        "human_ground_truth": copy.deepcopy(case.human_ground_truth),
         "notes": case.notes,
         "runtime_input_fingerprint": _sha256_json(runtime_input),
         "runtime_input_keys": sorted(runtime_input),
@@ -385,7 +391,16 @@ def _product_distribution(case, payload: dict[str, Any]) -> dict[str, Any]:
             "topic_200_digest_134__gpt_v2",
         },
         "inclusion_reason": case.notes,
+        "candidate_text_hash": _candidate_text_hash(post_text),
     }
+
+
+
+
+def _candidate_text_hash(post_text: str) -> str:
+    if not post_text:
+        return ""
+    return hashlib.sha256(post_text.strip().lower().encode("utf-8")).hexdigest()
 
 
 def _length_band(length: int) -> str:
@@ -494,17 +509,21 @@ def _product_corpus_adequacy(manifest: ProductValidationCorpusManifest) -> dict[
         1 for case in manifest.cases if case.family == "candidate_quality_case"
     )
     return {
-        "status": (
-            "PRODUCT_CORPUS_INSUFFICIENT"
-            if product_count < PRODUCT_CORPUS_MINIMUM_CASES
-            else "PRODUCT_CORPUS_ADEQUATE"
-        ),
+        "status": _product_corpus_adequacy_status(product_count),
         "current_product_case_count": product_count,
         "minimum_product_case_count": PRODUCT_CORPUS_MINIMUM_CASES,
         "preferred_product_case_count": PRODUCT_CORPUS_PREFERRED_CASES,
         "gap_to_minimum": max(PRODUCT_CORPUS_MINIMUM_CASES - product_count, 0),
         "gap_to_preferred": max(PRODUCT_CORPUS_PREFERRED_CASES - product_count, 0),
     }
+
+
+def _product_corpus_adequacy_status(product_count: int) -> str:
+    if product_count < PRODUCT_CORPUS_MINIMUM_CASES:
+        return "PRODUCT_CORPUS_INSUFFICIENT"
+    if product_count < PRODUCT_CORPUS_PREFERRED_CASES:
+        return "PRODUCT_CORPUS_MINIMUM_MET"
+    return "PRODUCT_CORPUS_PREFERRED_MET"
 
 
 def _provider_calls(records: tuple[dict[str, Any], ...]) -> int:

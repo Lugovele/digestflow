@@ -88,6 +88,8 @@ def compute_product_validation_metrics(records: tuple[dict[str, Any], ...]) -> d
         "boundary_metrics": _boundary_metrics(boundary_records),
         "source_metrics": _source_metrics(source_records),
         "critical_invariants": _critical_invariants(records),
+        "human_ground_truth_metrics": _human_ground_truth_metrics(product_records),
+        "product_case_distribution": _product_case_distribution(product_records),
         "repeated_failure_signatures": _repeated_failure_signatures(product_records),
     }
 
@@ -151,16 +153,12 @@ def _product_metrics(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     )
     return {
         "product_case_count": len(records),
-        "product_corpus_adequacy_status": (
-            "PRODUCT_CORPUS_INSUFFICIENT"
-            if len(records) < PRODUCT_CORPUS_MINIMUM_CASES
-            else "PRODUCT_CORPUS_ADEQUATE"
-        ),
+        "product_corpus_adequacy_status": _product_corpus_adequacy_status(len(records)),
         "minimum_product_case_count": PRODUCT_CORPUS_MINIMUM_CASES,
         "preferred_product_case_count": PRODUCT_CORPUS_PREFERRED_CASES,
         "gap_to_minimum_product_cases": max(PRODUCT_CORPUS_MINIMUM_CASES - len(records), 0),
         "gap_to_preferred_product_cases": max(PRODUCT_CORPUS_PREFERRED_CASES - len(records), 0),
-        "product_rates_are_exploratory": len(records) < PRODUCT_CORPUS_MINIMUM_CASES,
+        "product_rates_are_exploratory": len(records) < PRODUCT_CORPUS_PREFERRED_CASES,
         "live_product_case_count": len(live_records),
         "live_product_not_measured_count": len(records) - len(live_records),
         "product_evaluable_case_count": len(evaluable),
@@ -302,17 +300,171 @@ def _critical_invariants(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     return invariants
 
 
+def _human_ground_truth_metrics(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    reviewed = [record for record in records if isinstance(record.get("human_ground_truth"), dict)]
+    matrix: Counter[str] = Counter()
+    for record in reviewed:
+        human = (record.get("human_ground_truth") or {}).get("final_disposition", "")
+        runtime = _runtime_disposition(record)
+        matrix[f"runtime_{runtime.lower()}_vs_human_{str(human).lower()}"] += 1
+    unsafe_accept_count = sum(
+        1
+        for record in reviewed
+        if _runtime_disposition(record) == "ACCEPT"
+        and (record.get("human_ground_truth") or {}).get("final_disposition") == "NOT_READY"
+    )
+    unnecessary_repair_count = sum(
+        1
+        for record in reviewed
+        if _runtime_disposition(record) == "REPAIR"
+        and (record.get("human_ground_truth") or {}).get("final_disposition") == "ACCEPT"
+    )
+    missed_repair_count = sum(
+        1
+        for record in reviewed
+        if _runtime_disposition(record) in {"ACCEPT", "NOT_READY"}
+        and (record.get("human_ground_truth") or {}).get("final_disposition") == "REPAIR"
+    )
+    human_genericization_block_count = sum(
+        1
+        for record in reviewed
+        if (record.get("human_ground_truth") or {}).get("genericization") == "MATERIAL"
+    )
+    runtime_accepted_material_genericization_count = sum(
+        1
+        for record in reviewed
+        if _runtime_disposition(record) == "ACCEPT"
+        and (record.get("human_ground_truth") or {}).get("genericization") == "MATERIAL"
+    )
+    repair_introduced_material_genericization_count = sum(
+        1
+        for record in reviewed
+        if _repair_executed(record) and record.get("material_genericization") is True
+    )
+    return {
+        "human_ground_truth_case_count": len(reviewed),
+        "human_ground_truth_coverage_rate": _rate(len(reviewed), len(records)),
+        **{key: matrix.get(key, 0) for key in _human_runtime_matrix_keys()},
+        "unsafe_accept_count": unsafe_accept_count,
+        "unsafe_accept_rate": _rate(unsafe_accept_count, len(reviewed)),
+        "unnecessary_repair_count": unnecessary_repair_count,
+        "missed_repair_count": missed_repair_count,
+        "human_material_genericization_count": human_genericization_block_count,
+        "human_genericization_block_count": human_genericization_block_count,
+        "runtime_accepted_material_genericization_count": runtime_accepted_material_genericization_count,
+        "accepted_human_genericization_block_count": runtime_accepted_material_genericization_count,
+        "repair_introduced_material_genericization_count": repair_introduced_material_genericization_count,
+        "grounding_disagreement_count": _grounding_disagreement_count(tuple(reviewed)),
+    }
+
+
+def _human_runtime_matrix_keys() -> tuple[str, ...]:
+    runtime = ("accept", "repair", "not_ready", "not_measured")
+    human = ("accept", "repair", "not_ready")
+    return tuple(f"runtime_{r}_vs_human_{h}" for r in runtime for h in human)
+
+
+def _runtime_disposition(record: dict[str, Any]) -> str:
+    outcome = record.get("live_outcome")
+    if not outcome:
+        return "NOT_MEASURED"
+    if outcome in {LIVE_ACCEPTED_FIRST_ATTEMPT, LIVE_REPAIR_ACCEPTED}:
+        return "ACCEPT"
+    if outcome in {
+        LIVE_REPAIR_REQUIRED_NOT_EXECUTED,
+        LIVE_REPAIR_TARGET_NOT_FIXED,
+        LIVE_REPAIR_REGRESSION,
+        LIVE_REPAIR_EXCESSIVE_REWRITE,
+    }:
+        return "REPAIR"
+    return "NOT_READY"
+
+
+def _grounding_disagreement_count(records: tuple[dict[str, Any], ...]) -> int:
+    count = 0
+    for record in records:
+        truth = record.get("human_ground_truth") or {}
+        human_grounding = truth.get("grounding_fidelity")
+        live_stage = record.get("live_stage_outcomes") or {}
+        runtime_grounding = live_stage.get("semantic_grounding")
+        if not isinstance(runtime_grounding, dict) or human_grounding not in {"PASS", "FAIL"}:
+            continue
+        runtime_pass = runtime_grounding.get("status") == "pass" or (
+            isinstance(runtime_grounding.get("grounding_review"), dict)
+            and runtime_grounding["grounding_review"].get("pass") is True
+        )
+        if (human_grounding == "PASS") != runtime_pass:
+            count += 1
+    return count
+
+
+def _product_case_distribution(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    return {
+        "topic": dict(sorted(Counter(str(record.get("topic", "")) for record in records).items())),
+        "candidate_provider_model": dict(sorted(Counter(_provider_model(record) for record in records).items())),
+        "human_disposition": dict(sorted(Counter(str((record.get("human_ground_truth") or {}).get("final_disposition", "")) for record in records).items())),
+        "repair_target": dict(sorted(Counter(str((record.get("human_ground_truth") or {}).get("repair_target", "")) for record in records).items())),
+        "genericization": dict(sorted(Counter(str((record.get("human_ground_truth") or {}).get("genericization", "")) for record in records).items())),
+        "grounding": dict(sorted(Counter(str((record.get("human_ground_truth") or {}).get("grounding_fidelity", "")) for record in records).items())),
+        "length_bucket": dict(sorted(Counter(str((record.get("product_case_distribution") or {}).get("length_band", "")) for record in records).items())),
+        "independence_group_count": len({str(record.get("independence_group", "")) for record in records if record.get("independence_group")}),
+        "duplicate_candidate_hash_count": _duplicate_candidate_hash_count(records),
+        "raw_product_case_count": len(records),
+        "rates_should_be_read_with_independence_groups": True,
+    }
+
+
+def _provider_model(record: dict[str, Any]) -> str:
+    provider = record.get("candidate_provider") or (record.get("product_case_distribution") or {}).get("writer_provider") or "unknown"
+    model = record.get("candidate_model") or (record.get("product_case_distribution") or {}).get("writer_model") or "unknown"
+    return f"{provider}/{model}"
+
+
+def _duplicate_candidate_hash_count(records: tuple[dict[str, Any], ...]) -> int:
+    hashes = Counter()
+    for record in records:
+        distribution = record.get("product_case_distribution") or {}
+        text_hash = distribution.get("candidate_text_hash")
+        if text_hash:
+            hashes[str(text_hash)] += 1
+            continue
+        candidate = record.get("final_candidate") or {}
+        text = candidate.get("post_text", "") if isinstance(candidate, dict) else ""
+        if text:
+            hashes[text.strip().lower()] += 1
+    return sum(count - 1 for count in hashes.values() if count > 1)
+
+
+def _product_corpus_adequacy_status(product_count: int) -> str:
+    if product_count < PRODUCT_CORPUS_MINIMUM_CASES:
+        return "PRODUCT_CORPUS_INSUFFICIENT"
+    if product_count < PRODUCT_CORPUS_PREFERRED_CASES:
+        return "PRODUCT_CORPUS_MINIMUM_MET"
+    return "PRODUCT_CORPUS_PREFERRED_MET"
+
+
 def _repeated_failure_signatures(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
-    signatures = Counter(_failure_signature(record) for record in records)
-    signatures.pop("", None)
+    groups_by_signature: dict[str, set[str]] = {}
+    raw_counts = Counter()
+    for record in records:
+        signature = _failure_signature(record)
+        if not signature:
+            continue
+        raw_counts[signature] += 1
+        group = str(record.get("independence_group") or record.get("case_id") or "")
+        groups_by_signature.setdefault(signature, set()).add(group)
+    independent_counts = {
+        signature: len(groups) for signature, groups in sorted(groups_by_signature.items())
+    }
     systemic = {
         signature: count
-        for signature, count in sorted(signatures.items())
+        for signature, count in independent_counts.items()
         if count >= SYSTEMIC_FAILURE_MIN_CASES
     }
     return {
         "systemic_threshold": SYSTEMIC_FAILURE_MIN_CASES,
-        "signature_counts": dict(sorted(signatures.items())),
+        "signature_counts": dict(sorted(raw_counts.items())),
+        "independent_group_counts": independent_counts,
         "candidate_systemic_issues": systemic,
     }
 

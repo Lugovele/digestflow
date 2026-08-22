@@ -28,11 +28,11 @@ from services.packaging import postflow_product_validation_runner as runner
 
 
 class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
-    def test_manifest_loads_exactly_27_cases_and_frozen_anchors(self) -> None:
+    def test_manifest_loads_exactly_33_cases_and_frozen_anchors(self) -> None:
         manifest = corpus.load_product_validation_corpus_manifest()
 
-        self.assertEqual(len(manifest.cases), 27)
-        self.assertEqual(manifest.target_case_count, 27)
+        self.assertEqual(len(manifest.cases), 33)
+        self.assertEqual(manifest.target_case_count, 33)
         self.assertEqual(
             tuple(manifest.frozen_anchor_case_ids),
             corpus.FROZEN_ANCHOR_CASE_IDS,
@@ -48,7 +48,7 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         families = [case.family for case in manifest.cases]
 
         self.assertEqual(families.count(corpus.CASE_FAMILY_SOURCE_ARTICLE), 5)
-        self.assertEqual(families.count(corpus.CASE_FAMILY_CANDIDATE_QE), 6)
+        self.assertEqual(families.count(corpus.CASE_FAMILY_CANDIDATE_QE), 12)
         self.assertEqual(families.count(corpus.CASE_FAMILY_SEMANTIC_BOUNDARY), 16)
 
     def test_manifest_references_existing_fixtures_by_hash(self) -> None:
@@ -83,8 +83,8 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             self.assertEqual(result.status, runner.STATUS_DRY_RUN)
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(result.provider_call_count, 0)
-            self.assertEqual(result.run_count, 27)
-            self.assertEqual(result.corpus_case_count, 27)
+            self.assertEqual(result.run_count, 33)
+            self.assertEqual(result.corpus_case_count, 33)
             artifacts = result.artifacts.to_dict()
             for path in artifacts.values():
                 self.assertTrue(Path(path).exists(), path)
@@ -146,7 +146,7 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
                 )
 
         self.assertEqual(result.status, runner.STATUS_COMPLETED)
-        self.assertEqual(len(calls), 27)
+        self.assertEqual(len(calls), 33)
         self.assertEqual(
             [family for _, family in calls].count(corpus.CASE_FAMILY_SOURCE_ARTICLE),
             5,
@@ -157,9 +157,9 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         )
         self.assertEqual(
             [family for _, family in calls].count(corpus.CASE_FAMILY_CANDIDATE_QE),
-            6,
+            12,
         )
-        self.assertEqual(result.provider_call_count, 28)
+        self.assertEqual(result.provider_call_count, 40)
 
     def test_dry_run_plans_single_repair_continuation_for_product_cases(self) -> None:
         planned = live_execution.planned_provider_calls_for_case_family(
@@ -527,9 +527,9 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertIn("source_metrics", result.metrics)
         self.assertIn("critical_invariants", result.metrics)
         self.assertIn("repeated_failure_signatures", result.metrics)
-        self.assertEqual(result.metrics["product_metrics"]["product_case_count"], 6)
+        self.assertEqual(result.metrics["product_metrics"]["product_case_count"], 12)
         self.assertEqual(result.metrics["product_metrics"]["live_product_case_count"], 0)
-        self.assertEqual(result.metrics["product_metrics"]["live_product_not_measured_count"], 6)
+        self.assertEqual(result.metrics["product_metrics"]["live_product_not_measured_count"], 12)
         self.assertEqual(result.metrics["product_metrics"]["product_evaluable_case_count"], 0)
         self.assertIsNone(result.metrics["product_metrics"]["first_attempt_acceptance_rate"])
         self.assertIsNone(result.metrics["product_metrics"]["evaluable_final_acceptance_rate"])
@@ -539,7 +539,279 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertEqual(result.metrics["source_metrics"]["source_invalid"], 0)
         self.assertGreater(result.metrics["product_failure_case_count"], 0)
         self.assertEqual(result.metrics["infrastructure_failure_case_count"], 0)
-        self.assertEqual(result.metrics["human_review_case_count"], 4)
+        self.assertEqual(result.metrics["human_review_case_count"], 10)
+
+    def test_product_cases_include_structured_human_ground_truth(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        product_cases = [
+            case for case in manifest.cases
+            if case.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        ]
+
+        self.assertEqual(len(product_cases), 12)
+        for case in product_cases:
+            truth = case.human_ground_truth
+            self.assertIsInstance(truth, dict, case.case_id)
+            self.assertIn(truth["final_disposition"], {"ACCEPT", "REPAIR", "NOT_READY"})
+            self.assertIn(truth["review_status"], {"REVIEWED", "NEEDS_SECOND_REVIEW"})
+            self.assertIn(truth["confidence"], {"HIGH", "MEDIUM", "LOW"})
+            self.assertTrue(case.independence_group)
+
+    def test_truncated_product_artifacts_are_not_labeled_accepted_or_repairable(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        product_cases = [
+            case for case in manifest.cases
+            if case.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        ]
+
+        truncated_cases = []
+        for case in product_cases:
+            payload = corpus.resolve_product_validation_case(case)
+            post_text = payload["candidate_payload"]["post_text"]
+            if (
+                payload.get("artifact_completeness_status") == "TRUNCATED_SOURCE_ARTIFACT"
+                or len(post_text) == 500 and not post_text.rstrip().endswith((".", "?", "!"))
+            ):
+                truncated_cases.append(case.case_id)
+                truth = case.human_ground_truth
+                self.assertEqual(payload["artifact_completeness_status"], "TRUNCATED_SOURCE_ARTIFACT")
+                self.assertEqual(case.failure_category, corpus.FAILURE_CATEGORY_PRODUCT)
+                self.assertEqual(case.risk_type, "truncated_artifact_product_review")
+                self.assertEqual(truth["final_disposition"], "NOT_READY", case.case_id)
+                self.assertEqual(truth["length_validity"], "FAIL", case.case_id)
+                self.assertEqual(truth["repair_target"], "", case.case_id)
+                self.assertEqual(truth["repair_locality"], "none", case.case_id)
+                self.assertIn("truncated", truth["primary_reason"].lower())
+
+        self.assertEqual(len(truncated_cases), 4)
+
+    def test_runtime_input_fingerprint_excludes_human_ground_truth(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+            and item.human_ground_truth
+        )
+        payload = corpus.resolve_product_validation_case(case)
+        original_truth = case.human_ground_truth
+        runtime_input = live_execution.runtime_input_for_case(case, payload)
+
+        forbidden = {
+            "human_ground_truth",
+            "human_final_disposition",
+            "historical_expected_outcome",
+            "independence_group",
+            "review_status",
+            "confidence",
+        }
+        self.assertTrue(forbidden.isdisjoint(runtime_input))
+        self.assertEqual(case.human_ground_truth, original_truth)
+
+    def test_human_ground_truth_label_does_not_change_runtime_input(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+        payload = corpus.resolve_product_validation_case(case)
+        changed_case = corpus.ProductValidationCorpusCase(
+            **{
+                **case.to_dict(),
+                "human_ground_truth": {
+                    **case.human_ground_truth,
+                    "final_disposition": "NOT_READY",
+                    "primary_reason": "Changed label must remain benchmark-only.",
+                },
+            }
+        )
+
+        self.assertEqual(
+            live_execution.runtime_input_for_case(case, payload),
+            live_execution.runtime_input_for_case(changed_case, payload),
+        )
+
+    def test_changing_human_ground_truth_does_not_change_live_role_requests(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+        payload = corpus.resolve_product_validation_case(case)
+        changed_case = corpus.ProductValidationCorpusCase(
+            **{
+                **case.to_dict(),
+                "human_ground_truth": {
+                    **case.human_ground_truth,
+                    "final_disposition": "NOT_READY",
+                    "primary_reason": "Changed human label must not alter live runtime.",
+                    "genericization": "MATERIAL",
+                },
+            }
+        )
+
+        def run_with(target_case):
+            captured: dict[str, list[str]] = {"grounding": [], "quality": [], "repair": []}
+            quality_payloads = [_quality_review_fail_payload(), _quality_review_pass_payload()]
+
+            def fake_grounding(request):
+                captured["grounding"].append(request.rendered_prompt_input.input_text)
+                return SemanticGroundingRawResponse(
+                    raw_text=json.dumps(_semantic_grounding_pass_payload(payload)),
+                    provider="gemini",
+                    model="gemini-3.6-flash",
+                )
+
+            def fake_quality(request):
+                captured["quality"].append(request.rendered_prompt_input.input_text)
+                return QualityEvaluatorRawResponse(
+                    raw_text=json.dumps(quality_payloads.pop(0)),
+                    provider="openai",
+                    model="gpt-4.1-2025-04-14",
+                )
+
+            def fake_repair(request):
+                captured["repair"].append(request.rendered_prompt_input.input_text)
+                return RepairWriterRawResponse(
+                    raw_text=json.dumps({"post_text": "Repaired human post."}),
+                    provider="gemini",
+                    model="gemini-3.6-flash",
+                    prompt_metadata=_repair_prompt_metadata(),
+                )
+
+            record = live_execution.execute_product_validation_live_case(
+                case=target_case,
+                fixture_payload=payload,
+                experiment_id="human-truth-runtime-isolation",
+                started_at=_fixed_now().isoformat(),
+                completed_at=_fixed_now().isoformat(),
+                executors=live_execution.ProductValidationLiveExecutors(
+                    semantic_grounding_executor=fake_grounding,
+                    quality_evaluator_executor=fake_quality,
+                    repair_writer_executor=fake_repair,
+                ),
+            )
+            return captured, record
+
+        original_requests, original_record = run_with(case)
+        changed_requests, changed_record = run_with(changed_case)
+
+        self.assertEqual(original_requests, changed_requests)
+        for record in (original_record, changed_record):
+            self.assertEqual(record["live_outcome"], live_execution.LIVE_REPAIR_ACCEPTED)
+            self.assertNotIn("human_ground_truth", json.dumps(record, sort_keys=True))
+        self.assertEqual(original_record["live_stage_outcomes"], changed_record["live_stage_outcomes"])
+        self.assertEqual(original_record["provider_invocation_counts"], changed_record["provider_invocation_counts"])
+
+    def test_record_uses_explicit_historical_expected_outcome_when_present(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+        changed_case_payload = case.to_dict()
+        changed_case_payload["fixture_path"] = Path(changed_case_payload["fixture_path"])
+        changed_case_payload["historical_expected_outcome"] = "historical_inconclusive"
+        changed_case = corpus.ProductValidationCorpusCase(**changed_case_payload)
+
+        with patch.object(
+            runner,
+            "load_product_validation_corpus_manifest",
+            return_value=corpus.ProductValidationCorpusManifest(
+                corpus_id=manifest.corpus_id,
+                schema_version=manifest.schema_version,
+                target_case_count=1,
+                frozen_anchor_case_ids=(),
+                cases=(changed_case,),
+                frozen_model_role_configuration=runner.FROZEN_ROLE_CONFIGURATION,
+                provenance=manifest.provenance,
+            ),
+        ), tempfile.TemporaryDirectory() as tempdir:
+            result = runner.run_product_validation_benchmark(
+                runner.ProductValidationRequest(output_root=Path(tempdir)),
+                now_factory=_fixed_now,
+            )
+
+        self.assertEqual(
+            result.run_records[0]["historical_expected_outcome"],
+            "historical_inconclusive",
+        )
+        self.assertEqual(result.run_records[0]["historical_outcome"], "historical_inconclusive")
+
+    def test_dry_run_duplicate_candidate_hashes_are_reported_from_fixture_distribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = runner.run_product_validation_benchmark(
+                runner.ProductValidationRequest(output_root=Path(tempdir)),
+                now_factory=_fixed_now,
+            )
+
+        distribution = result.metrics["product_case_distribution"]
+
+        self.assertEqual(distribution["duplicate_candidate_hash_count"], 0)
+        self.assertEqual(distribution["raw_product_case_count"], 12)
+        self.assertTrue(distribution["rates_should_be_read_with_independence_groups"])
+        self.assertIn("candidate_text_hash", result.run_records[5]["product_case_distribution"])
+
+    def test_human_ground_truth_metrics_include_confusion_and_genericization_counts(self) -> None:
+        record = {
+            "family": corpus.CASE_FAMILY_CANDIDATE_QE,
+            "live_execution_status": live_execution.LIVE_EXECUTION_COMPLETED,
+            "live_outcome": live_execution.LIVE_ACCEPTED_FIRST_ATTEMPT,
+            "live_failure_category": corpus.FAILURE_CATEGORY_PRODUCT_BEHAVIOR,
+            "human_ground_truth": {
+                "final_disposition": "NOT_READY",
+                "genericization": "MATERIAL",
+                "grounding_fidelity": "PASS",
+            },
+            "product_case_distribution": {"length": 700, "length_band": "medium"},
+            "provider_invocation_counts": {},
+        }
+
+        computed = metrics.compute_product_validation_metrics((record,))
+        human_metrics = computed["human_ground_truth_metrics"]
+
+        self.assertEqual(human_metrics["human_ground_truth_case_count"], 1)
+        self.assertEqual(human_metrics["runtime_accept_vs_human_not_ready"], 1)
+        self.assertEqual(human_metrics["unsafe_accept_count"], 1)
+        self.assertEqual(human_metrics["human_material_genericization_count"], 1)
+        self.assertEqual(
+            human_metrics["runtime_accepted_material_genericization_count"],
+            1,
+        )
+
+    def test_repeated_failure_signatures_count_independent_groups(self) -> None:
+        records = (
+            {
+                "family": corpus.CASE_FAMILY_CANDIDATE_QE,
+                "case_id": "a",
+                "independence_group": "same-source",
+                "live_outcome": live_execution.LIVE_REPAIR_TARGET_NOT_FIXED,
+                "live_stage_outcomes": {"repair": {"repair_executed": True}},
+                "repair_target_enforcement": {"initiating_failed_criterion": "cta"},
+                "product_case_distribution": {"length": 700},
+                "provider_invocation_counts": {},
+            },
+            {
+                "family": corpus.CASE_FAMILY_CANDIDATE_QE,
+                "case_id": "b",
+                "independence_group": "same-source",
+                "live_outcome": live_execution.LIVE_REPAIR_TARGET_NOT_FIXED,
+                "live_stage_outcomes": {"repair": {"repair_executed": True}},
+                "repair_target_enforcement": {"initiating_failed_criterion": "cta"},
+                "product_case_distribution": {"length": 700},
+                "provider_invocation_counts": {},
+            },
+        )
+
+        signatures = metrics.compute_product_validation_metrics(records)[
+            "repeated_failure_signatures"
+        ]
+
+        self.assertEqual(signatures["signature_counts"]["repair_target_not_fixed:cta"], 2)
+        self.assertEqual(
+            signatures["independent_group_counts"]["repair_target_not_fixed:cta"],
+            1,
+        )
+        self.assertEqual(signatures["candidate_systemic_issues"], {})
 
     def test_configuration_fingerprint_contains_frozen_roles_and_hashes(self) -> None:
         manifest = corpus.load_product_validation_corpus_manifest()
@@ -591,13 +863,19 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             "qe_scores",
             "failed_criteria",
             "human_review_priority",
+            "human_final_disposition",
+            "human_primary_reason",
+            "human_repair_target",
+            "human_genericization",
+            "review_confidence",
+            "review_status",
             "would_publish_yes_no",
             "reviewer_label",
             "backlog_action",
         ):
             self.assertIn(column, header)
 
-    def test_product_corpus_is_reported_as_insufficient_for_live_product_rates(self) -> None:
+    def test_product_corpus_is_reported_as_minimum_met_for_live_product_rates(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             result = runner.run_product_validation_benchmark(
                 runner.ProductValidationRequest(output_root=Path(tempdir)),
@@ -610,17 +888,17 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             report_text = Path(result.artifacts.report_md).read_text(encoding="utf-8")
 
         adequacy = manifest_payload["product_corpus_adequacy"]
-        self.assertEqual(adequacy["status"], "PRODUCT_CORPUS_INSUFFICIENT")
-        self.assertEqual(adequacy["current_product_case_count"], 6)
-        self.assertEqual(adequacy["gap_to_minimum"], 6)
+        self.assertEqual(adequacy["status"], "PRODUCT_CORPUS_MINIMUM_MET")
+        self.assertEqual(adequacy["current_product_case_count"], 12)
+        self.assertEqual(adequacy["gap_to_minimum"], 0)
         product_metrics = result.metrics["product_metrics"]
         self.assertEqual(
             product_metrics["product_corpus_adequacy_status"],
-            "PRODUCT_CORPUS_INSUFFICIENT",
+            "PRODUCT_CORPUS_MINIMUM_MET",
         )
         self.assertTrue(product_metrics["product_rates_are_exploratory"])
         self.assertIn("## Product Corpus Adequacy", report_text)
-        self.assertIn("PRODUCT_CORPUS_INSUFFICIENT", report_text)
+        self.assertIn("PRODUCT_CORPUS_MINIMUM_MET", report_text)
         self.assertLess(
             report_text.index("## Live Outcome Taxonomy"),
             report_text.index("## Historical Outcome Taxonomy"),

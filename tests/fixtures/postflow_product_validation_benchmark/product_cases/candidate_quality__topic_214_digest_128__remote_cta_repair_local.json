@@ -1,0 +1,111 @@
+{
+  "angle_decision": {
+    "angle_to_avoid": [
+      "generic summary",
+      "source-term drift",
+      "unsupported prescription risk",
+      "Do not use as a standalone claim beyond the source evidence.",
+      "generic summary; source-term drift",
+      "unsupported prescription risk; source-term drift",
+      "Do not overstate evidence from a0-summary.",
+      "Do not overstate evidence from a1-kp0.",
+      "Do not overstate evidence from a2-summary."
+    ],
+    "author_position": "The author position is that workplace needs both workplace rules and inclusive work design to become a useful takeaway.",
+    "authorial_voice_directive": {
+      "authorial_observation": "The author notices that workplace rules and inclusive work design should not be collapsed into one easy conclusion.",
+      "first_person_policy": "allowed_not_required",
+      "forbidden_author_claims": [
+        "personal experience",
+        "professional authority",
+        "direct market exposure",
+        "client or customer stories",
+        "invented emotional reaction",
+        "biographical claims"
+      ],
+      "personal_presence_requirement": "explicit_author_owned_statement_required",
+      "rejected_reading": "Reject treating workplace rules as proof that inclusive work design has been resolved.",
+      "why_distinction_matters": "The distinction matters because readers may treat workplace rules as the whole story before checking inclusive work design."
+    },
+    "controlling_angle": "The stronger workplace angle is that Workplace expectations are not durable on their own; they need inclusive work design to become usable.",
+    "main_tension": "The tension is between workplace rules and inclusive work design.",
+    "reader_problem": "Readers may treat workplace rules as the whole story before checking inclusive work design.",
+    "supporting_evidence_ids": [
+      "a0-summary",
+      "a1-kp0",
+      "a2-summary"
+    ]
+  },
+  "base_case_id": "topic_214_digest_128",
+  "candidate_payload": {
+    "post_text": "Workplace expectations, no matter how precisely documented, are not durable on their own—they must be supported by inclusive work design to be genuinely effective. Clear policies can optimize productivity and support well-being, but written rules alone do not account for the human reality of remote work, where research highlights persistent challenges such as social isolation and mental distress. Comprehensive remote work guidelines help with consistency and work-life balance, but they do not erase the need to actively address feelings of isolation—especially for those living or working alone. Diversity, too, goes beyond visible categories, encompassing differences in age, sexual orientation, and socioeconomic status that shape employees’ experiences and needs. I want to emphasize that workplace rules and inclusive design should not be collapsed into one easy conclusion; treating policy as a substitute for inclusive design leaves real needs unmet. Before treating workplace rules as the whole story, ask yourself: are your guidelines paired with inclusive work design to work for every employee?"
+  },
+  "candidate_post_character_length": 1109,
+  "candidate_validity_status": "CANONICAL_VALID",
+  "canonical_candidate_valid": true,
+  "case_id": "topic_214_digest_128__remote_cta_repair_local",
+  "case_selection_note": "Historical repaired remote-work candidate accepted after repair in product validation live-v2.",
+  "editorial_classification": "REPAIR_PROJECTION",
+  "frozen_input_reconstruction": "DETERMINISTIC_RECONSTRUCTION",
+  "known_grounding_result": {
+    "blocking_claim_count": 3,
+    "contradicted_claim_count": 0,
+    "pass": false,
+    "unsupported_claim_count": 2
+  },
+  "known_historical_quality_result": null,
+  "post_brief": {
+    "core_point": "The author position is that workplace needs both workplace rules and inclusive work design to become a useful takeaway.",
+    "cta_direction": "Ask the reader to reconsider this reader problem: Readers may treat workplace rules as the whole story before checking inclusive work design.",
+    "ending_direction": "End by returning to this author position: The author position is that workplace needs both workplace rules and inclusive work design to become a useful takeaway.",
+    "evidence_to_use": [
+      {
+        "evidence_id": "a0-summary",
+        "evidence_text": "The article provides a comprehensive guide on creating an effective remote work policy, arguing that such a policy is essential for optimizing employee productivity and well-being in a permanent hybrid work environment. It concludes that clear guidelines and defined expectations can help avoid misunderstandings and promote a healthier work-life balance for remote workers. Ensuring consistent communication, providing appropriate tools, and regularly reviewing the policy are critical for success.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a1-kp0",
+        "evidence_text": "Workplace diversity goes beyond race and gender, encompassing various aspects like age, sexual orientation, and socioeconomic status.",
+        "role_in_post": "Use this evidence as practical_point support. May support a practical_point role in a later LinkedIn post."
+      },
+      {
+        "evidence_id": "a2-summary",
+        "evidence_text": "The article presents research indicating that the long-term shift to remote work post-pandemic has led to increased feelings of isolation and mental distress among American workers, particularly those in remote-friendly jobs who live alone. The author, Emma Harrington, argues that while remote work offers certain benefits, its adverse effects on mental well-being warrant attention. The conclusion emphasizes the need for strategies to mitigate isolation in remote work environments.",
+        "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+      }
+    ],
+    "opening_direction": "Open with this editorial angle: The stronger workplace angle is that Workplace expectations are not durable on their own; they need inclusive work design to become usable.",
+    "pattern_interrupt": "Interrupt the expected framing with this tension: The tension is between workplace rules and inclusive work design.",
+    "practical_point": "Anchor the reader takeaway in this practical point: Workplace diversity goes beyond race and gender, encompassing various aspects like age, sexual orientation, and socioeconomic status."
+  },
+  "product_validation_fixture_origin": "scope_26g_existing_historical_artifact",
+  "repair_target": "cta",
+  "schema_version": "2026-08-14",
+  "selected_evidence": [
+    {
+      "evidence_id": "a0-summary",
+      "evidence_text": "The article provides a comprehensive guide on creating an effective remote work policy, arguing that such a policy is essential for optimizing employee productivity and well-being in a permanent hybrid work environment. It concludes that clear guidelines and defined expectations can help avoid misunderstandings and promote a healthier work-life balance for remote workers. Ensuring consistent communication, providing appropriate tools, and regularly reviewing the policy are critical for success.",
+      "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+    },
+    {
+      "evidence_id": "a1-kp0",
+      "evidence_text": "Workplace diversity goes beyond race and gender, encompassing various aspects like age, sexual orientation, and socioeconomic status.",
+      "role_in_post": "Use this evidence as practical_point support. May support a practical_point role in a later LinkedIn post."
+    },
+    {
+      "evidence_id": "a2-summary",
+      "evidence_text": "The article presents research indicating that the long-term shift to remote work post-pandemic has led to increased feelings of isolation and mental distress among American workers, particularly those in remote-friendly jobs who live alone. The author, Emma Harrington, argues that while remote work offers certain benefits, its adverse effects on mental well-being warrant attention. The conclusion emphasizes the need for strategies to mitigate isolation in remote work environments.",
+      "role_in_post": "Use this evidence as proof support. May support a proof role in a later LinkedIn post."
+    }
+  ],
+  "source_experiment_id": "product_validation_live_v2_repair_continuation",
+  "source_git_commit": "b830bb95e84acb43f00a3f7abdb508d89a584beb",
+  "source_plan_id": "",
+  "source_run_id": "topic_214_digest_128__gpt_writer_gpt_fixed__run_1",
+  "source_run_index": 10,
+  "source_runs_jsonl": "debug_outputs/postflow_product_validation_benchmarks/postflow-product-validation-live-v2-repair-continuation/product_validation_runs.jsonl",
+  "source_smoke_fixture": "tests/fixtures/linkedin_post_smoke/writer_benchmarks/topic_214_digest_128.json",
+  "writer_model": "gemini-3.6-flash",
+  "writer_provider": "gemini"
+}

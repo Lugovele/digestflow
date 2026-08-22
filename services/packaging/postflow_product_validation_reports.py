@@ -32,6 +32,18 @@ HUMAN_REVIEW_COLUMNS = (
     "length_after",
     "infrastructure_failure",
     "human_review_priority",
+    "human_final_disposition",
+    "human_primary_reason",
+    "human_repair_target",
+    "human_genericization",
+    "human_grounding_fidelity",
+    "human_distinctive_voice",
+    "human_voice",
+    "human_cta",
+    "human_author_point_of_view",
+    "human_repair_locality",
+    "review_confidence",
+    "review_status",
     "final_text_quality_1_5",
     "voice_preservation_1_5",
     "genericization_none_mild_material",
@@ -122,6 +134,18 @@ def write_human_review_csv(path: Path, records: tuple[dict[str, Any], ...]) -> N
                         record.get("live_failure_category") == "infrastructure_failure"
                     ),
                     "human_review_priority": _human_review_priority(record),
+                    "human_final_disposition": _truth(record).get("final_disposition", ""),
+                    "human_primary_reason": _truth(record).get("primary_reason", ""),
+                    "human_repair_target": _truth(record).get("repair_target", ""),
+                    "human_genericization": _truth(record).get("genericization", ""),
+                    "human_grounding_fidelity": _truth(record).get("grounding_fidelity", ""),
+                    "human_distinctive_voice": _truth(record).get("distinctive_voice", ""),
+                    "human_voice": _truth(record).get("human_voice", ""),
+                    "human_cta": _truth(record).get("cta", ""),
+                    "human_author_point_of_view": _truth(record).get("author_point_of_view", ""),
+                    "human_repair_locality": _truth(record).get("repair_locality", ""),
+                    "review_confidence": _truth(record).get("confidence", ""),
+                    "review_status": _truth(record).get("review_status", ""),
                     "final_text_quality_1_5": "",
                     "voice_preservation_1_5": "",
                     "genericization_none_mild_material": "",
@@ -181,6 +205,26 @@ def build_product_validation_report_markdown(
     lines.extend(["", "## Infrastructure vs Product Failure"])
     for category, count in metrics["failure_category_counts"].items():
         lines.append(f"- `{category}`: {count}")
+    lines.extend(["", "## Human Ground Truth Coverage", f"- cases: {metrics.get('human_ground_truth_metrics', {}).get('human_ground_truth_case_count', 0)}"])
+    lines.extend(["", "## Product Corpus Distribution"])
+    lines.append(json.dumps(metrics.get("product_case_distribution", {}), ensure_ascii=False, sort_keys=True))
+    lines.append("Product rates must be interpreted alongside `independence_group_count`; repeated failures count independent groups, not raw case variants.")
+    lines.extend(["", "## Human vs Runtime Confusion Matrix"])
+    lines.append(json.dumps(metrics.get("human_ground_truth_metrics", {}), ensure_ascii=False, sort_keys=True))
+    lines.extend(["", "## Unsafe Accepts"])
+    lines.append(f"- unsafe_accept_count: `{metrics.get('human_ground_truth_metrics', {}).get('unsafe_accept_count', 0)}`")
+    lines.append("Definition: runtime accepted a case that human ground truth marks `NOT_READY`; this is a severe product signal for that experiment.")
+    lines.extend(["", "## Unnecessary Repairs"])
+    lines.append(f"- unnecessary_repair_count: `{metrics.get('human_ground_truth_metrics', {}).get('unnecessary_repair_count', 0)}`")
+    lines.extend(["", "## Missed Repairs"])
+    lines.append(f"- missed_repair_count: `{metrics.get('human_ground_truth_metrics', {}).get('missed_repair_count', 0)}`")
+    lines.extend(["", "## Genericization Blocks"])
+    lines.append(f"- human_material_genericization_count: `{metrics.get('human_ground_truth_metrics', {}).get('human_material_genericization_count', 0)}`")
+    lines.append(f"- runtime_accepted_material_genericization_count: `{metrics.get('human_ground_truth_metrics', {}).get('runtime_accepted_material_genericization_count', 0)}`")
+    lines.extend(["", "## Repair Product Outcomes"])
+    lines.append(json.dumps(metrics.get("product_metrics", {}), ensure_ascii=False, sort_keys=True))
+    lines.extend(["", "## Known Non-Systemic Provider Anomalies"])
+    lines.append("- `QE_TOTAL_SCORE_MISMATCH`: observed_count=1; systemic=false; no production normalization change.")
     lines.extend(["", "## Human Review", f"- cases: {metrics['human_review_case_count']}"])
     lines.extend(["", "## Live Product Metrics"])
     lines.append(json.dumps(metrics.get("product_metrics", {}), ensure_ascii=False, sort_keys=True))
@@ -223,6 +267,12 @@ def write_human_review_markdown(path: Path, records: tuple[dict[str, Any], ...])
                 f"- historical_expected_outcome: `{record.get('historical_expected_outcome', '')}`",
                 f"- live_outcome: `{record.get('live_outcome', '')}`",
                 f"- human_review_priority: `{_human_review_priority(record)}`",
+                f"- human_final_disposition: `{_truth(record).get('final_disposition', '')}`",
+                f"- human_primary_reason: `{_truth(record).get('primary_reason', '')}`",
+                f"- human_repair_target: `{_truth(record).get('repair_target', '')}`",
+                f"- human_genericization: `{_truth(record).get('genericization', '')}`",
+                f"- review_confidence: `{_truth(record).get('confidence', '')}`",
+                f"- review_status: `{_truth(record).get('review_status', '')}`",
                 "- reviewer_label:",
                 "- reviewer_notes:",
                 "- backlog_action:",
@@ -260,3 +310,8 @@ def _human_review_priority(record: dict[str, Any]) -> str:
     if record.get("human_review_required") or record.get("live_failure_category"):
         return "MEDIUM"
     return "LOW"
+
+
+def _truth(record: dict[str, Any]) -> dict[str, Any]:
+    value = record.get("human_ground_truth")
+    return value if isinstance(value, dict) else {}
