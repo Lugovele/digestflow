@@ -348,6 +348,69 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertIn("repair", record["live_stage_outcomes"])
         self.assertTrue(record["live_stage_outcomes"]["repair"]["repair_executed"])
 
+    def test_repaired_material_generic_candidate_is_not_live_repair_accepted(self) -> None:
+        manifest = corpus.load_product_validation_corpus_manifest()
+        case = next(
+            item for item in manifest.cases
+            if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
+        )
+        payload = corpus.resolve_product_validation_case(case)
+        calls = {"grounding": 0, "quality": 0, "repair": 0}
+        quality_payloads = [
+            _quality_review_fail_payload(),
+            _quality_review_pass_payload(),
+        ]
+
+        def fake_grounding(_request):
+            calls["grounding"] += 1
+            return SemanticGroundingRawResponse(
+                raw_text=json.dumps(_semantic_grounding_pass_payload(payload)),
+                provider="gemini",
+                model="gemini-3.6-flash",
+            )
+
+        def fake_quality(_request):
+            calls["quality"] += 1
+            return QualityEvaluatorRawResponse(
+                raw_text=json.dumps(quality_payloads.pop(0)),
+                provider="openai",
+                model="gpt-4.1-2025-04-14",
+            )
+
+        def fake_repair(_request):
+            calls["repair"] += 1
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": _material_generic_repaired_post_text()}),
+                provider="gemini",
+                model="gemini-3.6-flash",
+                prompt_metadata=_repair_prompt_metadata(),
+            )
+
+        record = live_execution.execute_product_validation_live_case(
+            case=case,
+            fixture_payload=payload,
+            experiment_id="fake-live-product-repaired-generic-block",
+            started_at=_fixed_now().isoformat(),
+            completed_at=_fixed_now().isoformat(),
+            executors=live_execution.ProductValidationLiveExecutors(
+                semantic_grounding_executor=fake_grounding,
+                quality_evaluator_executor=fake_quality,
+                repair_writer_executor=fake_repair,
+            ),
+        )
+
+        self.assertNotEqual(record["live_outcome"], live_execution.LIVE_REPAIR_ACCEPTED)
+        self.assertEqual(record["live_outcome"], live_execution.LIVE_QE_REJECTED)
+        self.assertIsNone(record["accepted_payload"])
+        self.assertEqual(record["final_candidate"]["post_text"], _material_generic_repaired_post_text())
+        self.assertEqual(record["provider_invocation_counts"]["repair_writer_provider_api_calls"], 1)
+        self.assertEqual(record["total_provider_calls"], 5)
+        self.assertEqual(calls, {"grounding": 2, "quality": 2, "repair": 1})
+        self.assertIn(
+            "material generic/template-like prose",
+            record["live_stage_outcomes"]["repair"]["terminal_reason"],
+        )
+
     def test_repair_target_comes_from_live_quality_review_not_historical_labels(self) -> None:
         manifest = corpus.load_product_validation_corpus_manifest()
         case = next(
@@ -1086,6 +1149,20 @@ def _semantic_grounding_pass_payload(fixture_payload: dict) -> dict:
         "repairable": False,
         "repair_instructions": [],
     }
+
+
+def _material_generic_repaired_post_text() -> str:
+    return (
+        "Crypto's headline numbers--30% of Americans own some, and nearly 17% CAGR "
+        "is forecast through 2035--sound conclusive. But treating these adoption "
+        "stats or growth projections as a settled story, to me, misses what actually "
+        "shapes the crypto market. What stands out is the underlying fragility: yes, "
+        "public interest and policy moves generate real momentum, but consistent "
+        "issues like security concerns, persistent volatility, and traders' caution "
+        "keep broader adoption and lasting confidence conditional. Before treating "
+        "headline metrics as proof of a clean growth story, are you evaluating the "
+        "confidence and security risks beneath the surface?"
+    )
 
 
 def _quality_review_pass_payload() -> dict:

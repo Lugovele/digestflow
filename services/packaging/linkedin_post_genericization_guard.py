@@ -17,6 +17,8 @@ SIGNAL_WEAK_DISTINCTIVE_SENTENCE_SHAPE = "weak_distinctive_sentence_shape"
 SIGNAL_GENERIC_CLOSING_OR_CTA = "generic_closing_or_cta"
 
 MIN_BLOCKING_SIGNALS = 3
+HIGH_INTENSITY_FORMULAIC_MARKER_COUNT = 4
+
 
 _WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z'-]*|\d+(?:\.\d+)?%?")
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]?")
@@ -47,6 +49,8 @@ _FORMULAIC_FRAMING_MARKERS = (
 
 _GENERIC_CLOSING_MARKERS = (
     "are you checking whether",
+    "are you evaluating",
+    "are you relying",
     "before drawing conclusions",
     "before viewing",
     "essential for seeing the real picture",
@@ -125,9 +129,9 @@ def evaluate_genericization_selection_blocker(post_text: object) -> Genericizati
     if _has_generic_closing_or_cta(normalized):
         signals.append(SIGNAL_GENERIC_CLOSING_OR_CTA)
 
-    blocked = (
-        SIGNAL_WEAK_DISTINCTIVE_SENTENCE_SHAPE in signals
-        and len(signals) >= MIN_BLOCKING_SIGNALS
+    blocked = _signals_are_materially_generic(
+        signals=signals,
+        formulaic_count=formulaic_count,
     )
     reason = (
         "material generic/template-like prose blocks selection: "
@@ -141,6 +145,24 @@ def evaluate_genericization_selection_blocker(post_text: object) -> Genericizati
         signals=tuple(signals),
     )
 
+
+
+def _signals_are_materially_generic(
+    *,
+    signals: list[str],
+    formulaic_count: int,
+) -> bool:
+    has_weak_shape = SIGNAL_WEAK_DISTINCTIVE_SENTENCE_SHAPE in signals
+    if not has_weak_shape:
+        return False
+    if len(signals) >= MIN_BLOCKING_SIGNALS:
+        return True
+    if SIGNAL_GENERIC_CLOSING_OR_CTA in signals:
+        return True
+    return (
+        SIGNAL_FORMULAIC_POLISHED_FRAMING in signals
+        and formulaic_count >= HIGH_INTENSITY_FORMULAIC_MARKER_COUNT
+    )
 
 def _normalize_text(text: str) -> str:
     return " ".join(text.lower().replace("’", "'").split())

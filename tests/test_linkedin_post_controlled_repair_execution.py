@@ -795,6 +795,37 @@ class FinalPostControlledRepairExecutionTests(SimpleTestCase):
             OUTCOME_NOT_READY,
         )
 
+    def test_repaired_material_generic_candidate_does_not_become_accepted(self) -> None:
+        repair_client = QueuedFakeClient(
+            _provider_response(
+                _candidate_json(post_text=_material_generic_repaired_post_text())
+            )
+        )
+
+        result = execute_final_post_controlled_repair_attempt(
+            _controlled_request(),
+            candidate_writer_client=QueuedFakeClient(
+                _provider_response(_candidate_json())
+            ),
+            semantic_grounding_client=_passing_semantic_client(),
+            quality_evaluator_client=QueuedFakeClient(
+                _provider_response(json.dumps(_quality_review_payload(passed=False))),
+                _provider_response(json.dumps(_quality_review_payload(passed=True))),
+            ),
+            repair_writer_client=repair_client,
+            **_flow_kwargs(),
+        )
+
+        self.assertEqual(repair_client.call_count, 1)
+        self.assertEqual(result.repair_invocation_count, 1)
+        self.assertEqual(result.quality_evaluator_invocation_count, 2)
+        self.assertEqual(result.terminal_outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.accepted_payload)
+        self.assertIsNone(result.failure_code)
+        self.assertEqual(result.repaired_attempt_outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(result.repaired_attempt_outcome.accepted_result)
+        self.assertIn("material generic/template-like prose", result.terminal_reason)
+
     def test_repair_provider_failure_is_distinct(self) -> None:
         result = execute_final_post_controlled_repair_attempt(
             _controlled_request(),
@@ -1274,6 +1305,20 @@ def _semantic_review_payload(*, passed: bool = True) -> dict:
             ]
         ),
     }
+
+
+def _material_generic_repaired_post_text() -> str:
+    return (
+        "Crypto's headline numbers--30% of Americans own some, and nearly 17% CAGR "
+        "is forecast through 2035--sound conclusive. But treating these adoption "
+        "stats or growth projections as a settled story, to me, misses what actually "
+        "shapes the crypto market. What stands out is the underlying fragility: yes, "
+        "public interest and policy moves generate real momentum, but consistent "
+        "issues like security concerns, persistent volatility, and traders' caution "
+        "keep broader adoption and lasting confidence conditional. Before treating "
+        "headline metrics as proof of a clean growth story, are you evaluating the "
+        "confidence and security risks beneath the surface?"
+    )
 
 
 def _candidate_json(

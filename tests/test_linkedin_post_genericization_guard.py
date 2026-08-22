@@ -44,6 +44,37 @@ REPAIRED_CRYPTO_RECOVERY_LIVE_V5_POST_TEXT = (
 )
 
 
+REPAIRED_REMOTE_WORK_LIVE_V6B_POST_TEXT = (
+    "Workplace expectations, no matter how precisely documented, are not durable "
+    "on their own--they must be supported by inclusive work design to be genuinely "
+    "effective. Clear policies can optimize productivity and support well-being, "
+    "but written rules alone do not account for the human reality of remote work, "
+    "where research highlights persistent challenges such as social isolation and "
+    "mental distress. Comprehensive remote work guidelines help with consistency "
+    "and work-life balance, but they do not erase the need to actively address "
+    "feelings of isolation--especially for those living or working alone. Diversity, "
+    "too, goes beyond visible categories, encompassing differences in age, sexual "
+    "orientation, and socioeconomic status that shape employees' experiences and "
+    "needs. I want to emphasize that workplace rules and inclusive design should "
+    "not be collapsed into one easy conclusion; treating policy as a substitute "
+    "for inclusive design leaves real needs unmet. Are you relying on workplace "
+    "rules alone, or have you evaluated whether your work design actually supports "
+    "every employee in practice?"
+)
+
+REPAIRED_CRYPTO_RECOVERY_LIVE_V6B_POST_TEXT = (
+    "Crypto's headline numbers--30% of Americans own some, and nearly 17% CAGR "
+    "is forecast through 2035--sound conclusive. But treating these adoption "
+    "stats or growth projections as a settled story, to me, misses what actually "
+    "shapes the crypto market. What stands out is the underlying fragility: yes, "
+    "public interest and policy moves generate real momentum, but consistent "
+    "issues like security concerns, persistent volatility, and traders' caution "
+    "keep broader adoption and lasting confidence conditional. Before treating "
+    "headline metrics as proof of a clean growth story, are you evaluating the "
+    "confidence and security risks beneath the surface?"
+)
+
+
 class LinkedInPostGenericizationGuardTests(SimpleTestCase):
     def test_material_generic_blocker_fixtures_are_blocked(self) -> None:
         for case_id in BLOCKER_CASE_IDS:
@@ -71,6 +102,37 @@ class LinkedInPostGenericizationGuardTests(SimpleTestCase):
         )
 
         self.assertTrue(result.blocked)
+
+    def test_repaired_remote_work_live_v6b_text_is_blocked_by_weak_shape_and_generic_closing(self) -> None:
+        result = evaluate_genericization_selection_blocker(
+            REPAIRED_REMOTE_WORK_LIVE_V6B_POST_TEXT
+        )
+
+        self.assertTrue(result.blocked)
+        self.assertIn("weak_distinctive_sentence_shape", result.signals)
+        self.assertIn("generic_closing_or_cta", result.signals)
+
+    def test_repaired_crypto_recovery_live_v6b_text_is_blocked_by_intense_formulaic_framing(self) -> None:
+        result = evaluate_genericization_selection_blocker(
+            REPAIRED_CRYPTO_RECOVERY_LIVE_V6B_POST_TEXT
+        )
+
+        self.assertTrue(result.blocked)
+        self.assertIn("formulaic_polished_framing", result.signals)
+        self.assertIn("weak_distinctive_sentence_shape", result.signals)
+
+    def test_weak_sentence_shape_alone_remains_non_blocking(self) -> None:
+        result = evaluate_genericization_selection_blocker(
+            "The first long sentence explains a concrete operational tradeoff without "
+            "leaning on a template or generic closing question. The second long sentence "
+            "keeps the point specific by naming what changed and what did not change. "
+            "The third long sentence stays grounded in the same situation rather than "
+            "turning the post into broad motivational advice. The fourth long sentence "
+            "closes with a practical distinction instead of a polished catch-all CTA."
+        )
+
+        self.assertFalse(result.blocked)
+        self.assertEqual(result.signals, (SIGNAL_WEAK_DISTINCTIVE_SENTENCE_SHAPE,))
 
     def test_strong_control_fixtures_are_not_blocked(self) -> None:
         for case_id in STRONG_CONTROL_CASE_IDS:
