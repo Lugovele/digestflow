@@ -19,6 +19,7 @@ from services.packaging.linkedin_post_deterministic_orchestration import (
     FinalPostDecisionReadyResult,
 )
 from services.packaging.linkedin_post_flow_contracts import (
+    ACTION_ACCEPT,
     ACTION_NOT_READY,
     ACTION_NEEDS_HUMAN_REVIEW,
     ACTION_REPAIR_EDITORIAL,
@@ -32,6 +33,9 @@ from services.packaging.linkedin_post_flow_decision import (
 from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
+)
+from services.packaging.linkedin_post_genericization_guard import (
+    evaluate_genericization_selection_blocker,
 )
 from services.packaging.linkedin_post_repair_target_enforcement import (
     evaluate_repair_target_enforcement,
@@ -134,6 +138,12 @@ def build_final_post_attempt_outcome_from_gate_and_quality(
         quality_review=quality_review,
         initiating_failed_criterion=initiating_failed_criterion,
         angle_decision=angle_decision,
+    )
+    decision = _decision_after_genericization_guard(
+        decision=decision,
+        candidate_output=candidate_output,
+        attempt_history=history,
+        policy=policy,
     )
 
     decision_ready_result = FinalPostDecisionReadyResult(
@@ -240,6 +250,61 @@ def _decision_after_repair_target_enforcement(
         target_model_name=None,
         needs_human_review=False,
     )
+
+
+def _decision_after_genericization_guard(
+    *,
+    decision: FinalPostDecision,
+    candidate_output: CandidateWriterOutput,
+    attempt_history: FinalPostAttemptHistory,
+    policy: FinalPostDecisionPolicy | None,
+) -> FinalPostDecision:
+    if decision.action != ACTION_ACCEPT:
+        return decision
+    post_text = candidate_output.payload.get("post_text")
+    diagnostics = evaluate_genericization_selection_blocker(post_text)
+    if not diagnostics.blocked:
+        return decision
+
+    active_policy = policy or FinalPostDecisionPolicy()
+    if _editorial_repair_attempts_remain(attempt_history, active_policy):
+        return FinalPostDecision(
+            action=ACTION_REPAIR_EDITORIAL,
+            reason=diagnostics.reason,
+            repair_type="editorial",
+            target_model_provider=None,
+            target_model_name=None,
+            needs_human_review=False,
+        )
+    return FinalPostDecision(
+        action=ACTION_NOT_READY,
+        reason=diagnostics.reason,
+        repair_type=None,
+        target_model_provider=None,
+        target_model_name=None,
+        needs_human_review=False,
+    )
+
+
+def _editorial_repair_attempts_remain(
+    attempt_history: FinalPostAttemptHistory,
+    policy: FinalPostDecisionPolicy,
+) -> bool:
+    if len(attempt_history.attempts) >= policy.max_total_attempts:
+        return False
+    return _editorial_repair_attempt_count(attempt_history) < policy.max_editorial_repairs
+
+
+def _editorial_repair_attempt_count(attempt_history: FinalPostAttemptHistory) -> int:
+    count = 0
+    for attempt in attempt_history.attempts:
+        if attempt.decision is not None and attempt.decision.action == ACTION_REPAIR_EDITORIAL:
+            count += 1
+            continue
+        repair_plan = attempt.repair_plan
+        if isinstance(repair_plan, dict) and repair_plan.get("repair_type") == "editorial":
+            count += 1
+    return count
 
 def _validate_quality_evaluation_state(
     quality_evaluation: FinalPostQualityEvaluationState,

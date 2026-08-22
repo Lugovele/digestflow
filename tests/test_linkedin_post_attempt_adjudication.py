@@ -30,6 +30,7 @@ from services.packaging.linkedin_post_flow_contracts import (
     FinalPostAttemptHistory,
 )
 from services.packaging.linkedin_post_flow_decision import FinalPostDecisionController
+from services.packaging.linkedin_post_flow_decision import FinalPostDecisionPolicy
 from services.packaging.linkedin_post_flow_handoffs import (
     CandidateWriterOutput,
     DeterministicGateOutput,
@@ -67,6 +68,49 @@ class LinkedInPostAttemptAdjudicationTests(SimpleTestCase):
         self.assertIs(outcome.accepted_result.accepted_payload, payload)
         self.assertEqual(outcome.attempt.created_at, "2026-07-29T10:00:00Z")
         self.assertEqual(outcome.attempt.quality_review["scores"], quality_review["scores"])
+
+    def test_generic_template_candidate_routes_to_editorial_repair_instead_of_accept(self) -> None:
+        payload = _valid_payload(post_text=_generic_post_text())
+        outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(_quality_review(passed=True, total_score=37)),
+            attempt_index=0,
+        )
+
+        self.assertEqual(outcome.outcome, OUTCOME_REPAIR_REQUIRED)
+        self.assertIsNone(outcome.accepted_result)
+        self.assertEqual(outcome.decision.repair_type, "editorial")
+        self.assertIn("material generic/template-like prose", outcome.reason)
+
+    def test_repaired_generic_template_candidate_is_not_ready_when_repair_budget_exhausted(self) -> None:
+        payload = _valid_payload(post_text=_generic_post_text())
+        prior_outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(_quality_review(passed=False, total_score=34, failed_criteria=["human_voice"])),
+            attempt_index=0,
+        )
+
+        repaired_outcome = build_final_post_attempt_outcome_from_gate_and_quality(
+            post_brief=_post_brief(),
+            candidate_output=_candidate_output(payload),
+            gate_output=_passing_gate_output(payload),
+            quality_evaluation=_quality_state(_quality_review(passed=True, total_score=37)),
+            attempt_history=prior_outcome.attempt_history,
+            policy=FinalPostDecisionPolicy(max_total_attempts=2, max_editorial_repairs=0),
+            attempt_index=1,
+            parent_attempt_index=0,
+            repair_plan={"repair_type": "editorial", "failed_criterion": "human_voice"},
+            initiating_failed_criterion="human_voice",
+            angle_decision=_angle_decision(explicit=True),
+        )
+
+        self.assertEqual(repaired_outcome.outcome, OUTCOME_NOT_READY)
+        self.assertIsNone(repaired_outcome.accepted_result)
+        self.assertIn("material generic/template-like prose", repaired_outcome.reason)
 
     def test_valid_quality_fail_returns_editorial_repair_outcome(self) -> None:
         payload = _valid_payload()
@@ -675,6 +719,25 @@ def _valid_payload(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def _generic_post_text() -> str:
+    return (
+        "Workplace expectations, no matter how precisely documented, are not durable "
+        "on their own--they must be supported by inclusive work design to be genuinely "
+        "effective. Clear policies can optimize productivity and support well-being, "
+        "but written rules alone do not account for the human reality of remote work, "
+        "where research highlights persistent challenges such as social isolation and "
+        "mental distress. Comprehensive remote work guidelines help with consistency "
+        "and work-life balance, but they do not erase the need to actively address "
+        "feelings of isolation. Diversity, too, goes beyond visible categories, "
+        "encompassing differences that shape employees' experiences and needs. I want "
+        "to emphasize that workplace rules and inclusive design should not be collapsed "
+        "into one easy conclusion; treating policy as a substitute for inclusive design "
+        "leaves real needs unmet. Before viewing workplace rules as a complete solution, "
+        "organizations and leaders must reconsider whether these expectations are truly "
+        "usable for every employee, in every environment."
+    )
 
 
 def _quality_review(

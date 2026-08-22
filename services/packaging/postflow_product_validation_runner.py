@@ -84,6 +84,7 @@ FINGERPRINT_FILE_PATHS = (
     "prompts/linkedin/final_post_semantic_grounding_evaluator.txt",
     "prompts/linkedin/final_post_quality_evaluator.txt",
     "services/packaging/linkedin_post_controlled_repair_execution.py",
+    "services/packaging/linkedin_post_genericization_guard.py",
     "services/packaging/linkedin_post_prompt_renderers.py",
     "services/packaging/linkedin_post_repair_writer_execution.py",
     "services/packaging/linkedin_post_final_post_payload_contract.py",

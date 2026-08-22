@@ -218,7 +218,7 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             if item.family == corpus.CASE_FAMILY_CANDIDATE_QE
         )
         payload = corpus.resolve_product_validation_case(case)
-        calls = {"grounding": 0, "quality": 0}
+        calls = {"grounding": 0, "quality": 0, "repair": 0}
 
         def fake_grounding(_request):
             calls["grounding"] += 1
@@ -236,6 +236,15 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
                 model="gpt-4.1-2025-04-14",
             )
 
+        def fake_repair(_request):
+            calls["repair"] += 1
+            return RepairWriterRawResponse(
+                raw_text=json.dumps({"post_text": "Repaired human post."}),
+                provider="gemini",
+                model="gemini-3.6-flash",
+                prompt_metadata=_repair_prompt_metadata(),
+            )
+
         record = live_execution.execute_product_validation_live_case(
             case=case,
             fixture_payload=payload,
@@ -245,15 +254,17 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
             executors=live_execution.ProductValidationLiveExecutors(
                 semantic_grounding_executor=fake_grounding,
                 quality_evaluator_executor=fake_quality,
+                repair_writer_executor=fake_repair,
             ),
         )
 
-        self.assertEqual(record["live_outcome"], live_execution.LIVE_ACCEPTED_FIRST_ATTEMPT)
+        self.assertEqual(record["live_outcome"], live_execution.LIVE_REPAIR_ACCEPTED)
         self.assertEqual(record["provider_invocation_counts"]["candidate_writer_provider_api_calls"], 0)
-        self.assertEqual(record["provider_invocation_counts"]["semantic_grounding_provider_api_calls"], 1)
-        self.assertEqual(record["provider_invocation_counts"]["quality_evaluator_provider_api_calls"], 1)
-        self.assertEqual(record["total_provider_calls"], 2)
-        self.assertEqual(calls, {"grounding": 1, "quality": 1})
+        self.assertEqual(record["provider_invocation_counts"]["semantic_grounding_provider_api_calls"], 2)
+        self.assertEqual(record["provider_invocation_counts"]["quality_evaluator_provider_api_calls"], 2)
+        self.assertEqual(record["provider_invocation_counts"]["repair_writer_provider_api_calls"], 1)
+        self.assertEqual(record["total_provider_calls"], 5)
+        self.assertEqual(calls, {"grounding": 2, "quality": 2, "repair": 1})
 
     def test_repair_required_product_case_continues_through_repair_once(self) -> None:
         manifest = corpus.load_product_validation_corpus_manifest()
@@ -834,6 +845,10 @@ class PostFlowProductValidationBenchmarkTests(SimpleTestCase):
         self.assertEqual(fingerprint["missing_contract_file_paths"], [])
         self.assertIn(
             "services/packaging/linkedin_post_repair_writer_execution.py",
+            fingerprint["contract_file_hashes"],
+        )
+        self.assertIn(
+            "services/packaging/linkedin_post_genericization_guard.py",
             fingerprint["contract_file_hashes"],
         )
 
