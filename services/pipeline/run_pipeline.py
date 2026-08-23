@@ -17,7 +17,10 @@ from services.digests.used_articles import (
 )
 from services.config.author_profile import load_author_profile
 from services.json_utils import make_json_safe
-from services.packaging import generate_content_package_for_digest
+from services.packaging.linkedin_post_product_publication import (
+    FinalPostProviderClients,
+    generate_accepted_linkedin_content_package_for_digest,
+)
 from services.processing.cleaner import clean_source_items_with_diagnostics
 from services.processing.deduper import dedupe_source_items_with_metrics
 from services.processing.ranker import DEFAULT_MIN_QUALITY_SCORE, rank_source_items
@@ -33,7 +36,15 @@ INSUFFICIENT_QUALITY_MESSAGE = (
 logger = logging.getLogger(__name__)
 
 
-def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) -> DigestRun:
+generate_content_package_for_digest = generate_accepted_linkedin_content_package_for_digest
+
+
+def run_digest_pipeline(
+    run_id: int,
+    raw_items: Iterable[dict] | None = None,
+    *,
+    final_post_provider_clients: FinalPostProviderClients | None = None,
+) -> DigestRun:
     """Run the first end-to-end pipeline: Topic -> articles -> Digest -> ContentPackage."""
     run = DigestRun.objects.select_related("topic").get(pk=run_id)
     run.source_mode = _resolve_source_mode(run)
@@ -226,6 +237,7 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
             content_package, packaging_debug = generate_content_package_for_digest(
                 digest,
                 author_profile=author_profile,
+                provider_clients=final_post_provider_clients,
             )
         except Exception as exc:
             logger.exception("[DigestRun %s] Packaging stage failed", run.id)
@@ -275,6 +287,11 @@ def run_digest_pipeline(run_id: int, raw_items: Iterable[dict] | None = None) ->
                     else None,
                 },
                 "estimated_cost_usd": packaging_debug.get("estimated_cost_usd"),
+                **(
+                    {"final_post_flow": packaging_debug["final_post_flow"]}
+                    if packaging_debug.get("final_post_flow")
+                    else {}
+                ),
             },
             "used_articles_stage": {
                 "status": "completed",

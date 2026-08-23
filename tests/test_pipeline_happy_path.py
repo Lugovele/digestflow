@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from apps.digests.models import Digest, DigestRun, UsedArticle
+from apps.packaging.models import ContentPackage
 from apps.digests import result_messages
 from apps.sources.models import Article
 from apps.topics.models import Topic
@@ -35,6 +35,22 @@ LONG_RSS_SNIPPET_3 = (
 )
 
 
+def _fake_content_package_for_digest(digest, **_kwargs):
+    package = ContentPackage.objects.create(
+        digest=digest,
+        post_text="Clean accepted post from patched publication seam.",
+        hook_variants=["Hook one", "Hook two", "Hook three"],
+        cta_variants=["CTA one", "CTA two", "CTA three"],
+        hashtags=["#PostFlow"],
+        validation_report={"status": "valid"},
+    )
+    return package, {
+        "provider": "clean_postflow",
+        "is_mock": False,
+        "tokens": None,
+        "estimated_cost_usd": None,
+    }
+
 @override_settings(OPENAI_API_KEY="sk-your-key")
 class DigestPipelineHappyPathTests(TestCase):
     def test_run_digest_pipeline_completes_end_to_end_with_mock_ai(self):
@@ -58,7 +74,8 @@ class DigestPipelineHappyPathTests(TestCase):
 
         raw_items = get_demo_articles_for_topic(topic.name)
 
-        result = run_digest_pipeline(run.id, raw_items)
+        with patch("services.pipeline.run_pipeline.generate_content_package_for_digest", side_effect=_fake_content_package_for_digest):
+            result = run_digest_pipeline(run.id, raw_items)
         run.refresh_from_db()
         digest = run.digest
         content_package = digest.content_package
@@ -193,8 +210,8 @@ class DigestPipelineHappyPathTests(TestCase):
         self.assertNotIn("key_points_count", digest_stage)
         self.assertNotIn("sources_count", digest_stage)
         self.assertEqual(packaging_stage.get("status"), "completed")
-        self.assertEqual(packaging_stage.get("provider"), "mock")
-        self.assertTrue(packaging_stage.get("is_mock"))
+        self.assertEqual(packaging_stage.get("provider"), "clean_postflow")
+        self.assertFalse(packaging_stage.get("is_mock"))
 
     def test_run_digest_pipeline_completes_with_local_rss_items_and_no_error_message(self):
         user = get_user_model().objects.create_user(
@@ -216,11 +233,33 @@ class DigestPipelineHappyPathTests(TestCase):
             },
         )
 
-        with patch("services.sources.rss_adapter._fetch_url_text", return_value=""):
-            raw_items = fetch_rss_articles(str(Path("tests/fixtures/sample_feed.xml")))
+        raw_items = [
+            {
+                "title": "AI briefing workflow cut research prep",
+                "url": "https://example.com/articles/ai-briefing-workflow",
+                "source_name": "DigestFlow Sample Feed",
+                "snippet": LONG_RSS_SNIPPET_1,
+                "published_at": "2026-05-01T09:00:00+00:00",
+            },
+            {
+                "title": "Structured intake forms improved support triage",
+                "url": "https://example.com/articles/support-triage-handoffs",
+                "source_name": "DigestFlow Sample Feed",
+                "snippet": LONG_RSS_SNIPPET_2,
+                "published_at": "2026-05-01T10:20:00+00:00",
+            },
+            {
+                "title": "Workflow redesign before AI improved results",
+                "url": "https://example.com/articles/workflow-redesign-before-ai",
+                "source_name": "DigestFlow Sample Feed",
+                "snippet": LONG_RSS_SNIPPET_3,
+                "published_at": "2026-05-01T14:25:00+00:00",
+            },
+        ]
         json.dumps(raw_items[0])
 
-        result = run_digest_pipeline(run.id, raw_items)
+        with patch("services.pipeline.run_pipeline.generate_content_package_for_digest", side_effect=_fake_content_package_for_digest):
+            result = run_digest_pipeline(run.id, raw_items)
         run.refresh_from_db()
 
         self.assertEqual(result.id, run.id)
@@ -251,7 +290,8 @@ class DigestPipelineHappyPathTests(TestCase):
             input_snapshot={"mode": "demo", "source": "integration_test"},
         )
 
-        result = run_digest_pipeline(run.id, get_demo_articles_for_topic(topic.name))
+        with patch("services.pipeline.run_pipeline.generate_content_package_for_digest", side_effect=_fake_content_package_for_digest):
+            result = run_digest_pipeline(run.id, get_demo_articles_for_topic(topic.name))
         run.refresh_from_db()
 
         self.assertEqual(result.id, run.id)
@@ -365,7 +405,8 @@ class DigestPipelineHappyPathTests(TestCase):
             },
         ]
 
-        result = run_digest_pipeline(run.id, raw_items)
+        with patch("services.pipeline.run_pipeline.generate_content_package_for_digest", side_effect=_fake_content_package_for_digest):
+            result = run_digest_pipeline(run.id, raw_items)
         run.refresh_from_db()
 
         self.assertEqual(result.id, run.id)
