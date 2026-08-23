@@ -17,6 +17,14 @@ def _postflow_provider_setting(env_name: str) -> str:
     return os.getenv(env_name, "openai").strip().lower() or "openai"
 
 
+def _postflow_role_model_setting(env_name: str, default: str) -> str:
+    return os.getenv(env_name) or default
+
+
+def _postflow_role_provider_setting(env_name: str, default: str) -> str:
+    return os.getenv(env_name, default).strip().lower() or default
+
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-insecure-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
 ALLOWED_HOSTS = [
@@ -104,6 +112,22 @@ POSTFLOW_RESEARCH_PROVIDER = _postflow_provider_setting("POSTFLOW_RESEARCH_PROVI
 POSTFLOW_POST_PROVIDER = _postflow_provider_setting("POSTFLOW_POST_PROVIDER")
 POSTFLOW_RESEARCH_MODEL = _postflow_model_setting("POSTFLOW_RESEARCH_MODEL", "gpt-4o-mini-2024-07-18")
 POSTFLOW_POST_MODEL = _postflow_model_setting("POSTFLOW_POST_MODEL", "gpt-4.1-2025-04-14")
+POSTFLOW_CANDIDATE_WRITER_PROVIDER = _postflow_role_provider_setting(
+    "POSTFLOW_CANDIDATE_WRITER_PROVIDER",
+    "anthropic",
+)
+POSTFLOW_CANDIDATE_WRITER_MODEL = _postflow_role_model_setting(
+    "POSTFLOW_CANDIDATE_WRITER_MODEL",
+    "claude-sonnet-5",
+)
+POSTFLOW_QUALITY_EVALUATOR_PROVIDER = _postflow_role_provider_setting(
+    "POSTFLOW_QUALITY_EVALUATOR_PROVIDER",
+    "openai",
+)
+POSTFLOW_QUALITY_EVALUATOR_MODEL = _postflow_role_model_setting(
+    "POSTFLOW_QUALITY_EVALUATOR_MODEL",
+    "gpt-4.1-2025-04-14",
+)
 SEARCH_PROVIDER_ENABLED = os.getenv("SEARCH_PROVIDER_ENABLED", "False").lower() == "true"
 SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "").strip().lower()
 SEARCH_PROVIDER_API_KEY = os.getenv("SEARCH_PROVIDER_API_KEY", "")

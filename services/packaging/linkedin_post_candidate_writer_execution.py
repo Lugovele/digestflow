@@ -223,12 +223,12 @@ def execute_candidate_writer_prompt(
 
 
 def _resolve_provider(provider: str | None) -> str:
-    resolved = provider if provider is not None else settings.POSTFLOW_POST_PROVIDER
+    resolved = provider if provider is not None else settings.POSTFLOW_CANDIDATE_WRITER_PROVIDER
     return str(resolved or "").strip().lower()
 
 
 def _resolve_model(model: str | None) -> str:
-    resolved = model if model is not None else settings.POSTFLOW_POST_MODEL
+    resolved = model if model is not None else settings.POSTFLOW_CANDIDATE_WRITER_MODEL
     return str(resolved or "").strip()
 
 

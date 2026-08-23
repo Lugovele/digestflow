@@ -11,7 +11,16 @@ from apps.digests.models import Digest, DigestRun
 from apps.packaging.models import ContentPackage
 from apps.topics.models import Topic
 from services.pipeline.run_pipeline import run_digest_pipeline
-from services.packaging.linkedin_post_product_publication import FinalPostProviderClients
+from services.packaging.linkedin_post_final_post_attempt_contract import (
+    STAGE_CANDIDATE_WRITER_REQUEST,
+    STAGE_QUALITY_EVALUATOR_REQUEST,
+    STAGE_SEMANTIC_GROUNDING_REQUEST,
+)
+from services.packaging.linkedin_post_product_publication import (
+    FinalPostProviderClients,
+    _build_product_attempt_request,
+    generate_accepted_linkedin_content_package_for_digest,
+)
 
 
 ACCEPTED_POST_TEXT = (
@@ -251,6 +260,145 @@ class LinkedInPostProductPublicationIntegrationTests(TestCase):
         self.assertEqual(run.status, DigestRun.STATUS_PARTIAL_FAILED)
         self.assertEqual(run.metrics["packaging_stage"]["status"], "failed")
         self.assertFalse(hasattr(run.digest, "content_package"))
+
+
+    @override_settings(
+        POSTFLOW_CANDIDATE_WRITER_PROVIDER="anthropic",
+        POSTFLOW_CANDIDATE_WRITER_MODEL="claude-sonnet-5",
+        POSTFLOW_QUALITY_EVALUATOR_PROVIDER="openai",
+        POSTFLOW_QUALITY_EVALUATOR_MODEL="gpt-4.1-2025-04-14",
+    )
+    def test_product_attempt_request_uses_independent_role_specific_settings(self):
+        run = self._make_run("role-settings-user")
+        digest = self._create_digest(run)
+
+        prepared = _build_product_attempt_request(
+            digest=digest,
+            author_profile={"author": "PostFlow"},
+        )
+        request = prepared["request"]
+
+        self.assertEqual(request.candidate_writer_provider, "anthropic")
+        self.assertEqual(request.candidate_writer_model, "claude-sonnet-5")
+        self.assertEqual(request.quality_evaluator_provider, "openai")
+        self.assertEqual(request.quality_evaluator_model, "gpt-4.1-2025-04-14")
+        self.assertIsNone(request.semantic_grounding_provider)
+        self.assertIsNone(request.semantic_grounding_model)
+
+    @override_settings(
+        POSTFLOW_CANDIDATE_WRITER_PROVIDER="anthropic",
+        POSTFLOW_CANDIDATE_WRITER_MODEL="claude-sonnet-5",
+        POSTFLOW_QUALITY_EVALUATOR_PROVIDER="gemini",
+        POSTFLOW_QUALITY_EVALUATOR_MODEL="gemini-3.6-flash",
+    )
+    def test_changing_quality_evaluator_settings_does_not_change_candidate_writer(self):
+        run = self._make_run("qe-independent-user")
+        digest = self._create_digest(run)
+
+        request = _build_product_attempt_request(
+            digest=digest,
+            author_profile=None,
+        )["request"]
+
+        self.assertEqual(request.candidate_writer_provider, "anthropic")
+        self.assertEqual(request.candidate_writer_model, "claude-sonnet-5")
+        self.assertEqual(request.quality_evaluator_provider, "gemini")
+        self.assertEqual(request.quality_evaluator_model, "gemini-3.6-flash")
+
+    @override_settings(
+        POSTFLOW_CANDIDATE_WRITER_PROVIDER="openai",
+        POSTFLOW_CANDIDATE_WRITER_MODEL="gpt-4.1-2025-04-14",
+        POSTFLOW_QUALITY_EVALUATOR_PROVIDER="openai",
+        POSTFLOW_QUALITY_EVALUATOR_MODEL="gpt-4.1-2025-04-14",
+    )
+    def test_changing_candidate_writer_settings_does_not_change_quality_evaluator(self):
+        run = self._make_run("candidate-independent-user")
+        digest = self._create_digest(run)
+
+        request = _build_product_attempt_request(
+            digest=digest,
+            author_profile=None,
+        )["request"]
+
+        self.assertEqual(request.candidate_writer_provider, "openai")
+        self.assertEqual(request.candidate_writer_model, "gpt-4.1-2025-04-14")
+        self.assertEqual(request.quality_evaluator_provider, "openai")
+        self.assertEqual(request.quality_evaluator_model, "gpt-4.1-2025-04-14")
+
+    @override_settings(
+        ANTHROPIC_API_KEY="",
+        GEMINI_API_KEY="realistic-gemini-key-for-preflight",
+        OPENAI_API_KEY="realistic-openai-key-for-preflight",
+        POSTFLOW_CANDIDATE_WRITER_PROVIDER="anthropic",
+        POSTFLOW_CANDIDATE_WRITER_MODEL="claude-sonnet-5",
+        POSTFLOW_QUALITY_EVALUATOR_PROVIDER="openai",
+        POSTFLOW_QUALITY_EVALUATOR_MODEL="gpt-4.1-2025-04-14",
+    )
+    def test_missing_anthropic_key_fails_candidate_preflight_without_fallback(self):
+        run = self._make_run("missing-anthropic-key-user")
+        digest = self._create_digest(run)
+
+        with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY") as captured:
+            generate_accepted_linkedin_content_package_for_digest(digest)
+
+        self.assertIn(STAGE_CANDIDATE_WRITER_REQUEST, str(captured.exception))
+        self.assertFalse(ContentPackage.objects.filter(digest=digest).exists())
+
+    @override_settings(
+        ANTHROPIC_API_KEY="realistic-anthropic-key-for-preflight",
+        GEMINI_API_KEY="",
+        OPENAI_API_KEY="realistic-openai-key-for-preflight",
+        POSTFLOW_CANDIDATE_WRITER_PROVIDER="anthropic",
+        POSTFLOW_CANDIDATE_WRITER_MODEL="claude-sonnet-5",
+        POSTFLOW_QUALITY_EVALUATOR_PROVIDER="openai",
+        POSTFLOW_QUALITY_EVALUATOR_MODEL="gpt-4.1-2025-04-14",
+    )
+    def test_missing_gemini_key_fails_grounding_preflight_without_provider_call(self):
+        run = self._make_run("missing-gemini-key-user")
+        digest = self._create_digest(run)
+        clients = FinalPostProviderClients(
+            candidate_writer_client=FakeTextClient(json.dumps({"post_text": ACCEPTED_POST_TEXT})),
+            quality_evaluator_client=FakeTextClient(json.dumps(_quality_review_payload(passed=True))),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY") as captured:
+            generate_accepted_linkedin_content_package_for_digest(
+                digest,
+                provider_clients=clients,
+            )
+
+        self.assertIn(STAGE_SEMANTIC_GROUNDING_REQUEST, str(captured.exception))
+        self.assertEqual(clients.candidate_writer_client.calls, [])
+        self.assertEqual(clients.quality_evaluator_client.calls, [])
+        self.assertFalse(ContentPackage.objects.filter(digest=digest).exists())
+
+    @override_settings(
+        ANTHROPIC_API_KEY="realistic-anthropic-key-for-preflight",
+        GEMINI_API_KEY="realistic-gemini-key-for-preflight",
+        OPENAI_API_KEY="",
+        POSTFLOW_CANDIDATE_WRITER_PROVIDER="anthropic",
+        POSTFLOW_CANDIDATE_WRITER_MODEL="claude-sonnet-5",
+        POSTFLOW_QUALITY_EVALUATOR_PROVIDER="openai",
+        POSTFLOW_QUALITY_EVALUATOR_MODEL="gpt-4.1-2025-04-14",
+    )
+    def test_missing_openai_key_fails_quality_preflight_without_provider_call(self):
+        run = self._make_run("missing-openai-key-user")
+        digest = self._create_digest(run)
+        clients = FinalPostProviderClients(
+            candidate_writer_client=FakeTextClient(json.dumps({"post_text": ACCEPTED_POST_TEXT})),
+            semantic_grounding_client=FakeTextClient(_semantic_response),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY") as captured:
+            generate_accepted_linkedin_content_package_for_digest(
+                digest,
+                provider_clients=clients,
+            )
+
+        self.assertIn(STAGE_QUALITY_EVALUATOR_REQUEST, str(captured.exception))
+        self.assertEqual(clients.candidate_writer_client.calls, [])
+        self.assertEqual(clients.semantic_grounding_client.calls, [])
+        self.assertFalse(ContentPackage.objects.filter(digest=digest).exists())
 
     def _make_run(self, username: str) -> DigestRun:
         user = get_user_model().objects.create_user(

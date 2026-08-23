@@ -29,10 +29,10 @@ from services.packaging.linkedin_post_prompt_renderers import (
 
 
 class CandidateWriterExecutionTests(SimpleTestCase):
-    def test_execution_request_construction_uses_postflow_post_settings(self) -> None:
+    def test_execution_request_construction_uses_candidate_writer_role_settings(self) -> None:
         with override_settings(
-            POSTFLOW_POST_PROVIDER="openai",
-            POSTFLOW_POST_MODEL="gpt-4.1-2025-04-14",
+            POSTFLOW_CANDIDATE_WRITER_PROVIDER="anthropic",
+            POSTFLOW_CANDIDATE_WRITER_MODEL="claude-sonnet-5",
         ):
             request = build_candidate_writer_execution_request(
                 _render(),
@@ -41,9 +41,9 @@ class CandidateWriterExecutionTests(SimpleTestCase):
             )
 
         self.assertIsInstance(request, CandidateWriterExecutionRequest)
-        self.assertEqual(request.provider, "openai")
-        self.assertEqual(request.model, "gpt-4.1-2025-04-14")
-        self.assertEqual(request.thinking_mode, AI_THINKING_MODE_PROVIDER_DEFAULT)
+        self.assertEqual(request.provider, "anthropic")
+        self.assertEqual(request.model, "claude-sonnet-5")
+        self.assertEqual(request.thinking_mode, AI_THINKING_MODE_DISABLED)
         self.assertEqual(request.execution_metadata, {"attempt": 1})
 
     def test_execution_request_to_dict_defensively_copies_metadata(self) -> None:

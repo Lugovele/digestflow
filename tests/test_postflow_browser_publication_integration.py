@@ -24,7 +24,11 @@ ACCEPTED_BROWSER_POST_TEXT = (
 
 
 class PostFlowBrowserPublicationIntegrationTests(TestCase):
-    @override_settings(OPENAI_API_KEY="sk-test-key", GEMINI_API_KEY="gemini-test-key")
+    @override_settings(
+        OPENAI_API_KEY="sk-test-key",
+        GEMINI_API_KEY="gemini-test-key",
+        ANTHROPIC_API_KEY="anthropic-test-key",
+    )
     def test_browser_generate_post_reaches_clean_publication_result(self) -> None:
         user = get_user_model().objects.create_user(
             username="browser-publication-user",

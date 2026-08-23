@@ -30,10 +30,10 @@ from services.packaging.linkedin_post_provider_diagnostics import (
 
 
 class QualityEvaluatorExecutionTests(SimpleTestCase):
-    def test_execution_request_construction_uses_postflow_post_settings(self) -> None:
+    def test_execution_request_construction_uses_quality_evaluator_role_settings(self) -> None:
         with override_settings(
-            POSTFLOW_POST_PROVIDER="openai",
-            POSTFLOW_POST_MODEL="gpt-4.1-2025-04-14",
+            POSTFLOW_QUALITY_EVALUATOR_PROVIDER="openai",
+            POSTFLOW_QUALITY_EVALUATOR_MODEL="gpt-4.1-2025-04-14",
         ):
             request = build_quality_evaluator_execution_request(
                 _render(),
